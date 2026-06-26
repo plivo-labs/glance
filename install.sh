@@ -38,8 +38,23 @@ main() {
         persist_api_url "$GLANCE_API_URL"
     fi
 
+    install_skill
+
     say ""
     say "Done! Run 'glance login' to get started."
+}
+
+# Best-effort: if npx is available, install the glance-cli skill so AI agents
+# (Claude Code, Codex, Cursor, …) know how to drive the CLI. Never fatal — the
+# binary install above is what matters; a skill hiccup must not abort it.
+install_skill() {
+    command -v npx > /dev/null 2>&1 || return 0
+    say "Installing the glance skill for AI agents (npx skills)"
+    if npx --yes skills add "$REPO" --global --yes > /dev/null 2>&1; then
+        say "Skill installed for your AI agents"
+    else
+        warn "Skill install skipped — CLI is unaffected (run: npx skills add $REPO)"
+    fi
 }
 
 detect_platform() {

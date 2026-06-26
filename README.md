@@ -173,6 +173,14 @@ curl -fsSL https://raw.githubusercontent.com/samuellawerentz/glance/main/install
 They open a new shell, run `glance login` (Google SSO), and start deploying. Without
 `GLANCE_API_URL` the CLI defaults to `http://localhost:8787`.
 
+**AI-agent skill.** If `npx` is on PATH, the installer also runs `npx skills add` to install the
+`glance-cli` skill globally, so coding agents (Claude Code, Codex, Cursor, …) know how to drive the
+CLI. It's best-effort — no `npx`, no problem, the binary still installs. To add it on its own:
+
+```bash
+npx skills add samuellawerentz/glance --global
+```
+
 From a clone instead:
 
 ```bash
