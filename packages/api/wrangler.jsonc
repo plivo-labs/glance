@@ -1,0 +1,41 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "glance",
+  "main": "src/index.ts",
+  "account_id": "YOUR_ACCOUNT_ID", // EDIT: replace with your own (see README)
+  "compatibility_date": "2026-06-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  // Non-secret config. Secrets (GOOGLE_CLIENT_ID/SECRET, SESSION_SECRET) via `wrangler secret put`.
+  // setup.sh wires the YOUR-SUBDOMAIN sentinel from the live workers.dev URL on deploy.
+  "vars": {
+    "APP_URL": "https://glance.YOUR-SUBDOMAIN.workers.dev", // EDIT: replace with your own (see README)
+    "CONTENT_URL": "https://glance-content.YOUR-SUBDOMAIN.workers.dev", // EDIT: replace with your own (see README)
+    "ALLOWED_HD": "yourcompany.com", // EDIT: replace with your own (see README)
+    "SUPERADMIN_EMAIL": "you@yourcompany.com" // EDIT: replace with your own (see README)
+  },
+  // Main worker serves the React SPA as static assets. run_worker_first forces
+  // /api/* to Hono BEFORE the asset layer (otherwise SPA fallback returns index.html
+  // for API routes). Everything else falls through to assets; unknown paths return
+  // index.html (200) for client-side routing — incl. the /:space/:site viewer route.
+  "assets": {
+    "directory": "../web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "GLANCE_DB",
+      "database_name": "glance-db",
+      "database_id": "YOUR_D1_DATABASE_ID", // EDIT: replace with your own (see README)
+      "migrations_dir": "drizzle"
+    }
+  ],
+  "r2_buckets": [{ "binding": "GLANCE_FILES", "bucket_name": "glance-files" }],
+  "kv_namespaces": [{ "binding": "GLANCE_SESSIONS", "id": "YOUR_KV_NAMESPACE_ID" }], // EDIT: replace with your own (see README)
+  // Free, no Cloudflare zone needed (unlike WAF rules, which don't apply to *.workers.dev).
+  // 10 upload requests / 60s per client IP. period must be 10 or 60.
+  "ratelimits": [{ "name": "UPLOAD_LIMITER", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } }]
+}

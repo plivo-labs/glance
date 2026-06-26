@@ -1,0 +1,22 @@
+{
+  "name": "@glance/api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "deploy": "wrangler deploy",
+    "deploy:content": "wrangler deploy --config wrangler.content.jsonc"
+  },
+  "dependencies": {
+    "arctic": "^3.7.0",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.12.0",
+    "marked": "^18.0.5"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.10",
+    "typescript": "^6.0.3",
+    "wrangler": "^4.100.0"
+  }
+}

@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # Generates the gitignored worker-configuration.d.ts that typecheck depends on.
+      - name: Generate Cloudflare types
+        run: bun run cf-typegen
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Build web
+        run: bun run build:web
+
+      - name: Test
+        run: bun test
+
+      - name: Lint
+        run: bun run lint

@@ -1,0 +1,53 @@
+name: Deploy
+
+# Auto-deploy to Cloudflare on every push to main (i.e. when a PR merges).
+# Bindings (account_id, D1 id, KV id) live in the committed wrangler.jsonc — they are
+# identifiers, not secrets. The only secret CI needs is a scoped Cloudflare API token.
+#
+# Required GitHub repo secret (Settings -> Secrets and variables -> Actions):
+#   CLOUDFLARE_API_TOKEN  — token with: Workers Scripts:Edit, D1:Edit, Workers KV Storage:Edit,
+#                           Workers R2 Storage:Edit, Account Settings:Read (use the
+#                           "Edit Cloudflare Workers" template + add D1/KV/R2).
+#
+# Worker SECRETS (SESSION_SECRET, CONTENT_TOKEN_SECRET, BOOTSTRAP_TOKEN, GOOGLE_*) are set
+# ONCE via `wrangler secret put` (scripts/setup.sh does this) and PERSIST across deploys —
+# this workflow never touches them.
+
+on:
+  push:
+    branches: [main]
+
+# Never run two deploys at once; cancel an in-flight deploy if a newer commit lands.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build web
+        run: bun run build:web
+
+      - name: Apply D1 migrations (remote)
+        working-directory: packages/api
+        run: bunx wrangler d1 migrations apply glance-db --remote
+
+      - name: Deploy main worker
+        working-directory: packages/api
+        run: bunx wrangler deploy
+
+      - name: Deploy content worker
+        working-directory: packages/api
+        run: bunx wrangler deploy --config wrangler.content.jsonc

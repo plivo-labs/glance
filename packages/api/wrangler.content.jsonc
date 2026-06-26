@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "glance-content",
+  "main": "src/content.ts",
+  "account_id": "YOUR_ACCOUNT_ID", // EDIT: replace with your own (see README)
+  "compatibility_date": "2026-06-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  // APP_URL drives the frame-ancestors CSP (only the main app may iframe this origin).
+  // setup.sh wires the YOUR-SUBDOMAIN sentinel from the live workers.dev URL on deploy.
+  "vars": { "APP_URL": "https://glance.YOUR-SUBDOMAIN.workers.dev" }, // EDIT: replace with your own (see README)
+  // Content worker: serves uploaded file bytes from R2. No ASSETS, no KV (no cookies
+  // ever reach this origin). Shares the SAME D1 + R2 as the main worker (identical
+  // database_id / bucket_name). Gated access via HMAC token in the URL path.
+  "d1_databases": [
+    {
+      "binding": "GLANCE_DB",
+      "database_name": "glance-db",
+      "database_id": "YOUR_D1_DATABASE_ID", // EDIT: replace with your own (see README)
+      "migrations_dir": "drizzle"
+    }
+  ],
+  "r2_buckets": [{ "binding": "GLANCE_FILES", "bucket_name": "glance-files" }]
+}

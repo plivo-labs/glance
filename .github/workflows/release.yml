@@ -1,0 +1,40 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Build standalone binaries
+        working-directory: packages/cli
+        run: |
+          mkdir -p dist
+          while read -r target out; do
+            bun build ./index.ts --compile --minify --target="$target" --outfile "dist/$out"
+            ( cd dist && shasum -a 256 "$out" | awk '{print $1}' > "$out.sha256" )
+          done <<'EOF'
+          bun-darwin-arm64 glance-arm64-darwin
+          bun-darwin-x64   glance-x64-darwin
+          bun-linux-arm64  glance-arm64-linux
+          bun-linux-x64    glance-x64-linux
+          EOF
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            packages/cli/dist/glance-*-*
+            packages/cli/dist/glance-*-*.sha256
+          generate_release_notes: true

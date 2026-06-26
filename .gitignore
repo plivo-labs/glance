@@ -1,0 +1,46 @@
+# deps
+node_modules/
+.pnp.*
+
+# builds
+dist/
+build/
+.output/
+*.tsbuildinfo
+
+# cloudflare / wrangler
+.wrangler/
+.wrangler-shared/
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+worker-configuration.d.ts
+
+# drizzle local db artifacts
+*.sqlite
+*.sqlite-*
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# logs
+*.log
+npm-debug.log*
+bun-debug.log*
+
+# editor / os
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# omc state (not part of the product)
+.omc/
+
+# internal working docs (kept locally, not published)
+CLAUDE.md
+PLAN.md
+PROGRESS.md
+TEST_PLAN.md

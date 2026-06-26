@@ -1,0 +1,66 @@
+import { Hono } from 'hono'
+import { secureHeaders } from 'hono/secure-headers'
+import { withDb } from './db/client'
+import { superadminExists } from './db/repo'
+import { buildPublicConfig } from './lib/bootstrap'
+import { isGoogleEnabled } from './lib/oauth'
+import { requireSameOrigin } from './middleware/auth'
+import { admin } from './routes/admin'
+import { auth } from './routes/auth'
+import { sites } from './routes/sites'
+import { spaces } from './routes/spaces'
+import { upload } from './routes/upload'
+import { users } from './routes/users'
+import type { AppEnv } from './types'
+
+// Main worker: /api/* (Hono) + the React SPA (static assets, configured in wrangler.jsonc).
+// `run_worker_first: ["/api/*"]` routes API calls here; everything else falls through to
+// the asset layer, which serves index.html for unknown paths (SPA client routing).
+const app = new Hono<AppEnv>()
+
+// CSP is built per-request so frame-src can reference the content origin (env-specific).
+// 'unsafe-inline' is needed only for React inline style attributes; scripts stay 'self'.
+app.use('*', (c, next) =>
+  secureHeaders({
+    strictTransportSecurity: 'max-age=31536000; includeSubDomains',
+    xFrameOptions: 'DENY',
+    xContentTypeOptions: 'nosniff',
+    referrerPolicy: 'strict-origin-when-cross-origin',
+    contentSecurityPolicy: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:'],
+      fontSrc: ["'self'"],
+      connectSrc: ["'self'"],
+      frameSrc: ["'self'", c.env.CONTENT_URL],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"],
+    },
+  })(c, next),
+)
+app.use('/api/*', requireSameOrigin)
+app.use('/api/*', withDb)
+
+app.get('/api/health', (c) => c.json({ status: 'ok' }))
+
+// Public first-run config: what login options the SPA should offer. Behind requireSameOrigin
+// + withDb (GET same-origin is fine); exposes only booleans, no secrets.
+app.get('/api/config', async (c) =>
+  c.json(
+    buildPublicConfig({
+      googleEnabled: isGoogleEnabled(c.env),
+      hasSuperadmin: await superadminExists(c.get('db')),
+      bootstrapTokenSet: Boolean(c.env.BOOTSTRAP_TOKEN),
+    }),
+  ),
+)
+app.route('/api/auth', auth)
+app.route('/api/spaces', spaces)
+app.route('/api/sites', sites)
+app.route('/api/upload', upload)
+app.route('/api/users', users)
+app.route('/api/admin', admin)
+
+export default app

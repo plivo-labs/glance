@@ -1,0 +1,184 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background:           var(--background);
+  --color-foreground:           var(--foreground);
+  --color-card:                 var(--card);
+  --color-card-foreground:      var(--card-foreground);
+  --color-popover:              var(--popover);
+  --color-popover-foreground:   var(--popover-foreground);
+  --color-primary:              var(--primary);
+  --color-primary-foreground:   var(--primary-foreground);
+  --color-secondary:            var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted:                var(--muted);
+  --color-muted-foreground:     var(--muted-foreground);
+  --color-accent:               var(--accent);
+  --color-accent-foreground:    var(--accent-foreground);
+  --color-destructive:          var(--destructive);
+  --color-success:              var(--success);
+  --color-success-foreground:   var(--success-foreground);
+  --color-warning:              var(--warning);
+  --color-warning-foreground:   var(--warning-foreground);
+  --color-border:               var(--border);
+  --color-input:                var(--input);
+  --color-ring:                 var(--ring);
+  --radius-sm:  calc(var(--radius) * 0.6);
+  --radius-md:  calc(var(--radius) * 0.8);
+  --radius-lg:  var(--radius);
+  --radius-xl:  calc(var(--radius) * 1.4);
+
+  /* IBM Plex (loaded in index.html) */
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
+/* LIGHT — warm-neutral surfaces, amber primary (matches the brand). */
+:root {
+  --radius: 0.7rem;
+  --background:           oklch(0.991 0.002 80);
+  --foreground:           oklch(0.20 0.012 60);
+  --card:                 oklch(1 0 0);
+  --card-foreground:      oklch(0.20 0.012 60);
+  --popover:              oklch(1 0 0);
+  --popover-foreground:   oklch(0.20 0.012 60);
+  --primary:              oklch(0.72 0.158 64);
+  --primary-foreground:   oklch(0.22 0.03 70);
+  --secondary:            oklch(0.965 0.004 80);
+  --secondary-foreground: oklch(0.26 0.012 60);
+  --muted:                oklch(0.965 0.004 80);
+  --muted-foreground:     oklch(0.52 0.012 60);
+  --accent:               oklch(0.955 0.012 78);
+  --accent-foreground:    oklch(0.26 0.012 60);
+  --destructive:          oklch(0.585 0.222 27);
+  --success:              oklch(0.60 0.16 150);
+  --success-foreground:   oklch(0.99 0 0);
+  --warning:              oklch(0.70 0.16 62);
+  --warning-foreground:   oklch(0.22 0.03 70);
+  --border:               oklch(0.915 0.004 80);
+  --input:                oklch(0.915 0.004 80);
+  --ring:                 oklch(0.72 0.158 64);
+}
+
+/* DARK — "Blueprint": deep ink-blue surfaces, amber primary. */
+.dark {
+  --background:           oklch(0.165 0.028 250);
+  --foreground:           oklch(0.96 0.005 250);
+  --card:                 oklch(0.205 0.034 250);
+  --card-foreground:      oklch(0.96 0.005 250);
+  --popover:              oklch(0.205 0.034 250);
+  --popover-foreground:   oklch(0.96 0.005 250);
+  --primary:              oklch(0.80 0.17 78);
+  --primary-foreground:   oklch(0.16 0.03 80);
+  --secondary:            oklch(0.255 0.036 250);
+  --secondary-foreground: oklch(0.96 0.005 250);
+  --muted:                oklch(0.255 0.036 250);
+  --muted-foreground:     oklch(0.66 0.025 250);
+  --accent:               oklch(0.28 0.04 250);
+  --accent-foreground:    oklch(0.96 0.005 250);
+  --destructive:          oklch(0.70 0.19 22);
+  --success:              oklch(0.72 0.16 156);
+  --success-foreground:   oklch(0.16 0.03 160);
+  --warning:              oklch(0.80 0.16 78);
+  --warning-foreground:   oklch(0.16 0.03 80);
+  --border:               oklch(1 0 0 / 11%);
+  --input:                oklch(1 0 0 / 16%);
+  --ring:                 oklch(0.80 0.17 78);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Blueprint login + app motion helpers. Unlayered + namespaced bp-* so they
+ * win over layered utilities and never collide with anything.
+ * ------------------------------------------------------------------------- */
+@keyframes bp-rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes bp-blink {
+  50% { opacity: 0; }
+}
+
+.bp-caret {
+  display: inline-block;
+  width: 0.62ch;
+  height: 1.05em;
+  transform: translateY(0.14em);
+  background: currentColor;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .bp-rise {
+    opacity: 0;
+    animation: bp-rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+  .bp-caret {
+    animation: bp-blink 1.1s steps(1) infinite;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Authed-app atmosphere. A fixed, faint blueprint grid + a top amber glow that
+ * seats the whole signed-in app in the same world as the login — without the
+ * animated canvas. Pure CSS, GPU-cheap (two fixed gradient layers).
+ * ------------------------------------------------------------------------- */
+.bp-app-bg::before,
+.bp-app-bg::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+/* grid lines — keyed off --border so it tracks light/dark automatically */
+.bp-app-bg::before {
+  background-image:
+    linear-gradient(to right, var(--border) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--border) 1px, transparent 1px);
+  background-size: 44px 44px;
+  -webkit-mask-image: radial-gradient(120% 80% at 50% -8%, #000 38%, transparent 78%);
+  mask-image: radial-gradient(120% 80% at 50% -8%, #000 38%, transparent 78%);
+  opacity: 0.5;
+}
+/* top glow — a soft amber wash that lifts the header */
+.bp-app-bg::after {
+  background: radial-gradient(80% 50% at 50% -6%, color-mix(in oklch, var(--primary) 12%, transparent), transparent 60%);
+}
+.dark .bp-app-bg::before { opacity: 0.7; }
+
+/* Refined surface for cards: a hairline top highlight + a touch of depth, so
+ * cards read as panels with light catching the top edge rather than flat slabs. */
+.bp-surface {
+  background-image: linear-gradient(to bottom, color-mix(in oklch, var(--foreground) 3.5%, transparent), transparent 42%);
+  box-shadow:
+    0 1px 0 0 color-mix(in oklch, var(--foreground) 4%, transparent) inset,
+    0 1px 2px -1px rgb(0 0 0 / 0.10),
+    0 8px 24px -16px rgb(0 0 0 / 0.30);
+}
+.dark .bp-surface {
+  background-image: linear-gradient(to bottom, oklch(1 0 0 / 5%), transparent 42%);
+  box-shadow:
+    0 1px 0 0 oklch(1 0 0 / 6%) inset,
+    0 1px 2px -1px rgb(0 0 0 / 0.5),
+    0 16px 40px -24px rgb(0 0 0 / 0.6);
+}
+
+/* Mono eyebrow rule used on section headers — a small index tick + hairline. */
+.bp-rule::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(to right, var(--border), transparent);
+}

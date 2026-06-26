@@ -1,0 +1,29 @@
+# Copy to `packages/api/.dev.vars` (gitignored). `wrangler dev` reads it from THIS
+# directory for BOTH workers. In prod, set via `wrangler secret put <NAME>` (+ vars).
+
+# Google OAuth (console.cloud.google.com → Credentials). Dev redirect URI:
+#   http://localhost:8787/api/auth/callback
+# OPTIONAL: leave empty to run bootstrap-only (no Google) until you wire OAuth later.
+GOOGLE_CLIENT_ID=""
+GOOGLE_CLIENT_SECRET=""
+
+# One-shot token gating first-superadmin bootstrap (POST /api/auth/bootstrap).
+# Leave empty to disable bootstrap. Generate: openssl rand -hex 32
+BOOTSTRAP_TOKEN=""
+
+# HMAC secret for signed cookies and KV session tokens.
+# Generate: openssl rand -hex 32
+SESSION_SECRET=""
+
+# Separate HMAC secret for gated content-origin tokens. Keep distinct from SESSION_SECRET
+# so a leak of one can't be used to forge the other.
+# Generate: openssl rand -hex 32
+CONTENT_TOKEN_SECRET=""
+
+# Public base URLs (no trailing slash). Dev defaults shown.
+APP_URL="http://localhost:8787"
+CONTENT_URL="http://localhost:8788"
+
+# First superadmin (granted on first login) + allowed Google Workspace domain.
+SUPERADMIN_EMAIL="you@example.com"
+ALLOWED_HD="example.com"

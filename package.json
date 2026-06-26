@@ -1,0 +1,42 @@
+{
+  "name": "glance",
+  "private": true,
+  "type": "module",
+  "description": "Drop a folder of static files, get a URL. Self-hostable static hosting on Cloudflare Workers.",
+  "author": "Plivo Inc.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/samuellawerentz/glance.git"
+  },
+  "homepage": "https://github.com/samuellawerentz/glance#readme",
+  "bugs": {
+    "url": "https://github.com/samuellawerentz/glance/issues"
+  },
+  "keywords": ["static-hosting", "cloudflare-workers", "hono", "r2", "d1"],
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "dev": "trap 'kill 0' SIGINT; bun run dev:api & bun run dev:content & bun run dev:web & wait",
+    "dev:api": "cd packages/api && bunx wrangler dev --port 8787 --persist-to ../../.wrangler-shared",
+    "dev:content": "cd packages/api && bunx wrangler dev --config wrangler.content.jsonc --port 8788 --inspector-port 9230 --persist-to ../../.wrangler-shared",
+    "dev:web": "cd packages/web && bunx vite",
+    "build:web": "cd packages/web && bunx vite build",
+    "typecheck": "bun run --filter '*' typecheck",
+    "test": "bun run --filter '*' test",
+    "lint": "biome lint .",
+    "format": "biome check --write .",
+    "cf-typegen": "cd packages/api && bunx wrangler types",
+    "db:generate": "cd packages/api && bunx drizzle-kit generate",
+    "db:migrate:local": "cd packages/api && bunx wrangler d1 migrations apply glance-db --local --persist-to ../../.wrangler-shared",
+    "db:migrate:remote": "cd packages/api && bunx wrangler d1 migrations apply glance-db --remote",
+    "deploy": "bun run build:web && cd packages/api && bunx wrangler deploy && bunx wrangler deploy --config wrangler.content.jsonc"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.0",
+    "typescript": "^6.0.3",
+    "wrangler": "^4.100.0"
+  }
+}
