@@ -39,6 +39,10 @@ describe('parseIntent', () => {
     })
   })
 
+  test('parses a select-clear intent', () => {
+    expect(parseIntent(ev({ data: { type: 'glance:select-clear' } }), expected)).toEqual({ type: 'clear' })
+  })
+
   test('accepts a ready handshake; missing source check is skippable', () => {
     expect(parseIntent(ev({ data: { type: 'glance:ready', filePath: 'index.html' } }), expected)).toEqual({
       type: 'ready',

@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { ChevronDown, Home } from 'lucide-react'
+import { ChevronDown, Home, MessageSquare } from 'lucide-react'
 import { Link } from 'react-router'
 import type { ViewerSite } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -16,7 +16,7 @@ import { VISIBILITY_META } from '@/components/visibility'
 // The glass look layers three things: (1) an SVG feTurbulence→feDisplacementMap refraction applied
 // to the backdrop (Chromium-only; degrades to plain blur elsewhere), (2) blur+saturate+brightness
 // to lift the backdrop, (3) inset specular highlights + a top sheen for the curved-glass edge.
-export function PreviewToolbar({ site }: { site: ViewerSite }) {
+export function PreviewToolbar({ site, onReview }: { site: ViewerSite; onReview?: () => void }) {
   const [open, setOpen] = useState(false)
   const [dimmed, setDimmed] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -115,6 +115,12 @@ export function PreviewToolbar({ site }: { site: ViewerSite }) {
                 Home
               </Link>
             </Button>
+            {onReview && (
+              <Button variant="ghost" size="sm" className="rounded-full" onClick={onReview}>
+                <MessageSquare />
+                Comments
+              </Button>
+            )}
             <CopyButton text={site.contentUrl} variant="ghost" size="sm" className="rounded-full" />
             {site.isOwner && <ShareDialog spaceSlug={site.spaceSlug} siteSlug={site.siteSlug} title={site.title} />}
           </div>

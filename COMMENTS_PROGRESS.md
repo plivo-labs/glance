@@ -41,10 +41,19 @@ Status keys: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
 - [x] **Gate P4** — thermo-nuclear PASS → 129 tests (api 124 + web 5) + typecheck + lint + build:web green → commit `Phase 4: …`
 
 ### Phase 5 — Review-mode UI (manual smoke)
-- [ ] **Step 14** — opt-in review-mode split layout in `viewer.tsx` (persistent rail, not modal `Sheet`); append `?glance_annotate=1`; non-public only. · *med* · dep:9,11
-- [ ] **Step 15** — rail thread list · on-select composer (prefilled quote) · flat reply · resolve · **Outdated** group · mutations = explicit parent action. · *high* · dep:12,13,14
-- [ ] **Step 16** — gutter pins inside the iframe; mobile bottom drawer. · *med* · dep:15
-- [ ] **Gate P5** — thermo-nuclear on Phase-5 diff → manual browser smoke → typecheck + lint + `build:web` green → commit `Phase 5: …`
+- [x] **Step 14** — opt-in review-mode split layout (`ReviewMode.tsx`, persistent rail, not modal `Sheet`); appends `?glance_annotate=1`; "Comments" affordance non-public only (`PreviewToolbar`). · *med* · dep:9,11
+- [x] **Step 15** — rail thread list (`ReviewRail`/`ThreadCard`) · on-select floating button → quote-prefilled composer · flat reply · resolve/reopen · **Outdated** group · every mutation an explicit parent action. · *high* · dep:12,13,14
+- [x] **Step 16** — anchors painted inside the iframe (Custom Highlight API, located by quote); rail collapses to a bottom drawer on mobile. (Margin gutter-pins beyond highlights = v1.x.) · *med* · dep:15
+- [x] **Gate P5** — thermo-nuclear PASS → typecheck + lint + `build:web` green → manual browser smoke (see Log) → commit `Phase 5: …`
+
+> **Manual smoke (2026-06-28, localhost stack + bootstrap auth):** verified LIVE — upload contentHash,
+> gated tokens, annotate injection + boot payload (resolved path), etag drop, asset routes, comments
+> CRUD + authz, and reconcile (anchored→shifted on move, →orphaned on remove, comments kept); review-mode
+> split UI (rail, Open/Resolved, empty state, non-public-only); content + annotate client load top-level.
+> NOT click-through-smoked: the cross-origin select→comment→paint handshake — blocked by a pre-existing
+> dev artifact (`web/public/_headers` bakes the PROD `frame-src`, so the worker-served SPA at :8787 blocks
+> the localhost:8788 iframe; vite :5173 renders the iframe but `appOrigin` mismatches). Both are dev-only;
+> production aligns all origins. Handshake logic is unit-tested (`parseIntent`) + server-verified.
 
 > **Phase-exit gate (every phase):** after a phase's steps land, run `/thermo-nuclear-code-quality-review`
 > scoped to that phase's diff → triage (fix legit, note deferred w/ rationale) → re-run the full `bun test`
