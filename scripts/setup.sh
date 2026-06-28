@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
-# Glance one-shot setup: secrets -> remote migrate -> deploy -> wire URLs -> print first-run link.
+# Glance one-shot setup: provision -> deploy -> secrets -> migrate -> wire URLs -> print link.
 #
-# Scope (by design): this does NOT provision D1/KV/R2 bindings — the "Deploy to Cloudflare"
-# button (or the manual `wrangler ... create` steps in the README) does that. This script
-# assumes the bindings already exist in wrangler.jsonc / wrangler.content.jsonc and takes it
-# from there: generate the secrets, run migrations, deploy both workers, wire the live
-# workers.dev URLs into config, and print the URL + bootstrap token to finish setup.
+# Does the WHOLE self-host from a fresh Cloudflare account. After `wrangler login` this script:
+#   1. provisions the D1 database, KV namespace, and R2 bucket (create-or-reuse by name) and
+#      wires their IDs into wrangler.jsonc / wrangler.content.jsonc;
+#   2. strips the YOUR_ACCOUNT_ID placeholder so wrangler resolves the account from your login;
+#   3. deploys both workers, sets the shared HMAC secrets + bootstrap token, runs the remote
+#      D1 migration, wires the live workers.dev URLs into config, and prints the URL + token.
 #
-# Idempotent: re-running is safe. Existing secrets are NOT overwritten (regenerating
-# SESSION_SECRET would invalidate every live session), migrations already applied are
-# skipped, and URL wiring only touches the YOUR-SUBDOMAIN sentinel.
+# Idempotent: re-running is safe. Resources are reused, never duplicated; existing secrets are
+# NOT overwritten (regenerating SESSION_SECRET would invalidate every live session); migrations
+# already applied are skipped; ID/URL wiring only touches the YOUR_* sentinels.
+#
+# Prereqs: `bun install` done, `wrangler login` (or CLOUDFLARE_API_TOKEN in env), and R2 enabled
+# on the account (dash.cloudflare.com -> R2, accept terms). Multiple CF accounts on your login?
+# export CLOUDFLARE_ACCOUNT_ID first so wrangler knows which one to use.
 #
 # Usage:
 #   scripts/setup.sh
@@ -30,6 +35,65 @@ note "Checking Cloudflare auth"
 wrangler whoami >/dev/null 2>&1 || wrangler login
 
 CONTENT="--config wrangler.content.jsonc"
+
+# --- provision bindings (create-or-reuse by name) and wire their IDs into both configs ---
+# Gated on the YOUR_* sentinels: a config already carrying a real ID is left untouched, so
+# re-runs never reprovision. Each resource is looked up by name first and only created if absent.
+# This MUST run before the first deploy — wrangler rejects a binding that points at a placeholder.
+UUID='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+HEX32='[0-9a-f]{32}'
+
+wire() { # sentinel value file...
+  local sentinel="$1" value="$2"; shift 2
+  for f in "$@"; do
+    sed "s|$sentinel|$value|g" "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+  done
+}
+
+# account_id: the template ships a YOUR_ACCOUNT_ID placeholder. Drop the whole line so wrangler
+# resolves the account from `wrangler login` (or CLOUDFLARE_ACCOUNT_ID) instead of the bad literal.
+for f in wrangler.jsonc wrangler.content.jsonc; do
+  if grep -q 'YOUR_ACCOUNT_ID' "$f"; then
+    grep -v 'YOUR_ACCOUNT_ID' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+  fi
+done
+
+note "Provisioning D1 database (glance-db)"
+if grep -q 'YOUR_D1_DATABASE_ID' wrangler.jsonc; then
+  D1_ID="$(wrangler d1 info glance-db 2>/dev/null | grep -oiE "$UUID" | head -1 || true)"   # reuse if it exists
+  if [[ -z "$D1_ID" ]]; then
+    D1_ID="$(wrangler d1 create glance-db 2>&1 | tee /dev/stderr | grep -oiE "$UUID" | head -1 || true)"
+  fi
+  [[ -n "$D1_ID" ]] || { echo "Could not determine D1 database_id — aborting."; exit 1; }
+  wire YOUR_D1_DATABASE_ID "$D1_ID" wrangler.jsonc wrangler.content.jsonc   # both share one DB
+  echo "   glance-db → $D1_ID"
+else
+  echo "   already wired — skipping"
+fi
+
+note "Provisioning KV namespace (GLANCE_SESSIONS)"
+if grep -q 'YOUR_KV_NAMESPACE_ID' wrangler.jsonc; then
+  KV_ID="$(wrangler kv namespace list 2>/dev/null | grep -B3 'GLANCE_SESSIONS' | grep -oE "$HEX32" | head -1 || true)"
+  if [[ -z "$KV_ID" ]]; then
+    KV_ID="$(wrangler kv namespace create GLANCE_SESSIONS 2>&1 | tee /dev/stderr | grep -oE "$HEX32" | head -1 || true)"
+  fi
+  [[ -n "$KV_ID" ]] || { echo "Could not determine KV namespace id — aborting."; exit 1; }
+  wire YOUR_KV_NAMESPACE_ID "$KV_ID" wrangler.jsonc   # content worker has no KV
+  echo "   GLANCE_SESSIONS → $KV_ID"
+else
+  echo "   already wired — skipping"
+fi
+
+note "Provisioning R2 bucket (glance-files)"
+R2_OUT="$(wrangler r2 bucket create glance-files 2>&1 || true)"
+echo "$R2_OUT" >&2
+if echo "$R2_OUT" | grep -qiE 'created|already (exists|owned by you)'; then
+  echo "   glance-files ready"
+else
+  warn "R2 bucket not confirmed. If R2 isn't enabled, turn it on at dash.cloudflare.com -> R2"
+  warn "(accept the terms), then re-run. Multiple accounts? export CLOUDFLARE_ACCOUNT_ID first."
+  exit 1
+fi
 
 deploy_url() { # deploy and echo the first workers.dev URL from the output
   local out
@@ -103,10 +167,8 @@ SUBDOMAIN=""
 if [[ "$APP_URL" =~ ^https://[^.]+\.([^.]+)\.workers\.dev$ ]]; then SUBDOMAIN="${BASH_REMATCH[1]}"; fi
 if [[ -n "$SUBDOMAIN" ]] && grep -rq 'YOUR-SUBDOMAIN' wrangler.jsonc wrangler.content.jsonc "$ROOT/packages/web/public/_headers"; then
   note "Wiring workers.dev subdomain '$SUBDOMAIN' into config + CSP, then redeploying"
-  # macOS/BSD and GNU sed differ on -i; write to a temp and move for portability.
-  for f in wrangler.jsonc wrangler.content.jsonc "$ROOT/packages/web/public/_headers"; do
-    sed "s/YOUR-SUBDOMAIN/$SUBDOMAIN/g" "$f" > "$f.tmp" && mv "$f.tmp" "$f"
-  done
+  # reuse the sentinel-replace helper (temp+mv for macOS/BSD vs GNU sed portability).
+  wire YOUR-SUBDOMAIN "$SUBDOMAIN" wrangler.jsonc wrangler.content.jsonc "$ROOT/packages/web/public/_headers"
   (cd "$ROOT" && bun run build:web)
   wrangler deploy >/dev/null
   wrangler deploy --config wrangler.content.jsonc >/dev/null

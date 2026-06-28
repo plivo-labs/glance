@@ -6,20 +6,28 @@ Cloudflare Workers + Hono · React + React Router v7 · D1 · R2 · KV. $0/month
 
 ## Quick deploy
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/samuellawerentz/glance)
-
-The button forks the repo and provisions the D1 / KV / R2 bindings on your account. Then, from
-your clone, finish setup in one shot:
+Self-host a fresh instance in **one command**. After a `wrangler login`, `scripts/setup.sh`
+provisions everything, deploys both workers, sets the secrets, migrates, and prints your URL:
 
 ```bash
 bun install
-scripts/setup.sh   # generates secrets + a one-time admin token, migrates, deploys, prints the URL
+bunx wrangler login   # auth to your Cloudflare account
+scripts/setup.sh      # provision D1/KV/R2 → deploy both workers → secrets → migrate → print URL + token
 ```
+
+Prereqs: enable **R2** on your account first ([dashboard](https://dash.cloudflare.com) → R2 → accept
+terms — still free). Multiple Cloudflare accounts on your login? `export CLOUDFLARE_ACCOUNT_ID=<id>`
+before running so wrangler knows which one to use.
 
 `setup.sh` prints a **bootstrap token** at the end. Open the printed `/login`, paste the token into
 **Complete setup**, and you become the first superadmin — **no Google account required**. Google
 SSO is an optional upgrade you can wire up later (see [Deploy](#deploy)). Prefer to do it by hand?
 The manual path below still works.
+
+> **Why no one-click "Deploy to Cloudflare" button?** Glance runs as **two Workers** — the app plus a
+> separate content origin that sandboxes untrusted uploads (no app cookie ever reaches user HTML). A
+> deploy button only provisions and deploys a *single* Worker, so it can't stand up the content origin
+> or sync the shared signing secret across both. `setup.sh` does the whole thing in one command instead.
 
 ## Layout
 
@@ -41,7 +49,10 @@ bun run dev                           # main worker (8787) + content worker (878
 
 Open http://localhost:5173.
 
-## Cloudflare provisioning (one-time, fresh account)
+## Manual provisioning (only if you skip `setup.sh`)
+
+`scripts/setup.sh` does all of this for you (create-or-reuse by name, then wires the IDs into both
+configs). Reach for the steps below only if you want to provision by hand or debug a binding.
 
 ```bash
 wrangler login
@@ -67,7 +78,8 @@ Paste the IDs into **both** `packages/api/wrangler.jsonc` and `packages/api/wran
 "kv_namespaces": [{ "id": "<paste kv id here>" }],
 ```
 
-`account_id` is resolved automatically from `wrangler login`; you can remove it or leave the placeholder.
+**Delete the `account_id` line** (it ships as a `YOUR_ACCOUNT_ID` placeholder wrangler would reject) so
+the account resolves from `wrangler login` — or set it to your real account id. `setup.sh` strips it for you.
 
 Then set the `vars` block in both configs to your real values:
 
@@ -89,11 +101,11 @@ wrangler d1 migrations apply glance-db --remote
 
 ## Deploy
 
-The fastest path is `scripts/setup.sh` (see [Quick deploy](#quick-deploy)). It generates the
-secrets, sets a one-time `BOOTSTRAP_TOKEN`, runs the remote migration, deploys both workers, wires
-the live `workers.dev` URLs into config, and prints the first-run link + token. It is idempotent:
-re-running never rotates an existing `SESSION_SECRET` (which would drop live sessions). The manual
-equivalent is below.
+The fastest path is `scripts/setup.sh` (see [Quick deploy](#quick-deploy)). It provisions D1/KV/R2,
+generates the secrets, sets a one-time `BOOTSTRAP_TOKEN`, runs the remote migration, deploys both
+workers, wires the live `workers.dev` URLs into config, and prints the first-run link + token. It is
+idempotent: resources are reused (never duplicated) and re-running never rotates an existing
+`SESSION_SECRET` (which would drop live sessions). The manual equivalent is below.
 
 ### 1. Secrets
 
