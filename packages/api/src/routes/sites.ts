@@ -12,6 +12,7 @@ import type { Visibility } from '../db/schema'
 import { sites as sitesTable, spaces, users } from '../db/schema'
 import { checkAccess } from '../lib/access'
 import { readSession } from '../lib/session'
+import { resolveSite } from '../lib/site-access'
 import { isValidSlug } from '../lib/slug'
 import { deleteSiteObjects } from '../lib/storage'
 import { signToken } from '../lib/token'
@@ -30,25 +31,7 @@ const CONTENT_TOKEN_TTL = 60 * 60 // 1h
 
 export const sites = new Hono<AppEnv>()
 
-/** Resolve a site by (spaceSlug, siteSlug), joined to its space. Null if missing. */
-async function resolveSite(db: AppEnv['Variables']['db'], spaceSlug: string, siteSlug: string) {
-  const rows = await db
-    .select({
-      id: sitesTable.id,
-      spaceId: sitesTable.spaceId,
-      slug: sitesTable.slug,
-      title: sitesTable.title,
-      visibility: sitesTable.visibility,
-      status: sitesTable.status,
-      ownerId: sitesTable.ownerId,
-      createdAt: sitesTable.createdAt,
-    })
-    .from(sitesTable)
-    .innerJoin(spaces, eq(sitesTable.spaceId, spaces.id))
-    .where(and(eq(spaces.slug, spaceSlug), eq(sitesTable.slug, siteSlug)))
-    .limit(1)
-  return rows[0] ?? null
-}
+// `resolveSite` now lives in lib/site-access (shared with the comments routes); see import.
 
 // Over-fetch a little past the result cap so the in-memory checkAccess pass can drop a few
 // non-openable candidates and still fill the cap.

@@ -7,6 +7,7 @@ import { isGoogleEnabled } from './lib/oauth'
 import { requireSameOrigin } from './middleware/auth'
 import { admin } from './routes/admin'
 import { auth } from './routes/auth'
+import { comments } from './routes/comments'
 import { sites } from './routes/sites'
 import { spaces } from './routes/spaces'
 import { upload } from './routes/upload'
@@ -59,6 +60,9 @@ app.get('/api/config', async (c) =>
 app.route('/api/auth', auth)
 app.route('/api/spaces', spaces)
 app.route('/api/sites', sites)
+// Comments live under /api/sites/:space/:site/comments — three segments, so no collision with
+// the two-segment site routes above. Mounted separately to keep the comments surface isolated.
+app.route('/api/sites', comments)
 app.route('/api/upload', upload)
 app.route('/api/users', users)
 app.route('/api/admin', admin)

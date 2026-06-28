@@ -15,20 +15,20 @@ Status keys: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
 ## Steps
 
 ### Phase 1 — Pure anchoring core + data model
-- [ ] **Step 1** — pure `lib/anchor.ts`: `normalizeText` · `buildAnchor` · `resolveAnchor` (the
+- [x] **Step 1** — pure `lib/anchor.ts`: `normalizeText` · `buildAnchor` · `resolveAnchor` (the
       anchored/shifted/suggested/orphaned ladder; in-house bounded fuzzy). Single shared normalizer owner. · *high*
-- [ ] **Step 2** — `files.contentHash` computed via `normalizeText` at upload (create+replace). · *med* · dep:1
-- [ ] **Step 3** — upload-time duplicate-path rejection + pre-migration dup audit. · *med*
-- [ ] **Step 4** — `unique(files.siteId, files.path)` constraint migration. · *low* · dep:3
-- [ ] **Step 5** — `comment_threads` + flat `comments` tables (set-null user FKs, indexes). · *low*
-- [ ] **Gate P1** — `/thermo-nuclear-code-quality-review` on Phase-1 diff → full `bun test` + typecheck + lint green → commit `Phase 1: …`
+- [x] **Step 2** — `files.contentHash` computed via `normalizeText` at upload (create+replace). · *med* · dep:1
+- [x] **Step 3** — upload-time duplicate-path rejection + pre-migration dup audit. · *med*
+- [x] **Step 4** — `unique(files.siteId, files.path)` constraint migration. · *low* · dep:3
+- [x] **Step 5** — `comment_threads` + flat `comments` tables (set-null user FKs, indexes). · *low*
+- [x] **Gate P1** — thermo-nuclear PASS → 104 tests + typecheck + lint green → committed `Phase 1: …` (8251ece)
 
 ### Phase 2 — Authenticated comments API (correctness surface)
-- [ ] **Step 6** — extract shared `resolveSiteForAccess` from private `resolveSite` (`sites.ts:34`). · *med*
-- [ ] **Step 7** — repo helpers: create/list/reply/resolve/reopen/edit/soft-delete. · *med* · dep:5
-- [ ] **Step 8** — server-side re-anchor reconciliation in `listThreads` (hash-gated R2 read → `resolveAnchor` → persist). · *high* · dep:7,1,2
-- [ ] **Step 9** — routes `/api/sites/:space/:site/comments…` · `requireAuth` → `canComment` (no public) → `checkAccess` · authz · body cap. · *high* · dep:6,7,8
-- [ ] **Gate P2** — thermo-nuclear on Phase-2 diff → full suite green → commit `Phase 2: …`
+- [x] **Step 6** — extract shared `resolveSiteForAccess` from private `resolveSite` → `lib/site-access.ts` (sites.ts now reuses it). · *med*
+- [x] **Step 7** — repo helpers (`db/comments.ts`): create/list/reply/resolve/reopen/edit/soft-delete. · *med* · dep:5
+- [x] **Step 8** — server-side re-anchor reconciliation in `listThreads` (hash-gated single R2 read → `resolveAnchor` → persist-on-change). · *high* · dep:7,1,2
+- [x] **Step 9** — routes `/api/sites/:space/:site/comments…` · `requireAuth` → `canComment` (no public) → `checkAccess` · authz · body cap. · *high* · dep:6,7,8
+- [x] **Gate P2** — thermo-nuclear PASS → 118 tests + typecheck + lint green → commit `Phase 2: …`
 
 ### Phase 3 — Content-worker annotate mode (boundary mechanics)
 - [ ] **Step 10** — register `/_glance/annotate.{js,css}` before the catch-all + client-bundle build/serve. · *med*
