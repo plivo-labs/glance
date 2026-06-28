@@ -5,8 +5,9 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test",
+    "build:annotate": "bun scripts/build-annotate.ts",
     "deploy": "wrangler deploy",
-    "deploy:content": "wrangler deploy --config wrangler.content.jsonc"
+    "deploy:content": "bun run build:annotate && wrangler deploy --config wrangler.content.jsonc"
   },
   "dependencies": {
     "arctic": "^3.7.0",

@@ -9,6 +9,7 @@
       "!**/.wrangler",
       "!**/worker-configuration.d.ts",
       "!**/drizzle",
+      "!**/annotate/bundle.ts",
       "!**/components/ui",
       "!**/bun.lock",
       "!**/.omc",

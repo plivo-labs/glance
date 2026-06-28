@@ -1,0 +1,9 @@
+/* Annotate-mode styles, served at /_glance/annotate.css and injected alongside the client.
+   Custom Highlight API paint for anchored comment ranges; span-wrap fallback uses .glance-hl. */
+::highlight(glance-comment) {
+  background-color: rgba(255, 213, 0, 0.4);
+}
+.glance-hl {
+  background-color: rgba(255, 213, 0, 0.4);
+  cursor: pointer;
+}

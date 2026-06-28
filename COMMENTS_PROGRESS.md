@@ -31,9 +31,9 @@ Status keys: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked.
 - [x] **Gate P2** — thermo-nuclear PASS → 118 tests + typecheck + lint green → commit `Phase 2: …`
 
 ### Phase 3 — Content-worker annotate mode (boundary mechanics)
-- [ ] **Step 10** — register `/_glance/annotate.{js,css}` before the catch-all + client-bundle build/serve. · *med*
-- [ ] **Step 11** — annotate-mode HTML transform: buffer body · inject script+boot payload (resolved path) · drop/`Vary` ETag · HTML-only · markdown untouched · gated path only. · *high* · dep:10
-- [ ] **Gate P3** — thermo-nuclear on Phase-3 diff → full suite green → commit `Phase 3: …`
+- [x] **Step 10** — `/_glance/annotate.{js,css}` registered before the catch-all; client bundled to a string module (`scripts/build-annotate.ts` → `annotate/bundle.ts`, immutable cache). · *med*
+- [x] **Step 11** — annotate transform in `serve()`: buffer body · inject script + boot payload (resolved `files.path`) · drop ETag + `no-store` · HTML-only · markdown untouched · gated path only. · *high* · dep:10
+- [x] **Gate P3** — thermo-nuclear PASS → 124 tests + typecheck + lint green → commit `Phase 3: …`
 
 ### Phase 4 — Client annotator + parent intent filter (thin, trust-free)
 - [ ] **Step 12** — pure `parseIntent(event, expected)` — shape/size/origin/source FILTER (not a trust guard). · *med*

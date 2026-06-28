@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm'
 import { type DrizzleD1Database, drizzle } from 'drizzle-orm/d1'
 import { type Context, Hono } from 'hono'
 import { Marked } from 'marked'
+import { ANNOTATE_CSS, ANNOTATE_JS, ANNOTATE_VERSION } from './annotate/bundle'
 import { isSpaceMember, resolveIsShared, toSessionUser } from './db/repo'
 import { files, sites, spaces, users } from './db/schema'
 import { checkAccess } from './lib/access'
@@ -33,6 +34,17 @@ function notFound(c: Ctx): Response {
 }
 
 app.get('/', (c) => c.text('Glance content origin', 200))
+
+// Annotate-mode client assets. Registered BEFORE the /:space/:site/* catch-all so `_glance`
+// isn't captured as a space slug. Long-cache + content-versioned query (?v=) makes them
+// immutable per build. The bundle is the string produced by scripts/build-annotate.ts.
+const IMMUTABLE = 'public, max-age=31536000, immutable'
+app.get('/_glance/annotate.js', (c) =>
+  c.body(ANNOTATE_JS, 200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': IMMUTABLE }),
+)
+app.get('/_glance/annotate.css', (c) =>
+  c.body(ANNOTATE_CSS, 200, { 'content-type': 'text/css; charset=utf-8', 'cache-control': IMMUTABLE }),
+)
 
 // Gated access: token is bound to the viewer's userId AND scoped to "<space>/<site>".
 // Path: /_t/<token>/<space>/<site>/<rest>. We verify the signature (recovering the bound
@@ -118,6 +130,23 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
     })
   }
 
+  // Annotate mode: gated (non-public) HTML + ?glance_annotate=1 → buffer the body and inject the
+  // annotate client + boot payload. Public sites have no comments, so the flag is ignored there
+  // (userId === null). The bytes change, so we DROP the ETag and don't cache.
+  if (userId !== null && c.req.query('glance_annotate') === '1' && isHtmlFile(file.path)) {
+    const injected = injectAnnotate(await object.text(), {
+      siteId: siteRow.id,
+      filePath: file.path, // the RESOLVED path (single-file fallback), not the URL guess
+      appOrigin: c.env.APP_URL,
+    })
+    return c.html(injected, 200, {
+      'content-security-policy': frameAncestors,
+      'x-content-type-options': 'nosniff',
+      'referrer-policy': 'no-referrer',
+      'cache-control': 'no-store',
+    })
+  }
+
   const headers = new Headers()
   headers.set('content-type', contentType(file.path, file.mimeType))
   headers.set('etag', object.httpEtag)
@@ -146,6 +175,25 @@ export function restOf(url: string, skip: number): string {
       }
     })
   return segs.join('/') + (trailing ? '/' : '')
+}
+
+/** True for HTML files (the only anchorable type). Markdown is handled on its own branch. */
+export function isHtmlFile(path: string): boolean {
+  return /\.html?$/i.test(path)
+}
+
+/** Inject the annotate client + boot payload into an HTML document. The payload is the trusted
+ *  server-resolved context (siteId, resolved files.path, parent origin); `<` is escaped so a
+ *  path can't break out of the inline script. Inserted before </body> (else </head>, else end). */
+export function injectAnnotate(html: string, payload: { siteId: string; filePath: string; appOrigin: string }): string {
+  const json = JSON.stringify(payload).replace(/</g, '\\u003c')
+  const tags =
+    `<link rel="stylesheet" href="/_glance/annotate.css?v=${ANNOTATE_VERSION}">` +
+    `<script>window.__GLANCE__=${json}</script>` +
+    `<script src="/_glance/annotate.js?v=${ANNOTATE_VERSION}" defer></script>`
+  if (html.includes('</body>')) return html.replace('</body>', `${tags}</body>`)
+  if (html.includes('</head>')) return html.replace('</head>', `${tags}</head>`)
+  return html + tags
 }
 
 export function normalizePath(rest: string): string {
