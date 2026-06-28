@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react'
-import { useFetcher, useNavigate } from 'react-router'
+import { useCallback, useRef, useState } from 'react'
+import { useNavigate } from 'react-router'
 import { Copy, ExternalLink, Folder, LayoutDashboard, LogOut, Plus, Shield, SunMoon, Terminal } from 'lucide-react'
 import {
   CommandDialog,
@@ -26,36 +26,59 @@ export function CommandPalette({
   user: Me | null
 }) {
   const navigate = useNavigate()
-  // Two independent fetchers: remote site search (driven by the input) and the caller's
-  // spaces (loaded once when the palette opens). Event-driven — no effects.
-  const search = useFetcher<SiteSummary[]>()
-  const spacesFetcher = useFetcher<SpaceSummary[]>()
+  // Data comes from the `api` fetch helper, not useFetcher: useFetcher().load() resolves a
+  // React Router route, but /api/* are worker endpoints with no client route (they'd match
+  // the splat). Site search is driven by the input; spaces load when the palette opens.
   const [query, setQuery] = useState('')
+  const [sites, setSites] = useState<SiteSummary[]>([])
+  const [spaces, setSpaces] = useState<SpaceSummary[]>([])
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const reqSeq = useRef(0)
 
   const term = query.trim()
-  const sites = term ? ((search.data as SiteSummary[] | undefined) ?? []) : []
-  const spaces = (spacesFetcher.data as SpaceSummary[] | undefined) ?? []
 
-  function handleOpenChange(o: boolean) {
-    if (o && user && spacesFetcher.state === 'idle' && !spacesFetcher.data) spacesFetcher.load('/api/spaces/mine')
-    if (!o) {
-      if (timer.current) clearTimeout(timer.current)
-      setQuery('')
-    }
-    onOpenChange(o)
-  }
+  // Radix mounts the dialog content on open and unmounts it on close — for EVERY trigger
+  // (header button, ⌘K, Escape), unlike onOpenChange which the externally-controlled `open`
+  // prop bypasses. So load spaces / reset search here, via a ref callback (the codebase's
+  // effect-free idiom; see AppShell hotkeys).
+  const onPaletteMount = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (!node) {
+        if (timer.current) clearTimeout(timer.current)
+        setQuery('')
+        setSites([])
+        return
+      }
+      if (user)
+        api
+          .get<SpaceSummary[]>('/api/spaces/mine')
+          .then(setSpaces)
+          .catch(() => {})
+    },
+    [user],
+  )
 
-  // Debounced remote search. cmdk filters items client-side by their `value`; the server
-  // already ranked these, so each result's value embeds the live query to survive that
-  // filter while the static commands still filter naturally.
+  // Debounced remote search. A monotonic request id drops out-of-order responses. cmdk
+  // filters items client-side by their `value`, so each result embeds the live query to
+  // survive that filter while the static commands still filter naturally.
   function onSearchChange(v: string) {
     setQuery(v)
     if (timer.current) clearTimeout(timer.current)
     const q = v.trim()
-    if (!q) return
+    if (!q) {
+      setSites([])
+      return
+    }
+    const id = ++reqSeq.current
     timer.current = setTimeout(() => {
-      search.load(`/api/sites/search?q=${encodeURIComponent(q)}`)
+      api
+        .get<SiteSummary[]>(`/api/sites/search?q=${encodeURIComponent(q)}`)
+        .then((res) => {
+          if (id === reqSeq.current) setSites(res)
+        })
+        .catch(() => {
+          if (id === reqSeq.current) setSites([])
+        })
     }, SEARCH_DEBOUNCE_MS)
   }
 
@@ -70,12 +93,13 @@ export function CommandPalette({
   return (
     <CommandDialog
       open={open}
-      onOpenChange={handleOpenChange}
+      onOpenChange={onOpenChange}
       title="Command palette"
       description="Search sites and run actions"
     >
       <CommandInput placeholder="Search all your sites or run a command…" onValueChange={onSearchChange} />
       <CommandList>
+        <div ref={onPaletteMount} className="hidden" aria-hidden="true" />
         <CommandEmpty>{term ? 'No matching sites.' : 'No results.'}</CommandEmpty>
         {sites.length > 0 && (
           <CommandGroup heading="Sites">
