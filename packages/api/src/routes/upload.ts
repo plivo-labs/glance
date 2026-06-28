@@ -3,6 +3,7 @@ import { Hono } from 'hono'
 import { isSpaceMember } from '../db/repo'
 import type { NewFileRow, Visibility } from '../db/schema'
 import { files, sites, spaces } from '../db/schema'
+import { hashContent } from '../lib/anchor'
 import { isValidSlug } from '../lib/slug'
 import { deleteKeys, MAX_FILE_BYTES, sanitizePath } from '../lib/storage'
 import { requireAuth } from '../middleware/auth'
@@ -13,6 +14,11 @@ import type { AppEnv } from '../types'
 
 const VISIBILITIES: ReadonlySet<string> = new Set(['private', 'group', 'team', 'public'])
 const isVisibility = (v: unknown): v is Visibility => typeof v === 'string' && VISIBILITIES.has(v)
+
+// HTML is the only anchorable type (v1 anchors over static HTML source text), so it's the only
+// type we read-and-hash at upload; everything else streams straight through with a null hash.
+const isHtmlUpload = (path: string, mime: string): boolean =>
+  /\.(html?|xhtml)$/i.test(path) || mime === 'text/html'
 
 export const upload = new Hono<AppEnv>()
 
@@ -42,6 +48,15 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
     items.push({ path, file })
   }
   if (items.length === 0) return c.json({ error: 'no files' }, 400)
+
+  // Reject duplicate paths BEFORE any R2 write. Two multipart names can sanitize to the same
+  // path (`a/b.html` + `a\b.html`); serving picks one via .limit(1) and the unique(siteId,path)
+  // constraint would otherwise 500 the request *after* objects were already committed to R2.
+  const seenPaths = new Set<string>()
+  for (const { path } of items) {
+    if (seenPaths.has(path)) return c.json({ error: 'duplicate path', path }, 400)
+    seenPaths.add(path)
+  }
 
   // Resolve space + require membership.
   const space = (
@@ -86,9 +101,17 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
   const newRows: NewFileRow[] = []
   for (const { path, file } of items) {
     const storageKey = `${prefix}/${path}`
-    await c.env.GLANCE_FILES.put(storageKey, file.stream(), {
-      httpMetadata: { contentType: file.type || 'application/octet-stream' },
-    })
+    const contentType = file.type || 'application/octet-stream'
+    // HTML: read the body once, store contentHash for the re-anchor gate, and put the text we
+    // already read (no double read). Everything else streams straight to R2 with a null hash.
+    let contentHash: string | null = null
+    if (isHtmlUpload(path, file.type)) {
+      const text = await file.text()
+      contentHash = await hashContent(text)
+      await c.env.GLANCE_FILES.put(storageKey, text, { httpMetadata: { contentType } })
+    } else {
+      await c.env.GLANCE_FILES.put(storageKey, file.stream(), { httpMetadata: { contentType } })
+    }
     newRows.push({
       id: crypto.randomUUID(),
       siteId,
@@ -96,6 +119,7 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
       storageKey,
       mimeType: file.type || null,
       size: file.size,
+      contentHash,
     })
   }
 

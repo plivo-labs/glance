@@ -1,4 +1,5 @@
-import { integer, primaryKey, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core'
+import { index, integer, primaryKey, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core'
+import type { Anchor, AnchorStatus } from '../lib/anchor'
 
 // Column names mirror the spec's SQL exactly (camelCase) so raw `wrangler d1 execute`
 // queries in the runbook keep working. IDs are app-generated UUIDs; timestamps are ISO-8601.
@@ -47,15 +48,26 @@ export const sites = sqliteTable(
   (t) => [unique('sites_space_slug_unq').on(t.spaceId, t.slug)],
 )
 
-export const files = sqliteTable('files', {
-  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
-  siteId: text('siteId').notNull().references(() => sites.id, { onDelete: 'cascade' }),
-  path: text('path').notNull(),
-  storageKey: text('storageKey').notNull().unique(),
-  mimeType: text('mimeType'),
-  size: integer('size'),
-  createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
-})
+export const files = sqliteTable(
+  'files',
+  {
+    id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+    siteId: text('siteId').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+    path: text('path').notNull(),
+    storageKey: text('storageKey').notNull().unique(),
+    mimeType: text('mimeType'),
+    size: integer('size'),
+    // Normalized-text digest (lib/anchor `normalizeText`) of the file body, computed at upload.
+    // Nullable: pre-existing rows + non-text files have none. The cheap "hash unchanged → skip
+    // re-anchor" gate (Step 8) keys off this.
+    contentHash: text('contentHash'),
+    createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
+  },
+  // One row per (site, path): serving picks a file by (siteId, path) via .limit(1), so a
+  // duplicate path silently shadows. Upload now rejects dupes before write (storage layer),
+  // and this constraint is the backstop.
+  (t) => [unique('files_site_path_unq').on(t.siteId, t.path)],
+)
 
 // Explicit per-user sharing: grant a specific user access to a site, on top of its
 // visibility tier (additive — most useful for `private`). Composite PK = idempotent.
@@ -78,6 +90,58 @@ export const siteGroupShares = sqliteTable(
   (t) => [primaryKey({ columns: [t.siteId, t.spaceId] })],
 )
 
+// Anchored, threaded review comments on a deployed site's files. A thread anchors to a quote
+// in one file (or to the page); comments are FLAT (one level — no parentId). User FKs are
+// SET NULL so deleting a user never nukes review history; only site/thread deletes cascade.
+export const commentThreads = sqliteTable(
+  'comment_threads',
+  {
+    id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+    siteId: text('siteId').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+    filePath: text('filePath').notNull(),
+    // 'text' = anchored to a quote; 'page' = whole-page (markdown, or anchoring fallback).
+    anchorType: text('anchorType', { enum: ['text', 'page'] }).notNull().default('text'),
+    // The stored anchor {quote, prefix, suffix} (lib/anchor). Null for page-level threads.
+    anchor: text('anchor', { mode: 'json' }).$type<Anchor>(),
+    // Denormalized quote for display (Outdated group shows it even when offsets are gone).
+    quote: text('quote'),
+    // Hash of the file text the offsets below were last resolved against (reconcile gate).
+    contentHash: text('contentHash'),
+    anchorStatus: text('anchorStatus', { enum: ['anchored', 'shifted', 'suggested', 'orphaned'] })
+      .notNull()
+      .default('anchored')
+      .$type<AnchorStatus>(),
+    // Resolved offsets into normalizeText(file) — rewritten by the server-side reconciler.
+    start: integer('start'),
+    end: integer('end'),
+    status: text('status', { enum: ['open', 'resolved'] }).notNull().default('open'),
+    resolvedBy: text('resolvedBy').references(() => users.id, { onDelete: 'set null' }),
+    resolvedAt: text('resolvedAt'),
+    createdBy: text('createdBy').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
+    updatedAt: text('updatedAt').notNull().$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    index('threads_site_file_status').on(t.siteId, t.filePath, t.status),
+    index('threads_site_status_updated').on(t.siteId, t.status, t.updatedAt),
+  ],
+)
+
+export const comments = sqliteTable(
+  'comments',
+  {
+    id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+    threadId: text('threadId').notNull().references(() => commentThreads.id, { onDelete: 'cascade' }),
+    authorId: text('authorId').references(() => users.id, { onDelete: 'set null' }),
+    body: text('body').notNull(),
+    createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
+    editedAt: text('editedAt'),
+    // Soft delete: keeps the row (and thread shape) so history survives; body is redacted on read.
+    deletedAt: text('deletedAt'),
+  },
+  (t) => [index('comments_thread_created').on(t.threadId, t.createdAt), index('comments_author').on(t.authorId)],
+)
+
 export type User = typeof users.$inferSelect
 export type NewUser = typeof users.$inferInsert
 export type Space = typeof spaces.$inferSelect
@@ -90,5 +154,11 @@ export type NewFileRow = typeof files.$inferInsert
 export type SiteUserShare = typeof siteUserShares.$inferSelect
 export type SiteGroupShare = typeof siteGroupShares.$inferSelect
 
+export type CommentThread = typeof commentThreads.$inferSelect
+export type NewCommentThread = typeof commentThreads.$inferInsert
+export type Comment = typeof comments.$inferSelect
+export type NewComment = typeof comments.$inferInsert
+
 export type Visibility = Site['visibility']
 export type SpaceType = Space['type']
+export type ThreadStatus = CommentThread['status']

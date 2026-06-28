@@ -15,6 +15,13 @@
       "when": 1781416770575,
       "tag": "0001_steep_black_bolt",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1782668102901,
+      "tag": "0002_silly_gertrude_yorkes",
+      "breakpoints": true
     }
   ]
 }

@@ -7,10 +7,17 @@ import { join } from 'node:path'
 import { Database } from 'bun:sqlite'
 import { drizzle } from 'drizzle-orm/bun-sqlite'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
+import { hashContent } from '../lib/anchor'
 import {
+  type NewComment,
+  type NewCommentThread,
+  type NewFileRow,
   type NewSite,
   type NewSpace,
   type NewUser,
+  comments,
+  commentThreads,
+  files,
   siteGroupShares,
   siteUserShares,
   sites,
@@ -19,7 +26,11 @@ import {
   users,
 } from '../db/schema'
 
-const MIGRATIONS = ['drizzle/0000_init.sql', 'drizzle/0001_steep_black_bolt.sql']
+const MIGRATIONS = [
+  'drizzle/0000_init.sql',
+  'drizzle/0001_steep_black_bolt.sql',
+  'drizzle/0002_silly_gertrude_yorkes.sql',
+]
 
 /** Fresh in-memory DB with the real schema applied. */
 export function makeDb(): DrizzleD1Database {
@@ -99,6 +110,77 @@ export async function seedGroupShare(db: DrizzleD1Database, siteId: string, spac
   await db.insert(siteGroupShares).values({ siteId, spaceId })
 }
 
+// --- S-SEED+ : files (with contentHash + R2 body), threads, comments. ---
+
+/** Insert a `files` row and, if an R2 mock is given, store its body under the storageKey.
+ *  `contentHash` is derived from `text` via the shared hasher (overridable). Returns the
+ *  storageKey so reconcile/inject tests can read the same object the row points at. */
+export async function seedFile(
+  db: DrizzleD1Database,
+  r2: { put: (key: string, value: string, opts?: unknown) => Promise<void> } | null,
+  siteId: string,
+  o: { path: string; text?: string; mimeType?: string; contentHash?: string | null; storageKey?: string } & Partial<NewFileRow>,
+): Promise<string> {
+  const id = o.id ?? nextId('file')
+  const storageKey = o.storageKey ?? `${id}/${o.path}`
+  const text = o.text ?? ''
+  const contentHash = o.contentHash !== undefined ? o.contentHash : await hashContent(text)
+  await db.insert(files).values({
+    id,
+    siteId,
+    path: o.path,
+    storageKey,
+    mimeType: o.mimeType ?? 'text/html',
+    size: text.length,
+    contentHash,
+  })
+  if (r2) await r2.put(storageKey, text, { httpMetadata: { contentType: o.mimeType ?? 'text/html' } })
+  return storageKey
+}
+
+/** Insert a `comment_threads` row; returns its id. Defaults: text anchor, open, anchored. */
+export async function seedThread(
+  db: DrizzleD1Database,
+  o: { siteId: string; filePath: string } & Partial<NewCommentThread>,
+): Promise<string> {
+  const id = o.id ?? nextId('th')
+  await db.insert(commentThreads).values({
+    id,
+    siteId: o.siteId,
+    filePath: o.filePath,
+    anchorType: o.anchorType ?? 'text',
+    anchor: o.anchor ?? null,
+    quote: o.quote ?? null,
+    contentHash: o.contentHash ?? null,
+    anchorStatus: o.anchorStatus ?? 'anchored',
+    start: o.start ?? null,
+    end: o.end ?? null,
+    status: o.status ?? 'open',
+    resolvedBy: o.resolvedBy ?? null,
+    resolvedAt: o.resolvedAt ?? null,
+    createdBy: o.createdBy ?? null,
+  })
+  return id
+}
+
+/** Insert a `comments` row; returns its id. */
+export async function seedComment(
+  db: DrizzleD1Database,
+  o: { threadId: string } & Partial<NewComment>,
+): Promise<string> {
+  const id = o.id ?? nextId('cm')
+  await db.insert(comments).values({
+    id,
+    threadId: o.threadId,
+    authorId: o.authorId ?? null,
+    body: o.body ?? 'a comment',
+    createdAt: o.createdAt ?? new Date().toISOString(),
+    editedAt: o.editedAt ?? null,
+    deletedAt: o.deletedAt ?? null,
+  })
+  return id
+}
+
 /** In-memory stand-in for the GLANCE_SESSIONS KV namespace (get/put/delete + ttl peek). */
 export function makeKv() {
   const store = new Map<string, string>()
@@ -117,5 +199,43 @@ export function makeKv() {
     },
     store,
     ttls,
+  }
+}
+
+/** In-memory stand-in for the GLANCE_FILES R2 bucket: get/put/delete over string bodies,
+ *  with a `gets()` counter so the reconcile zero-work gate ("R2.get not invoked") is testable.
+ *  `get` returns an object exposing `text()`, `body` (the string is a valid BodyInit), and a
+ *  stable `httpEtag`, matching the surface content.ts/upload.ts use. */
+export function makeR2() {
+  const store = new Map<string, { body: string; httpMetadata?: { contentType?: string } }>()
+  let gets = 0
+  return {
+    get: (key: string) => {
+      gets++
+      const v = store.get(key)
+      if (!v) return Promise.resolve(null)
+      return Promise.resolve({
+        body: v.body,
+        httpEtag: `"${key}"`,
+        httpMetadata: v.httpMetadata,
+        text: () => Promise.resolve(v.body),
+        arrayBuffer: () => Promise.resolve(new TextEncoder().encode(v.body).buffer),
+      })
+    },
+    put: async (key: string, value: string | ReadableStream, options?: { httpMetadata?: { contentType?: string } }) => {
+      const body =
+        typeof value === 'string'
+          ? value
+          : value && typeof (value as ReadableStream).getReader === 'function'
+            ? await new Response(value as ReadableStream).text()
+            : ''
+      store.set(key, { body, httpMetadata: options?.httpMetadata })
+    },
+    delete: (keys: string | string[]) => {
+      for (const k of Array.isArray(keys) ? keys : [keys]) store.delete(k)
+      return Promise.resolve()
+    },
+    store,
+    gets: () => gets,
   }
 }
