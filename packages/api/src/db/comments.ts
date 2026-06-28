@@ -14,6 +14,12 @@ export type FileReader = { get(key: string): Promise<{ text(): Promise<string> }
 
 const now = () => new Date().toISOString()
 
+/** A batch op that bumps a thread's `updatedAt`. Appended to a comment mutation in the SAME
+ *  batch (so it's atomic) to resurface the thread in the updatedAt-sorted rail. */
+function touchThread(db: DrizzleD1Database, threadId: string, ts: string) {
+  return db.update(commentThreads).set({ updatedAt: ts }).where(eq(commentThreads.id, threadId))
+}
+
 /** Read a file body from R2 as text, or null if the object is gone. One get per call. */
 async function readText(r2: FileReader, key: string): Promise<string | null> {
   const obj = await r2.get(key)
@@ -72,16 +78,21 @@ type ReconcilePatch = { anchorStatus: AnchorStatus; start: number | null; end: n
  *  (→ orphaned). Returns a patch only if something changed; null otherwise. Page-level threads
  *  and threads whose stored hash already matches never reach here. */
 function reconcilePatch(t: CommentThread, text: string | null, currentHash: string | null): ReconcilePatch | null {
+  let next: ReconcilePatch
   if (text === null) {
-    if (t.anchorStatus === 'orphaned' && t.start === null && t.end === null) return null
-    return { anchorStatus: 'orphaned', start: null, end: null, contentHash: t.contentHash }
+    // File is gone → orphaned, and CLEAR the hash. Keeping the old hash would let a later
+    // re-upload of identical bytes (same hash) slip past the stale gate, stranding the thread
+    // orphaned forever; a null hash guarantees the next resolve runs when the file returns.
+    next = { anchorStatus: 'orphaned', start: null, end: null, contentHash: null }
+  } else {
+    const prior = t.start !== null && t.end !== null ? { start: t.start, end: t.end } : undefined
+    const res = resolveAnchor(t.anchor as Anchor, text, prior)
+    next = { anchorStatus: res.status, start: res.start, end: res.end, contentHash: currentHash }
   }
-  const prior = t.start !== null && t.end !== null ? { start: t.start, end: t.end } : undefined
-  const res = resolveAnchor(t.anchor as Anchor, text, prior)
-  if (res.status === t.anchorStatus && res.start === t.start && res.end === t.end && currentHash === t.contentHash) {
-    return null
-  }
-  return { anchorStatus: res.status, start: res.start, end: res.end, contentHash: currentHash }
+  // One change-detector for both paths: persist only a real change, so a no-op list writes nothing.
+  const unchanged =
+    next.anchorStatus === t.anchorStatus && next.start === t.start && next.end === t.end && next.contentHash === t.contentHash
+  return unchanged ? null : next
 }
 
 /**
@@ -225,7 +236,7 @@ export async function addComment(
   const id = crypto.randomUUID()
   await db.batch([
     db.insert(comments).values({ id, threadId: input.threadId, authorId: input.authorId, body: input.body }),
-    db.update(commentThreads).set({ updatedAt: now() }).where(eq(commentThreads.id, input.threadId)),
+    touchThread(db, input.threadId, now()),
   ])
   return id
 }
@@ -245,13 +256,22 @@ export async function reopenThread(db: DrizzleD1Database, threadId: string): Pro
     .where(eq(commentThreads.id, threadId))
 }
 
-export async function editComment(db: DrizzleD1Database, commentId: string, body: string): Promise<void> {
-  await db.update(comments).set({ body, editedAt: now() }).where(eq(comments.id, commentId))
+export async function editComment(db: DrizzleD1Database, threadId: string, commentId: string, body: string): Promise<void> {
+  const ts = now()
+  await db.batch([
+    db.update(comments).set({ body, editedAt: ts }).where(eq(comments.id, commentId)),
+    touchThread(db, threadId, ts),
+  ])
 }
 
-/** Soft delete: keep the row (and thread shape); body is redacted on read. */
-export async function deleteComment(db: DrizzleD1Database, commentId: string): Promise<void> {
-  await db.update(comments).set({ deletedAt: now() }).where(eq(comments.id, commentId))
+/** Soft delete: keep the row (and thread shape); body is redacted on read. Bumps the thread so
+ *  the change resurfaces in the updatedAt-sorted rail. */
+export async function deleteComment(db: DrizzleD1Database, threadId: string, commentId: string): Promise<void> {
+  const ts = now()
+  await db.batch([
+    db.update(comments).set({ deletedAt: ts }).where(eq(comments.id, commentId)),
+    touchThread(db, threadId, ts),
+  ])
 }
 
 export async function getComment(db: DrizzleD1Database, commentId: string): Promise<Comment | null> {

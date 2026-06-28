@@ -37,4 +37,5 @@ CREATE TABLE `comments` (
 CREATE INDEX `comments_thread_created` ON `comments` (`threadId`,`createdAt`);--> statement-breakpoint
 CREATE INDEX `comments_author` ON `comments` (`authorId`);--> statement-breakpoint
 ALTER TABLE `files` ADD `contentHash` text;--> statement-breakpoint
+DELETE FROM `files` WHERE `rowid` NOT IN (SELECT MAX(`rowid`) FROM `files` GROUP BY `siteId`, `path`);--> statement-breakpoint
 CREATE UNIQUE INDEX `files_site_path_unq` ON `files` (`siteId`,`path`);

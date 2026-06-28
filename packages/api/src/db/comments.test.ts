@@ -64,7 +64,7 @@ describe('listThreads — ordering + soft-delete shape', () => {
     const { db, r2, siteId, user, path } = await siteWithFile('<p>hi there</p>')
     const { threadId } = await createThread(db, r2, { siteId, filePath: path, createdBy: user, body: 'keep me', quote: 'hi' })
     const replyId = await addComment(db, { threadId, authorId: user, body: 'delete me' })
-    await deleteComment(db, replyId)
+    await deleteComment(db, threadId, replyId)
     const [thread] = await listThreads(db, r2, siteId, path)
     expect(thread.comments).toHaveLength(2)
     const deleted = thread.comments.find((c) => c.id === replyId)!
@@ -115,5 +115,25 @@ describe('listThreads — server-side reconciliation (hash-gated)', () => {
     await listThreads(db, r2, siteId, path)
     await listThreads(db, r2, siteId, path)
     expect(r2.gets()).toBe(baseline) // zero-work gate: no further R2 reads
+  })
+
+  test('reconcile-restores-after-same-content-reupload: orphaned file returning with identical bytes re-resolves', async () => {
+    const text = 'Intro. anchor target sentence. Outro.'
+    const { db, r2, siteId, user, path, storageKey } = await siteWithFile(text)
+    await createThread(db, r2, { siteId, filePath: path, createdBy: user, body: 'note', quote: 'anchor target sentence' })
+    expect((await listThreads(db, r2, siteId, path))[0].anchorStatus).toBe('anchored')
+
+    // File row + object removed (deletion, or a redeploy window) → thread orphans.
+    await db.delete(files).where(eq(files.siteId, siteId))
+    await r2.delete(storageKey)
+    const orphaned = (await listThreads(db, r2, siteId, path))[0]
+    expect(orphaned.anchorStatus).toBe('orphaned')
+    expect(orphaned.contentHash).toBeNull() // hash cleared so a same-bytes restore isn't skipped
+
+    // Re-upload the SAME bytes (same hash). The thread must re-resolve, not stay stuck orphaned.
+    await seedFile(db, r2, siteId, { path, text })
+    const restored = (await listThreads(db, r2, siteId, path))[0]
+    expect(restored.anchorStatus).toBe('anchored')
+    expect(restored.start).not.toBeNull()
   })
 })

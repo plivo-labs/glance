@@ -20,6 +20,14 @@ import type { AppEnv, SessionUser } from '../types'
 // are already global on /api/* in index.ts; do NOT re-add them here.
 
 const MAX_COMMENT_BODY = 10_000
+// Caps on the anchor fields. parseIntent bounds these for iframe-sourced messages, but a direct
+// API call bypasses it; without a cap a huge quote bloats the DB and blows up the browser regex
+// the annotate client builds from it. prefix/suffix are sliced to 64 by buildAnchor, but cap the
+// raw input too so we never NFKC-fold a multi-MB string just to throw it away.
+const MAX_QUOTE = 8_000
+const MAX_PATH = 1_024
+
+const tooLong = (v: unknown, max: number): boolean => typeof v === 'string' && v.length > max
 
 export const comments = new Hono<AppEnv>()
 
@@ -61,7 +69,7 @@ comments.get('/:space/:site/comments', async (c) => {
   const site = await siteOrError(c)
   if (site instanceof Response) return site
   const filePath = c.req.query('filePath')
-  if (!filePath) return c.json({ error: 'filePath required' }, 400)
+  if (!filePath || tooLong(filePath, MAX_PATH)) return c.json({ error: 'filePath required' }, 400)
   return c.json(await listThreads(c.get('db'), c.env.GLANCE_FILES, site.id, filePath))
 })
 
@@ -72,7 +80,10 @@ comments.post('/:space/:site/comments', async (c) => {
   const raw = await c.req.json().catch(() => null)
   const body = cleanBody(raw?.body)
   if (!body) return c.json({ error: 'invalid body' }, 400)
-  if (typeof raw?.filePath !== 'string' || !raw.filePath) return c.json({ error: 'filePath required' }, 400)
+  if (typeof raw?.filePath !== 'string' || !raw.filePath || tooLong(raw.filePath, MAX_PATH))
+    return c.json({ error: 'filePath required' }, 400)
+  if ([raw.quote, raw.prefix, raw.suffix].some((v) => tooLong(v, MAX_QUOTE)))
+    return c.json({ error: 'anchor too long' }, 400)
   const anchorType = raw.anchorType === 'page' ? 'page' : 'text'
   const out = await createThread(c.get('db'), c.env.GLANCE_FILES, {
     siteId: site.id,
@@ -125,7 +136,7 @@ comments.patch('/:space/:site/comments/:threadId/messages/:commentId', async (c)
   const raw = await c.req.json().catch(() => null)
   const body = cleanBody(raw?.body)
   if (!body) return c.json({ error: 'invalid body' }, 400)
-  await editComment(c.get('db'), comment.id, body)
+  await editComment(c.get('db'), comment.threadId, comment.id, body)
   return c.json({ ok: true })
 })
 
@@ -137,7 +148,7 @@ comments.delete('/:space/:site/comments/:threadId/messages/:commentId', async (c
   const comment = await commentInSite(c, site.id)
   if (comment instanceof Response) return comment
   if (comment.authorId !== user.id && !canModerate(site, user)) return c.json({ error: 'forbidden' }, 403)
-  await deleteComment(c.get('db'), comment.id)
+  await deleteComment(c.get('db'), comment.threadId, comment.id)
   return c.json({ ok: true })
 })
 
