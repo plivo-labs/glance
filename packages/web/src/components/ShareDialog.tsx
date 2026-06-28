@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Check, Search, Share2 } from 'lucide-react'
+import { useNavigate } from 'react-router'
+import { Check, Plus, Search, Share2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import type { ShareSet, SpaceSummary, UserLite } from '@/lib/types'
@@ -30,6 +31,7 @@ function toggle(set: Set<string>, id: string): Set<string> {
 // site's visibility tier. Data loads on open (event-driven — no effect); Save replaces the
 // whole set via PUT.
 export function ShareDialog({ spaceSlug, siteSlug, title }: Props) {
+  const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -88,7 +90,7 @@ export function ShareDialog({ spaceSlug, siteSlug, title }: Props) {
       <DialogTrigger asChild>
         <Button variant="outline" size="sm">
           <Share2 />
-          Share
+          Share with people &amp; groups
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">
@@ -105,7 +107,7 @@ export function ShareDialog({ spaceSlug, siteSlug, title }: Props) {
           </div>
         ) : (
           <div className="space-y-4">
-            {groups.length > 0 && (
+            {groups.length > 0 ? (
               <div className="space-y-1">
                 <p className="text-xs font-medium text-muted-foreground">Groups</p>
                 <div className="max-h-32 space-y-0.5 overflow-y-auto">
@@ -119,6 +121,24 @@ export function ShareDialog({ spaceSlug, siteSlug, title }: Props) {
                     />
                   ))}
                 </div>
+              </div>
+            ) : (
+              <div className="rounded-md border border-dashed p-3 text-center">
+                <p className="text-sm text-muted-foreground">
+                  You’re not in any groups yet. Create a space to share a site with a whole group at once.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-2"
+                  onClick={() => {
+                    setOpen(false)
+                    navigate('/dashboard?new=space')
+                  }}
+                >
+                  <Plus />
+                  New space
+                </Button>
               </div>
             )}
 
