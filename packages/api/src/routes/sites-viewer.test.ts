@@ -1,0 +1,72 @@
+import { describe, expect, test } from 'bun:test'
+import { Hono } from 'hono'
+import { requireSameOrigin } from '../middleware/auth'
+import { makeDb, makeKv, seedMember, seedSite, seedSpace, seedUser } from '../test/harness'
+import type { AppEnv } from '../types'
+import { sites } from './sites'
+
+// Viewer metadata endpoint (GET /api/sites/:space/:site) — the source of the gated content URL.
+// It reads the user inline via readSessionOrBearer, so a CLI Bearer token (no cookie) must mint
+// the same `/_t/<token>/…` URL the browser viewer gets — this is what `glance read` relies on.
+
+const APP_URL = 'https://glance.example.com'
+const CONTENT_URL = 'https://content.example.com'
+
+async function setup() {
+  const db = makeDb()
+  const kv = makeKv()
+  const env = {
+    APP_URL,
+    CONTENT_URL,
+    SESSION_SECRET: 's',
+    CONTENT_TOKEN_SECRET: 'cts',
+    GLANCE_SESSIONS: kv,
+  } as unknown as AppEnv['Bindings']
+  const app = new Hono<AppEnv>()
+  app.use('/api/*', requireSameOrigin)
+  app.use('/api/*', async (c, next) => {
+    c.set('db', db)
+    await next()
+  })
+  app.route('/api/sites', sites)
+  return { db, kv, app, env }
+}
+
+async function mintUser(db: ReturnType<typeof makeDb>, kv: ReturnType<typeof makeKv>, id: string) {
+  await seedUser(db, { id, role: 'member' })
+  await kv.put(`cli:tok-${id}`, JSON.stringify({ id, email: `${id}@example.com`, name: null, role: 'member' }))
+  return id
+}
+
+const view = (app: Hono<AppEnv>, env: AppEnv['Bindings'], space: string, site: string, headers: Record<string, string> = {}) =>
+  app.request(`/api/sites/${space}/${site}`, { headers }, env)
+
+describe('GET /api/sites/:space/:site (viewer metadata)', () => {
+  test('CLI Bearer token mints a gated content URL', async () => {
+    const { db, kv, app, env } = await setup()
+    await mintUser(db, kv, 'u1')
+    const space = await seedSpace(db, { createdBy: 'u1', slug: 'docs' })
+    await seedMember(db, space, 'u1')
+    await seedSite(db, { spaceId: space, ownerId: 'u1', slug: 'report' }) // team tier
+
+    const res = await view(app, env, 'docs', 'report', { Authorization: 'Bearer tok-u1' })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { contentUrl: string }
+    expect(body.contentUrl.startsWith(`${CONTENT_URL}/_t/`)).toBe(true)
+    expect(body.contentUrl.endsWith('/docs/report/')).toBe(true)
+  })
+
+  test('no auth → 401 (every tier requires a viewer)', async () => {
+    const { db, app, env } = await setup()
+    const space = await seedSpace(db, { createdBy: 'u1', slug: 'docs' })
+    await seedSite(db, { spaceId: space, ownerId: 'u1', slug: 'report' })
+
+    expect((await view(app, env, 'docs', 'report')).status).toBe(401)
+  })
+
+  test('unknown site → 404', async () => {
+    const { db, kv, app, env } = await setup()
+    await mintUser(db, kv, 'u1')
+    expect((await view(app, env, 'docs', 'nope', { Authorization: 'Bearer tok-u1' })).status).toBe(404)
+  })
+})

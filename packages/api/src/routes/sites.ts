@@ -11,7 +11,7 @@ import {
 import type { Visibility } from '../db/schema'
 import { sites as sitesTable, spaces, users } from '../db/schema'
 import { checkAccess } from '../lib/access'
-import { readSession } from '../lib/session'
+import { readSessionOrBearer } from '../lib/session'
 import { resolveSite } from '../lib/site-access'
 import { isValidSlug } from '../lib/slug'
 import { deleteSiteObjects } from '../lib/storage'
@@ -302,7 +302,8 @@ sites.get('/:spaceSlug/:siteSlug', async (c) => {
   const site = await resolveSite(db, spaceSlug, siteSlug)
   if (!site) return c.json({ error: 'not found' }, 404)
 
-  const user = await readSession(c)
+  // Cookie (browser viewer) OR CLI Bearer token (`glance read`) — both mint the same gated URL.
+  const user = await readSessionOrBearer(c)
   const isMember = user ? await isSpaceMember(db, site.spaceId, user.id) : false
   const isShared = user ? await resolveIsShared(db, site.id, user.id) : false
   const access = checkAccess(site, user, isMember, isShared)

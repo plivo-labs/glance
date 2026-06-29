@@ -53,3 +53,14 @@ export async function readCliToken(c: Context<AppEnv>, token: string): Promise<S
     return null
   }
 }
+
+// Resolve the request's user from the session cookie, falling back to a CLI Bearer token.
+// Used by `requireAuth` and by route handlers that read the user inline (rather than via the
+// middleware) so they can shape their own not-found / forbidden JSON — e.g. the viewer endpoint.
+export async function readSessionOrBearer(c: Context<AppEnv>): Promise<SessionUser | null> {
+  const user = await readSession(c)
+  if (user) return user
+  const header = c.req.header('Authorization')
+  if (header?.startsWith('Bearer ')) return readCliToken(c, header.slice(7))
+  return null
+}

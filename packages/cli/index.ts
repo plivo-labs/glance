@@ -7,7 +7,7 @@ import { createInterface } from 'node:readline/promises'
 import { SKILL_MD, SKILL_NAME } from './skill-content'
 
 // Glance CLI — deploy folders to Glance from the terminal.
-//   glance login | deploy <path> --space <s> --name <s> [--visibility v] | list | delete <space/slug> | move <space/slug> <new-space> | logout
+//   glance login | deploy <path> --space <s> --name <s> [--visibility v] | list | delete <space/slug> | move <space/slug> <new-space> | comments <space/slug> | read <space/slug> | logout
 
 const CONFIG_DIR = join(homedir(), '.glance')
 const CONFIG_PATH = join(CONFIG_DIR, 'config.json')
@@ -370,6 +370,30 @@ async function comments(argv: string[]): Promise<void> {
   console.log(renderDigest(threads, { open: flags.open === true, json: flags.json === true }))
 }
 
+// --- read (fetch a deployed file's contents) --------------------------------
+// Every tier is gated (no public/anonymous access), so there's no URL to curl directly: the
+// viewer endpoint mints a short-lived, user-bound content token, then we fetch the gated URL
+// with no cookie (the token in the path carries the auth — same path the sandboxed iframe uses).
+async function read(argv: string[]): Promise<void> {
+  const { positional, flags } = parseArgs(argv)
+  const target = positional[0]
+  if (!target?.includes('/')) die('Usage: glance read <space/slug> [--file <path>]')
+  const [space, name] = target.split('/')
+  const file = typeof flags.file === 'string' ? flags.file : ''
+
+  const cfg = requireAuth()
+  const meta = await authed(cfg, `/api/sites/${space}/${name}`)
+  if (!meta.ok) die(`Could not read ${space}/${name} (${meta.status}): ${(await meta.text()).slice(0, 200)}`)
+  const { contentUrl } = (await meta.json()) as { contentUrl: string }
+
+  // contentUrl always ends with `/`; append the in-site path (empty → site root / single file).
+  // Encode each segment so paths with spaces/unicode resolve, mirroring a browser request.
+  const path = file.replace(/^\/+/, '').split('/').map(encodeURIComponent).join('/')
+  const res = await fetch(contentUrl + path)
+  if (!res.ok) die(`Could not fetch ${file || 'site root'} (${res.status}): ${(await res.text()).slice(0, 200)}`)
+  process.stdout.write(await res.text())
+}
+
 if (import.meta.main) {
   const [cmd, ...rest] = process.argv.slice(2)
   const commands: Record<string, () => Promise<void>> = {
@@ -379,6 +403,7 @@ if (import.meta.main) {
     delete: () => del(rest),
     move: () => move(rest),
     comments: () => comments(rest),
+    read: () => read(rest),
     skill: async () => skillCmd(rest),
     logout,
   }
@@ -391,6 +416,7 @@ if (import.meta.main) {
     console.log('  glance delete <space/slug>')
     console.log('  glance move <space/slug> <new-space>')
     console.log('  glance comments <space/slug> [--file <path>] [--open] [--json]')
+    console.log('  glance read <space/slug> [--file <path>]')
     console.log('  glance skill install')
     console.log('  glance logout')
     process.exit(cmd ? 1 : 0)

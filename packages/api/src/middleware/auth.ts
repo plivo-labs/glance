@@ -1,6 +1,6 @@
 import { getCookie } from 'hono/cookie'
 import { createMiddleware } from 'hono/factory'
-import { readCliToken, readSession } from '../lib/session'
+import { readSessionOrBearer } from '../lib/session'
 import type { AppEnv } from '../types'
 
 const SESSION_COOKIE = 'glance_session'
@@ -28,11 +28,7 @@ export const requireSameOrigin = createMiddleware<AppEnv>(async (c, next) => {
 
 /** 401 unless a valid browser session OR CLI Bearer token exists; attaches the user. */
 export const requireAuth = createMiddleware<AppEnv>(async (c, next) => {
-  let user = await readSession(c)
-  if (!user) {
-    const header = c.req.header('Authorization')
-    if (header?.startsWith('Bearer ')) user = await readCliToken(c, header.slice(7))
-  }
+  const user = await readSessionOrBearer(c)
   if (!user) return c.json({ error: 'unauthorized' }, 401)
   c.set('user', user)
   await next()

@@ -1,6 +1,6 @@
 ---
 name: glance-cli
-description: Use the `glance` CLI to deploy a local folder of static files (HTML/markdown/assets) to a Glance instance and get a URL, and to PULL a deployed site's review comments back to the terminal so a coding agent can act on them. Use when the user wants to publish/upload/deploy a folder, list their Glance sites, delete a site, log in/out of Glance from the terminal, or fetch/read/pull the review comments (feedback left in the browser) on a site to address them. Closes the review loop: deploy → comment in the browser → `glance comments` to pull → edit → redeploy (anchors re-resolve server-side). Covers pointing the CLI at a self-hosted instance via GLANCE_API_URL.
+description: Use the `glance` CLI to deploy a local folder of static files (HTML/markdown/assets) to a Glance instance and get a URL, and to PULL a deployed site's review comments back to the terminal so a coding agent can act on them. Use when the user wants to publish/upload/deploy a folder, list their Glance sites, delete a site, log in/out of Glance from the terminal, or fetch/read/pull the review comments (feedback left in the browser) on a site to address them, or read a deployed file's raw contents back to the terminal. Closes the review loop: deploy → comment in the browser → `glance comments` to pull → edit → redeploy (anchors re-resolve server-side). Covers pointing the CLI at a self-hosted instance via GLANCE_API_URL.
 ---
 
 # Glance CLI
@@ -38,6 +38,7 @@ Put it in your shell profile to make it permanent. Token + URL are saved to `~/.
 | `glance delete <space/slug>` | confirms (y/N), then deletes |
 | `glance move <space/slug> <new-space>` | moves a site to another space you belong to (keeps its files, comments, shares) |
 | `glance comments <space/slug> [--file <path>] [--open] [--json]` | prints a site's review comments as a markdown digest (or raw JSON) |
+| `glance read <space/slug> [--file <path>]` | prints a deployed file's raw contents to stdout (HTML as stored) |
 | `glance logout` | revokes the server session and removes the local token |
 
 ### login
@@ -93,6 +94,14 @@ Default output is a **markdown digest**:
 - Empty result prints `No comments.`.
 
 **Agent loop** — this command closes the review loop without a browser: `glance comments <space/slug> --open` to pull outstanding feedback → edit the local doc to address it → `glance deploy` to redeploy. Anchors re-resolve **server-side** on the new content (a thread whose quote still matches stays `anchored`/`shifted`; one whose span vanished goes `orphaned`/`⚠`), so re-running `glance comments` reflects the new state.
+
+### read
+Prints a deployed file's **raw contents** to stdout — the bytes as stored (HTML stays HTML; markdown stays markdown source, NOT the server-rendered HTML).
+
+- `<space/slug>` is required and must contain the slash (e.g. `docs/api-reference`).
+- `--file <path>` selects a file within the site (e.g. `--file guide.html`); omit it for the site root (a single-file site serves its lone file there).
+- Output is the file body only — no headers, no trailing newline — so it pipes cleanly: `glance read docs/api-reference --file index.html > index.html`.
+- Every tier is access-gated (there is no anonymous tier), so `read` works only on sites you can view; a tier you can't access fails with the server's status. Errors print the HTTP status + a truncated server message.
 
 ## Visibility values
 `team` (default) · `private` · `members`.
