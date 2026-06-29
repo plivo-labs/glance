@@ -6,7 +6,8 @@
   "bin": { "glance": "./index.ts" },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "build:skill": "bun scripts/build-skill.ts"
   },
   "devDependencies": {
     "@types/node": "^26.0.0",

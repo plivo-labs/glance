@@ -4,11 +4,11 @@ import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync }
 import { homedir, platform } from 'node:os'
 import { basename, join, relative, resolve, sep } from 'node:path'
 import { createInterface } from 'node:readline/promises'
+import { SKILL_MD, SKILL_NAME } from './skill-content'
 
 // Glance CLI — deploy folders to Glance from the terminal.
 //   glance login | deploy <path> --space <s> --name <s> [--visibility v] | list | delete <space/slug> | logout
 
-const API = process.env.GLANCE_API_URL ?? 'http://localhost:8787'
 const CONFIG_DIR = join(homedir(), '.glance')
 const CONFIG_PATH = join(CONFIG_DIR, 'config.json')
 
@@ -28,6 +28,14 @@ function readConfig(): Config | null {
 function writeConfig(cfg: Config): void {
   mkdirSync(CONFIG_DIR, { recursive: true })
   writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2))
+}
+
+// Instance URL precedence: explicit env override → persisted config (written at login, or seeded by
+// the installer) → local dev default. Reading the config here is what lets `glance login` work in the
+// SAME shell right after install — before the profile's GLANCE_API_URL export has been sourced.
+function apiBase(): string {
+  // `||` (not `??`) so an empty/blank GLANCE_API_URL falls through instead of yielding a bad base URL.
+  return process.env.GLANCE_API_URL?.trim() || readConfig()?.apiUrl || 'http://localhost:8787'
 }
 
 function die(msg: string): never {
@@ -129,7 +137,8 @@ function openBrowser(url: string): void {
 }
 
 async function login(): Promise<void> {
-  const res = await fetch(`${API}/api/auth/cli/start`, { method: 'POST' })
+  const api = apiBase()
+  const res = await fetch(`${api}/api/auth/cli/start`, { method: 'POST' })
   if (!res.ok) die(`Could not start login (${res.status})`)
   const { deviceCode, userCode, verificationUri, interval } = (await res.json()) as {
     deviceCode: string
@@ -145,11 +154,11 @@ async function login(): Promise<void> {
   for (;;) {
     await new Promise((r) => setTimeout(r, Math.max(1, interval) * 1000))
     process.stdout.write('.')
-    const poll = await fetch(`${API}/api/auth/cli/poll?device_code=${encodeURIComponent(deviceCode)}`)
+    const poll = await fetch(`${api}/api/auth/cli/poll?device_code=${encodeURIComponent(deviceCode)}`)
     if (poll.status === 404) die('\nLogin request expired. Try again.')
     const data = (await poll.json()) as { status: string; accessToken?: string }
     if (data.status === 'complete' && data.accessToken) {
-      writeConfig({ apiUrl: API, token: data.accessToken })
+      writeConfig({ apiUrl: api, token: data.accessToken })
       console.log('\n✓ Logged in.')
       return
     }
@@ -241,6 +250,19 @@ async function del(argv: string[]): Promise<void> {
   console.log('✓ Deleted.')
 }
 
+// Install the bundled AI-agent skill with NO Node/npx dependency — writes it into Claude Code's
+// user skills dir. Other agents (Codex, Cursor) can pull the same skill via `npx skills add`.
+function skillCmd(argv: string[]): void {
+  const sub = argv[0] ?? 'install'
+  if (sub !== 'install') die('Usage: glance skill install')
+  const dir = join(homedir(), '.claude', 'skills', SKILL_NAME)
+  mkdirSync(dir, { recursive: true })
+  const dest = join(dir, 'SKILL.md')
+  writeFileSync(dest, SKILL_MD)
+  console.log(`✓ Installed the ${SKILL_NAME} skill for Claude Code → ${dest}`)
+  console.log('  Other agents (Codex, Cursor): npx skills add plivo-labs/glance --global')
+}
+
 async function logout(): Promise<void> {
   const cfg = readConfig()
   if (cfg?.token) await authed(cfg, '/api/auth/logout', { method: 'POST' }).catch(() => {})
@@ -330,6 +352,7 @@ if (import.meta.main) {
     list,
     delete: () => del(rest),
     comments: () => comments(rest),
+    skill: async () => skillCmd(rest),
     logout,
   }
   const run = commands[cmd ?? '']
@@ -340,6 +363,7 @@ if (import.meta.main) {
     console.log('  glance list')
     console.log('  glance delete <space/slug>')
     console.log('  glance comments <space/slug> [--file <path>] [--open] [--json]')
+    console.log('  glance skill install')
     console.log('  glance logout')
     process.exit(cmd ? 1 : 0)
   }

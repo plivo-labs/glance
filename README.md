@@ -183,12 +183,15 @@ curl -fsSL https://glance.your-subdomain.workers.dev/api/install | sh
 
 (Equivalent to piping the GitHub installer with `GLANCE_API_URL=…` set by hand — that still works too:
 `curl -fsSL https://raw.githubusercontent.com/plivo-labs/glance/main/install.sh | GLANCE_API_URL=… sh`.)
-They open a new shell, run `glance login` (Google SSO), and start deploying. Without `GLANCE_API_URL`
-the CLI defaults to `http://localhost:8787`.
+The installer writes the instance into the CLI's own config (`~/.glance/config.json`), so `glance
+login` targets it **immediately — in the same shell, no `source`/restart needed**. The URL precedence
+is `GLANCE_API_URL` env → that config → `http://localhost:8787`. They just run `glance login` (Google
+SSO) and start deploying.
 
-**AI-agent skill.** If `npx` is on PATH, the installer also runs `npx skills add` to install the
-`glance-cli` skill globally, so coding agents (Claude Code, Codex, Cursor, …) know how to drive the
-CLI. It's best-effort — no `npx`, no problem, the binary still installs. To add it on its own:
+**AI-agent skill.** The installer also runs `glance skill install` — which ships the skill inside the
+binary and writes it into Claude Code's skills dir with **no Node/npx needed** — so coding agents know
+how to drive the CLI. Add or refresh it anytime with `glance skill install`. Other agents (Codex,
+Cursor) can pull the same skill from the repo:
 
 ```bash
 npx skills add plivo-labs/glance --global

@@ -35,7 +35,7 @@ main() {
     fi
 
     if [ -n "${GLANCE_API_URL:-}" ]; then
-        persist_api_url "$GLANCE_API_URL"
+        seed_config "$GLANCE_API_URL"
     fi
 
     install_skill
@@ -44,17 +44,11 @@ main() {
     say "Done! Run 'glance login' to get started."
 }
 
-# Best-effort: if npx is available, install the glance-cli skill so AI agents
-# (Claude Code, Codex, Cursor, …) know how to drive the CLI. Never fatal — the
-# binary install above is what matters; a skill hiccup must not abort it.
+# Install the glance-cli skill so AI agents (Claude Code, …) know how to drive the CLI. Uses the
+# freshly-installed binary — NO Node/npx needed (the binary audience usually has neither). Never
+# fatal: the binary is what matters; a skill hiccup must not abort the install.
 install_skill() {
-    command -v npx > /dev/null 2>&1 || return 0
-    say "Installing the glance skill for AI agents (npx skills)"
-    if npx --yes skills add "$REPO" --global --yes > /dev/null 2>&1; then
-        say "Skill installed for your AI agents"
-    else
-        warn "Skill install skipped — CLI is unaffected (run: npx skills add $REPO)"
-    fi
+    "$INSTALL_DIR/glance" skill install || warn "Skill install skipped — add later with: glance skill install"
 }
 
 detect_platform() {
@@ -140,21 +134,19 @@ add_to_path() {
     fi
 }
 
-persist_api_url() {
+# Seed the CLI's own config so `glance login` targets this instance immediately — even in the shell
+# that ran the installer (the CLI reads ~/.glance/config.json before any profile export is sourced).
+# Never clobber an existing config: it may already hold a login token.
+seed_config() {
     url="$1"
-    profile="$(detect_profile)"
-    if [ -n "$profile" ]; then
-        if grep -q "export GLANCE_API_URL=" "$profile" 2>/dev/null; then
-            warn "GLANCE_API_URL already set in $profile — leaving it as-is"
-        else
-            echo "" >> "$profile"
-            echo "# Added by glance installer" >> "$profile"
-            echo "export GLANCE_API_URL=\"${url}\"" >> "$profile"
-            say "Set GLANCE_API_URL=$url in $profile — restart your shell or run: source $profile"
-        fi
-    else
-        say "Add this to your shell profile: export GLANCE_API_URL=\"${url}\""
+    cfg="$HOME/.glance/config.json"
+    if [ -f "$cfg" ]; then
+        say "Existing config left as-is: $cfg"
+        return 0
     fi
+    mkdir -p "$HOME/.glance"
+    printf '{\n  "apiUrl": "%s"\n}\n' "$url" > "$cfg"
+    say "Configured instance: $url"
 }
 
 say()  { printf "  \033[1;32mglance\033[0m: %s\n" "$*"; }

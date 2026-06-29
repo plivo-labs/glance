@@ -11,6 +11,7 @@
       "!**/drizzle",
       "!**/annotate/bundle.ts",
       "!**/install-script.ts",
+      "!**/skill-content.ts",
       "!**/components/ui",
       "!**/bun.lock",
       "!**/.omc",
