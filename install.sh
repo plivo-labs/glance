@@ -19,9 +19,10 @@ main() {
     trap 'rm -rf "$tmpdir"' EXIT
 
     url="https://github.com/${REPO}/releases/download/${version}/${artifact}"
-    say "Downloading $url"
-    download "$url" "$tmpdir/glance"
+    say "Downloading ${url}.gz"
+    download "${url}.gz" "$tmpdir/glance.gz"
     download "${url}.sha256" "$tmpdir/glance.sha256"
+    decompress "$tmpdir/glance.gz"
     verify_checksum "$tmpdir/glance" "$tmpdir/glance.sha256"
 
     mkdir -p "$INSTALL_DIR"
@@ -86,6 +87,16 @@ download() {
         wget -qO "$2" "$1"
     else
         err "curl or wget is required"
+    fi
+}
+
+decompress() {
+    if command -v gunzip > /dev/null 2>&1; then
+        gunzip "$1"
+    elif command -v gzip > /dev/null 2>&1; then
+        gzip -d "$1"
+    else
+        err "gzip or gunzip is required to decompress the download"
     fi
 }
 

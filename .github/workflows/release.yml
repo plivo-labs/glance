@@ -23,7 +23,9 @@ jobs:
           mkdir -p dist
           while read -r target out; do
             bun build ./index.ts --compile --minify --target="$target" --outfile "dist/$out"
-            ( cd dist && shasum -a 256 "$out" | awk '{print $1}' > "$out.sha256" )
+            # Checksum the uncompressed binary (what actually runs), then gzip to shrink the
+            # download ~2-3x. The installer verifies the decompressed bytes against this sum.
+            ( cd dist && shasum -a 256 "$out" | awk '{print $1}' > "$out.sha256" && gzip -9 "$out" )
           done <<'EOF'
           bun-darwin-arm64 glance-arm64-darwin
           bun-darwin-x64   glance-x64-darwin
@@ -35,6 +37,6 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           files: |
-            packages/cli/dist/glance-*-*
+            packages/cli/dist/glance-*-*.gz
             packages/cli/dist/glance-*-*.sha256
           generate_release_notes: true
