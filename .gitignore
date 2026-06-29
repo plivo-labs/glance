@@ -41,6 +41,5 @@ bun-debug.log*
 
 # internal working docs (kept locally, not published)
 CLAUDE.md
-PLAN.md
-PROGRESS.md
-TEST_PLAN.md
+*PLAN.md
+*PROGRESS.md
