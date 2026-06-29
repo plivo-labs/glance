@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { Check, Plus, Search, Share2 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -18,7 +18,16 @@ import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/states'
 import { cn } from '@/lib/utils'
 
-type Props = { spaceSlug: string; siteSlug: string; title?: string | null; compact?: boolean }
+type Props = {
+  spaceSlug: string
+  siteSlug: string
+  title?: string | null
+  compact?: boolean
+  // Controlled mode: when `open` is provided the dialog renders no trigger and is driven by the
+  // parent (e.g. a dropdown-menu item). Uncontrolled (default) keeps its own Share button.
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+}
 
 function toggle(set: Set<string>, id: string): Set<string> {
   const next = new Set(set)
@@ -28,11 +37,15 @@ function toggle(set: Set<string>, id: string): Set<string> {
 }
 
 // Owner-only sharing: pick specific people and/or groups to grant access, on top of the
-// site's visibility tier. Data loads on open (event-driven — no effect); Save replaces the
-// whole set via PUT.
-export function ShareDialog({ spaceSlug, siteSlug, title, compact }: Props) {
+// site's visibility tier. Data loads on open via a ref-callback on the dialog content (Radix
+// mounts it on every open — and a controlled/external open does NOT fire Radix onOpenChange,
+// so the load can't live there); Save replaces the whole set via PUT.
+export function ShareDialog({ spaceSlug, siteSlug, title, compact, open: openProp, onOpenChange }: Props) {
   const navigate = useNavigate()
-  const [open, setOpen] = useState(false)
+  const [internalOpen, setInternalOpen] = useState(false)
+  const controlled = openProp !== undefined
+  const open = controlled ? openProp : internalOpen
+  const setOpen = (o: boolean) => (controlled ? onOpenChange?.(o) : setInternalOpen(o))
   const [busy, setBusy] = useState(false)
   const [saving, setSaving] = useState(false)
   const [users, setUsers] = useState<UserLite[]>([])
@@ -41,27 +54,29 @@ export function ShareDialog({ spaceSlug, siteSlug, title, compact }: Props) {
   const [selGroups, setSelGroups] = useState<Set<string>>(new Set())
   const [q, setQ] = useState('')
 
-  async function onOpenChange(next: boolean) {
-    setOpen(next)
-    if (!next) return
-    setBusy(true)
-    try {
-      const [us, sp, shares] = await Promise.all([
+  // Stable identity (useCallback) so React fires it only on mount/unmount, not every render.
+  const loadOnMount = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (!node) return
+      setBusy(true)
+      Promise.all([
         api.get<UserLite[]>('/api/users'),
         api.get<SpaceSummary[]>('/api/spaces/mine'),
         api.get<ShareSet>(`/api/sites/${spaceSlug}/${siteSlug}/shares`),
       ])
-      setUsers(us)
-      setGroups(sp.filter((s) => s.type === 'group'))
-      setSelUsers(new Set(shares.userIds))
-      setSelGroups(new Set(shares.groupIds))
-    } catch (err) {
-      toast.error('Could not load sharing', { description: err instanceof Error ? err.message : undefined })
-      setOpen(false)
-    } finally {
-      setBusy(false)
-    }
-  }
+        .then(([us, sp, shares]) => {
+          setUsers(us)
+          setGroups(sp.filter((s) => s.type === 'group'))
+          setSelUsers(new Set(shares.userIds))
+          setSelGroups(new Set(shares.groupIds))
+        })
+        .catch((err) =>
+          toast.error('Could not load sharing', { description: err instanceof Error ? err.message : undefined }),
+        )
+        .finally(() => setBusy(false))
+    },
+    [spaceSlug, siteSlug],
+  )
 
   async function save() {
     setSaving(true)
@@ -86,26 +101,28 @@ export function ShareDialog({ spaceSlug, siteSlug, title, compact }: Props) {
   const count = selUsers.size + selGroups.size
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogTrigger asChild>
-        {compact ? (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8 rounded-full"
-            title="Share with people & groups"
-            aria-label="Share with people & groups"
-          >
-            <Share2 />
-          </Button>
-        ) : (
-          <Button variant="outline" size="sm">
-            <Share2 />
-            Share with people &amp; groups
-          </Button>
-        )}
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-md">
+    <Dialog open={open} onOpenChange={setOpen}>
+      {!controlled && (
+        <DialogTrigger asChild>
+          {compact ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 rounded-full"
+              title="Share with people & groups"
+              aria-label="Share with people & groups"
+            >
+              <Share2 />
+            </Button>
+          ) : (
+            <Button variant="outline" size="sm">
+              <Share2 />
+              Share with people &amp; groups
+            </Button>
+          )}
+        </DialogTrigger>
+      )}
+      <DialogContent ref={loadOnMount} className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="truncate">Share {title ?? siteSlug}</DialogTitle>
           <DialogDescription>

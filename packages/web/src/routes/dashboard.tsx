@@ -16,9 +16,9 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { CopyButton } from '@/components/CopyButton'
-import { SiteCard } from '@/components/SiteCard'
+import { SitesTable } from '@/components/SitesTable'
 import { SpaceSelect } from '@/components/SpaceSelect'
-import { EmptyState, PageHeader, SectionHeader, Spinner } from '@/components/states'
+import { EmptyState, PageHeader, Spinner } from '@/components/states'
 import { VisibilityBadge, VisibilityMenu } from '@/components/visibility'
 import { Button } from '@/components/ui/button'
 import {
@@ -49,8 +49,10 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api, ApiError } from '@/lib/api'
 import { toLogin } from '@/lib/nav'
+import { timeAgo } from '@/lib/time'
 import type { SiteSummary, SlugExists, SpaceSummary, TeamUpload, Visibility } from '@/lib/types'
 import { type DroppedFile, filesFromDataTransfer, filesFromInput } from '@/lib/walkFiles'
 import { uploadFiles } from '@/lib/uploadWithProgress'
@@ -127,89 +129,92 @@ export function Component() {
 
       <DeployCard spaces={spaces} />
 
-      <section className="space-y-4">
-        <SectionHeader index={1} title="Your sites" />
-        {sites.length === 0 ? (
-          <EmptyState
-            icon={Rocket}
-            title="No sites yet"
-            description="Drop a folder above to ship your first."
-          />
-        ) : (
-          <div className="grid gap-3">
-            {sites.map((s) => (
-              <SiteCard key={s.id} site={s} />
-            ))}
-          </div>
-        )}
-      </section>
+      <Tabs defaultValue="sites" className="gap-6">
+        <TabsList variant="line">
+          <TabsTrigger value="sites">
+            Your sites
+            <TabCount n={sites.length} />
+          </TabsTrigger>
+          {shared.length > 0 && (
+            <TabsTrigger value="shared">
+              Shared with me
+              <TabCount n={shared.length} />
+            </TabsTrigger>
+          )}
+          <TabsTrigger value="spaces">
+            Your spaces
+            <TabCount n={groupSpaces.length} />
+          </TabsTrigger>
+          <TabsTrigger value="team">Team activity</TabsTrigger>
+        </TabsList>
 
-      {shared.length > 0 && (
-        <section className="space-y-4">
-          <SectionHeader index={2} title="Shared with me" />
-          <div className="grid gap-3">
+        <TabsContent value="sites">
+          {sites.length === 0 ? (
+            <EmptyState
+              icon={Rocket}
+              title="No sites yet"
+              description="Drop a folder above to ship your first."
+            />
+          ) : (
+            <SitesTable sites={sites} />
+          )}
+        </TabsContent>
+
+        {shared.length > 0 && (
+          <TabsContent value="shared" className="grid gap-3">
             {shared.map((s) => (
               <SharedSiteRow key={s.id} site={s} />
             ))}
-          </div>
-        </section>
-      )}
-
-      <section className="space-y-4">
-        <SectionHeader index={3} title="Your spaces">
-          <NewSpaceDialog />
-        </SectionHeader>
-        {groupSpaces.length === 0 ? (
-          <EmptyState
-            title="No group spaces"
-            description="Create a space to collaborate with teammates."
-          />
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2">
-            {groupSpaces.map((s) => (
-              <SpaceCard key={s.id} space={s} />
-            ))}
-          </div>
+          </TabsContent>
         )}
-      </section>
 
-      <section className="space-y-4">
-        <SectionHeader index={4} title="Team activity" />
-        {team.length === 0 ? (
-          <EmptyState
-            icon={Rocket}
-            title="Nothing shipped yet"
-            description="Team-visible sites show up here as people deploy them."
-          />
-        ) : (
-          <Card className="gap-0 py-0">
-            <ul className="divide-y">
-              {team.map((u) => (
-                <TeamActivityRow key={u.id} upload={u} />
+        <TabsContent value="spaces" className="space-y-4">
+          <div className="flex justify-end">
+            <NewSpaceDialog />
+          </div>
+          {groupSpaces.length === 0 ? (
+            <EmptyState
+              title="No group spaces"
+              description="Create a space to collaborate with teammates."
+            />
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {groupSpaces.map((s) => (
+                <SpaceCard key={s.id} space={s} />
               ))}
-            </ul>
-          </Card>
-        )}
-      </section>
+            </div>
+          )}
+        </TabsContent>
+
+        <TabsContent value="team">
+          {team.length === 0 ? (
+            <EmptyState
+              icon={Rocket}
+              title="Nothing shipped yet"
+              description="Team-visible sites show up here as people deploy them."
+            />
+          ) : (
+            <Card className="gap-0 py-0">
+              <ul className="divide-y">
+                {team.map((u) => (
+                  <TeamActivityRow key={u.id} upload={u} />
+                ))}
+              </ul>
+            </Card>
+          )}
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }
 
-// ─── Team activity ───────────────────────────────────────────────────────────
-
-// Relative "time ago" for the activity feed — compact, no dependency.
-function timeAgo(iso: string): string {
-  const then = new Date(iso).getTime()
-  const secs = Math.round((Date.now() - then) / 1000)
-  if (secs < 60) return 'just now'
-  const mins = Math.round(secs / 60)
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.round(mins / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  const days = Math.round(hrs / 24)
-  if (days < 30) return `${days}d ago`
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+function TabCount({ n }: { n: number }) {
+  return (
+    <span className="rounded-full bg-muted px-1.5 text-xs tabular-nums text-muted-foreground">{n}</span>
+  )
 }
+
+// ─── Team activity ───────────────────────────────────────────────────────────
 
 function TeamActivityRow({ upload }: { upload: TeamUpload }) {
   const who = upload.uploaderName ?? upload.uploaderEmail
