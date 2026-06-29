@@ -1,7 +1,7 @@
 import { and, eq, inArray } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { type Anchor, type AnchorStatus, buildAnchor, resolveAnchor } from '../lib/anchor'
-import { type Comment, type CommentThread, comments, commentThreads, files } from './schema'
+import { type Comment, type CommentThread, comments, commentThreads, files, users } from './schema'
 
 // Comments repo: create/list/reply/resolve/edit/soft-delete, plus the SERVER-SIDE re-anchor
 // reconciliation. Anchor resolution happens here over trusted R2 bytes — never trusted from
@@ -29,6 +29,7 @@ async function readText(r2: FileReader, key: string): Promise<string | null> {
 export type CommentView = {
   id: string
   authorId: string | null
+  author: string | null // display name (name ?? email); kept even when soft-deleted
   body: string | null // null when soft-deleted (redacted)
   deleted: boolean
   createdAt: string
@@ -47,8 +48,10 @@ export type ThreadView = {
   end: number | null
   status: 'open' | 'resolved'
   resolvedBy: string | null
+  resolvedByName: string | null
   resolvedAt: string | null
   createdBy: string | null
+  createdByName: string | null
   createdAt: string
   updatedAt: string
   comments: CommentView[]
@@ -72,7 +75,12 @@ async function currentFile(
 
 // Fields the reconciler may rewrite. Returned only when they actually changed, so a no-op
 // listThreads writes nothing.
-type ReconcilePatch = { anchorStatus: AnchorStatus; start: number | null; end: number | null; contentHash: string | null }
+type ReconcilePatch = {
+  anchorStatus: AnchorStatus
+  start: number | null
+  end: number | null
+  contentHash: string | null
+}
 
 /** Re-resolve one thread against the current file text. `text` is null when the file is gone
  *  (→ orphaned). Returns a patch only if something changed; null otherwise. Page-level threads
@@ -91,8 +99,114 @@ function reconcilePatch(t: CommentThread, text: string | null, currentHash: stri
   }
   // One change-detector for both paths: persist only a real change, so a no-op list writes nothing.
   const unchanged =
-    next.anchorStatus === t.anchorStatus && next.start === t.start && next.end === t.end && next.contentHash === t.contentHash
+    next.anchorStatus === t.anchorStatus &&
+    next.start === t.start &&
+    next.end === t.end &&
+    next.contentHash === t.contentHash
   return unchanged ? null : next
+}
+
+/**
+ * Build ThreadViews from an ALREADY-QUERIED, ALREADY-ORDERED array of threads, reconciling
+ * anchors first and returning views in the SAME order as the input. Threads are grouped by
+ * filePath internally; the cheap hash gate runs per group (only text-anchored threads whose
+ * stored `contentHash` differs from that file's current hash are re-resolved), and each stale
+ * file's R2 body is read AT MOST ONCE (and only if a thread needs it). Files and comments load
+ * in ONE query each (no per-file/per-thread N+1), and every referenced author/actor id resolves
+ * to a display name in ONE more query.
+ *
+ * PRECONDITION: all threads belong to the SAME site — `siteId` is taken from `threads[0]` to scope
+ * the file lookup. Both callers (listThreads, listSiteThreads) query a single site, which holds.
+ */
+export async function buildThreadViews(
+  db: DrizzleD1Database,
+  r2: FileReader,
+  threads: CommentThread[],
+): Promise<ThreadView[]> {
+  if (threads.length === 0) return []
+  const siteId = threads[0].siteId
+
+  // One query for every referenced file → Map<path, {storageKey, contentHash}> (no N+1).
+  const paths = [...new Set(threads.map((t) => t.filePath))]
+  const fileRows = await db
+    .select({ path: files.path, storageKey: files.storageKey, contentHash: files.contentHash })
+    .from(files)
+    .where(and(eq(files.siteId, siteId), inArray(files.path, paths)))
+  const fileByPath = new Map(fileRows.map((f) => [f.path, { storageKey: f.storageKey, contentHash: f.contentHash }]))
+
+  // Group by file and reconcile per group: a thread whose file row is absent → text=null → orphaned.
+  const byFile = new Map<string, CommentThread[]>()
+  for (const t of threads) {
+    const list = byFile.get(t.filePath)
+    if (list) list.push(t)
+    else byFile.set(t.filePath, [t])
+  }
+  for (const [path, group] of byFile) {
+    const file = fileByPath.get(path) ?? null
+    const currentHash = file?.contentHash ?? null
+    const stale = group.filter((t) => t.anchorType === 'text' && t.anchor && t.contentHash !== currentHash)
+    if (stale.length === 0) continue
+    const text = file ? await readText(r2, file.storageKey) : null
+    for (const t of stale) {
+      const patch = reconcilePatch(t, text, currentHash)
+      if (!patch) continue
+      Object.assign(t, patch) // reflect new state in the returned view
+      await db.update(commentThreads).set(patch).where(eq(commentThreads.id, t.id))
+    }
+  }
+
+  // One query for every thread's comments, ordered as today; group by thread.
+  const ids = threads.map((t) => t.id)
+  const rows = await db.select().from(comments).where(inArray(comments.threadId, ids)).orderBy(comments.createdAt)
+  const byThread = new Map<string, Comment[]>()
+  for (const c of rows) {
+    const list = byThread.get(c.threadId)
+    if (list) list.push(c)
+    else byThread.set(c.threadId, [c])
+  }
+
+  // One query resolving every referenced author/actor id → display name (name ?? email).
+  const userIds = new Set<string>()
+  for (const t of threads) {
+    if (t.createdBy) userIds.add(t.createdBy)
+    if (t.resolvedBy) userIds.add(t.resolvedBy)
+  }
+  for (const c of rows) if (c.authorId) userIds.add(c.authorId)
+  const userById = new Map<string, { name: string | null; email: string }>()
+  if (userIds.size > 0) {
+    const userRows = await db
+      .select({ id: users.id, name: users.name, email: users.email })
+      .from(users)
+      .where(inArray(users.id, [...userIds]))
+    for (const u of userRows) userById.set(u.id, { name: u.name, email: u.email })
+  }
+  // null id → null; id with no row (dangling; harness runs FK-off) → null; else name ?? email.
+  const displayName = (id: string | null): string | null => {
+    if (id == null) return null
+    const row = userById.get(id)
+    return row ? (row.name ?? row.email) : null
+  }
+
+  return threads.map((t) => ({
+    id: t.id,
+    filePath: t.filePath,
+    anchorType: t.anchorType,
+    anchor: t.anchor as Anchor | null,
+    quote: t.quote,
+    contentHash: t.contentHash,
+    anchorStatus: t.anchorStatus,
+    start: t.start,
+    end: t.end,
+    status: t.status,
+    resolvedBy: t.resolvedBy,
+    resolvedByName: displayName(t.resolvedBy),
+    resolvedAt: t.resolvedAt,
+    createdBy: t.createdBy,
+    createdByName: displayName(t.createdBy),
+    createdAt: t.createdAt,
+    updatedAt: t.updatedAt,
+    comments: (byThread.get(t.id) ?? []).map((c) => toCommentView(c, displayName)),
+  }))
 }
 
 /**
@@ -111,55 +225,34 @@ export async function listThreads(
     .from(commentThreads)
     .where(and(eq(commentThreads.siteId, siteId), eq(commentThreads.filePath, filePath)))
     .orderBy(commentThreads.createdAt)
-
-  const file = await currentFile(db, siteId, filePath)
-  const currentHash = file?.contentHash ?? null
-  const stale = threads.filter((t) => t.anchorType === 'text' && t.anchor && t.contentHash !== currentHash)
-
-  if (stale.length > 0) {
-    const text = file ? await readText(r2, file.storageKey) : null
-    for (const t of stale) {
-      const patch = reconcilePatch(t, text, currentHash)
-      if (!patch) continue
-      Object.assign(t, patch) // reflect new state in the returned view
-      await db.update(commentThreads).set(patch).where(eq(commentThreads.id, t.id))
-    }
-  }
-
-  const ids = threads.map((t) => t.id)
-  const rows = ids.length
-    ? await db.select().from(comments).where(inArray(comments.threadId, ids)).orderBy(comments.createdAt)
-    : []
-  const byThread = new Map<string, Comment[]>()
-  for (const c of rows) {
-    const list = byThread.get(c.threadId)
-    if (list) list.push(c)
-    else byThread.set(c.threadId, [c])
-  }
-
-  return threads.map((t) => ({
-    id: t.id,
-    filePath: t.filePath,
-    anchorType: t.anchorType,
-    anchor: t.anchor as Anchor | null,
-    quote: t.quote,
-    contentHash: t.contentHash,
-    anchorStatus: t.anchorStatus,
-    start: t.start,
-    end: t.end,
-    status: t.status,
-    resolvedBy: t.resolvedBy,
-    resolvedAt: t.resolvedAt,
-    createdBy: t.createdBy,
-    createdAt: t.createdAt,
-    updatedAt: t.updatedAt,
-    comments: (byThread.get(t.id) ?? []).map(toCommentView),
-  }))
+  return buildThreadViews(db, r2, threads)
 }
 
-function toCommentView(c: Comment): CommentView {
+/**
+ * List EVERY thread on a site (+ ordered comments), reconciling anchors first. Threads come back
+ * ordered by (filePath ASC, createdAt ASC); reconciliation runs per file with the same cheap
+ * hash gate and at-most-one-R2-read-per-file guarantee as the per-file `listThreads`.
+ */
+export async function listSiteThreads(db: DrizzleD1Database, r2: FileReader, siteId: string): Promise<ThreadView[]> {
+  const threads = await db
+    .select()
+    .from(commentThreads)
+    .where(eq(commentThreads.siteId, siteId))
+    .orderBy(commentThreads.filePath, commentThreads.createdAt)
+  return buildThreadViews(db, r2, threads)
+}
+
+function toCommentView(c: Comment, displayName: (id: string | null) => string | null): CommentView {
   const deleted = c.deletedAt !== null
-  return { id: c.id, authorId: c.authorId, body: deleted ? null : c.body, deleted, createdAt: c.createdAt, editedAt: c.editedAt }
+  return {
+    id: c.id,
+    authorId: c.authorId,
+    author: displayName(c.authorId), // identity kept even when the body is redacted
+    body: deleted ? null : c.body,
+    deleted,
+    createdAt: c.createdAt,
+    editedAt: c.editedAt,
+  }
 }
 
 export type CreateThreadInput = {
@@ -256,7 +349,12 @@ export async function reopenThread(db: DrizzleD1Database, threadId: string): Pro
     .where(eq(commentThreads.id, threadId))
 }
 
-export async function editComment(db: DrizzleD1Database, threadId: string, commentId: string, body: string): Promise<void> {
+export async function editComment(
+  db: DrizzleD1Database,
+  threadId: string,
+  commentId: string,
+  body: string,
+): Promise<void> {
   const ts = now()
   await db.batch([
     db.update(comments).set({ body, editedAt: ts }).where(eq(comments.id, commentId)),

@@ -10,6 +10,7 @@ export type ThreadStatus = 'open' | 'resolved'
 export interface CommentItem {
   id: string
   authorId: string | null
+  author: string | null // display name (name ?? email); kept even when soft-deleted
   body: string | null // null when soft-deleted
   deleted: boolean
   createdAt: string
@@ -26,8 +27,10 @@ export interface Thread {
   end: number | null
   status: ThreadStatus
   resolvedBy: string | null
+  resolvedByName: string | null
   resolvedAt: string | null
   createdBy: string | null
+  createdByName: string | null
   createdAt: string
   updatedAt: string
   comments: CommentItem[]
@@ -47,8 +50,7 @@ type SiteRef = Pick<ViewerSite, 'spaceSlug' | 'siteSlug'>
 const base = (s: SiteRef) => `/api/sites/${s.spaceSlug}/${s.siteSlug}/comments`
 
 export const comments = {
-  list: (s: SiteRef, filePath: string) =>
-    api.get<Thread[]>(`${base(s)}?filePath=${encodeURIComponent(filePath)}`),
+  list: (s: SiteRef, filePath: string) => api.get<Thread[]>(`${base(s)}?filePath=${encodeURIComponent(filePath)}`),
   create: (s: SiteRef, input: NewThreadInput) =>
     api.post<{ threadId: string; anchorStatus: AnchorStatus }>(base(s), input),
   reply: (s: SiteRef, threadId: string, body: string) =>
