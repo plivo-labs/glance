@@ -44,21 +44,40 @@ export function VisibilityMenu({
   value,
   onChange,
   disabled,
+  trigger = 'button',
 }: {
   value: Visibility
   onChange: (v: Visibility) => void
   disabled?: boolean
+  // 'chip' renders the status badge itself as the trigger (for dense table rows); 'button' is
+  // the standalone form-control look used on the deploy card.
+  trigger?: 'button' | 'chip'
 }) {
   const m = VISIBILITY_META[value]
   const Icon = m.icon
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm" disabled={disabled} className="gap-1.5">
-          <Icon className="size-3.5" />
-          {m.label}
-          <ChevronDown className="size-3.5 opacity-60" />
-        </Button>
+        {trigger === 'chip' ? (
+          <button
+            type="button"
+            disabled={disabled}
+            className={cn(
+              'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium transition-opacity hover:opacity-80 disabled:opacity-50',
+              m.badge,
+            )}
+          >
+            <Icon className="size-3" />
+            {m.label}
+            <ChevronDown className="size-3 opacity-60" />
+          </button>
+        ) : (
+          <Button variant="outline" size="sm" disabled={disabled} className="gap-1.5">
+            <Icon className="size-3.5" />
+            {m.label}
+            <ChevronDown className="size-3.5 opacity-60" />
+          </Button>
+        )}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-60">
         <DropdownMenuLabel>Who can see this</DropdownMenuLabel>

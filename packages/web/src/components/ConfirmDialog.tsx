@@ -17,25 +17,34 @@ import { Loader2 } from 'lucide-react'
 // while it runs we show a spinner; on success we close, on failure we toast and stay open.
 export function ConfirmDialog({
   children,
+  open: openProp,
+  onOpenChange,
   title,
   description,
   confirmLabel = 'Confirm',
   destructive = false,
   onConfirm,
 }: {
-  children: React.ReactNode
+  // Trigger element. Omit when driving the dialog externally via `open`/`onOpenChange`
+  // (e.g. opened from a dropdown-menu item).
+  children?: React.ReactNode
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
   title: string
   description?: string
   confirmLabel?: string
   destructive?: boolean
   onConfirm: () => void | Promise<void>
 }) {
-  const [open, setOpen] = useState(false)
+  const [internalOpen, setInternalOpen] = useState(false)
   const [busy, setBusy] = useState(false)
+  const controlled = openProp !== undefined
+  const open = controlled ? openProp : internalOpen
+  const setOpen = (o: boolean) => (controlled ? onOpenChange?.(o) : setInternalOpen(o))
 
   return (
     <AlertDialog open={open} onOpenChange={(o) => !busy && setOpen(o)}>
-      <AlertDialogTrigger asChild>{children}</AlertDialogTrigger>
+      {children && <AlertDialogTrigger asChild>{children}</AlertDialogTrigger>}
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
