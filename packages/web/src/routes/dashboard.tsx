@@ -10,6 +10,7 @@ import {
 } from 'react-router'
 import {
   ExternalLink,
+  FileUp,
   FolderUp,
   Pencil,
   Plus,
@@ -288,6 +289,7 @@ function deriveSlug(files: DroppedFile[]): string {
 function DeployCard({ spaces }: { spaces: SpaceSummary[] }) {
   const revalidator = useRevalidator()
   const slugCheck = useFetcher<SlugExists>()
+  const folderInput = useRef<HTMLInputElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
 
   const defaultSpace = spaces.find((s) => s.type === 'personal')?.slug ?? spaces[0]?.slug ?? ''
@@ -439,14 +441,15 @@ function DeployCard({ spaces }: { spaces: SpaceSummary[] }) {
           ownedConflict={ownedConflict}
           busy={busy}
           onDragActive={setDragActive}
-          onChooseClick={() => fileInput.current?.click()}
+          onChooseFolder={() => folderInput.current?.click()}
+          onChooseFiles={() => fileInput.current?.click()}
           onDropFiles={async (dt) => {
             setDragActive(false)
             handleIncoming(await filesFromDataTransfer(dt))
           }}
         />
         <input
-          ref={fileInput}
+          ref={folderInput}
           type="file"
           multiple
           // @ts-expect-error non-standard attribute required for folder selection
@@ -455,6 +458,16 @@ function DeployCard({ spaces }: { spaces: SpaceSummary[] }) {
           onChange={(e) => {
             if (e.target.files) handleIncoming(filesFromInput(e.target.files))
             e.target.value = '' // allow re-selecting the same folder
+          }}
+        />
+        <input
+          ref={fileInput}
+          type="file"
+          multiple
+          hidden
+          onChange={(e) => {
+            if (e.target.files) handleIncoming(filesFromInput(e.target.files))
+            e.target.value = '' // allow re-selecting the same file
           }}
         />
 
@@ -592,7 +605,8 @@ function Dropzone({
   ownedConflict,
   busy,
   onDragActive,
-  onChooseClick,
+  onChooseFolder,
+  onChooseFiles,
   onDropFiles,
 }: {
   dragActive: boolean
@@ -601,7 +615,8 @@ function Dropzone({
   ownedConflict: boolean
   busy: boolean
   onDragActive: (v: boolean) => void
-  onChooseClick: () => void
+  onChooseFolder: () => void
+  onChooseFiles: () => void
   onDropFiles: (dt: DataTransfer) => void
 }) {
   const tint = takenByOther
@@ -637,12 +652,18 @@ function Dropzone({
       </div>
       <div>
         <p className="font-medium">Drop a folder or files here</p>
-        <p className="text-sm text-muted-foreground">or pick one from your computer</p>
+        <p className="text-sm text-muted-foreground">or pick from your computer</p>
       </div>
-      <Button type="button" variant="outline" onClick={onChooseClick} disabled={busy}>
-        <FolderUp />
-        Choose folder
-      </Button>
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        <Button type="button" variant="outline" onClick={onChooseFolder} disabled={busy}>
+          <FolderUp />
+          Choose folder
+        </Button>
+        <Button type="button" variant="outline" onClick={onChooseFiles} disabled={busy}>
+          <FileUp />
+          Choose files
+        </Button>
+      </div>
     </div>
   )
 }
