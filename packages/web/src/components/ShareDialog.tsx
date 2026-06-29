@@ -18,7 +18,7 @@ import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/states'
 import { cn } from '@/lib/utils'
 
-type Props = { spaceSlug: string; siteSlug: string; title?: string | null }
+type Props = { spaceSlug: string; siteSlug: string; title?: string | null; compact?: boolean }
 
 function toggle(set: Set<string>, id: string): Set<string> {
   const next = new Set(set)
@@ -30,7 +30,7 @@ function toggle(set: Set<string>, id: string): Set<string> {
 // Owner-only sharing: pick specific people and/or groups to grant access, on top of the
 // site's visibility tier. Data loads on open (event-driven — no effect); Save replaces the
 // whole set via PUT.
-export function ShareDialog({ spaceSlug, siteSlug, title }: Props) {
+export function ShareDialog({ spaceSlug, siteSlug, title, compact }: Props) {
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -88,10 +88,22 @@ export function ShareDialog({ spaceSlug, siteSlug, title }: Props) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>
-        <Button variant="outline" size="sm">
-          <Share2 />
-          Share with people &amp; groups
-        </Button>
+        {compact ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8 rounded-full"
+            title="Share with people & groups"
+            aria-label="Share with people & groups"
+          >
+            <Share2 />
+          </Button>
+        ) : (
+          <Button variant="outline" size="sm">
+            <Share2 />
+            Share with people &amp; groups
+          </Button>
+        )}
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>

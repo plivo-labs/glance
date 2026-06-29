@@ -8,12 +8,15 @@ import { Button } from '@/components/ui/button'
 export function CopyButton({
   text,
   label = 'Copy link',
+  title,
   className,
   variant = 'outline',
   size = 'sm',
 }: {
   text: string
   label?: string
+  // Hover/accessible name when rendered icon-only (label=''); falls back to the label otherwise.
+  title?: string
   className?: string
   variant?: React.ComponentProps<typeof Button>['variant']
   size?: React.ComponentProps<typeof Button>['size']
@@ -24,6 +27,8 @@ export function CopyButton({
       type="button"
       variant={variant}
       size={size}
+      title={title ?? label}
+      aria-label={title ?? label}
       className={className}
       onClick={async () => {
         try {
