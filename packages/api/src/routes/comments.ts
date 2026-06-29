@@ -6,6 +6,7 @@ import {
   editComment,
   getComment,
   getThread,
+  listSiteThreads,
   listThreads,
   reopenThread,
   resolveThread,
@@ -64,11 +65,14 @@ function cleanBody(v: unknown): string | null {
 // Every route in this router is a comment route, so auth is required on all of them.
 comments.use('*', requireAuth)
 
-// GET — list threads (+ reconciled anchors + ordered comments) for one file.
+// GET — list threads (+ reconciled anchors + ordered comments). With ?filePath, one file's
+// threads (as before); with NO filePath at all, the whole site's threads. Authz is site-level
+// (siteOrError), so the site-wide list exposes nothing the per-file list didn't.
 comments.get('/:space/:site/comments', async (c) => {
   const site = await siteOrError(c)
   if (site instanceof Response) return site
   const filePath = c.req.query('filePath')
+  if (filePath === undefined) return c.json(await listSiteThreads(c.get('db'), c.env.GLANCE_FILES, site.id))
   if (!filePath || tooLong(filePath, MAX_PATH)) return c.json({ error: 'filePath required' }, 400)
   return c.json(await listThreads(c.get('db'), c.env.GLANCE_FILES, site.id, filePath))
 })

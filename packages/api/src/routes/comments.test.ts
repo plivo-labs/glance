@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { Hono } from 'hono'
 import { requireSameOrigin } from '../middleware/auth'
-import { makeDb, makeKv, makeR2, seedFile, seedMember, seedSite, seedSpace, seedUser } from '../test/harness'
+import { makeDb, makeKv, makeR2, seedComment, seedFile, seedMember, seedSite, seedSpace, seedThread, seedUser } from '../test/harness'
 import type { AppEnv } from '../types'
 import { comments } from './comments'
 import { sites } from './sites'
@@ -141,5 +141,93 @@ describe('comments routes — auth / access / authz', () => {
     expect(after[0].comments).toHaveLength(1)
     expect(after[0].comments[0].deleted).toBe(true)
     expect(after[0].comments[0].body).toBeNull()
+  })
+})
+
+describe('comments routes — site-wide list (filePath optional)', () => {
+  /** Seed acme/doc with TWO files, each carrying one thread + opening comment. */
+  async function seedSiteWithTwoFiles(
+    db: ReturnType<typeof makeDb>,
+    r2: ReturnType<typeof makeR2>,
+    ownerId: string,
+    visibility: 'private' | 'group' | 'team' | 'public' = 'group',
+  ) {
+    const sp = await seedSpace(db, { createdBy: ownerId, slug: 'acme' })
+    const siteId = await seedSite(db, { spaceId: sp, ownerId, slug: 'doc', visibility })
+    await seedFile(db, r2, siteId, { path: 'index.html', text: '<p>The quick brown fox jumps.</p>' })
+    await seedFile(db, r2, siteId, { path: 'about.html', text: '<p>About the lazy dog.</p>' })
+    const t1 = await seedThread(db, { siteId, filePath: 'index.html', createdBy: ownerId })
+    await seedComment(db, { threadId: t1, authorId: ownerId, body: 'on index' })
+    const t2 = await seedThread(db, { siteId, filePath: 'about.html', createdBy: ownerId })
+    await seedComment(db, { threadId: t2, authorId: ownerId, body: 'on about' })
+    return { spaceId: sp, siteId, t1, t2 }
+  }
+
+  test('get-no-filePath-lists-whole-site: no ?filePath → threads from BOTH files', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    const member = await mintUser(db, kv, { id: 'member' })
+    const { spaceId } = await seedSiteWithTwoFiles(db, r2, owner, 'group')
+    await seedMember(db, spaceId, member)
+
+    const res = await app.request(url(), { headers: auth(member) }, env)
+    expect(res.status).toBe(200)
+    const threads = await res.json()
+    expect(threads).toHaveLength(2)
+    expect(new Set(threads.map((t: { filePath: string }) => t.filePath))).toEqual(new Set(['index.html', 'about.html']))
+  })
+
+  test('get-with-filePath-still-per-file: ?filePath=<one file> → only that file (back-compat)', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    const member = await mintUser(db, kv, { id: 'member' })
+    const { spaceId } = await seedSiteWithTwoFiles(db, r2, owner, 'group')
+    await seedMember(db, spaceId, member)
+
+    const res = await app.request(url('?filePath=index.html'), { headers: auth(member) }, env)
+    expect(res.status).toBe(200)
+    const threads = await res.json()
+    expect(threads).toHaveLength(1)
+    expect(threads[0].filePath).toBe('index.html')
+  })
+
+  test('get-oversized-filePath-still-400: ?filePath over MAX_PATH → 400 (guard preserved)', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    const member = await mintUser(db, kv, { id: 'member' })
+    const { spaceId } = await seedSiteWithTwoFiles(db, r2, owner, 'group')
+    await seedMember(db, spaceId, member)
+
+    const res = await app.request(url(`?filePath=${'a'.repeat(1025)}`), { headers: auth(member) }, env)
+    expect(res.status).toBe(400)
+  })
+
+  test('get-empty-filePath-still-400: explicit ?filePath= (present but empty) → 400, not site-wide', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    const member = await mintUser(db, kv, { id: 'member' })
+    const { spaceId } = await seedSiteWithTwoFiles(db, r2, owner, 'group')
+    await seedMember(db, spaceId, member)
+
+    // Present-but-empty is distinct from truly-absent: it must hit the 400 guard, NOT fall through
+    // to the site-wide list (the empty-vs-undefined seam this phase introduces).
+    const res = await app.request(url('?filePath='), { headers: auth(member) }, env)
+    expect(res.status).toBe(400)
+  })
+
+  test('site-list-access-still-gated: public → 403; group non-member → 403', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    const outsider = await mintUser(db, kv, { id: 'outsider' })
+
+    const pub = await setup()
+    const pubOwner = await mintUser(pub.db, pub.kv, { id: 'pubowner' })
+    await seedSiteWithTwoFiles(pub.db, pub.r2, pubOwner, 'public')
+    const onPublic = await pub.app.request(url(), { headers: auth(pubOwner) }, pub.env)
+    expect(onPublic.status).toBe(403)
+
+    await seedSiteWithTwoFiles(db, r2, owner, 'group')
+    const onGroupNonMember = await app.request(url(), { headers: auth(outsider) }, env)
+    expect(onGroupNonMember.status).toBe(403)
   })
 })
