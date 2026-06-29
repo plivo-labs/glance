@@ -62,7 +62,9 @@ const router = createBrowserRouter([
   { path: '/login', lazy: () => import('./routes/login') },
   // Site preview is full-bleed too — a chrome-less, full-screen iframe (opened in a new tab).
   // Lives outside the shell so there's no header/nav; loader 401 → /login, 403/404/410 → RootError.
-  { path: '/:space/:site', lazy: () => import('./routes/viewer'), ErrorBoundary: RootError },
+  // The trailing `*` carries an optional in-site file path (`/space/site/docs/page.html`) so a
+  // deep link / the directory-listing fallback points the iframe at that file and the URL reflects it.
+  { path: '/:space/:site/*', lazy: () => import('./routes/viewer'), ErrorBoundary: RootError },
   {
     path: '/',
     Component: AppShell,

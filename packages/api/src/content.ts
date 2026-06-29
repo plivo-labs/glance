@@ -305,16 +305,19 @@ function markdownCsp(frameAncestors: string): string {
 }
 
 // Auto-index for a directory that has no index.html. `dir` is '' (root) or `docs/`; `paths`
-// are full site paths under it. Links are RELATIVE to the served directory URL so they work
-// under both public (/space/site/…) and gated (/_t/token/space/site/…) prefixes. Status 200
-// (like nginx/Apache autoindex) so it renders cleanly in the viewer iframe; never cached
-// since a replace can change the file set.
+// are full site paths under it. Links point at the APP viewer URL with target="_top" so a click
+// breaks OUT of the content iframe — the browser address bar updates to the file's app route and
+// the SPA chrome (toolbar/comments) is kept; the viewer re-mints any gated token for that path.
+// Status 200 (like nginx/Apache autoindex) so it renders cleanly in the viewer iframe; never
+// cached since a replace can change the file set.
 function directoryListing(c: Ctx, site: string, paths: string[], dir: string): Response {
+  const appBase = `${c.env.APP_URL}/${site}` // e.g. https://app.example.com/space/site
   const rels = [...new Set(paths.map((p) => p.slice(dir.length)).filter(Boolean))].sort()
   const rows = rels
     .map((rel) => {
-      const href = rel.split('/').map(encodeURIComponent).join('/')
-      return `<li><a href="${escapeHtml(href)}">${escapeHtml(rel)}</a></li>`
+      const full = `${dir}${rel}` // path from the SITE root, what the app route needs
+      const href = `${appBase}/${full.split('/').map(encodeURIComponent).join('/')}`
+      return `<li><a href="${escapeHtml(href)}" target="_top">${escapeHtml(rel)}</a></li>`
     })
     .join('')
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(

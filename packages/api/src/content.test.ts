@@ -184,8 +184,9 @@ describe('directory listing fallback (no index.html)', () => {
     expect(res.headers.get('cache-control')).toBe('no-store')
     const body = await res.text()
     expect(body).toContain('No <code>index.html')
-    expect(body).toContain('href="home.html"')
-    expect(body).toContain('href="assets/app.js"')
+    // Links point at the app viewer route (URL updates) and break out of the iframe (target=_top).
+    expect(body).toContain('href="https://glance.example.com/sam/site/home.html" target="_top"')
+    expect(body).toContain('href="https://glance.example.com/sam/site/assets/app.js" target="_top"')
   })
 
   test('single-file site still serves the lone file at the root (fallback preserved)', async () => {

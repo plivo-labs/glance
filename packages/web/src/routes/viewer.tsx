@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { MessageSquarePlus } from 'lucide-react'
-import { type LoaderFunctionArgs, useLoaderData } from 'react-router'
+import { type LoaderFunctionArgs, useLoaderData, useParams } from 'react-router'
 import { toast } from 'sonner'
 import { api, ApiError } from '@/lib/api'
 import { toLogin } from '@/lib/nav'
@@ -33,12 +33,16 @@ export function Component() {
   const site = useLoaderData() as ViewerSite
   const canReview = site.visibility !== 'public'
 
+  // Optional in-site file path from the route splat (`/space/site/docs/page.html`). Appended to the
+  // content URL so a deep link / the directory-listing fallback opens that specific file; '' = root.
+  const sitePath = useParams()['*'] ?? ''
+
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const contentOrigin = useMemo(() => new URL(site.contentUrl).origin, [site.contentUrl])
-  const src = useMemo(
-    () => (canReview ? withAnnotate(site.contentUrl) : site.contentUrl),
-    [site.contentUrl, canReview],
-  )
+  const src = useMemo(() => {
+    const target = appendPath(site.contentUrl, sitePath)
+    return canReview ? withAnnotate(target) : target
+  }, [site.contentUrl, canReview, sitePath])
 
   const [review, setReview] = useState(false)
   const [loaded, setLoaded] = useState(false)
@@ -129,7 +133,10 @@ export function Component() {
           src={src}
           title={site.title ?? site.siteSlug}
           onLoad={() => setLoaded(true)}
-          sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+          // allow-top-navigation-by-user-activation: lets the directory-listing links (target=_top)
+          // break out to the app route on a user click, so the address bar updates. Gesture-gated,
+          // so iframed content can't silently redirect the tab.
+          sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-top-navigation-by-user-activation"
         />
         {review && selection?.rect && (
           <Button
@@ -173,4 +180,11 @@ function withAnnotate(u: string): string {
   const url = new URL(u)
   url.searchParams.set('glance_annotate', '1')
   return url.toString()
+}
+
+// contentUrl always ends in `/` (…/space/site/ or …/_t/token/space/site/); append the in-site
+// path so sub-resources still resolve relative to the site root. Each segment is encoded.
+function appendPath(contentUrl: string, filePath: string): string {
+  if (!filePath) return contentUrl
+  return contentUrl + filePath.split('/').map(encodeURIComponent).join('/')
 }
