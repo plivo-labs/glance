@@ -37,14 +37,12 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build web
-        run: bun run build:web
-
-      # The committed wrangler configs carry YOUR_* placeholders (real binding IDs are kept out of
-      # this public template). Wire the real, non-secret identifiers in from repo Actions Variables
-      # before any wrangler call, else the deploy 7003s on /accounts/YOUR_ACCOUNT_ID/...
-      - name: Wire Cloudflare binding IDs into wrangler config
-        working-directory: packages/api
+      # The committed wrangler configs AND the SPA's public/_headers carry YOUR_* / YOUR-SUBDOMAIN
+      # placeholders (real binding IDs are kept out of this public template, via skip-worktree). Wire
+      # the real, non-secret identifiers in from repo Actions Variables BEFORE build:web (so the
+      # _headers CSP copied into dist has the real content origin) and before any wrangler call (else
+      # the deploy 7003s on /accounts/YOUR_ACCOUNT_ID/... ).
+      - name: Wire Cloudflare binding IDs into config
         env:
           CF_ACCOUNT_ID: ${{ vars.CF_ACCOUNT_ID }}
           CF_D1_DATABASE_ID: ${{ vars.CF_D1_DATABASE_ID }}
@@ -55,7 +53,7 @@ jobs:
           : "${CF_D1_DATABASE_ID:?set repo Actions variable CF_D1_DATABASE_ID}"
           : "${CF_KV_NAMESPACE_ID:?set repo Actions variable CF_KV_NAMESPACE_ID}"
           : "${CF_WORKERS_SUBDOMAIN:?set repo Actions variable CF_WORKERS_SUBDOMAIN}"
-          for f in wrangler.jsonc wrangler.content.jsonc; do
+          for f in packages/api/wrangler.jsonc packages/api/wrangler.content.jsonc packages/web/public/_headers; do
             sed -i \
               -e "s/YOUR_ACCOUNT_ID/${CF_ACCOUNT_ID}/g" \
               -e "s/YOUR_D1_DATABASE_ID/${CF_D1_DATABASE_ID}/g" \
@@ -63,6 +61,9 @@ jobs:
               -e "s/YOUR-SUBDOMAIN/${CF_WORKERS_SUBDOMAIN}/g" \
               "$f"
           done
+
+      - name: Build web
+        run: bun run build:web
 
       - name: Apply D1 migrations (remote)
         working-directory: packages/api
