@@ -10,6 +10,7 @@
       "!**/worker-configuration.d.ts",
       "!**/drizzle",
       "!**/annotate/bundle.ts",
+      "!**/install-script.ts",
       "!**/components/ui",
       "!**/bun.lock",
       "!**/.omc",

@@ -3,6 +3,7 @@ import { secureHeaders } from 'hono/secure-headers'
 import { withDb } from './db/client'
 import { superadminExists } from './db/repo'
 import { buildPublicConfig } from './lib/bootstrap'
+import { INSTALL_SH } from './install-script'
 import { isGoogleEnabled } from './lib/oauth'
 import { requireSameOrigin } from './middleware/auth'
 import { admin } from './routes/admin'
@@ -41,6 +42,20 @@ app.use('*', (c, next) =>
     },
   })(c, next),
 )
+// Public installer: serves the repo-root install.sh (single source via build:install) with
+// GLANCE_API_URL defaulted to THIS origin, so `curl -fsSL <origin>/api/install | sh` lands a CLI
+// already pointed here — no env to set. Registered BEFORE the /api/* guards: it needs no DB and
+// must accept plain curl (no Origin / no cookie). Lives under /api/* so run_worker_first reaches
+// the worker instead of the SPA asset fallback.
+app.get('/api/install', (c) => {
+  const origin = new URL(c.req.url).origin
+  const script = INSTALL_SH.replace(
+    '#!/bin/sh\nset -eu\n',
+    `#!/bin/sh\nset -eu\n\n# Defaulted by ${origin}/api/install — export GLANCE_API_URL before piping to override.\nGLANCE_API_URL="\${GLANCE_API_URL:-${origin}}"\n`,
+  )
+  return c.text(script, 200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' })
+})
+
 app.use('/api/*', requireSameOrigin)
 app.use('/api/*', withDb)
 

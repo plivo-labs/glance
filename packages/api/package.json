@@ -6,6 +6,7 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "build:annotate": "bun scripts/build-annotate.ts",
+    "build:install": "bun scripts/build-install.ts",
     "deploy": "wrangler deploy",
     "deploy:content": "bun run build:annotate && wrangler deploy --config wrangler.content.jsonc"
   },

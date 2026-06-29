@@ -173,17 +173,18 @@ curl -fsSL https://raw.githubusercontent.com/plivo-labs/glance/main/install.sh |
 
 It installs to `~/.local/bin/glance`. Override the target with `GLANCE_INSTALL_DIR`.
 
-**Pointing teammates at your instance in one shot.** Pass `GLANCE_API_URL` to the installer and it
-persists `export GLANCE_API_URL=...` into their shell profile, so `glance` targets your deployment
-with no extra step. Send teammates exactly this (with your subdomain filled in):
+**Pointing teammates at your instance in one shot.** Your deployment serves the installer itself at
+`/api/install`, with `GLANCE_API_URL` already baked in to that origin. Teammates run one line and the
+CLI targets your instance — no env var to set, no GitHub URL to remember:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/plivo-labs/glance/main/install.sh \
-  | GLANCE_API_URL=https://glance.your-subdomain.workers.dev sh
+curl -fsSL https://glance.your-subdomain.workers.dev/api/install | sh
 ```
 
-They open a new shell, run `glance login` (Google SSO), and start deploying. Without
-`GLANCE_API_URL` the CLI defaults to `http://localhost:8787`.
+(Equivalent to piping the GitHub installer with `GLANCE_API_URL=…` set by hand — that still works too:
+`curl -fsSL https://raw.githubusercontent.com/plivo-labs/glance/main/install.sh | GLANCE_API_URL=… sh`.)
+They open a new shell, run `glance login` (Google SSO), and start deploying. Without `GLANCE_API_URL`
+the CLI defaults to `http://localhost:8787`.
 
 **AI-agent skill.** If `npx` is on PATH, the installer also runs `npx skills add` to install the
 `glance-cli` skill globally, so coding agents (Claude Code, Codex, Cursor, …) know how to drive the
