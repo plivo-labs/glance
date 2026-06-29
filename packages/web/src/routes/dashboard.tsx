@@ -2,7 +2,6 @@ import { useRef, useState } from 'react'
 import {
   Link,
   type LoaderFunctionArgs,
-  useFetcher,
   useLoaderData,
   useNavigate,
   useRevalidator,
@@ -287,9 +286,12 @@ function deriveSlug(files: DroppedFile[]): string {
 
 function DeployCard({ spaces }: { spaces: SpaceSummary[] }) {
   const revalidator = useRevalidator()
-  const slugCheck = useFetcher<SlugExists>()
   const folderInput = useRef<HTMLInputElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
+  // Slug-conflict probe. MUST use the `api` helper, not useFetcher().load() — `/api/*`
+  // has no client route, so a fetcher.load matches the `*` not-found splat and throws a
+  // 404 into the AppShell error boundary (renders the 404 page, URL stuck on /dashboard).
+  const checkSeq = useRef(0)
 
   const defaultSpace = spaces.find((s) => s.type === 'personal')?.slug ?? spaces[0]?.slug ?? ''
   const [space, setSpace] = useState(defaultSpace)
@@ -302,8 +304,8 @@ function DeployCard({ spaces }: { spaces: SpaceSummary[] }) {
   // Files dropped before a slug was set — held until the user confirms via Deploy.
   const [staged, setStaged] = useState<DroppedFile[] | null>(null)
 
-  const conflict = slugCheck.data
-  const checking = slugCheck.state !== 'idle'
+  const [conflict, setConflict] = useState<SlugExists | null>(null)
+  const [checking, setChecking] = useState(false)
   const takenByOther = conflict?.exists === true && conflict.owned === false
   const ownedConflict = conflict?.exists === true && conflict.owned === true
   const available = conflict?.exists === false
@@ -311,8 +313,18 @@ function DeployCard({ spaces }: { spaces: SpaceSummary[] }) {
   const busy = upload.phase === 'uploading'
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
 
-  function checkSlug() {
-    if (slug && space) slugCheck.load(`/api/sites/${space}/${slug}/exists`)
+  async function checkSlug(targetSlug = slug) {
+    if (!targetSlug || !space) return
+    const seq = ++checkSeq.current
+    setChecking(true)
+    try {
+      const res = await api.get<SlugExists>(`/api/sites/${space}/${targetSlug}/exists`)
+      if (seq === checkSeq.current) setConflict(res)
+    } catch {
+      if (seq === checkSeq.current) setConflict(null)
+    } finally {
+      if (seq === checkSeq.current) setChecking(false)
+    }
   }
 
   async function doUpload(files: DroppedFile[], replace: boolean) {
@@ -326,7 +338,7 @@ function DeployCard({ spaces }: { spaces: SpaceSummary[] }) {
       setUpload({ phase: 'done', url: res.url })
       setStaged(null)
       toast.success('Deployed', { description: res.url })
-      slugCheck.load(`/api/sites/${space}/${slug}/exists`) // now owned
+      void checkSlug() // now owned
       revalidator.revalidate()
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Upload failed'
@@ -364,7 +376,7 @@ function DeployCard({ spaces }: { spaces: SpaceSummary[] }) {
     const derived = deriveSlug(files)
     if (derived) {
       setSlug(derived)
-      if (space) slugCheck.load(`/api/sites/${space}/${derived}/exists`)
+      void checkSlug(derived)
     }
     setStaged(files)
   }
@@ -405,7 +417,7 @@ function DeployCard({ spaces }: { spaces: SpaceSummary[] }) {
               id="deploy-slug"
               value={slug}
               onChange={(e) => setSlug(e.target.value.toLowerCase())}
-              onBlur={checkSlug}
+              onBlur={() => checkSlug()}
               placeholder="my-runbook"
               className="font-mono"
               disabled={busy}
