@@ -1,19 +1,17 @@
 import { and, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { isSpaceMember } from '../db/repo'
-import type { NewFileRow, Visibility } from '../db/schema'
+import type { NewFileRow } from '../db/schema'
 import { files, sites, spaces } from '../db/schema'
 import { hashContent } from '../lib/anchor'
 import { isValidSlug } from '../lib/slug'
 import { deleteKeys, MAX_FILE_BYTES, sanitizePath } from '../lib/storage'
+import { isVisibility, normalizeVisibility } from '../lib/visibility'
 import { requireAuth } from '../middleware/auth'
 import type { AppEnv } from '../types'
 
 // Phase 4: multipart create-or-replace upload. Mounted at /api/upload.
 // Accepts a browser cookie OR a CLI Bearer token (both resolved by requireAuth).
-
-const VISIBILITIES: ReadonlySet<string> = new Set(['private', 'group', 'team', 'public'])
-const isVisibility = (v: unknown): v is Visibility => typeof v === 'string' && VISIBILITIES.has(v)
 
 // HTML is the only anchorable type (v1 anchors over static HTML source text), so it's the only
 // type we read-and-hash at upload; everything else streams straight through with a null hash.
@@ -36,7 +34,7 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
   const { spaceSlug, siteSlug } = c.req.param()
 
   const form = await c.req.formData()
-  const visibility = (form.get('visibility') as string) || 'team'
+  const visibility = normalizeVisibility((form.get('visibility') as string) || 'team')
   const uploaded = form.getAll('files').filter((f): f is File => f instanceof File)
 
   // Build (path, file) pairs, dropping empty paths; validate per-file size before storing.

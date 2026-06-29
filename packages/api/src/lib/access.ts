@@ -7,11 +7,11 @@ const ALLOW: AccessResult = { ok: true }
 
 /**
  * Pure permission logic — the single source of truth for visibility, used by both
- * the API and the content worker. `isMember` (space membership for `group` sites)
+ * the API and the content worker. `isMember` (space membership for `members` sites)
  * is resolved by the caller via DB lookup so this stays pure and unit-testable.
  *
  *   private → owner only
- *   group   → space member (or owner)
+ *   members → space member (or owner)
  *   team    → any authenticated user in the allowed domain
  *   public  → anyone
  *   shared  → any user/group explicitly granted access (additive, any tier)
@@ -34,7 +34,7 @@ export function checkAccess(
       return ALLOW
     case 'team':
       return user ? ALLOW : { ok: false, status: 401 }
-    case 'group':
+    case 'members':
       if (!user) return { ok: false, status: 401 }
       return isMember || site.ownerId === user.id ? ALLOW : { ok: false, status: 403 }
     case 'private':

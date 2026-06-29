@@ -12,14 +12,14 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
-export const VISIBILITIES: Visibility[] = ['private', 'group', 'team', 'public']
+export const VISIBILITIES: Visibility[] = ['private', 'members', 'team', 'public']
 
 export const VISIBILITY_META: Record<
   Visibility,
   { label: string; hint: string; icon: LucideIcon; badge: string }
 > = {
   private: { label: 'Private', hint: 'Only you', icon: Lock, badge: 'bg-muted text-muted-foreground' },
-  group: { label: 'Group', hint: 'This space only', icon: Users, badge: 'bg-sky-500/15 text-sky-600 dark:text-sky-300' },
+  members: { label: 'Members', hint: 'This space only', icon: Users, badge: 'bg-sky-500/15 text-sky-600 dark:text-sky-300' },
   team: { label: 'Team', hint: 'Everyone in your org', icon: Building2, badge: 'bg-primary/15 text-primary' },
   public: { label: 'Public', hint: 'Anyone with the link', icon: Globe, badge: 'bg-success/15 text-success' },
 }

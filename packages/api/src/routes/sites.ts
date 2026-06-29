@@ -16,13 +16,11 @@ import { resolveSite } from '../lib/site-access'
 import { isValidSlug } from '../lib/slug'
 import { deleteSiteObjects } from '../lib/storage'
 import { signToken } from '../lib/token'
+import { isVisibility, normalizeVisibility } from '../lib/visibility'
 import { requireAuth } from '../middleware/auth'
 import type { AppEnv, SessionUser } from '../types'
 
 // Phase 4: site CRUD + viewer metadata. Mounted at /api/sites.
-
-const VISIBILITIES: ReadonlySet<string> = new Set(['private', 'group', 'team', 'public'])
-const isVisibility = (v: unknown): v is Visibility => typeof v === 'string' && VISIBILITIES.has(v)
 
 // Gated-content link lifetime. The token rides in the iframe URL path and is inherited by
 // relative sub-resources, so it must outlast a real viewing session — 5min broke long views
@@ -117,7 +115,8 @@ sites.post('/', requireAuth, async (c) => {
     return c.json({ error: 'spaceSlug and siteSlug are required' }, 400)
   }
   if (!isValidSlug(siteSlug)) return c.json({ error: 'invalid siteSlug' }, 400)
-  if (visibility !== undefined && !isVisibility(visibility)) {
+  const vis = normalizeVisibility(visibility)
+  if (visibility !== undefined && !isVisibility(vis)) {
     return c.json({ error: 'invalid visibility' }, 400)
   }
   if (title !== undefined && title !== null && typeof title !== 'string') {
@@ -145,7 +144,7 @@ sites.post('/', requireAuth, async (c) => {
     spaceId: space.id,
     slug: siteSlug,
     title: typeof title === 'string' ? title : null,
-    visibility: isVisibility(visibility) ? visibility : 'team',
+    visibility: isVisibility(vis) ? vis : 'team',
     ownerId: user.id,
   })
 
@@ -393,8 +392,9 @@ sites.patch('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
 
   const patch: { visibility?: Visibility; title?: string | null } = {}
   if (visibility !== undefined) {
-    if (!isVisibility(visibility)) return c.json({ error: 'invalid visibility' }, 400)
-    patch.visibility = visibility
+    const vis = normalizeVisibility(visibility)
+    if (!isVisibility(vis)) return c.json({ error: 'invalid visibility' }, 400)
+    patch.visibility = vis
   }
   if (title !== undefined) {
     if (title !== null && typeof title !== 'string') return c.json({ error: 'invalid title' }, 400)
@@ -405,6 +405,46 @@ sites.patch('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
   }
 
   return c.json({ ok: true })
+})
+
+// POST /api/sites/:spaceSlug/:siteSlug/move — owner (or superadmin) moves a site to another
+// space they belong to. Storage keys are space-agnostic (uuid-prefixed), so only `spaceId`
+// changes; shares/comments key off `siteId` and survive. The site's URL becomes /<dest>/<slug>.
+sites.post('/:spaceSlug/:siteSlug/move', requireAuth, async (c) => {
+  const user = c.get('user')
+  const db = c.get('db')
+  const { spaceSlug, siteSlug } = c.req.param()
+  const site = await resolveSite(db, spaceSlug, siteSlug)
+  if (!site) return c.json({ error: 'not found' }, 404)
+  if (site.ownerId !== user.id && user.role !== 'superadmin') {
+    return c.json({ error: 'forbidden' }, 403)
+  }
+
+  const body = await c.req.json().catch(() => null)
+  const target = (body as { space?: unknown } | null)?.space
+  if (typeof target !== 'string' || !target) return c.json({ error: 'space is required' }, 400)
+
+  const dest = (
+    await db.select({ id: spaces.id, slug: spaces.slug }).from(spaces).where(eq(spaces.slug, target)).limit(1)
+  )[0]
+  if (!dest) return c.json({ error: 'space not found' }, 404)
+  if (dest.id === site.spaceId) return c.json({ error: 'site is already in that space' }, 400)
+  // Can't dump a site into a space you're not in (superadmin may move anywhere).
+  if (user.role !== 'superadmin' && !(await isSpaceMember(db, dest.id, user.id))) {
+    return c.json({ error: 'forbidden' }, 403)
+  }
+  // The (spaceId, slug) unique index would otherwise throw — check first for a clean 409.
+  const clash = (
+    await db
+      .select({ id: sitesTable.id })
+      .from(sitesTable)
+      .where(and(eq(sitesTable.spaceId, dest.id), eq(sitesTable.slug, site.slug)))
+      .limit(1)
+  )[0]
+  if (clash) return c.json({ error: 'a site with this slug already exists in that space', conflict: true }, 409)
+
+  await db.update(sitesTable).set({ spaceId: dest.id }).where(eq(sitesTable.id, site.id))
+  return c.json({ ok: true, spaceSlug: dest.slug, siteSlug: site.slug, url: `${c.env.APP_URL}/${dest.slug}/${site.slug}` })
 })
 
 // DELETE /api/sites/:spaceSlug/:siteSlug — hard delete (owner or superadmin). Purges R2 first.

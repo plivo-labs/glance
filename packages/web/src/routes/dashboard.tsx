@@ -10,19 +10,16 @@ import {
 import {
   ExternalLink,
   FolderUp,
-  Pencil,
   Plus,
   Rocket,
-  Trash2,
   UploadCloud,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { CopyButton } from '@/components/CopyButton'
-import { ConfirmDialog } from '@/components/ConfirmDialog'
-import { ShareDialog } from '@/components/ShareDialog'
+import { SiteCard } from '@/components/SiteCard'
+import { SpaceSelect } from '@/components/SpaceSelect'
 import { EmptyState, PageHeader, SectionHeader, Spinner } from '@/components/states'
 import { VisibilityBadge, VisibilityMenu } from '@/components/visibility'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -52,13 +49,6 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { api, ApiError } from '@/lib/api'
 import { toLogin } from '@/lib/nav'
 import type { SiteSummary, SlugExists, SpaceSummary, TeamUpload, Visibility } from '@/lib/types'
@@ -394,21 +384,7 @@ function DeployCard({ spaces }: { spaces: SpaceSummary[] }) {
         <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto]">
           <div className="space-y-1.5">
             <Label htmlFor="deploy-space">Space</Label>
-            <Select value={space} onValueChange={setSpace}>
-              <SelectTrigger id="deploy-space" className="w-full">
-                <SelectValue placeholder="Select a space" />
-              </SelectTrigger>
-              <SelectContent>
-                {spaces.map((s) => (
-                  <SelectItem key={s.id} value={s.slug}>
-                    <span className="font-mono">{s.slug}</span>
-                    {s.type === 'personal' && (
-                      <span className="text-muted-foreground"> · personal</span>
-                    )}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SpaceSelect id="deploy-space" value={space} onChange={setSpace} spaces={spaces} />
           </div>
 
           <div className="space-y-1.5">
@@ -689,155 +665,6 @@ function Dropzone({
         </p>
       </div>
     </div>
-  )
-}
-
-// ─── Your sites ──────────────────────────────────────────────────────────────
-
-function SiteCard({ site }: { site: SiteSummary }) {
-  const revalidator = useRevalidator()
-  const [pendingVis, setPendingVis] = useState<Visibility | null>(null)
-  const visibility = pendingVis ?? site.visibility
-  const archived = site.status === 'archived'
-
-  async function changeVisibility(v: Visibility) {
-    setPendingVis(v)
-    try {
-      await api.patch(`/api/sites/${site.spaceSlug}/${site.siteSlug}`, { visibility: v })
-      toast.success('Visibility updated', { description: VISIBILITY_LABEL(v) })
-      setPendingVis(null) // drop the optimistic value; revalidated loader is source of truth
-      revalidator.revalidate()
-    } catch (err) {
-      setPendingVis(null)
-      toast.error('Could not update visibility', {
-        description: err instanceof Error ? err.message : undefined,
-      })
-    }
-  }
-
-  return (
-    <Card className="gap-0 py-0">
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 p-4">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="truncate font-medium">{site.title ?? site.siteSlug}</span>
-            {archived && <Badge variant="secondary">archived</Badge>}
-          </div>
-          <a
-            href={site.url}
-            target="_blank"
-            rel="noreferrer"
-            className="font-mono text-sm text-muted-foreground hover:text-foreground hover:underline"
-          >
-            {site.url}
-          </a>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <VisibilityMenu value={visibility} onChange={changeVisibility} />
-          <RenameDialog site={site} onDone={() => revalidator.revalidate()} />
-          <ShareDialog spaceSlug={site.spaceSlug} siteSlug={site.siteSlug} title={site.title} />
-          <CopyButton text={site.url} label="" variant="outline" />
-          <Button asChild variant="outline" size="sm">
-            <a href={site.url} target="_blank" rel="noreferrer">
-              <ExternalLink />
-              Open
-            </a>
-          </Button>
-          <ConfirmDialog
-            title={`Delete ${site.spaceSlug}/${site.siteSlug}?`}
-            description="This permanently removes the site and all its files."
-            confirmLabel="Delete"
-            destructive
-            onConfirm={async () => {
-              await api.delete(`/api/sites/${site.spaceSlug}/${site.siteSlug}`)
-              toast.success('Site deleted')
-              revalidator.revalidate()
-            }}
-          >
-            <Button variant="ghost" size="icon" aria-label="Delete site">
-              <Trash2 className="text-destructive" />
-            </Button>
-          </ConfirmDialog>
-        </div>
-      </div>
-    </Card>
-  )
-}
-
-function VISIBILITY_LABEL(v: Visibility): string {
-  return v.charAt(0).toUpperCase() + v.slice(1)
-}
-
-function RenameDialog({ site, onDone }: { site: SiteSummary; onDone: () => void }) {
-  const [open, setOpen] = useState(false)
-  const [title, setTitle] = useState(site.title ?? '')
-  const [saving, setSaving] = useState(false)
-
-  async function save() {
-    setSaving(true)
-    try {
-      await api.patch(`/api/sites/${site.spaceSlug}/${site.siteSlug}`, { title })
-      toast.success('Renamed')
-      setOpen(false)
-      onDone()
-    } catch (err) {
-      toast.error('Could not rename', {
-        description: err instanceof Error ? err.message : undefined,
-      })
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(o) => {
-        if (saving) return
-        setOpen(o)
-        if (o) setTitle(site.title ?? '')
-      }}
-    >
-      <DialogTrigger asChild>
-        <Button variant="outline" size="sm">
-          <Pencil />
-          Rename
-        </Button>
-      </DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Rename site</DialogTitle>
-          <DialogDescription className="font-mono">{site.url}</DialogDescription>
-        </DialogHeader>
-        <div className="space-y-1.5">
-          <Label htmlFor={`rename-${site.id}`}>Title</Label>
-          <Input
-            id={`rename-${site.id}`}
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder={site.siteSlug}
-            autoFocus
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                void save()
-              }
-            }}
-          />
-        </div>
-        <DialogFooter>
-          <DialogClose asChild>
-            <Button variant="outline" disabled={saving}>
-              Cancel
-            </Button>
-          </DialogClose>
-          <Button onClick={save} disabled={saving}>
-            {saving && <Spinner />}
-            Save
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   )
 }
 

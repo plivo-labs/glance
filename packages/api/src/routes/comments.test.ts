@@ -41,7 +41,7 @@ async function seedSiteWithFile(
   db: ReturnType<typeof makeDb>,
   r2: ReturnType<typeof makeR2>,
   ownerId: string,
-  visibility: 'private' | 'group' | 'team' | 'public' = 'team',
+  visibility: 'private' | 'members' | 'team' | 'public' = 'team',
 ) {
   const sp = await seedSpace(db, { createdBy: ownerId, slug: 'acme' })
   const siteId = await seedSite(db, { spaceId: sp, ownerId, slug: 'doc', visibility })
@@ -73,7 +73,7 @@ describe('comments routes — auth / access / authz', () => {
     const owner = await mintUser(db, kv, { id: 'owner' })
     const member = await mintUser(db, kv, { id: 'member' })
     const outsider = await mintUser(db, kv, { id: 'outsider' })
-    const { spaceId } = await seedSiteWithFile(db, r2, owner, 'group')
+    const { spaceId } = await seedSiteWithFile(db, r2, owner, 'members')
     await seedMember(db, spaceId, member)
 
     const blocked = await app.request(url('?filePath=index.html'), { headers: auth(outsider) }, env)
@@ -106,7 +106,7 @@ describe('comments routes — auth / access / authz', () => {
     const { app, env, db, r2, kv } = await setup()
     const owner = await mintUser(db, kv, { id: 'owner' })
     const member = await mintUser(db, kv, { id: 'member' })
-    const { spaceId } = await seedSiteWithFile(db, r2, owner, 'group')
+    const { spaceId } = await seedSiteWithFile(db, r2, owner, 'members')
     await seedMember(db, spaceId, member)
     // member opens a thread (its opening comment is authored by member)
     const created = await (await app.request(url(), { method: 'POST', headers: auth(member), body: JSON.stringify({ filePath: 'index.html', body: 'mine', quote: 'fox' }) }, env)).json()
@@ -124,7 +124,7 @@ describe('comments routes — auth / access / authz', () => {
     const { app, env, db, r2, kv } = await setup()
     const owner = await mintUser(db, kv, { id: 'owner' })
     const member = await mintUser(db, kv, { id: 'member' })
-    const { spaceId } = await seedSiteWithFile(db, r2, owner, 'group')
+    const { spaceId } = await seedSiteWithFile(db, r2, owner, 'members')
     await seedMember(db, spaceId, member)
     const created = await (await app.request(url(), { method: 'POST', headers: auth(member), body: JSON.stringify({ filePath: 'index.html', body: 'mine', quote: 'fox' }) }, env)).json()
     const commentId = (await (await app.request(url('?filePath=index.html'), { headers: auth(member) }, env)).json())[0].comments[0].id
@@ -150,7 +150,7 @@ describe('comments routes — site-wide list (filePath optional)', () => {
     db: ReturnType<typeof makeDb>,
     r2: ReturnType<typeof makeR2>,
     ownerId: string,
-    visibility: 'private' | 'group' | 'team' | 'public' = 'group',
+    visibility: 'private' | 'members' | 'team' | 'public' = 'members',
   ) {
     const sp = await seedSpace(db, { createdBy: ownerId, slug: 'acme' })
     const siteId = await seedSite(db, { spaceId: sp, ownerId, slug: 'doc', visibility })
@@ -167,7 +167,7 @@ describe('comments routes — site-wide list (filePath optional)', () => {
     const { app, env, db, r2, kv } = await setup()
     const owner = await mintUser(db, kv, { id: 'owner' })
     const member = await mintUser(db, kv, { id: 'member' })
-    const { spaceId } = await seedSiteWithTwoFiles(db, r2, owner, 'group')
+    const { spaceId } = await seedSiteWithTwoFiles(db, r2, owner, 'members')
     await seedMember(db, spaceId, member)
 
     const res = await app.request(url(), { headers: auth(member) }, env)
@@ -181,7 +181,7 @@ describe('comments routes — site-wide list (filePath optional)', () => {
     const { app, env, db, r2, kv } = await setup()
     const owner = await mintUser(db, kv, { id: 'owner' })
     const member = await mintUser(db, kv, { id: 'member' })
-    const { spaceId } = await seedSiteWithTwoFiles(db, r2, owner, 'group')
+    const { spaceId } = await seedSiteWithTwoFiles(db, r2, owner, 'members')
     await seedMember(db, spaceId, member)
 
     const res = await app.request(url('?filePath=index.html'), { headers: auth(member) }, env)
@@ -195,7 +195,7 @@ describe('comments routes — site-wide list (filePath optional)', () => {
     const { app, env, db, r2, kv } = await setup()
     const owner = await mintUser(db, kv, { id: 'owner' })
     const member = await mintUser(db, kv, { id: 'member' })
-    const { spaceId } = await seedSiteWithTwoFiles(db, r2, owner, 'group')
+    const { spaceId } = await seedSiteWithTwoFiles(db, r2, owner, 'members')
     await seedMember(db, spaceId, member)
 
     const res = await app.request(url(`?filePath=${'a'.repeat(1025)}`), { headers: auth(member) }, env)
@@ -206,7 +206,7 @@ describe('comments routes — site-wide list (filePath optional)', () => {
     const { app, env, db, r2, kv } = await setup()
     const owner = await mintUser(db, kv, { id: 'owner' })
     const member = await mintUser(db, kv, { id: 'member' })
-    const { spaceId } = await seedSiteWithTwoFiles(db, r2, owner, 'group')
+    const { spaceId } = await seedSiteWithTwoFiles(db, r2, owner, 'members')
     await seedMember(db, spaceId, member)
 
     // Present-but-empty is distinct from truly-absent: it must hit the 400 guard, NOT fall through
@@ -226,7 +226,7 @@ describe('comments routes — site-wide list (filePath optional)', () => {
     const onPublic = await pub.app.request(url(), { headers: auth(pubOwner) }, pub.env)
     expect(onPublic.status).toBe(403)
 
-    await seedSiteWithTwoFiles(db, r2, owner, 'group')
+    await seedSiteWithTwoFiles(db, r2, owner, 'members')
     const onGroupNonMember = await app.request(url(), { headers: auth(outsider) }, env)
     expect(onGroupNonMember.status).toBe(403)
   })

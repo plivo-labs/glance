@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { isSpaceMember, resolveIsShared } from '../db/repo'
 import { sites as sitesTable, spaces } from '../db/schema'
+import type { Visibility } from '../db/schema'
 import type { SessionUser } from '../types'
 import { type AccessResult, checkAccess } from './access'
 
@@ -14,7 +15,7 @@ export type ResolvedSite = {
   spaceId: string
   slug: string
   title: string | null
-  visibility: 'private' | 'group' | 'team' | 'public'
+  visibility: Visibility
   status: 'active' | 'archived'
   ownerId: string
   createdAt: string

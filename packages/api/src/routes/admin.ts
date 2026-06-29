@@ -2,6 +2,7 @@ import { and, desc, eq, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { sites, spaceMembers, spaces as spacesTable, users } from '../db/schema'
 import { deleteSiteObjects } from '../lib/storage'
+import { isVisibility, normalizeVisibility } from '../lib/visibility'
 import { requireAuth, requireSuperAdmin } from '../middleware/auth'
 import type { AppEnv } from '../types'
 
@@ -25,14 +26,8 @@ admin.get('/sites', async (c) => {
 
   const filters = []
   if (statusParam === 'active' || statusParam === 'archived') filters.push(eq(sites.status, statusParam))
-  if (
-    visibilityParam === 'private' ||
-    visibilityParam === 'group' ||
-    visibilityParam === 'team' ||
-    visibilityParam === 'public'
-  ) {
-    filters.push(eq(sites.visibility, visibilityParam))
-  }
+  const vis = normalizeVisibility(visibilityParam)
+  if (isVisibility(vis)) filters.push(eq(sites.visibility, vis))
   const where = filters.length > 0 ? and(...filters) : undefined
 
   const rows = await db

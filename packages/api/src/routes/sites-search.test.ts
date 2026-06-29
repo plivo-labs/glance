@@ -24,7 +24,7 @@ describe('searchSites (cmdk site search)', () => {
     const owner = await seedUser(db)
     const sp = await seedSpace(db, { createdBy: owner })
     await seedMember(db, sp, me) // member, NOT owner
-    const site = await seedSite(db, { spaceId: sp, ownerId: owner, slug: 'group-plan', visibility: 'group' })
+    const site = await seedSite(db, { spaceId: sp, ownerId: owner, slug: 'group-plan', visibility: 'members' })
     expect(ids(await searchSites(db, member(me), 'group-plan')).has(site)).toBe(true)
   })
 
@@ -33,7 +33,7 @@ describe('searchSites (cmdk site search)', () => {
     const me = await seedUser(db, { id: 'me' })
     const owner = await seedUser(db)
     const sp = await seedSpace(db, { createdBy: owner }) // me is NOT a member
-    const group = await seedSite(db, { spaceId: sp, ownerId: owner, slug: 'grp-x', visibility: 'group' })
+    const group = await seedSite(db, { spaceId: sp, ownerId: owner, slug: 'grp-x', visibility: 'members' })
     const priv = await seedSite(db, { spaceId: sp, ownerId: owner, slug: 'prv-x', visibility: 'private' })
     const res = ids(await searchSites(db, member(me), 'x'))
     expect(res.has(group)).toBe(false)
@@ -99,7 +99,7 @@ describe('searchSites (cmdk site search)', () => {
     const owner = await seedUser(db)
     const sp = await seedSpace(db, { createdBy: owner }) // admin owns none, member of none
     const priv = await seedSite(db, { spaceId: sp, ownerId: owner, slug: 'p-doc', visibility: 'private' })
-    const group = await seedSite(db, { spaceId: sp, ownerId: owner, slug: 'g-doc', visibility: 'group' })
+    const group = await seedSite(db, { spaceId: sp, ownerId: owner, slug: 'g-doc', visibility: 'members' })
     const team = await seedSite(db, { spaceId: sp, ownerId: owner, slug: 't-doc', visibility: 'team' })
     const pub = await seedSite(db, { spaceId: sp, ownerId: owner, slug: 'pub-doc', visibility: 'public' })
     const archived = await seedSite(db, { spaceId: sp, ownerId: owner, slug: 'a-doc', visibility: 'public', status: 'archived' })
