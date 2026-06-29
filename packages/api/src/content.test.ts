@@ -4,7 +4,7 @@ import contentApp, { contentType, markdown, normalizePath, restOf } from './cont
 import { sites, spaces, users } from './db/schema'
 import { sanitizePath } from './lib/storage'
 import { signToken, verifyToken } from './lib/token'
-import { makeDb } from './test/harness'
+import { makeDb, makeR2, seedFile, seedSite, seedSpace, seedUser } from './test/harness'
 
 const secret = 'test-secret'
 const userId = 'user-123'
@@ -150,6 +150,52 @@ describe('content 404s carry Cache-Control: no-store', () => {
     const res = await app.request('/sam/site/', {}, env)
     expect(res.status).toBe(404)
     expect(res.headers.get('cache-control')).toBe('no-store')
+  })
+})
+
+describe('directory listing fallback (no index.html)', () => {
+  function setup() {
+    const db = makeDb()
+    const r2 = makeR2()
+    const app = new Hono()
+    app.use('*', async (c, next) => {
+      c.set('db', db)
+      await next()
+    })
+    app.route('/', contentApp)
+    return { app, db, r2, env: { APP_URL: 'https://glance.example.com', GLANCE_FILES: r2 } }
+  }
+
+  async function publicSite(db: ReturnType<typeof makeDb>) {
+    const uid = await seedUser(db, { id: 'u1' })
+    const sp = await seedSpace(db, { createdBy: uid, slug: 'sam' })
+    return seedSite(db, { spaceId: sp, ownerId: uid, slug: 'site', visibility: 'public' })
+  }
+
+  test('multi-file site with no root index.html → 200 navigable listing, not a bare 404', async () => {
+    const { app, db, r2, env } = setup()
+    const siteId = await publicSite(db)
+    await seedFile(db, r2, siteId, { path: 'home.html', text: '<p>hi</p>' })
+    await seedFile(db, r2, siteId, { path: 'assets/app.js', text: 'x', mimeType: 'text/javascript' })
+
+    const res = await app.request('/sam/site/', {}, env)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toContain('text/html')
+    expect(res.headers.get('cache-control')).toBe('no-store')
+    const body = await res.text()
+    expect(body).toContain('No <code>index.html')
+    expect(body).toContain('href="home.html"')
+    expect(body).toContain('href="assets/app.js"')
+  })
+
+  test('single-file site still serves the lone file at the root (fallback preserved)', async () => {
+    const { app, db, r2, env } = setup()
+    const siteId = await publicSite(db)
+    await seedFile(db, r2, siteId, { path: 'report.html', text: '<h1>Report</h1>' })
+
+    const res = await app.request('/sam/site/', {}, env)
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('<h1>Report</h1>')
   })
 })
 

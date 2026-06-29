@@ -106,11 +106,20 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
     await db.select(cols).from(files).where(and(eq(files.siteId, siteRow.id), eq(files.path, reqPath))).limit(1)
   )[0]
 
-  // Single-file site: when the root has no index.html, serve the one uploaded file.
-  // (Dropping a lone `report.html` should still render at the site root.)
-  if (!file && reqPath === 'index.html') {
-    const all = await db.select(cols).from(files).where(eq(files.siteId, siteRow.id)).limit(2)
-    if (all.length === 1) file = all[0]
+  // Directory request (root, or any `…/`) with no index.html. Rather than a bare 404 — which
+  // leaves an author who dropped a folder without a root index.html staring at a blank frame
+  // with no clue what's wrong — fall back to either the single uploaded file or a navigable
+  // listing of what IS in the site, so they can see the contents and click straight in.
+  if (!file && (reqPath === 'index.html' || reqPath.endsWith('/index.html'))) {
+    const dir = reqPath.slice(0, -'index.html'.length) // '' at the root, else `docs/`
+    const all = await db.select(cols).from(files).where(eq(files.siteId, siteRow.id))
+    // Single-file site: serve the lone uploaded file at the root (e.g. a dropped `report.html`).
+    if (dir === '' && all.length === 1) {
+      file = all[0]
+    } else {
+      const here = all.map((f) => f.path).filter((p) => p.startsWith(dir))
+      if (here.length > 0) return directoryListing(c, `${spaceSlug}/${siteSlug}`, here, dir)
+    }
   }
   if (!file) return notFound(c)
 
@@ -293,6 +302,32 @@ function markdownCsp(frameAncestors: string): string {
     "base-uri 'none'",
     frameAncestors,
   ].join('; ')
+}
+
+// Auto-index for a directory that has no index.html. `dir` is '' (root) or `docs/`; `paths`
+// are full site paths under it. Links are RELATIVE to the served directory URL so they work
+// under both public (/space/site/…) and gated (/_t/token/space/site/…) prefixes. Status 200
+// (like nginx/Apache autoindex) so it renders cleanly in the viewer iframe; never cached
+// since a replace can change the file set.
+function directoryListing(c: Ctx, site: string, paths: string[], dir: string): Response {
+  const rels = [...new Set(paths.map((p) => p.slice(dir.length)).filter(Boolean))].sort()
+  const rows = rels
+    .map((rel) => {
+      const href = rel.split('/').map(encodeURIComponent).join('/')
+      return `<li><a href="${escapeHtml(href)}">${escapeHtml(rel)}</a></li>`
+    })
+    .join('')
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(
+    site,
+  )}${escapeHtml(dir ? `/${dir}` : '')}</title><style>html{color-scheme:light dark}body{max-width:760px;margin:3rem auto;padding:0 1.25rem;font:15px/1.6 -apple-system,system-ui,sans-serif}h1{font-size:1.1rem;margin:0 0 .25rem}p{margin:.25rem 0 1.5rem;color:#6b7280}ul{list-style:none;padding:0;margin:0;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden}li+li{border-top:1px solid #e5e7eb}a{display:block;padding:.6rem .9rem;color:#0969da;text-decoration:none;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em}a:hover{background:#f6f8fa}code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}@media(prefers-color-scheme:dark){p{color:#9ca3af}ul{border-color:#30363d}li+li{border-color:#30363d}a:hover{background:#161b22}}</style></head><body><h1>No <code>index.html</code> here</h1><p>Glance serves <code>index.html</code> at ${
+    dir ? `<code>${escapeHtml(dir)}</code>` : 'the root'
+  } — add one to set the landing page, or open a file below.</p><ul>${rows}</ul></body></html>`
+  return c.html(html, 200, {
+    'content-security-policy': `frame-ancestors 'self' ${c.env.APP_URL}`,
+    'x-content-type-options': 'nosniff',
+    'referrer-policy': 'no-referrer',
+    'cache-control': 'no-store',
+  })
 }
 
 function renderMarkdownDoc(title: string, body: string): string {
