@@ -10,7 +10,6 @@ import {
 } from 'react-router'
 import {
   ExternalLink,
-  FileUp,
   FolderUp,
   Pencil,
   Plus,
@@ -627,10 +626,16 @@ function Dropzone({
         ? 'border-success/50 bg-success/5'
         : 'border-border bg-muted/30'
 
+  // The whole zone is the click target → file picker (the common single/multi-file case).
+  // A full-zone overlay <button> is the click target → file picker (the common single/multi-file
+  // case); the labels above set pointer-events-none so a click anywhere in the zone falls through
+  // to it. Folders go via drag-drop, or the separate "upload a folder" button. One native dialog
+  // can't offer files AND folders at once, and a real button can't nest another — hence two
+  // sibling buttons rather than one role="button" wrapper.
   return (
     <div
       className={cn(
-        'flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed px-6 py-12 text-center transition-colors',
+        'relative flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed px-6 py-12 text-center transition-colors',
         dragActive ? 'border-primary bg-primary/10' : tint,
         busy && 'pointer-events-none opacity-60',
       )}
@@ -647,22 +652,29 @@ function Dropzone({
         onDropFiles(e.dataTransfer)
       }}
     >
-      <div className="flex size-12 items-center justify-center rounded-full bg-background text-muted-foreground shadow-sm">
+      <button
+        type="button"
+        aria-label="Choose files to upload"
+        className="absolute inset-0 cursor-pointer rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        onClick={onChooseFiles}
+        disabled={busy}
+      />
+      <div className="pointer-events-none relative flex size-12 items-center justify-center rounded-full bg-background text-muted-foreground shadow-sm">
         <FolderUp className="size-6" />
       </div>
-      <div>
-        <p className="font-medium">Drop a folder or files here</p>
-        <p className="text-sm text-muted-foreground">or pick from your computer</p>
-      </div>
-      <div className="flex flex-wrap items-center justify-center gap-2">
-        <Button type="button" variant="outline" onClick={onChooseFolder} disabled={busy}>
-          <FolderUp />
-          Choose folder
-        </Button>
-        <Button type="button" variant="outline" onClick={onChooseFiles} disabled={busy}>
-          <FileUp />
-          Choose files
-        </Button>
+      <div className="pointer-events-none relative">
+        <p className="font-medium">Drop files or a folder here</p>
+        <p className="text-sm text-muted-foreground">
+          click to choose files, or{' '}
+          <button
+            type="button"
+            className="pointer-events-auto font-medium text-primary underline-offset-2 hover:underline"
+            onClick={onChooseFolder}
+            disabled={busy}
+          >
+            upload a folder
+          </button>
+        </p>
       </div>
     </div>
   )
