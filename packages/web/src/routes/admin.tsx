@@ -143,7 +143,7 @@ function RestoreButton({ siteId }: { siteId: string }) {
 }
 
 const STATUS_OPTIONS = ['active', 'archived'] as const
-const VISIBILITY_OPTIONS: Visibility[] = ['private', 'group', 'team', 'public']
+const VISIBILITY_OPTIONS: Visibility[] = ['private', 'members', 'team', 'public']
 
 // "all" is the sentinel for the unfiltered option (Radix Select can't hold an empty value).
 const ALL = 'all'

@@ -22,6 +22,13 @@
       "when": 1782668102901,
       "tag": "0002_silly_gertrude_yorkes",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1782700000000,
+      "tag": "0003_rename_group_visibility",
+      "breakpoints": true
     }
   ]
 }

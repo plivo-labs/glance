@@ -7,7 +7,7 @@ import { signToken, verifyToken } from './token'
 const owner: SessionUser = { id: 'u1', email: 'a@example.com', name: null, role: 'member' }
 const other: SessionUser = { id: 'u2', email: 'b@example.com', name: null, role: 'member' }
 const admin: SessionUser = { id: 'u3', email: 'c@example.com', name: null, role: 'superadmin' }
-const site = (visibility: 'private' | 'group' | 'team' | 'public', status: 'active' | 'archived' = 'active') =>
+const site = (visibility: 'private' | 'members' | 'team' | 'public', status: 'active' | 'archived' = 'active') =>
   ({ visibility, status, ownerId: 'u1' }) as const
 
 describe('checkAccess', () => {
@@ -24,9 +24,9 @@ describe('checkAccess', () => {
     expect(checkAccess(site('private'), other, false)).toEqual({ ok: false, status: 403 })
     expect(checkAccess(site('private'), null, false)).toEqual({ ok: false, status: 401 })
   })
-  test('group: member ok, non-member → 403', () => {
-    expect(checkAccess(site('group'), other, true).ok).toBe(true)
-    expect(checkAccess(site('group'), other, false)).toEqual({ ok: false, status: 403 })
+  test('members: member ok, non-member → 403', () => {
+    expect(checkAccess(site('members'), other, true).ok).toBe(true)
+    expect(checkAccess(site('members'), other, false)).toEqual({ ok: false, status: 403 })
   })
   test('archived: 410 for all except superadmin', () => {
     expect(checkAccess(site('public', 'archived'), owner, false)).toEqual({ ok: false, status: 410 })
@@ -37,7 +37,7 @@ describe('checkAccess', () => {
   })
   test('explicit share grants access on any tier', () => {
     expect(checkAccess(site('private'), other, false, true).ok).toBe(true)
-    expect(checkAccess(site('group'), other, false, true).ok).toBe(true)
+    expect(checkAccess(site('members'), other, false, true).ok).toBe(true)
   })
   test('explicit share is still blocked when archived (non-admin)', () => {
     expect(checkAccess(site('private', 'archived'), other, false, true)).toEqual({ ok: false, status: 410 })

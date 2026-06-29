@@ -109,7 +109,7 @@ export function ShareDialog({ spaceSlug, siteSlug, title, compact }: Props) {
         <DialogHeader>
           <DialogTitle className="truncate">Share {title ?? siteSlug}</DialogTitle>
           <DialogDescription>
-            Grant specific people or groups access — on top of the site’s visibility setting.
+            Grant specific people or other spaces access — on top of the site’s visibility setting.
           </DialogDescription>
         </DialogHeader>
 
@@ -121,7 +121,7 @@ export function ShareDialog({ spaceSlug, siteSlug, title, compact }: Props) {
           <div className="space-y-4">
             {groups.length > 0 ? (
               <div className="space-y-1">
-                <p className="text-xs font-medium text-muted-foreground">Groups</p>
+                <p className="text-xs font-medium text-muted-foreground">Other spaces</p>
                 <div className="max-h-32 space-y-0.5 overflow-y-auto">
                   {groups.map((g) => (
                     <Row
@@ -137,7 +137,7 @@ export function ShareDialog({ spaceSlug, siteSlug, title, compact }: Props) {
             ) : (
               <div className="rounded-md border border-dashed p-3 text-center">
                 <p className="text-sm text-muted-foreground">
-                  You’re not in any groups yet. Create a space to share a site with a whole group at once.
+                  You’re only in your personal space. Create a space to share a site with a whole team at once.
                 </p>
                 <Button
                   variant="outline"

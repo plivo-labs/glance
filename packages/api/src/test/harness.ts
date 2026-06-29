@@ -30,6 +30,7 @@ const MIGRATIONS = [
   'drizzle/0000_init.sql',
   'drizzle/0001_steep_black_bolt.sql',
   'drizzle/0002_silly_gertrude_yorkes.sql',
+  'drizzle/0003_rename_group_visibility.sql',
 ]
 
 /** Fresh in-memory DB with the real schema applied. */

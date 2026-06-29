@@ -7,7 +7,7 @@ import { createInterface } from 'node:readline/promises'
 import { SKILL_MD, SKILL_NAME } from './skill-content'
 
 // Glance CLI — deploy folders to Glance from the terminal.
-//   glance login | deploy <path> --space <s> --name <s> [--visibility v] | list | delete <space/slug> | logout
+//   glance login | deploy <path> --space <s> --name <s> [--visibility v] | list | delete <space/slug> | move <space/slug> <new-space> | logout
 
 const CONFIG_DIR = join(homedir(), '.glance')
 const CONFIG_PATH = join(CONFIG_DIR, 'config.json')
@@ -169,9 +169,14 @@ async function deploy(argv: string[]): Promise<void> {
   const { positional, flags } = parseArgs(argv)
   const path = positional[0]
   // deploy passes no booleanFlags, so every flag is a value-flag (string) here.
-  const visibility = (flags.visibility as string | undefined) ?? 'team'
+  let visibility = (flags.visibility as string | undefined) ?? 'team'
+  // `group` was renamed to `members`; keep old commands/scripts working (server normalizes too).
+  if (visibility === 'group') {
+    console.warn("note: --visibility group is now 'members' (this space’s people) — using members.")
+    visibility = 'members'
+  }
   if (!path)
-    die('Usage: glance deploy <path> [--space <slug>] [--name <slug>] [--visibility team|public|private|group]')
+    die('Usage: glance deploy <path> [--space <slug>] [--name <slug>] [--visibility team|public|private|members]')
 
   const cfg = requireAuth()
   const root = resolve(path)
@@ -248,6 +253,22 @@ async function del(argv: string[]): Promise<void> {
   const res = await authed(cfg, `/api/sites/${space}/${name}`, { method: 'DELETE' })
   if (!res.ok) die(`Delete failed (${res.status})`)
   console.log('✓ Deleted.')
+}
+
+async function move(argv: string[]): Promise<void> {
+  const target = argv[0]
+  const dest = argv[1]
+  if (!target?.includes('/') || !dest) die('Usage: glance move <space/slug> <new-space>')
+  const [space, name] = target.split('/')
+  const cfg = requireAuth()
+  const res = await authed(cfg, `/api/sites/${space}/${name}/move`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ space: dest }),
+  })
+  if (!res.ok) die(`Move failed (${res.status}): ${(await res.text()).slice(0, 200)}`)
+  const { url } = (await res.json()) as { url: string }
+  console.log(`✓ Moved → ${url}`)
 }
 
 // Install the bundled AI-agent skill with NO Node/npx dependency — writes it into Claude Code's
@@ -351,6 +372,7 @@ if (import.meta.main) {
     deploy: () => deploy(rest),
     list,
     delete: () => del(rest),
+    move: () => move(rest),
     comments: () => comments(rest),
     skill: async () => skillCmd(rest),
     logout,
@@ -359,9 +381,10 @@ if (import.meta.main) {
   if (!run) {
     console.log('glance — deploy folders to Glance\n')
     console.log('  glance login')
-    console.log('  glance deploy <path> [--space <slug>] [--name <slug>] [--visibility team|public|private|group]')
+    console.log('  glance deploy <path> [--space <slug>] [--name <slug>] [--visibility team|public|private|members]')
     console.log('  glance list')
     console.log('  glance delete <space/slug>')
+    console.log('  glance move <space/slug> <new-space>')
     console.log('  glance comments <space/slug> [--file <path>] [--open] [--json]')
     console.log('  glance skill install')
     console.log('  glance logout')
