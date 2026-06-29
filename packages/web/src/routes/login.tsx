@@ -33,8 +33,8 @@ const FEATURES = [
     detail: 'Drop a folder in the browser or run glance deploy. Same upload, same URL.',
   },
   {
-    label: 'private · group · team · public',
-    detail: 'Four visibility levels per site — from just you to the open internet.',
+    label: 'private · members · team',
+    detail: 'Three visibility levels per site — from just you to everyone in your org.',
   },
   {
     label: '$0/month on Cloudflare',
@@ -48,8 +48,8 @@ const TERMINAL = [
     output: 'uploading 14 files…  ✓ live → glance.example.com/infra/deploy-guide · 0.4s',
   },
   {
-    prompt: 'glance deploy ./design-system --visibility public',
-    output: '✓ live → glance.example.com/frontend/design-system · public',
+    prompt: 'glance deploy ./design-system --visibility team',
+    output: '✓ live → glance.example.com/frontend/design-system · team',
   },
   {
     prompt: 'glance list',

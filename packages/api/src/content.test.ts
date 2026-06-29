@@ -130,7 +130,7 @@ describe('content 404s carry Cache-Control: no-store', () => {
       await next()
     })
     app.route('/', contentApp)
-    return { app, db, env: { APP_URL: 'https://glance.example.com' } }
+    return { app, db, env: { APP_URL: 'https://glance.example.com', CONTENT_TOKEN_SECRET: secret } }
   }
 
   test('content-missing-site-404-no-store: unknown space/site → 404 + no-store, before any R2 access', async () => {
@@ -140,14 +140,15 @@ describe('content 404s carry Cache-Control: no-store', () => {
     expect(res.headers.get('cache-control')).toBe('no-store')
   })
 
-  test('content-missing-file-404-no-store: public site, zero files → 404 + no-store, before R2.get', async () => {
+  test('content-missing-file-404-no-store: gated site, zero files → 404 + no-store, before R2.get', async () => {
     const { app, db, env } = setup()
     await db.insert(users).values({ id: 'u1', email: 'o@example.com', role: 'member' })
     await db.insert(spaces).values({ id: 's1', slug: 'sam', name: 'Sam', type: 'personal', createdBy: 'u1' })
     await db
       .insert(sites)
-      .values({ id: 'site1', spaceId: 's1', slug: 'site', visibility: 'public', status: 'active', ownerId: 'u1' })
-    const res = await app.request('/sam/site/', {}, env)
+      .values({ id: 'site1', spaceId: 's1', slug: 'site', visibility: 'team', status: 'active', ownerId: 'u1' })
+    const token = await signToken(secret, 'u1', 'sam/site', 300)
+    const res = await app.request(`/_t/${token}/sam/site/`, {}, env)
     expect(res.status).toBe(404)
     expect(res.headers.get('cache-control')).toBe('no-store')
   })
@@ -163,22 +164,25 @@ describe('directory listing fallback (no index.html)', () => {
       await next()
     })
     app.route('/', contentApp)
-    return { app, db, r2, env: { APP_URL: 'https://glance.example.com', GLANCE_FILES: r2 } }
+    return { app, db, r2, env: { APP_URL: 'https://glance.example.com', CONTENT_TOKEN_SECRET: secret, GLANCE_FILES: r2 } }
   }
 
-  async function publicSite(db: ReturnType<typeof makeDb>) {
+  // Seed sam/site (gated `team` tier) owned by u1 and return a content token bound to that owner.
+  async function gatedSite(db: ReturnType<typeof makeDb>) {
     const uid = await seedUser(db, { id: 'u1' })
     const sp = await seedSpace(db, { createdBy: uid, slug: 'sam' })
-    return seedSite(db, { spaceId: sp, ownerId: uid, slug: 'site', visibility: 'public' })
+    const siteId = await seedSite(db, { spaceId: sp, ownerId: uid, slug: 'site', visibility: 'team' })
+    const token = await signToken(secret, uid, 'sam/site', 300)
+    return { siteId, token }
   }
 
   test('multi-file site with no root index.html → 200 navigable listing, not a bare 404', async () => {
     const { app, db, r2, env } = setup()
-    const siteId = await publicSite(db)
+    const { siteId, token } = await gatedSite(db)
     await seedFile(db, r2, siteId, { path: 'home.html', text: '<p>hi</p>' })
     await seedFile(db, r2, siteId, { path: 'assets/app.js', text: 'x', mimeType: 'text/javascript' })
 
-    const res = await app.request('/sam/site/', {}, env)
+    const res = await app.request(`/_t/${token}/sam/site/`, {}, env)
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toContain('text/html')
     expect(res.headers.get('cache-control')).toBe('no-store')
@@ -191,10 +195,10 @@ describe('directory listing fallback (no index.html)', () => {
 
   test('single-file site still serves the lone file at the root (fallback preserved)', async () => {
     const { app, db, r2, env } = setup()
-    const siteId = await publicSite(db)
+    const { siteId, token } = await gatedSite(db)
     await seedFile(db, r2, siteId, { path: 'report.html', text: '<h1>Report</h1>' })
 
-    const res = await app.request('/sam/site/', {}, env)
+    const res = await app.request(`/_t/${token}/sam/site/`, {}, env)
     expect(res.status).toBe(200)
     expect(await res.text()).toBe('<h1>Report</h1>')
   })

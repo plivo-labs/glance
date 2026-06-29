@@ -49,7 +49,7 @@ export type SearchRow = {
 
 /**
  * cmdk site search. ONE bounded candidate query over *active* sites the caller might open
- * (owner / member-space / team|public / explicitly-shared; superadmin ⇒ all active), then a
+ * (owner / member-space / team / explicitly-shared; superadmin ⇒ all active), then a
  * final in-memory checkAccess pass — the single source of truth — using precomputed
  * membership/share sets so it stays O(rows), not N+1. "Openable" semantics: the result is
  * exactly what checkAccess admits. q matches site title/slug or its space slug/name.
@@ -69,7 +69,7 @@ export async function searchSites(
 
   let where = and(eq(sitesTable.status, 'active'), qMatch)
   if (!isSuper) {
-    const reach = [eq(sitesTable.ownerId, user.id), inArray(sitesTable.visibility, ['team', 'public'])]
+    const reach = [eq(sitesTable.ownerId, user.id), eq(sitesTable.visibility, 'team')]
     if (memberSpaces.size) reach.push(inArray(sitesTable.spaceId, [...memberSpaces]))
     if (shared.size) reach.push(inArray(sitesTable.id, [...shared]))
     where = and(where, or(...reach))
@@ -221,8 +221,8 @@ sites.get('/shared', requireAuth, async (c) => {
   )
 })
 
-// GET /api/sites/team — team-wide upload feed: every team/public site across all spaces,
-// newest first, with who uploaded it. Visible to any signed-in member (these tiers are
+// GET /api/sites/team — team-wide upload feed: every team site across all spaces,
+// newest first, with who uploaded it. Visible to any signed-in member (the team tier is
 // already visible team-wide). Capped — this is an at-a-glance activity feed, not a full log.
 sites.get('/team', requireAuth, async (c) => {
   const db = c.get('db')
@@ -241,7 +241,7 @@ sites.get('/team', requireAuth, async (c) => {
     .from(sitesTable)
     .innerJoin(spaces, eq(sitesTable.spaceId, spaces.id))
     .innerJoin(users, eq(sitesTable.ownerId, users.id))
-    .where(and(eq(sitesTable.status, 'active'), inArray(sitesTable.visibility, ['team', 'public'])))
+    .where(and(eq(sitesTable.status, 'active'), eq(sitesTable.visibility, 'team')))
     .orderBy(desc(sitesTable.createdAt))
     .limit(50)
   return c.json(
@@ -293,9 +293,9 @@ sites.get('/:spaceSlug/:siteSlug/exists', requireAuth, async (c) => {
   return c.json({ exists: true, owned: site.ownerId === user.id })
 })
 
-// GET /api/sites/:spaceSlug/:siteSlug — viewer metadata + a (possibly token-gated) content URL.
-// OPTIONAL auth: public sites must resolve for logged-out visitors, so we read the session
-// directly instead of using requireAuth.
+// GET /api/sites/:spaceSlug/:siteSlug — viewer metadata + a token-gated content URL.
+// Reads the session directly (not requireAuth) so the not-found / forbidden shapes are returned
+// as JSON the viewer can act on rather than a redirect.
 sites.get('/:spaceSlug/:siteSlug', async (c) => {
   const db = c.get('db')
   const { spaceSlug, siteSlug } = c.req.param()
@@ -308,18 +308,16 @@ sites.get('/:spaceSlug/:siteSlug', async (c) => {
   const access = checkAccess(site, user, isMember, isShared)
   if (!access.ok) return c.json({ error: 'forbidden' }, access.status)
 
-  // Non-public access always implies an authenticated user (checkAccess returns 401
-  // otherwise), so `user` is non-null on the gated branch. The token is bound to
-  // `user.id` + scope; the content worker re-runs checkAccess at serve time.
-  const contentUrl =
-    site.visibility === 'public' || !user
-      ? `${c.env.CONTENT_URL}/${spaceSlug}/${siteSlug}/`
-      : `${c.env.CONTENT_URL}/_t/${await signToken(
-          c.env.CONTENT_TOKEN_SECRET,
-          user.id,
-          `${spaceSlug}/${siteSlug}`,
-          CONTENT_TOKEN_TTL,
-        )}/${spaceSlug}/${siteSlug}/`
+  // Every tier requires an authenticated viewer (checkAccess 401s otherwise), so `user` is
+  // non-null here. The token is bound to `user.id` + scope; the content worker re-runs
+  // checkAccess at serve time so a revoked share / tightened tier stops serving immediately.
+  if (!user) return c.json({ error: 'forbidden' }, 401)
+  const contentUrl = `${c.env.CONTENT_URL}/_t/${await signToken(
+    c.env.CONTENT_TOKEN_SECRET,
+    user.id,
+    `${spaceSlug}/${siteSlug}`,
+    CONTENT_TOKEN_TTL,
+  )}/${spaceSlug}/${siteSlug}/`
 
   return c.json({
     id: site.id,

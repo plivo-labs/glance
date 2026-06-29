@@ -7,13 +7,10 @@ import { signToken, verifyToken } from './token'
 const owner: SessionUser = { id: 'u1', email: 'a@example.com', name: null, role: 'member' }
 const other: SessionUser = { id: 'u2', email: 'b@example.com', name: null, role: 'member' }
 const admin: SessionUser = { id: 'u3', email: 'c@example.com', name: null, role: 'superadmin' }
-const site = (visibility: 'private' | 'members' | 'team' | 'public', status: 'active' | 'archived' = 'active') =>
+const site = (visibility: 'private' | 'members' | 'team', status: 'active' | 'archived' = 'active') =>
   ({ visibility, status, ownerId: 'u1' }) as const
 
 describe('checkAccess', () => {
-  test('public: anyone, even anonymous', () => {
-    expect(checkAccess(site('public'), null, false).ok).toBe(true)
-  })
   test('team: any authed user, anon → 401', () => {
     expect(checkAccess(site('team'), other, false).ok).toBe(true)
     const r = checkAccess(site('team'), null, false)
@@ -29,7 +26,7 @@ describe('checkAccess', () => {
     expect(checkAccess(site('members'), other, false)).toEqual({ ok: false, status: 403 })
   })
   test('archived: 410 for all except superadmin', () => {
-    expect(checkAccess(site('public', 'archived'), owner, false)).toEqual({ ok: false, status: 410 })
+    expect(checkAccess(site('team', 'archived'), owner, false)).toEqual({ ok: false, status: 410 })
     expect(checkAccess(site('private', 'archived'), admin, false).ok).toBe(true)
   })
   test('superadmin bypasses private + archive', () => {

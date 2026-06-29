@@ -57,7 +57,8 @@ app.get('/_t/:token/:space/:site/*', async (c) => {
   return serve(c, space, site, restOf(c.req.url, 4), userId)
 })
 
-// Public access: only `public` sites are served without a token. Path: /<space>/<site>/<rest>
+// Untokened path: there is no public tier, so an anonymous request can never be authorized.
+// Kept so the URL shape still resolves (serve → 403) rather than 404ing the route. Path: /<space>/<site>/<rest>
 app.get('/:space/:site/*', (c) => serve(c, c.req.param('space'), c.req.param('site'), restOf(c.req.url, 2), null))
 
 // `userId` is the token-bound viewer for gated requests, or null for public requests.
@@ -81,8 +82,8 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
   if (siteRow.status === 'archived') return c.text('This site has been archived', 410)
 
   if (userId === null) {
-    // Public path: no token, so only `public` sites are allowed.
-    if (siteRow.visibility !== 'public') return c.text('Forbidden', 403)
+    // Untokened request: no public tier exists, so anonymous access is never allowed.
+    return c.text('Forbidden', 403)
   } else {
     // Gated path: reconstruct the bound user from D1 and re-authorize against live state.
     const userRow = (
@@ -139,9 +140,9 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
     })
   }
 
-  // Annotate mode: gated (non-public) HTML + ?glance_annotate=1 → buffer the body and inject the
-  // annotate client + boot payload. Public sites have no comments, so the flag is ignored there
-  // (userId === null). The bytes change, so we DROP the ETag and don't cache.
+  // Annotate mode: gated HTML + ?glance_annotate=1 → buffer the body and inject the annotate
+  // client + boot payload. Every serve here is already token-gated (anonymous requests 403 above),
+  // so the flag always applies to an authed viewer. The bytes change, so we DROP the ETag and don't cache.
   if (userId !== null && c.req.query('glance_annotate') === '1' && isHtmlFile(file.path)) {
     const injected = injectAnnotate(await object.text(), {
       siteId: siteRow.id,

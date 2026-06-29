@@ -13,10 +13,11 @@ const ALLOW: AccessResult = { ok: true }
  *   private → owner only
  *   members → space member (or owner)
  *   team    → any authenticated user in the allowed domain
- *   public  → anyone
  *   shared  → any user/group explicitly granted access (additive, any tier)
  *   archived→ 410 for everyone except superadmin
  *   superadmin → bypasses all visibility + archive rules
+ *
+ * There is no public/anonymous tier: every tier requires an authenticated user.
  */
 export function checkAccess(
   site: Pick<Site, 'visibility' | 'status' | 'ownerId'>,
@@ -30,8 +31,6 @@ export function checkAccess(
   if (isShared && user) return ALLOW
 
   switch (site.visibility) {
-    case 'public':
-      return ALLOW
     case 'team':
       return user ? ALLOW : { ok: false, status: 401 }
     case 'members':

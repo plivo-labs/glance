@@ -16,7 +16,7 @@ import type { Me } from './lib/types'
 import './tailwind.css'
 
 // Root loader fetches identity ONCE before render (replaces a mount useEffect). It does
-// NOT redirect — public site views must work logged-out; protected route loaders guard
+// NOT redirect — the login page must render logged-out; protected route loaders guard
 // themselves.
 async function rootLoader(): Promise<{ user: Me | null }> {
   try {

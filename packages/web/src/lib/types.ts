@@ -1,6 +1,6 @@
 // Mirrors the API response contract (packages/api routes).
 
-export type Visibility = 'private' | 'members' | 'team' | 'public'
+export type Visibility = 'private' | 'members' | 'team'
 export type SiteStatus = 'active' | 'archived'
 
 export interface Me {

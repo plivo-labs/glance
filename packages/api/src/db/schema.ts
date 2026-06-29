@@ -38,7 +38,7 @@ export const sites = sqliteTable(
     spaceId: text('spaceId').notNull().references(() => spaces.id, { onDelete: 'cascade' }),
     slug: text('slug').notNull(),
     title: text('title'),
-    visibility: text('visibility', { enum: ['private', 'members', 'team', 'public'] })
+    visibility: text('visibility', { enum: ['private', 'members', 'team'] })
       .notNull()
       .default('team'),
     status: text('status', { enum: ['active', 'archived'] }).notNull().default('active'),

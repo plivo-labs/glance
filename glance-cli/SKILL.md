@@ -33,7 +33,7 @@ Put it in your shell profile to make it permanent. Token + URL are saved to `~/.
 | command | what it does |
 |---|---|
 | `glance login` | device-code flow: prints a URL + code, opens a browser, polls until you approve, saves the token |
-| `glance deploy <path> [--space <slug>] [--name <slug>] [--visibility team\|public\|private\|members]` | uploads a file or a folder |
+| `glance deploy <path> [--space <slug>] [--name <slug>] [--visibility team\|private\|members]` | uploads a file or a folder |
 | `glance list` | lists your sites — `space/slug  visibility  url` |
 | `glance delete <space/slug>` | confirms (y/N), then deletes |
 | `glance move <space/slug> <new-space>` | moves a site to another space you belong to (keeps its files, comments, shares) |
@@ -55,7 +55,7 @@ Device-code flow. If no browser opener is available (SSH/headless), open the pri
 
 ```bash
 glance deploy report.html                                  # → /<you>/report in your personal space
-glance deploy ./dist --space docs --name api-reference --visibility public
+glance deploy ./dist --space docs --name api-reference --visibility members
 ```
 
 ### delete
@@ -95,9 +95,9 @@ Default output is a **markdown digest**:
 **Agent loop** — this command closes the review loop without a browser: `glance comments <space/slug> --open` to pull outstanding feedback → edit the local doc to address it → `glance deploy` to redeploy. Anchors re-resolve **server-side** on the new content (a thread whose quote still matches stays `anchored`/`shifted`; one whose span vanished goes `orphaned`/`⚠`), so re-running `glance comments` reflects the new state.
 
 ## Visibility values
-`team` (default) · `public` · `private` · `members`.
+`team` (default) · `private` · `members`.
 
-`members` = people in the site's own space only (it was renamed from `group`; the old value is still accepted and mapped to `members`).
+`members` = people in the site's own space only (it was renamed from `group`; the old value is still accepted and mapped to `members`). There is no public/anonymous tier — `public` is still accepted on the wire but mapped to `team` (everyone in your org).
 
 ## Gotchas
 - Commands other than `login`/`logout` require a saved token; run `glance login` first.

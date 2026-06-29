@@ -179,7 +179,7 @@ export function Component() {
           <EmptyState
             icon={Rocket}
             title="Nothing shipped yet"
-            description="Team- and public-visible sites show up here as people deploy them."
+            description="Team-visible sites show up here as people deploy them."
           />
         ) : (
           <Card className="gap-0 py-0">

@@ -40,16 +40,16 @@ describe('searchSites (cmdk site search)', () => {
     expect(res.has(priv)).toBe(false)
   })
 
-  test('search-team-public-visible-to-any-member', async () => {
+  test('search-team-visible-to-any-member', async () => {
     const db = makeDb()
     const me = await seedUser(db, { id: 'me' })
     const owner = await seedUser(db)
     const sp = await seedSpace(db, { createdBy: owner }) // me not a member
     const team = await seedSite(db, { spaceId: sp, ownerId: owner, slug: 'tm-feed', visibility: 'team' })
-    const pub = await seedSite(db, { spaceId: sp, ownerId: owner, slug: 'pub-feed', visibility: 'public' })
+    const priv = await seedSite(db, { spaceId: sp, ownerId: owner, slug: 'pv-feed', visibility: 'private' })
     const res = ids(await searchSites(db, member(me), 'feed'))
     expect(res.has(team)).toBe(true)
-    expect(res.has(pub)).toBe(true)
+    expect(res.has(priv)).toBe(false) // private in a space me isn't a member of
   })
 
   test('search-explicit-share-included: direct share and via-group share both included', async () => {
@@ -72,10 +72,10 @@ describe('searchSites (cmdk site search)', () => {
     const db = makeDb()
     const me = await seedUser(db, { id: 'me' })
     const neutral = await seedSpace(db, { createdBy: me, slug: 'neutral' })
-    const byTitle = await seedSite(db, { spaceId: neutral, ownerId: me, slug: 's1', title: 'Alpha Report', visibility: 'public' })
-    const bySlug = await seedSite(db, { spaceId: neutral, ownerId: me, slug: 'alpha-deck', visibility: 'public' })
+    const byTitle = await seedSite(db, { spaceId: neutral, ownerId: me, slug: 's1', title: 'Alpha Report', visibility: 'team' })
+    const bySlug = await seedSite(db, { spaceId: neutral, ownerId: me, slug: 'alpha-deck', visibility: 'team' })
     const alphaSpace = await seedSpace(db, { createdBy: me, slug: 'alpha-zone' })
-    const bySpace = await seedSite(db, { spaceId: alphaSpace, ownerId: me, slug: 'zzz', title: 'Nothing', visibility: 'public' })
+    const bySpace = await seedSite(db, { spaceId: alphaSpace, ownerId: me, slug: 'zzz', title: 'Nothing', visibility: 'team' })
     const res = ids(await searchSites(db, member(me), 'alpha'))
     expect(res.has(byTitle)).toBe(true)
     expect(res.has(bySlug)).toBe(true)
@@ -86,8 +86,8 @@ describe('searchSites (cmdk site search)', () => {
     const db = makeDb()
     const me = await seedUser(db, { id: 'me' })
     const sp = await seedSpace(db, { createdBy: me })
-    const active = await seedSite(db, { spaceId: sp, ownerId: me, slug: 'live-doc', visibility: 'public', status: 'active' })
-    const archived = await seedSite(db, { spaceId: sp, ownerId: me, slug: 'old-doc', visibility: 'public', status: 'archived' })
+    const active = await seedSite(db, { spaceId: sp, ownerId: me, slug: 'live-doc', visibility: 'team', status: 'active' })
+    const archived = await seedSite(db, { spaceId: sp, ownerId: me, slug: 'old-doc', visibility: 'team', status: 'archived' })
     const res = ids(await searchSites(db, member(me), 'doc'))
     expect(res.has(active)).toBe(true)
     expect(res.has(archived)).toBe(false)
@@ -101,13 +101,11 @@ describe('searchSites (cmdk site search)', () => {
     const priv = await seedSite(db, { spaceId: sp, ownerId: owner, slug: 'p-doc', visibility: 'private' })
     const group = await seedSite(db, { spaceId: sp, ownerId: owner, slug: 'g-doc', visibility: 'members' })
     const team = await seedSite(db, { spaceId: sp, ownerId: owner, slug: 't-doc', visibility: 'team' })
-    const pub = await seedSite(db, { spaceId: sp, ownerId: owner, slug: 'pub-doc', visibility: 'public' })
-    const archived = await seedSite(db, { spaceId: sp, ownerId: owner, slug: 'a-doc', visibility: 'public', status: 'archived' })
+    const archived = await seedSite(db, { spaceId: sp, ownerId: owner, slug: 'a-doc', visibility: 'team', status: 'archived' })
     const res = ids(await searchSites(db, superadmin('admin'), 'doc'))
     expect(res.has(priv)).toBe(true)
     expect(res.has(group)).toBe(true)
     expect(res.has(team)).toBe(true)
-    expect(res.has(pub)).toBe(true)
     expect(res.has(archived)).toBe(false)
   })
 
@@ -116,7 +114,7 @@ describe('searchSites (cmdk site search)', () => {
     const me = await seedUser(db, { id: 'me' })
     const sp = await seedSpace(db, { createdBy: me })
     for (let i = 0; i < 25; i++) {
-      await seedSite(db, { spaceId: sp, ownerId: me, slug: `cap-${i}`, visibility: 'public' })
+      await seedSite(db, { spaceId: sp, ownerId: me, slug: `cap-${i}`, visibility: 'team' })
     }
     expect((await searchSites(db, member(me), 'cap', 20)).length).toBe(20)
   })

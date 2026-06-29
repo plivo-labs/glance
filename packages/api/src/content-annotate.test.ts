@@ -29,7 +29,7 @@ async function gatedSite(
   db: ReturnType<typeof makeDb>,
   r2: ReturnType<typeof makeR2>,
   file: { path: string; text: string; mimeType?: string },
-  visibility: 'team' | 'public' = 'team',
+  visibility: 'team' | 'members' | 'private' = 'team',
 ) {
   const uid = await seedUser(db, { id: 'u1' })
   const sp = await seedSpace(db, { createdBy: uid, slug: 'sam' })
@@ -92,11 +92,11 @@ describe('annotate injection', () => {
     expect(res.headers.get('content-security-policy')).toContain("script-src 'none'")
   })
 
-  test('public-path-not-injected: public (untokened) serve ignores the flag', async () => {
+  test('untokened-serve-forbidden: anonymous request → 403 (no public tier), nothing injected', async () => {
     const { app, db, r2, env } = setup()
-    await gatedSite(db, r2, { path: 'index.html', text: HTML }, 'public')
-    const body = await (await app.request('/sam/site/?glance_annotate=1', {}, env)).text()
-    expect(body).toBe(HTML)
-    expect(body).not.toContain('__GLANCE__')
+    await gatedSite(db, r2, { path: 'index.html', text: HTML })
+    const res = await app.request('/sam/site/?glance_annotate=1', {}, env)
+    expect(res.status).toBe(403)
+    expect(await res.text()).not.toContain('__GLANCE__')
   })
 })

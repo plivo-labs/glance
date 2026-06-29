@@ -32,11 +32,11 @@ const tooLong = (v: unknown, max: number): boolean => typeof v === 'string' && v
 
 export const comments = new Hono<AppEnv>()
 
-// Pure gate (user decision): comments are disallowed on `public` sites entirely — that's the
-// anonymous-spam surface. Reached only after requireAuth, so `user` is guaranteed; the gate is
-// access-ok + non-public.
-function canComment(site: ResolvedSite, access: { ok: boolean }): boolean {
-  return access.ok && site.visibility !== 'public'
+// Pure gate: comments are allowed wherever the viewer has access. Every tier is now authed (the
+// public/anonymous tier was removed), so access-ok is the whole gate. Reached only after
+// requireAuth, so `user` is guaranteed.
+function canComment(_site: ResolvedSite, access: { ok: boolean }): boolean {
+  return access.ok
 }
 
 // Site owner or superadmin may resolve/reopen any thread and delete any comment.

@@ -41,7 +41,7 @@ async function seedSiteWithFile(
   db: ReturnType<typeof makeDb>,
   r2: ReturnType<typeof makeR2>,
   ownerId: string,
-  visibility: 'private' | 'members' | 'team' | 'public' = 'team',
+  visibility: 'private' | 'members' | 'team' = 'team',
 ) {
   const sp = await seedSpace(db, { createdBy: ownerId, slug: 'acme' })
   const siteId = await seedSite(db, { spaceId: sp, ownerId, slug: 'doc', visibility })
@@ -58,14 +58,6 @@ describe('comments routes — auth / access / authz', () => {
     await seedSiteWithFile(db, r2, owner)
     const res = await app.request(url('?filePath=index.html'), {}, env)
     expect(res.status).toBe(401)
-  })
-
-  test('comments-forbidden-on-public-site: authed user, public site → 403', async () => {
-    const { app, env, db, r2, kv } = await setup()
-    const owner = await mintUser(db, kv, { id: 'owner' })
-    await seedSiteWithFile(db, r2, owner, 'public')
-    const res = await app.request(url(), { method: 'POST', headers: auth(owner), body: JSON.stringify({ filePath: 'index.html', body: 'hi', quote: 'fox' }) }, env)
-    expect(res.status).toBe(403)
   })
 
   test('comments-respect-access-tier: non-member on group → 403; member → allowed', async () => {
@@ -150,7 +142,7 @@ describe('comments routes — site-wide list (filePath optional)', () => {
     db: ReturnType<typeof makeDb>,
     r2: ReturnType<typeof makeR2>,
     ownerId: string,
-    visibility: 'private' | 'members' | 'team' | 'public' = 'members',
+    visibility: 'private' | 'members' | 'team' = 'members',
   ) {
     const sp = await seedSpace(db, { createdBy: ownerId, slug: 'acme' })
     const siteId = await seedSite(db, { spaceId: sp, ownerId, slug: 'doc', visibility })
@@ -215,16 +207,10 @@ describe('comments routes — site-wide list (filePath optional)', () => {
     expect(res.status).toBe(400)
   })
 
-  test('site-list-access-still-gated: public → 403; group non-member → 403', async () => {
+  test('site-list-access-still-gated: group non-member → 403', async () => {
     const { app, env, db, r2, kv } = await setup()
     const owner = await mintUser(db, kv, { id: 'owner' })
     const outsider = await mintUser(db, kv, { id: 'outsider' })
-
-    const pub = await setup()
-    const pubOwner = await mintUser(pub.db, pub.kv, { id: 'pubowner' })
-    await seedSiteWithTwoFiles(pub.db, pub.r2, pubOwner, 'public')
-    const onPublic = await pub.app.request(url(), { headers: auth(pubOwner) }, pub.env)
-    expect(onPublic.status).toBe(403)
 
     await seedSiteWithTwoFiles(db, r2, owner, 'members')
     const onGroupNonMember = await app.request(url(), { headers: auth(outsider) }, env)

@@ -29,6 +29,13 @@
       "when": 1782700000000,
       "tag": "0003_rename_group_visibility",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1782800000000,
+      "tag": "0004_drop_public_visibility",
+      "breakpoints": true
     }
   ]
 }

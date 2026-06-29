@@ -25,13 +25,11 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
 type Pending = { quote: string; prefix: string; suffix: string; rect?: DOMRectLike }
 
 // One persistent iframe hosts the deployed HTML for the whole tab; opening comments slides a rail
-// in beside it WITHOUT reloading the frame. For review-capable (non-public) sites the iframe always
-// runs the annotate client (?glance_annotate=1), so toggling comments is a pure layout change — only
-// the rail and the in-page affordances are gated on `review`. Public sites have no comments (the
-// anonymous-spam exclusion), so they load the plain URL and never offer the rail.
+// in beside it WITHOUT reloading the frame. Every site is review-capable (there is no public tier),
+// so the iframe always runs the annotate client (?glance_annotate=1) and toggling comments is a pure
+// layout change — only the rail and the in-page affordances are gated on `review`.
 export function Component() {
   const site = useLoaderData() as ViewerSite
-  const canReview = site.visibility !== 'public'
 
   // Optional in-site file path from the route splat (`/space/site/docs/page.html`). Appended to the
   // content URL so a deep link / the directory-listing fallback opens that specific file; '' = root.
@@ -39,10 +37,7 @@ export function Component() {
 
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const contentOrigin = useMemo(() => new URL(site.contentUrl).origin, [site.contentUrl])
-  const src = useMemo(() => {
-    const target = appendPath(site.contentUrl, sitePath)
-    return canReview ? withAnnotate(target) : target
-  }, [site.contentUrl, canReview, sitePath])
+  const src = useMemo(() => withAnnotate(appendPath(site.contentUrl, sitePath)), [site.contentUrl, sitePath])
 
   const [review, setReview] = useState(false)
   const [loaded, setLoaded] = useState(false)
@@ -91,8 +86,8 @@ export function Component() {
   }, [contentOrigin])
 
   useEffect(() => {
-    if (canReview) api.get<Me>('/api/auth/me').then(setMe).catch(() => setMe(null))
-  }, [canReview])
+    api.get<Me>('/api/auth/me').then(setMe).catch(() => setMe(null))
+  }, [])
 
   // Load threads lazily the first time comments open (and refresh on re-entry). The frame is already
   // mounted, so this is just a fetch — never a reload.
@@ -170,7 +165,7 @@ export function Component() {
           onExit={exitReview}
         />
       ) : (
-        <PreviewToolbar site={site} onReview={canReview ? () => setReview(true) : undefined} />
+        <PreviewToolbar site={site} onReview={() => setReview(true)} />
       )}
     </div>
   )

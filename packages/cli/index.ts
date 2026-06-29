@@ -175,8 +175,13 @@ async function deploy(argv: string[]): Promise<void> {
     console.warn("note: --visibility group is now 'members' (this space’s people) — using members.")
     visibility = 'members'
   }
+  // The `public` tier was removed (no anonymous access); old scripts fall back to `team`.
+  if (visibility === 'public') {
+    console.warn("note: --visibility public was removed — using team (everyone in your org).")
+    visibility = 'team'
+  }
   if (!path)
-    die('Usage: glance deploy <path> [--space <slug>] [--name <slug>] [--visibility team|public|private|members]')
+    die('Usage: glance deploy <path> [--space <slug>] [--name <slug>] [--visibility team|private|members]')
 
   const cfg = requireAuth()
   const root = resolve(path)
@@ -381,7 +386,7 @@ if (import.meta.main) {
   if (!run) {
     console.log('glance — deploy folders to Glance\n')
     console.log('  glance login')
-    console.log('  glance deploy <path> [--space <slug>] [--name <slug>] [--visibility team|public|private|members]')
+    console.log('  glance deploy <path> [--space <slug>] [--name <slug>] [--visibility team|private|members]')
     console.log('  glance list')
     console.log('  glance delete <space/slug>')
     console.log('  glance move <space/slug> <new-space>')
