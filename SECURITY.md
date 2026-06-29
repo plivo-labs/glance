@@ -15,7 +15,7 @@ Only the latest release on `main` receives security fixes.
 
 Use GitHub's private vulnerability reporting:
 **Security tab → "Report a vulnerability"**
-(direct link: `https://github.com/samuellawerentz/glance/security/advisories/new`)
+(direct link: `https://github.com/plivo-labs/glance/security/advisories/new`)
 
 Include:
 - Description of the vulnerability and potential impact

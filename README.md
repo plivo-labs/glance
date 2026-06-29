@@ -168,7 +168,7 @@ The `glance` CLI uploads local folders straight from the terminal.
 
 ```bash
 # one-liner — downloads the standalone binary for your platform (no Bun/Node needed)
-curl -fsSL https://raw.githubusercontent.com/samuellawerentz/glance/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/plivo-labs/glance/main/install.sh | sh
 ```
 
 It installs to `~/.local/bin/glance`. Override the target with `GLANCE_INSTALL_DIR`.
@@ -178,7 +178,7 @@ persists `export GLANCE_API_URL=...` into their shell profile, so `glance` targe
 with no extra step. Send teammates exactly this (with your subdomain filled in):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/samuellawerentz/glance/main/install.sh \
+curl -fsSL https://raw.githubusercontent.com/plivo-labs/glance/main/install.sh \
   | GLANCE_API_URL=https://glance.your-subdomain.workers.dev sh
 ```
 
@@ -190,7 +190,7 @@ They open a new shell, run `glance login` (Google SSO), and start deploying. Wit
 CLI. It's best-effort — no `npx`, no problem, the binary still installs. To add it on its own:
 
 ```bash
-npx skills add samuellawerentz/glance --global
+npx skills add plivo-labs/glance --global
 ```
 
 From a clone instead:

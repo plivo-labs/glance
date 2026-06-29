@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-REPO="samuellawerentz/glance"
+REPO="plivo-labs/glance"
 INSTALL_DIR="${GLANCE_INSTALL_DIR:-$HOME/.local/bin}"
 
 main() {
