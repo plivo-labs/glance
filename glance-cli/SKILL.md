@@ -1,6 +1,6 @@
 ---
 name: glance-cli
-description: Use the `glance` CLI to deploy a local folder of static files (HTML/markdown/assets) to a Glance instance and get a URL. Use when the user wants to publish/upload/deploy a folder, list their Glance sites, delete a site, or log in/out of Glance from the terminal. Covers pointing the CLI at a self-hosted instance via GLANCE_API_URL.
+description: Use the `glance` CLI to deploy a local folder of static files (HTML/markdown/assets) to a Glance instance and get a URL, and to PULL a deployed site's review comments back to the terminal so a coding agent can act on them. Use when the user wants to publish/upload/deploy a folder, list their Glance sites, delete a site, log in/out of Glance from the terminal, or fetch/read/pull the review comments (feedback left in the browser) on a site to address them. Closes the review loop: deploy → comment in the browser → `glance comments` to pull → edit → redeploy (anchors re-resolve server-side). Covers pointing the CLI at a self-hosted instance via GLANCE_API_URL.
 ---
 
 # Glance CLI
