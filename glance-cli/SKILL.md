@@ -36,6 +36,7 @@ Put it in your shell profile to make it permanent. Token + URL are saved to `~/.
 | `glance deploy <path> [--space <slug>] [--name <slug>] [--visibility team\|public\|private\|group]` | uploads a file or a folder |
 | `glance list` | lists your sites — `space/slug  visibility  url` |
 | `glance delete <space/slug>` | confirms (y/N), then deletes |
+| `glance comments <space/slug> [--file <path>] [--open] [--json]` | prints a site's review comments as a markdown digest (or raw JSON) |
 | `glance logout` | revokes the server session and removes the local token |
 
 ### login
@@ -58,6 +59,36 @@ glance deploy ./dist --space docs --name api-reference --visibility public
 
 ### delete
 Argument must be `space/slug` (with the slash), e.g. `glance delete docs/api-reference`.
+
+### comments
+Pulls the review comments (threads) on a deployed site so an agent can read them from the terminal.
+
+- `<space/slug>` is required and must contain the slash (e.g. `docs/api-reference`).
+- `--file <path>` narrows to a single file's threads (e.g. `--file index.md`); omit it to get **all** of the site's threads across every file.
+- `--open` hides resolved threads — only `open` ones are shown.
+- `--json` prints the raw thread array (the server `ThreadView[]`) instead of the digest — pipe it into `jq`. Combines with `--open` (the array is filtered to open threads first).
+
+Default output is a **markdown digest**:
+
+```
+# 1 open · 1 resolved
+
+### index.md · ✓ · OPEN
+> "the quoted span this thread anchors to"
+- @Ada: please reword this paragraph
+- @Bob (deleted): [deleted]
+
+### guide.md · ⚠ · RESOLVED
+- @Ada: fixed in the latest deploy
+```
+
+- A header line counts `open` vs `resolved` over the shown threads.
+- Threads are **grouped by file** (first-appearance order); each thread is a `###` heading `<filePath> · <glyph> · <STATUS>`.
+- The glyph is the **anchor status**: `✓` anchored · `~` shifted · `?` suggested · `⚠` orphaned (the warning glyph means the quoted span drifted out of the document and the anchor was lost).
+- A present quote renders as a `> "…"` blockquote; each comment is a `- @<author>: <body>` line. Deleted comments show `- @<author> (deleted): [deleted]` (original text is gone); a missing author falls back to `@unknown`.
+- Empty result prints `No comments.`.
+
+**Agent loop** — this command closes the review loop without a browser: `glance comments <space/slug> --open` to pull outstanding feedback → edit the local doc to address it → `glance deploy` to redeploy. Anchors re-resolve **server-side** on the new content (a thread whose quote still matches stays `anchored`/`shifted`; one whose span vanished goes `orphaned`/`⚠`), so re-running `glance comments` reflects the new state.
 
 ## Visibility values
 `team` (default) · `public` · `private` · `group`.

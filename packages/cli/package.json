@@ -5,7 +5,8 @@
   "type": "module",
   "bin": { "glance": "./index.ts" },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
   },
   "devDependencies": {
     "@types/node": "^26.0.0",

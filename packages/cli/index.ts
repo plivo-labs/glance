@@ -48,14 +48,21 @@ function authed(cfg: Config, path: string, init: RequestInit = {}): Promise<Resp
   })
 }
 
-// Parse `--flag value` pairs and positionals.
-function parseArgs(argv: string[]): { positional: string[]; flags: Record<string, string> } {
+// Parse `--flag value` pairs and positionals. Flags named in `booleanFlags` are valueless
+// (`--open` → true) and do NOT consume the next token, so a positional after them survives
+// (e.g. `comments --open x/y` keeps `x/y`). Everything else stays a value-flag as before.
+export function parseArgs(
+  argv: string[],
+  booleanFlags: Set<string> = new Set(),
+): { positional: string[]; flags: Record<string, string | boolean> } {
   const positional: string[] = []
-  const flags: Record<string, string> = {}
+  const flags: Record<string, string | boolean> = {}
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!
     if (a.startsWith('--')) {
-      flags[a.slice(2)] = argv[++i] ?? ''
+      const key = a.slice(2)
+      if (booleanFlags.has(key)) flags[key] = true
+      else flags[key] = argv[++i] ?? ''
     } else {
       positional.push(a)
     }
@@ -152,8 +159,10 @@ async function login(): Promise<void> {
 async function deploy(argv: string[]): Promise<void> {
   const { positional, flags } = parseArgs(argv)
   const path = positional[0]
-  const visibility = flags.visibility ?? 'team'
-  if (!path) die('Usage: glance deploy <path> [--space <slug>] [--name <slug>] [--visibility team|public|private|group]')
+  // deploy passes no booleanFlags, so every flag is a value-flag (string) here.
+  const visibility = (flags.visibility as string | undefined) ?? 'team'
+  if (!path)
+    die('Usage: glance deploy <path> [--space <slug>] [--name <slug>] [--visibility team|public|private|group]')
 
   const cfg = requireAuth()
   const root = resolve(path)
@@ -178,11 +187,11 @@ async function deploy(argv: string[]): Promise<void> {
   if (entries.length === 0) die('No files to upload.')
 
   // Name defaults to the file/folder name; space defaults to your personal space.
-  const name = flags.name ?? slugify(derived)
+  const name = (flags.name as string | undefined) ?? slugify(derived)
   if (!SLUG_RE.test(name)) {
     die(`Couldn't derive a valid name from "${basename(root)}". Pass --name <slug> (lowercase, 3–40 chars).`)
   }
-  const space = flags.space ?? (await personalSpace(cfg))
+  const space = (flags.space as string | undefined) ?? (await personalSpace(cfg))
 
   // Replace prompt if the site already exists and the caller owns it.
   const exists = await authed(cfg, `/api/sites/${space}/${name}/exists`)
@@ -216,7 +225,8 @@ async function list(): Promise<void> {
   if (!res.ok) die(`Failed to list (${res.status})`)
   const sites = (await res.json()) as { siteSlug: string; spaceSlug: string; visibility: string; url: string }[]
   if (sites.length === 0) return console.log('No sites yet.')
-  for (const s of sites) console.log(`  ${`${s.spaceSlug}/${s.siteSlug}`.padEnd(36)} ${s.visibility.padEnd(8)} ${s.url}`)
+  for (const s of sites)
+    console.log(`  ${`${s.spaceSlug}/${s.siteSlug}`.padEnd(36)} ${s.visibility.padEnd(8)} ${s.url}`)
 }
 
 async function del(argv: string[]): Promise<void> {
@@ -242,22 +252,96 @@ async function logout(): Promise<void> {
   console.log('✓ Logged out.')
 }
 
-const [cmd, ...rest] = process.argv.slice(2)
-const commands: Record<string, () => Promise<void>> = {
-  login,
-  deploy: () => deploy(rest),
-  list,
-  delete: () => del(rest),
-  logout,
+// --- comments digest --------------------------------------------------------
+// Local mirror of the server ThreadView/CommentView fields the digest reads (the CLI is
+// zero-dep, so we don't import from other packages). Extra server fields pass through --json.
+type DigestComment = {
+  author: string | null // display name (name ?? email); kept even when deleted
+  body: string | null // null when the comment is soft-deleted
+  deleted: boolean
 }
-const run = commands[cmd ?? '']
-if (!run) {
-  console.log('glance — deploy folders to Glance\n')
-  console.log('  glance login')
-  console.log('  glance deploy <path> [--space <slug>] [--name <slug>] [--visibility team|public|private|group]')
-  console.log('  glance list')
-  console.log('  glance delete <space/slug>')
-  console.log('  glance logout')
-  process.exit(cmd ? 1 : 0)
+type DigestThread = {
+  filePath: string
+  anchorStatus: 'anchored' | 'shifted' | 'suggested' | 'orphaned'
+  quote: string | null
+  status: 'open' | 'resolved'
+  comments: DigestComment[]
 }
-await run()
+
+// anchorStatus → glyph; orphaned is a loud warning so a drifted anchor stands out.
+const ANCHOR_GLYPH: Record<DigestThread['anchorStatus'], string> = {
+  anchored: '✓',
+  shifted: '~',
+  suggested: '?',
+  orphaned: '⚠',
+}
+
+// Render a site's comment threads as a markdown digest (or raw JSON). PURE — no I/O.
+export function renderDigest(threads: DigestThread[], opts: { open?: boolean; json?: boolean }): string {
+  const shown = opts.open ? threads.filter((t) => t.status === 'open') : threads
+  if (opts.json) return JSON.stringify(shown, null, 2)
+  if (shown.length === 0) return 'No comments.'
+
+  const open = shown.filter((t) => t.status === 'open').length
+  const lines: string[] = [`# ${open} open · ${shown.length - open} resolved`]
+
+  // Group by filePath, preserving first-appearance order, so a file's threads stay adjacent.
+  const byFile = new Map<string, DigestThread[]>()
+  for (const t of shown) {
+    const group = byFile.get(t.filePath)
+    if (group) group.push(t)
+    else byFile.set(t.filePath, [t])
+  }
+
+  for (const [filePath, group] of byFile) {
+    for (const t of group) {
+      lines.push('', `### ${filePath} · ${ANCHOR_GLYPH[t.anchorStatus]} · ${t.status.toUpperCase()}`)
+      if (t.quote) lines.push(`> "${t.quote}"`)
+      for (const c of t.comments) {
+        const author = c.author ?? 'unknown'
+        if (c.deleted) lines.push(`- @${author} (deleted): [deleted]`)
+        else lines.push(`- @${author}: ${c.body ?? ''}`)
+      }
+    }
+  }
+  return lines.join('\n')
+}
+
+async function comments(argv: string[]): Promise<void> {
+  const { positional, flags } = parseArgs(argv, new Set(['open', 'json']))
+  const target = positional[0]
+  if (!target?.includes('/')) die('Usage: glance comments <space/slug> [--file <path>] [--open] [--json]')
+  const [space, name] = target.split('/')
+
+  const file = typeof flags.file === 'string' && flags.file ? flags.file : undefined
+  const cfg = requireAuth()
+  const query = file ? `?filePath=${encodeURIComponent(file)}` : ''
+  const res = await authed(cfg, `/api/sites/${space}/${name}/comments${query}`)
+  if (!res.ok) die(`Failed to fetch comments (${res.status}): ${(await res.text()).slice(0, 200)}`)
+  const threads = (await res.json()) as DigestThread[]
+  console.log(renderDigest(threads, { open: flags.open === true, json: flags.json === true }))
+}
+
+if (import.meta.main) {
+  const [cmd, ...rest] = process.argv.slice(2)
+  const commands: Record<string, () => Promise<void>> = {
+    login,
+    deploy: () => deploy(rest),
+    list,
+    delete: () => del(rest),
+    comments: () => comments(rest),
+    logout,
+  }
+  const run = commands[cmd ?? '']
+  if (!run) {
+    console.log('glance — deploy folders to Glance\n')
+    console.log('  glance login')
+    console.log('  glance deploy <path> [--space <slug>] [--name <slug>] [--visibility team|public|private|group]')
+    console.log('  glance list')
+    console.log('  glance delete <space/slug>')
+    console.log('  glance comments <space/slug> [--file <path>] [--open] [--json]')
+    console.log('  glance logout')
+    process.exit(cmd ? 1 : 0)
+  }
+  await run()
+}
