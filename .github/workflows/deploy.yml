@@ -51,6 +51,12 @@ jobs:
           # Allowed Google Workspace domain (e.g. plivo.com). Non-secret config — the OAuth callback
           # re-verifies the signed hd claim, so the value is safe to substitute in plaintext here.
           CF_ALLOWED_HD: ${{ vars.CF_ALLOWED_HD }}
+          # Optional custom-domain public URLs (served via CloudFront in front of the *.workers.dev
+          # origins). When set, the user-facing URLs (APP_URL / CONTENT_URL / SPA frame-src) are
+          # repointed off *.workers.dev to these; the workers KEEP their *.workers.dev endpoints
+          # (those are the CloudFront origins). Unset → stays on *.workers.dev (self-host default).
+          CF_APP_URL: ${{ vars.CF_APP_URL }}
+          CF_CONTENT_URL: ${{ vars.CF_CONTENT_URL }}
         run: |
           : "${CF_ACCOUNT_ID:?set repo Actions variable CF_ACCOUNT_ID}"
           : "${CF_D1_DATABASE_ID:?set repo Actions variable CF_D1_DATABASE_ID}"
@@ -66,6 +72,19 @@ jobs:
               -e "s/yourcompany.com/${CF_ALLOWED_HD}/g" \
               "$f"
           done
+          # Repoint public URLs to the custom domains, if configured (CloudFront cutover). Runs
+          # AFTER the subdomain substitution above (so glance[-content].$CF_WORKERS_SUBDOMAIN.workers.dev
+          # exist to match) and BEFORE build:web (so dist/_headers carries the real content origin).
+          if [ -n "${CF_APP_URL}${CF_CONTENT_URL}" ]; then
+            : "${CF_APP_URL:?set CF_APP_URL when CF_CONTENT_URL is set (custom domain)}"
+            : "${CF_CONTENT_URL:?set CF_CONTENT_URL when CF_APP_URL is set (custom domain)}"
+            for f in packages/api/wrangler.jsonc packages/api/wrangler.content.jsonc packages/web/public/_headers; do
+              sed -i \
+                -e "s#https://glance-content.${CF_WORKERS_SUBDOMAIN}.workers.dev#${CF_CONTENT_URL}#g" \
+                -e "s#https://glance.${CF_WORKERS_SUBDOMAIN}.workers.dev#${CF_APP_URL}#g" \
+                "$f"
+            done
+          fi
 
       - name: Build web
         run: bun run build:web
