@@ -18,8 +18,15 @@ export type Column<T> = {
   cellClassName?: string
 }
 
+// Below `sm` the table reflows into stacked label/value rows so actions are reachable without a
+// horizontal scroll; each cell's column label rides in via `data-label`. At `sm`+ it's a table.
+const mobileRow = 'max-sm:block max-sm:py-2'
+const mobileCell =
+  'max-sm:flex max-sm:items-center max-sm:justify-between max-sm:gap-4 max-sm:max-w-none max-sm:whitespace-normal max-sm:px-4 max-sm:py-1.5 max-sm:before:font-medium max-sm:before:text-sm max-sm:before:text-muted-foreground max-sm:before:content-[attr(data-label)]'
+
 // One sortable table shell shared by every site-collection (Your sites / Shared / Team activity)
 // so they stay visually identical — columns and per-cell rendering are the only differences.
+// Pass a STABLE `columns` (module-scope or memoized): the sort memo keys on the resolved column.
 export function SortableTable<T>({
   rows,
   columns,
@@ -36,8 +43,10 @@ export function SortableTable<T>({
 
   const sorted = useMemo(() => {
     if (!active?.compare) return rows
-    const arr = [...rows].sort(active.compare)
-    return sort.dir === 'asc' ? arr : arr.reverse()
+    const compare = active.compare
+    const dir = sort.dir === 'asc' ? 1 : -1
+    // Negate rather than `.reverse()` so equal-key rows keep their relative order in both directions.
+    return [...rows].sort((a, b) => dir * compare(a, b))
   }, [rows, active, sort.dir])
 
   const toggle = (col: Column<T>) =>
@@ -49,8 +58,8 @@ export function SortableTable<T>({
 
   return (
     <Card className="gap-0 overflow-hidden py-0">
-      <Table>
-        <TableHeader>
+      <Table className="max-sm:block">
+        <TableHeader className="max-sm:hidden">
           <TableRow className="hover:bg-transparent">
             {columns.map((c) =>
               c.compare ? (
@@ -70,11 +79,11 @@ export function SortableTable<T>({
             )}
           </TableRow>
         </TableHeader>
-        <TableBody>
+        <TableBody className="max-sm:block">
           {sorted.map((row) => (
-            <TableRow key={getRowKey(row)}>
+            <TableRow key={getRowKey(row)} className={mobileRow}>
               {columns.map((c) => (
-                <TableCell key={c.key} className={c.cellClassName}>
+                <TableCell key={c.key} data-label={c.label} className={cn(mobileCell, c.cellClassName)}>
                   {c.render(row)}
                 </TableCell>
               ))}
@@ -101,7 +110,7 @@ function SortHead({
 }) {
   const Icon = !active ? ChevronsUpDown : dir === 'asc' ? ArrowUp : ArrowDown
   return (
-    <TableHead className={className}>
+    <TableHead className={className} aria-sort={active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'}>
       <button
         type="button"
         onClick={onToggle}

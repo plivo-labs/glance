@@ -19,7 +19,14 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { CopyButton } from '@/components/CopyButton'
-import { createdColumn, nameColumn, urlColumn, visibilityBadgeColumn } from '@/components/siteColumns'
+import {
+  actionsColumn,
+  createdColumn,
+  nameColumn,
+  OpenLinkButton,
+  urlColumn,
+  visibilityBadgeColumn,
+} from '@/components/siteColumns'
 import { SitesTable } from '@/components/SitesTable'
 import { SortableTable, type Column } from '@/components/SortableTable'
 import { SpaceSelect } from '@/components/SpaceSelect'
@@ -76,34 +83,24 @@ export function loader() {
 }
 
 // Sites shared with me — same table shell as Your sites, minus the owner-only actions.
+const SHARED_COLUMNS: Column<SiteSummary>[] = [
+  nameColumn(),
+  urlColumn(),
+  visibilityBadgeColumn(),
+  createdColumn(),
+  actionsColumn((s) => (
+    <div className="flex items-center justify-end gap-1">
+      <CopyButton text={s.url} label="" variant="outline" />
+      <OpenLinkButton url={s.url} />
+    </div>
+  )),
+]
+
 function SharedSitesTable({ sites }: { sites: SiteSummary[] }) {
-  const columns: Column<SiteSummary>[] = [
-    nameColumn(),
-    urlColumn(),
-    visibilityBadgeColumn(),
-    createdColumn(),
-    {
-      key: 'actions',
-      label: '',
-      headClassName: 'text-right',
-      cellClassName: 'text-right',
-      render: (s) => (
-        <div className="flex items-center justify-end gap-1">
-          <CopyButton text={s.url} label="" variant="outline" />
-          <Button asChild variant="outline" size="sm">
-            <a href={s.url} target="_blank" rel="noreferrer">
-              <ExternalLink />
-              Open
-            </a>
-          </Button>
-        </div>
-      ),
-    },
-  ]
   return (
     <SortableTable
       rows={sites}
-      columns={columns}
+      columns={SHARED_COLUMNS}
       getRowKey={(s) => s.id}
       initialSort={{ key: 'created', dir: 'desc' }}
     />
@@ -287,39 +284,28 @@ function TabCount({ n }: { n: number }) {
 // ─── Team activity ───────────────────────────────────────────────────────────
 
 // Same table shell, with who-shipped + when columns. Defaults to newest-first (a feed).
+const who = (u: TeamUpload) => u.uploaderName ?? u.uploaderEmail
+
+const TEAM_COLUMNS: Column<TeamUpload>[] = [
+  nameColumn(),
+  urlColumn(),
+  visibilityBadgeColumn(),
+  {
+    key: 'who',
+    label: 'Shipped by',
+    compare: (a, b) => who(a).localeCompare(who(b)),
+    cellClassName: 'max-w-[12rem]',
+    render: (u) => <span className="block truncate text-sm">{who(u)}</span>,
+  },
+  createdColumn('when', 'When'),
+  actionsColumn((u) => <OpenLinkButton url={u.url} />),
+]
+
 function TeamActivityTable({ team }: { team: TeamUpload[] }) {
-  const who = (u: TeamUpload) => u.uploaderName ?? u.uploaderEmail
-  const columns: Column<TeamUpload>[] = [
-    nameColumn(),
-    urlColumn(),
-    visibilityBadgeColumn(),
-    {
-      key: 'who',
-      label: 'Shipped by',
-      compare: (a, b) => who(a).localeCompare(who(b)),
-      cellClassName: 'max-w-[12rem]',
-      render: (u) => <span className="block truncate text-sm">{who(u)}</span>,
-    },
-    createdColumn('when', 'When'),
-    {
-      key: 'actions',
-      label: '',
-      headClassName: 'text-right',
-      cellClassName: 'text-right',
-      render: (u) => (
-        <Button asChild variant="outline" size="sm">
-          <a href={u.url} target="_blank" rel="noreferrer">
-            <ExternalLink />
-            Open
-          </a>
-        </Button>
-      ),
-    },
-  ]
   return (
     <SortableTable
       rows={team}
-      columns={columns}
+      columns={TEAM_COLUMNS}
       getRowKey={(u) => u.id}
       initialSort={{ key: 'when', dir: 'desc' }}
     />

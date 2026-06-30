@@ -1,6 +1,9 @@
+import type { ReactNode } from 'react'
+import { ExternalLink } from 'lucide-react'
 import type { Column } from '@/components/SortableTable'
 import { VisibilityBadge } from '@/components/visibility'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { timeAgo } from '@/lib/time'
 import type { SiteSummary, Visibility } from '@/lib/types'
 
@@ -45,13 +48,37 @@ export function urlColumn<T extends SiteSummary>(): Column<T> {
   }
 }
 
-export function visibilityBadgeColumn<T extends SiteSummary>(): Column<T> {
+// Visibility column owns the rank-compare; callers supply the cell (a static badge, or the
+// owner's interactive tier picker) so the sort stays defined in one place.
+export function visibilityColumn<T extends SiteSummary>(render: (row: T) => ReactNode): Column<T> {
   return {
     key: 'visibility',
     label: 'Visibility',
     compare: (a, b) => visRank(a.visibility) - visRank(b.visibility),
-    render: (s) => <VisibilityBadge value={s.visibility} />,
+    render,
   }
+}
+
+export function visibilityBadgeColumn<T extends SiteSummary>(): Column<T> {
+  return visibilityColumn<T>((s) => <VisibilityBadge value={s.visibility} />)
+}
+
+// "Open in a new tab" button — the trailing action every site row carries.
+export function OpenLinkButton({ url }: { url: string }) {
+  return (
+    <Button asChild variant="outline" size="sm">
+      <a href={url} target="_blank" rel="noreferrer">
+        <ExternalLink />
+        Open
+      </a>
+    </Button>
+  )
+}
+
+// Trailing actions cell — the right-aligned shape shared by all three tables; `render` supplies
+// the buttons (Open + kebab / Copy + Open / Open).
+export function actionsColumn<T>(render: (row: T) => ReactNode): Column<T> {
+  return { key: 'actions', label: '', headClassName: 'text-right', cellClassName: 'text-right', render }
 }
 
 export function createdColumn<T extends SiteSummary>(key = 'created', label = 'Created'): Column<T> {

@@ -1,10 +1,17 @@
 import { useCallback, useState } from 'react'
 import { useRevalidator } from 'react-router'
-import { Copy, ExternalLink, FolderInput, MoreVertical, Pencil, Share2, Trash2 } from 'lucide-react'
+import { Copy, FolderInput, MoreVertical, Pencil, Share2, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { ShareDialog } from '@/components/ShareDialog'
-import { createdColumn, nameColumn, urlColumn, visRank } from '@/components/siteColumns'
+import {
+  actionsColumn,
+  createdColumn,
+  nameColumn,
+  OpenLinkButton,
+  urlColumn,
+  visibilityColumn,
+} from '@/components/siteColumns'
 import { SortableTable, type Column } from '@/components/SortableTable'
 import { SpaceSelect } from '@/components/SpaceSelect'
 import { Spinner } from '@/components/states'
@@ -32,29 +39,20 @@ import type { SiteSummary, SpaceSummary, Visibility } from '@/lib/types'
 
 const visibilityLabel = (v: Visibility): string => v.charAt(0).toUpperCase() + v.slice(1)
 
+// Stable module-scope columns so SortableTable's sort memo doesn't rebuild every render.
+const OWNER_COLUMNS: Column<SiteSummary>[] = [
+  nameColumn(),
+  urlColumn(),
+  visibilityColumn((s) => <OwnerVisibilityCell site={s} />),
+  createdColumn(),
+  actionsColumn((s) => <OwnerActions site={s} />),
+]
+
 export function SitesTable({ sites }: { sites: SiteSummary[] }) {
-  const columns: Column<SiteSummary>[] = [
-    nameColumn(),
-    urlColumn(),
-    {
-      key: 'visibility',
-      label: 'Visibility',
-      compare: (a, b) => visRank(a.visibility) - visRank(b.visibility),
-      render: (s) => <OwnerVisibilityCell site={s} />,
-    },
-    createdColumn(),
-    {
-      key: 'actions',
-      label: '',
-      headClassName: 'text-right',
-      cellClassName: 'text-right',
-      render: (s) => <OwnerActions site={s} />,
-    },
-  ]
   return (
     <SortableTable
       rows={sites}
-      columns={columns}
+      columns={OWNER_COLUMNS}
       getRowKey={(s) => s.id}
       initialSort={{ key: 'created', dir: 'desc' }}
     />
@@ -105,12 +103,7 @@ function OwnerActions({ site }: { site: SiteSummary }) {
 
   return (
     <div className="flex items-center justify-end gap-1">
-      <Button asChild variant="outline" size="sm">
-        <a href={site.url} target="_blank" rel="noreferrer">
-          <ExternalLink />
-          Open
-        </a>
-      </Button>
+      <OpenLinkButton url={site.url} />
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size="icon" aria-label="More actions">
