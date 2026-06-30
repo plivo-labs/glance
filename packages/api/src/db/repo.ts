@@ -100,19 +100,22 @@ export async function isSpaceMember(db: DrizzleD1Database, spaceId: string, user
 
 /** True if a site is explicitly shared with the user — directly, or via a group they're in. */
 export async function resolveIsShared(db: DrizzleD1Database, siteId: string, userId: string): Promise<boolean> {
-  const direct = await db
-    .select({ siteId: siteUserShares.siteId })
-    .from(siteUserShares)
-    .where(and(eq(siteUserShares.siteId, siteId), eq(siteUserShares.userId, userId)))
-    .limit(1)
-  if (direct.length > 0) return true
-  const viaGroup = await db
-    .select({ siteId: siteGroupShares.siteId })
-    .from(siteGroupShares)
-    .innerJoin(spaceMembers, eq(spaceMembers.spaceId, siteGroupShares.spaceId))
-    .where(and(eq(siteGroupShares.siteId, siteId), eq(spaceMembers.userId, userId)))
-    .limit(1)
-  return viaGroup.length > 0
+  // Direct and via-group grants are independent — resolve both in one round trip rather than
+  // serially. Drops the direct-hit short-circuit (one extra cheap query) to save a round trip.
+  const [direct, viaGroup] = await Promise.all([
+    db
+      .select({ siteId: siteUserShares.siteId })
+      .from(siteUserShares)
+      .where(and(eq(siteUserShares.siteId, siteId), eq(siteUserShares.userId, userId)))
+      .limit(1),
+    db
+      .select({ siteId: siteGroupShares.siteId })
+      .from(siteGroupShares)
+      .innerJoin(spaceMembers, eq(spaceMembers.spaceId, siteGroupShares.spaceId))
+      .where(and(eq(siteGroupShares.siteId, siteId), eq(spaceMembers.userId, userId)))
+      .limit(1),
+  ])
+  return direct.length > 0 || viaGroup.length > 0
 }
 
 /** Set of space ids the user is a member of (mirrors `sharedSiteIds` for the search candidate query). */
@@ -126,15 +129,14 @@ export async function memberSpaceIds(db: DrizzleD1Database, userId: string): Pro
 
 /** Set of site ids explicitly shared with the user (direct + via group membership). */
 export async function sharedSiteIds(db: DrizzleD1Database, userId: string): Promise<Set<string>> {
-  const direct = await db
-    .select({ siteId: siteUserShares.siteId })
-    .from(siteUserShares)
-    .where(eq(siteUserShares.userId, userId))
-  const viaGroup = await db
-    .select({ siteId: siteGroupShares.siteId })
-    .from(siteGroupShares)
-    .innerJoin(spaceMembers, eq(spaceMembers.spaceId, siteGroupShares.spaceId))
-    .where(eq(spaceMembers.userId, userId))
+  const [direct, viaGroup] = await Promise.all([
+    db.select({ siteId: siteUserShares.siteId }).from(siteUserShares).where(eq(siteUserShares.userId, userId)),
+    db
+      .select({ siteId: siteGroupShares.siteId })
+      .from(siteGroupShares)
+      .innerJoin(spaceMembers, eq(spaceMembers.spaceId, siteGroupShares.spaceId))
+      .where(eq(spaceMembers.userId, userId)),
+  ])
   return new Set([...direct, ...viaGroup].map((r) => r.siteId))
 }
 

@@ -86,18 +86,20 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
     return c.text('Forbidden', 403)
   } else {
     // Gated path: reconstruct the bound user from D1 and re-authorize against live state.
-    const userRow = (
-      await db
+    // The user row, membership and share all key off `userId` (the token-bound id) + siteRow,
+    // never off each other — so resolve them in one round trip instead of three serial ones.
+    const [userRow, isMember, isShared] = await Promise.all([
+      db
         .select({ id: users.id, email: users.email, name: users.name, role: users.role })
         .from(users)
         .where(eq(users.id, userId))
         .limit(1)
-    )[0]
+        .then((rows) => rows[0]),
+      isSpaceMember(db, siteRow.spaceId, userId),
+      resolveIsShared(db, siteRow.id, userId),
+    ])
     if (!userRow) return c.text('Forbidden', 403)
-    const user = toSessionUser(userRow)
-    const isMember = await isSpaceMember(db, siteRow.spaceId, user.id)
-    const isShared = await resolveIsShared(db, siteRow.id, user.id)
-    const access = checkAccess(siteRow, user, isMember, isShared)
+    const access = checkAccess(siteRow, toSessionUser(userRow), isMember, isShared)
     if (!access.ok) return c.text('Forbidden', access.status)
   }
 
