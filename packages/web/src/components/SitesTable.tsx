@@ -259,6 +259,10 @@ function MoveDialog({
   const [spaces, setSpaces] = useState<SpaceSummary[]>([])
   const [target, setTarget] = useState('')
 
+  // Load spaces when the dialog opens. The ref lives on a plain sensor <div> below (NOT on
+  // DialogContent): Radix recomposes the content ref on every render, so a ref-callback there
+  // fires on every render (detach+reattach) — a fetch + setState would loop forever. A plain
+  // element's ref is uncomposed, so this stable callback fires once per open. (cf. CommandPalette.)
   const loadOnMount = useCallback(
     (node: HTMLDivElement | null) => {
       if (!node) return
@@ -295,7 +299,8 @@ function MoveDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !saving && onOpenChange(o)}>
-      <DialogContent ref={loadOnMount}>
+      <DialogContent>
+        <div ref={loadOnMount} hidden aria-hidden="true" />
         <DialogHeader>
           <DialogTitle>Move site</DialogTitle>
           <DialogDescription className="font-mono">{site.url}</DialogDescription>

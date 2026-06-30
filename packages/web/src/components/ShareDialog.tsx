@@ -54,7 +54,10 @@ export function ShareDialog({ spaceSlug, siteSlug, title, compact, open: openPro
   const [selGroups, setSelGroups] = useState<Set<string>>(new Set())
   const [q, setQ] = useState('')
 
-  // Stable identity (useCallback) so React fires it only on mount/unmount, not every render.
+  // The ref lives on a plain sensor <div> below (NOT on DialogContent): Radix recomposes the
+  // content ref on every render, so a ref-callback there fires on every render (detach+reattach)
+  // and a fetch + setState would loop forever. A plain element's ref is uncomposed, so this stable
+  // callback fires once per open. (cf. CommandPalette's onPaletteMount.)
   const loadOnMount = useCallback(
     (node: HTMLDivElement | null) => {
       if (!node) return
@@ -122,7 +125,8 @@ export function ShareDialog({ spaceSlug, siteSlug, title, compact, open: openPro
           )}
         </DialogTrigger>
       )}
-      <DialogContent ref={loadOnMount} className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md">
+        <div ref={loadOnMount} hidden aria-hidden="true" />
         <DialogHeader>
           <DialogTitle className="truncate">Share {title ?? siteSlug}</DialogTitle>
           <DialogDescription>
