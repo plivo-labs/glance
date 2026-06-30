@@ -1,8 +1,11 @@
-import { useRef, useState } from 'react'
+import { Suspense, useMemo, useRef, useState } from 'react'
 import {
+  Await,
   Link,
-  type LoaderFunctionArgs,
+  Navigate,
+  useAsyncError,
   useLoaderData,
+  useLocation,
   useNavigate,
   useRevalidator,
   useSearchParams,
@@ -16,10 +19,19 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { CopyButton } from '@/components/CopyButton'
+import {
+  actionsColumn,
+  createdColumn,
+  nameColumn,
+  OpenLinkButton,
+  urlColumn,
+  visibilityBadgeColumn,
+} from '@/components/siteColumns'
 import { SitesTable } from '@/components/SitesTable'
+import { SortableTable, type Column } from '@/components/SortableTable'
 import { SpaceSelect } from '@/components/SpaceSelect'
 import { EmptyState, PageHeader, Spinner } from '@/components/states'
-import { VisibilityBadge, VisibilityMenu } from '@/components/visibility'
+import { VisibilityMenu } from '@/components/visibility'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -49,59 +61,49 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api, ApiError } from '@/lib/api'
-import { toLogin } from '@/lib/nav'
-import { timeAgo } from '@/lib/time'
 import type { SiteSummary, SlugExists, SpaceSummary, TeamUpload, Visibility } from '@/lib/types'
 import { type DroppedFile, filesFromDataTransfer, filesFromInput } from '@/lib/walkFiles'
 import { uploadFiles } from '@/lib/uploadWithProgress'
 import { cn } from '@/lib/utils'
 
-export async function loader({ request }: LoaderFunctionArgs) {
-  try {
-    const [sites, shared, spaces, team] = await Promise.all([
-      api.get<SiteSummary[]>('/api/sites/mine'),
-      api.get<SiteSummary[]>('/api/sites/shared'),
-      api.get<SpaceSummary[]>('/api/spaces/mine'),
-      api.get<TeamUpload[]>('/api/sites/team'),
-    ])
-    return { sites, shared, spaces, team }
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 401) throw toLogin(request)
-    throw err
+// Stream the feeds instead of blocking the route on them: the shell paints at root-loader time,
+// the deploy card streams on `spaces` alone, and the tabs stream once their feeds resolve —
+// rather than the whole page staying blank until the slowest call returns. Promises are consumed
+// via <Await>; a failed feed degrades only its own section (FeedError), and a 401 → login.
+export function loader() {
+  return {
+    sites: api.get<SiteSummary[]>('/api/sites/mine'),
+    shared: api.get<SiteSummary[]>('/api/sites/shared'),
+    spaces: api.get<SpaceSummary[]>('/api/spaces/mine'),
+    team: api.get<TeamUpload[]>('/api/sites/team'),
   }
 }
 
-function SharedSiteRow({ site }: { site: SiteSummary }) {
+// Sites shared with me — same table shell as Your sites, minus the owner-only actions.
+const SHARED_COLUMNS: Column<SiteSummary>[] = [
+  nameColumn(),
+  urlColumn(),
+  visibilityBadgeColumn(),
+  createdColumn(),
+  actionsColumn((s) => (
+    <div className="flex items-center justify-end gap-1">
+      <CopyButton text={s.url} label="" variant="outline" />
+      <OpenLinkButton url={s.url} />
+    </div>
+  )),
+]
+
+function SharedSitesTable({ sites }: { sites: SiteSummary[] }) {
   return (
-    <Card className="gap-0 py-0">
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 p-4">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="truncate font-medium">{site.title ?? site.siteSlug}</span>
-            <VisibilityBadge value={site.visibility} />
-          </div>
-          <a
-            href={site.url}
-            target="_blank"
-            rel="noreferrer"
-            className="font-mono text-sm text-muted-foreground hover:text-foreground hover:underline"
-          >
-            {site.url}
-          </a>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <CopyButton text={site.url} label="" variant="outline" />
-          <Button asChild variant="outline" size="sm">
-            <a href={site.url} target="_blank" rel="noreferrer">
-              <ExternalLink />
-              Open
-            </a>
-          </Button>
-        </div>
-      </div>
-    </Card>
+    <SortableTable
+      rows={sites}
+      columns={SHARED_COLUMNS}
+      getRowKey={(s) => s.id}
+      initialSort={{ key: 'created', dir: 'desc' }}
+    />
   )
 }
 
@@ -113,12 +115,18 @@ type UploadState =
 
 export function Component() {
   const { sites, shared, spaces, team } = useLoaderData() as {
-    sites: SiteSummary[]
-    shared: SiteSummary[]
-    spaces: SpaceSummary[]
-    team: TeamUpload[]
+    sites: Promise<SiteSummary[]>
+    shared: Promise<SiteSummary[]>
+    spaces: Promise<SpaceSummary[]>
+    team: Promise<TeamUpload[]>
   }
-  const groupSpaces = spaces.filter((s) => s.type === 'group')
+  // The tabs need every count (and the conditional Shared tab) up front, so they share one Await on
+  // all four feeds. The deploy card only needs `spaces`, so it streams on its own — the primary
+  // action paints as soon as spaces resolves and a slow or failing feed can't block or break it.
+  // Each <Await> sees a STABLE promise across re-renders (a fresh Promise.all would re-suspend);
+  // revalidation yields new promises but React keeps the resolved UI through the RR transition, so
+  // refetch won't flash the skeletons — only the first paint does.
+  const tabsData = useMemo(() => Promise.all([sites, shared, spaces, team]), [sites, shared, spaces, team])
 
   return (
     <div className="space-y-10">
@@ -126,9 +134,37 @@ export function Component() {
         title="Drop a folder, get a URL"
         description="HTML and markdown render in the browser; everything else downloads."
       />
+      <Suspense fallback={<DeployCardSkeleton />}>
+        <Await resolve={spaces} errorElement={<FeedError what="the deploy form" />}>
+          {(spaces) => <DeployCard spaces={spaces} />}
+        </Await>
+      </Suspense>
+      <Suspense fallback={<TabsSkeleton />}>
+        <Await resolve={tabsData} errorElement={<FeedError what="your sites" />}>
+          {([sites, shared, spaces, team]) => (
+            <DashboardTabs sites={sites} shared={shared} spaces={spaces} team={team} />
+          )}
+        </Await>
+      </Suspense>
+    </div>
+  )
+}
 
-      <DeployCard spaces={spaces} />
+function DashboardTabs({
+  sites,
+  shared,
+  spaces,
+  team,
+}: {
+  sites: SiteSummary[]
+  shared: SiteSummary[]
+  spaces: SpaceSummary[]
+  team: TeamUpload[]
+}) {
+  const groupSpaces = spaces.filter((s) => s.type === 'group')
 
+  return (
+    <div className="space-y-10">
       <Tabs defaultValue="sites" className="gap-6">
         <TabsList variant="line">
           <TabsTrigger value="sites">
@@ -161,10 +197,8 @@ export function Component() {
         </TabsContent>
 
         {shared.length > 0 && (
-          <TabsContent value="shared" className="grid gap-3">
-            {shared.map((s) => (
-              <SharedSiteRow key={s.id} site={s} />
-            ))}
+          <TabsContent value="shared">
+            <SharedSitesTable sites={shared} />
           </TabsContent>
         )}
 
@@ -194,17 +228,50 @@ export function Component() {
               description="Team-visible sites show up here as people deploy them."
             />
           ) : (
-            <Card className="gap-0 py-0">
-              <ul className="divide-y">
-                {team.map((u) => (
-                  <TeamActivityRow key={u.id} upload={u} />
-                ))}
-              </ul>
-            </Card>
+            <TeamActivityTable team={team} />
           )}
         </TabsContent>
       </Tabs>
     </div>
+  )
+}
+
+// First paint, before the feeds resolve — one placeholder per streamed section.
+function DeployCardSkeleton() {
+  return <Skeleton className="h-44 w-full rounded-xl" aria-hidden />
+}
+
+function TabsSkeleton() {
+  return (
+    <div className="space-y-6" aria-hidden>
+      <div className="flex gap-4">
+        {['a', 'b', 'c', 'd'].map((k) => (
+          <Skeleton key={k} className="h-7 w-28" />
+        ))}
+      </div>
+      <div className="space-y-2">
+        {['a', 'b', 'c', 'd', 'e'].map((k) => (
+          <Skeleton key={k} className="h-12 w-full rounded-lg" />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// A feed rejected. 401 = the session lapsed → bounce to login, preserving where we were. Anything
+// else renders a contained inline error so one failed feed degrades only its own section instead
+// of taking down the whole route.
+function FeedError({ what }: { what: string }) {
+  const error = useAsyncError()
+  const location = useLocation()
+  if (error instanceof ApiError && error.status === 401) {
+    return <Navigate to={`/login?next=${encodeURIComponent(location.pathname + location.search)}`} replace />
+  }
+  return (
+    <EmptyState
+      title={`Couldn't load ${what}`}
+      description={error instanceof Error ? error.message : 'Something went wrong. Try refreshing.'}
+    />
   )
 }
 
@@ -216,43 +283,32 @@ function TabCount({ n }: { n: number }) {
 
 // ─── Team activity ───────────────────────────────────────────────────────────
 
-function TeamActivityRow({ upload }: { upload: TeamUpload }) {
-  const who = upload.uploaderName ?? upload.uploaderEmail
+// Same table shell, with who-shipped + when columns. Defaults to newest-first (a feed).
+const who = (u: TeamUpload) => u.uploaderName ?? u.uploaderEmail
+
+const TEAM_COLUMNS: Column<TeamUpload>[] = [
+  nameColumn(),
+  urlColumn(),
+  visibilityBadgeColumn(),
+  {
+    key: 'who',
+    label: 'Shipped by',
+    compare: (a, b) => who(a).localeCompare(who(b)),
+    cellClassName: 'max-w-[12rem]',
+    render: (u) => <span className="block truncate text-sm">{who(u)}</span>,
+  },
+  createdColumn('when', 'When'),
+  actionsColumn((u) => <OpenLinkButton url={u.url} />),
+]
+
+function TeamActivityTable({ team }: { team: TeamUpload[] }) {
   return (
-    <li className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 p-4">
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="truncate font-medium">{upload.title ?? upload.siteSlug}</span>
-          <VisibilityBadge value={upload.visibility} />
-        </div>
-        <a
-          href={upload.url}
-          target="_blank"
-          rel="noreferrer"
-          className="font-mono text-sm text-muted-foreground hover:text-foreground hover:underline"
-        >
-          {upload.url}
-        </a>
-      </div>
-      <div className="flex shrink-0 items-center gap-3">
-        <div className="text-right text-sm">
-          <div className="truncate font-medium">{who}</div>
-          <time
-            className="text-xs text-muted-foreground"
-            dateTime={upload.createdAt}
-            title={new Date(upload.createdAt).toLocaleString()}
-          >
-            {timeAgo(upload.createdAt)}
-          </time>
-        </div>
-        <Button asChild variant="outline" size="sm">
-          <a href={upload.url} target="_blank" rel="noreferrer">
-            <ExternalLink />
-            Open
-          </a>
-        </Button>
-      </div>
-    </li>
+    <SortableTable
+      rows={team}
+      columns={TEAM_COLUMNS}
+      getRowKey={(u) => u.id}
+      initialSort={{ key: 'when', dir: 'desc' }}
+    />
   )
 }
 

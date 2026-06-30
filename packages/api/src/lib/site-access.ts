@@ -64,8 +64,9 @@ export async function resolveSiteForAccess(
 ): Promise<SiteAccess> {
   const site = await resolveSite(db, spaceSlug, siteSlug)
   if (!site) return { site: null, isMember: false, isShared: false, access: { ok: false, status: 403 } }
-  const isMember = user ? await isSpaceMember(db, site.spaceId, user.id) : false
-  const isShared = user ? await resolveIsShared(db, site.id, user.id) : false
+  const [isMember, isShared] = user
+    ? await Promise.all([isSpaceMember(db, site.spaceId, user.id), resolveIsShared(db, site.id, user.id)])
+    : [false, false]
   const access = checkAccess(site, user, isMember, isShared)
   return { site, isMember, isShared, access }
 }
