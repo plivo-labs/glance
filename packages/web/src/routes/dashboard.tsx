@@ -1,8 +1,11 @@
-import { useRef, useState } from 'react'
+import { Suspense, useMemo, useRef, useState } from 'react'
 import {
+  Await,
   Link,
-  type LoaderFunctionArgs,
+  Navigate,
+  useAsyncError,
   useLoaderData,
+  useLocation,
   useNavigate,
   useRevalidator,
   useSearchParams,
@@ -16,10 +19,12 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { CopyButton } from '@/components/CopyButton'
+import { createdColumn, nameColumn, urlColumn, visibilityBadgeColumn } from '@/components/siteColumns'
 import { SitesTable } from '@/components/SitesTable'
+import { SortableTable, type Column } from '@/components/SortableTable'
 import { SpaceSelect } from '@/components/SpaceSelect'
 import { EmptyState, PageHeader, Spinner } from '@/components/states'
-import { VisibilityBadge, VisibilityMenu } from '@/components/visibility'
+import { VisibilityMenu } from '@/components/visibility'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -49,59 +54,59 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api, ApiError } from '@/lib/api'
-import { toLogin } from '@/lib/nav'
-import { timeAgo } from '@/lib/time'
 import type { SiteSummary, SlugExists, SpaceSummary, TeamUpload, Visibility } from '@/lib/types'
 import { type DroppedFile, filesFromDataTransfer, filesFromInput } from '@/lib/walkFiles'
 import { uploadFiles } from '@/lib/uploadWithProgress'
 import { cn } from '@/lib/utils'
 
-export async function loader({ request }: LoaderFunctionArgs) {
-  try {
-    const [sites, shared, spaces, team] = await Promise.all([
-      api.get<SiteSummary[]>('/api/sites/mine'),
-      api.get<SiteSummary[]>('/api/sites/shared'),
-      api.get<SpaceSummary[]>('/api/spaces/mine'),
-      api.get<TeamUpload[]>('/api/sites/team'),
-    ])
-    return { sites, shared, spaces, team }
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 401) throw toLogin(request)
-    throw err
+// Stream the feeds instead of blocking the route on them: the shell paints at root-loader
+// time and each section resolves into its skeleton, rather than the whole page staying blank
+// until the slowest of four calls returns. Promises are consumed via <Await>; a 401 (session
+// expired) surfaces through its errorElement → login (see DeferredError).
+export function loader() {
+  return {
+    sites: api.get<SiteSummary[]>('/api/sites/mine'),
+    shared: api.get<SiteSummary[]>('/api/sites/shared'),
+    spaces: api.get<SpaceSummary[]>('/api/spaces/mine'),
+    team: api.get<TeamUpload[]>('/api/sites/team'),
   }
 }
 
-function SharedSiteRow({ site }: { site: SiteSummary }) {
-  return (
-    <Card className="gap-0 py-0">
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 p-4">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="truncate font-medium">{site.title ?? site.siteSlug}</span>
-            <VisibilityBadge value={site.visibility} />
-          </div>
-          <a
-            href={site.url}
-            target="_blank"
-            rel="noreferrer"
-            className="font-mono text-sm text-muted-foreground hover:text-foreground hover:underline"
-          >
-            {site.url}
-          </a>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <CopyButton text={site.url} label="" variant="outline" />
+// Sites shared with me — same table shell as Your sites, minus the owner-only actions.
+function SharedSitesTable({ sites }: { sites: SiteSummary[] }) {
+  const columns: Column<SiteSummary>[] = [
+    nameColumn(),
+    urlColumn(),
+    visibilityBadgeColumn(),
+    createdColumn(),
+    {
+      key: 'actions',
+      label: '',
+      headClassName: 'text-right',
+      cellClassName: 'text-right',
+      render: (s) => (
+        <div className="flex items-center justify-end gap-1">
+          <CopyButton text={s.url} label="" variant="outline" />
           <Button asChild variant="outline" size="sm">
-            <a href={site.url} target="_blank" rel="noreferrer">
+            <a href={s.url} target="_blank" rel="noreferrer">
               <ExternalLink />
               Open
             </a>
           </Button>
         </div>
-      </div>
-    </Card>
+      ),
+    },
+  ]
+  return (
+    <SortableTable
+      rows={sites}
+      columns={columns}
+      getRowKey={(s) => s.id}
+      initialSort={{ key: 'created', dir: 'desc' }}
+    />
   )
 }
 
@@ -113,12 +118,16 @@ type UploadState =
 
 export function Component() {
   const { sites, shared, spaces, team } = useLoaderData() as {
-    sites: SiteSummary[]
-    shared: SiteSummary[]
-    spaces: SpaceSummary[]
-    team: TeamUpload[]
+    sites: Promise<SiteSummary[]>
+    shared: Promise<SiteSummary[]>
+    spaces: Promise<SpaceSummary[]>
+    team: Promise<TeamUpload[]>
   }
-  const groupSpaces = spaces.filter((s) => s.type === 'group')
+  // Combine once per loader result so <Await> sees a STABLE promise across re-renders — a fresh
+  // Promise.all each render would re-suspend. Revalidation yields new promises → new combined
+  // promise, but React keeps the resolved UI through the transition, so refetch won't flash the
+  // skeleton; only the first paint (no prior UI) shows it.
+  const data = useMemo(() => Promise.all([sites, shared, spaces, team]), [sites, shared, spaces, team])
 
   return (
     <div className="space-y-10">
@@ -126,7 +135,32 @@ export function Component() {
         title="Drop a folder, get a URL"
         description="HTML and markdown render in the browser; everything else downloads."
       />
+      <Suspense fallback={<DashboardSkeleton />}>
+        <Await resolve={data} errorElement={<DeferredError />}>
+          {([sites, shared, spaces, team]) => (
+            <DashboardBody sites={sites} shared={shared} spaces={spaces} team={team} />
+          )}
+        </Await>
+      </Suspense>
+    </div>
+  )
+}
 
+function DashboardBody({
+  sites,
+  shared,
+  spaces,
+  team,
+}: {
+  sites: SiteSummary[]
+  shared: SiteSummary[]
+  spaces: SpaceSummary[]
+  team: TeamUpload[]
+}) {
+  const groupSpaces = spaces.filter((s) => s.type === 'group')
+
+  return (
+    <div className="space-y-10">
       <DeployCard spaces={spaces} />
 
       <Tabs defaultValue="sites" className="gap-6">
@@ -161,10 +195,8 @@ export function Component() {
         </TabsContent>
 
         {shared.length > 0 && (
-          <TabsContent value="shared" className="grid gap-3">
-            {shared.map((s) => (
-              <SharedSiteRow key={s.id} site={s} />
-            ))}
+          <TabsContent value="shared">
+            <SharedSitesTable sites={shared} />
           </TabsContent>
         )}
 
@@ -194,18 +226,44 @@ export function Component() {
               description="Team-visible sites show up here as people deploy them."
             />
           ) : (
-            <Card className="gap-0 py-0">
-              <ul className="divide-y">
-                {team.map((u) => (
-                  <TeamActivityRow key={u.id} upload={u} />
-                ))}
-              </ul>
-            </Card>
+            <TeamActivityTable team={team} />
           )}
         </TabsContent>
       </Tabs>
     </div>
   )
+}
+
+// First paint, before the feeds resolve: the deploy card + tabs region as pulsing placeholders.
+function DashboardSkeleton() {
+  return (
+    <div className="space-y-10" aria-hidden>
+      <Skeleton className="h-44 w-full rounded-xl" />
+      <div className="space-y-6">
+        <div className="flex gap-4">
+          {['a', 'b', 'c', 'd'].map((k) => (
+            <Skeleton key={k} className="h-7 w-28" />
+          ))}
+        </div>
+        <div className="space-y-2">
+          {['a', 'b', 'c', 'd', 'e'].map((k) => (
+            <Skeleton key={k} className="h-12 w-full rounded-lg" />
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// A feed rejected. 401 = the session lapsed between the root loader and here → bounce to login,
+// preserving where we were; anything else propagates to the route ErrorBoundary (RootError).
+function DeferredError() {
+  const error = useAsyncError()
+  const location = useLocation()
+  if (error instanceof ApiError && error.status === 401) {
+    return <Navigate to={`/login?next=${encodeURIComponent(location.pathname + location.search)}`} replace />
+  }
+  throw error
 }
 
 function TabCount({ n }: { n: number }) {
@@ -216,43 +274,43 @@ function TabCount({ n }: { n: number }) {
 
 // ─── Team activity ───────────────────────────────────────────────────────────
 
-function TeamActivityRow({ upload }: { upload: TeamUpload }) {
-  const who = upload.uploaderName ?? upload.uploaderEmail
-  return (
-    <li className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 p-4">
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="truncate font-medium">{upload.title ?? upload.siteSlug}</span>
-          <VisibilityBadge value={upload.visibility} />
-        </div>
-        <a
-          href={upload.url}
-          target="_blank"
-          rel="noreferrer"
-          className="font-mono text-sm text-muted-foreground hover:text-foreground hover:underline"
-        >
-          {upload.url}
-        </a>
-      </div>
-      <div className="flex shrink-0 items-center gap-3">
-        <div className="text-right text-sm">
-          <div className="truncate font-medium">{who}</div>
-          <time
-            className="text-xs text-muted-foreground"
-            dateTime={upload.createdAt}
-            title={new Date(upload.createdAt).toLocaleString()}
-          >
-            {timeAgo(upload.createdAt)}
-          </time>
-        </div>
+// Same table shell, with who-shipped + when columns. Defaults to newest-first (a feed).
+function TeamActivityTable({ team }: { team: TeamUpload[] }) {
+  const who = (u: TeamUpload) => u.uploaderName ?? u.uploaderEmail
+  const columns: Column<TeamUpload>[] = [
+    nameColumn(),
+    urlColumn(),
+    visibilityBadgeColumn(),
+    {
+      key: 'who',
+      label: 'Shipped by',
+      compare: (a, b) => who(a).localeCompare(who(b)),
+      cellClassName: 'max-w-[12rem]',
+      render: (u) => <span className="block truncate text-sm">{who(u)}</span>,
+    },
+    createdColumn('when', 'When'),
+    {
+      key: 'actions',
+      label: '',
+      headClassName: 'text-right',
+      cellClassName: 'text-right',
+      render: (u) => (
         <Button asChild variant="outline" size="sm">
-          <a href={upload.url} target="_blank" rel="noreferrer">
+          <a href={u.url} target="_blank" rel="noreferrer">
             <ExternalLink />
             Open
           </a>
         </Button>
-      </div>
-    </li>
+      ),
+    },
+  ]
+  return (
+    <SortableTable
+      rows={team}
+      columns={columns}
+      getRowKey={(u) => u.id}
+      initialSort={{ key: 'when', dir: 'desc' }}
+    />
   )
 }
 

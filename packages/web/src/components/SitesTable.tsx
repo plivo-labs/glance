@@ -1,26 +1,15 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useRevalidator } from 'react-router'
-import {
-  ArrowDown,
-  ArrowUp,
-  ChevronsUpDown,
-  Copy,
-  ExternalLink,
-  FolderInput,
-  MoreVertical,
-  Pencil,
-  Share2,
-  Trash2,
-} from 'lucide-react'
+import { Copy, ExternalLink, FolderInput, MoreVertical, Pencil, Share2, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { ShareDialog } from '@/components/ShareDialog'
+import { createdColumn, nameColumn, urlColumn, visRank } from '@/components/siteColumns'
+import { SortableTable, type Column } from '@/components/SortableTable'
 import { SpaceSelect } from '@/components/SpaceSelect'
 import { Spinner } from '@/components/states'
 import { VisibilityMenu } from '@/components/visibility'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
 import {
   Dialog,
   DialogContent,
@@ -38,107 +27,45 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { api } from '@/lib/api'
-import { timeAgo } from '@/lib/time'
 import type { SiteSummary, SpaceSummary, Visibility } from '@/lib/types'
-import { cn } from '@/lib/utils'
 
 const visibilityLabel = (v: Visibility): string => v.charAt(0).toUpperCase() + v.slice(1)
 
-// ─── Sortable table ──────────────────────────────────────────────────────────
-
-type SortKey = 'name' | 'visibility' | 'created'
-type Sort = { key: SortKey; dir: 'asc' | 'desc' }
-
-const VIS_RANK: Record<Visibility, number> = { private: 0, members: 1, team: 2 }
-const COMPARE: Record<SortKey, (a: SiteSummary, b: SiteSummary) => number> = {
-  name: (a, b) => (a.title ?? a.siteSlug).localeCompare(b.title ?? b.siteSlug),
-  visibility: (a, b) => VIS_RANK[a.visibility] - VIS_RANK[b.visibility],
-  created: (a, b) => a.createdAt.localeCompare(b.createdAt), // ISO 8601 sorts lexicographically
-}
-
 export function SitesTable({ sites }: { sites: SiteSummary[] }) {
-  const [sort, setSort] = useState<Sort>({ key: 'created', dir: 'desc' })
-
-  const rows = useMemo(() => {
-    const sorted = [...sites].sort(COMPARE[sort.key])
-    return sort.dir === 'asc' ? sorted : sorted.reverse()
-  }, [sites, sort])
-
-  // Click a column: flip direction if already active, else select it (newest-first for dates,
-  // A→Z otherwise).
-  const toggle = (key: SortKey) =>
-    setSort((s) =>
-      s.key === key
-        ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' }
-        : { key, dir: key === 'created' ? 'desc' : 'asc' },
-    )
-
+  const columns: Column<SiteSummary>[] = [
+    nameColumn(),
+    urlColumn(),
+    {
+      key: 'visibility',
+      label: 'Visibility',
+      compare: (a, b) => visRank(a.visibility) - visRank(b.visibility),
+      render: (s) => <OwnerVisibilityCell site={s} />,
+    },
+    createdColumn(),
+    {
+      key: 'actions',
+      label: '',
+      headClassName: 'text-right',
+      cellClassName: 'text-right',
+      render: (s) => <OwnerActions site={s} />,
+    },
+  ]
   return (
-    <Card className="gap-0 overflow-hidden py-0">
-      <Table>
-        <TableHeader>
-          <TableRow className="hover:bg-transparent">
-            <SortHead label="Name" sortKey="name" sort={sort} onToggle={toggle} />
-            <TableHead>URL</TableHead>
-            <SortHead label="Visibility" sortKey="visibility" sort={sort} onToggle={toggle} />
-            <SortHead label="Created" sortKey="created" sort={sort} onToggle={toggle} />
-            <TableHead className="text-right">
-              <span className="sr-only">Actions</span>
-            </TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {rows.map((s) => (
-            <SiteRow key={s.id} site={s} />
-          ))}
-        </TableBody>
-      </Table>
-    </Card>
+    <SortableTable
+      rows={sites}
+      columns={columns}
+      getRowKey={(s) => s.id}
+      initialSort={{ key: 'created', dir: 'desc' }}
+    />
   )
 }
 
-function SortHead({
-  label,
-  sortKey,
-  sort,
-  onToggle,
-}: {
-  label: string
-  sortKey: SortKey
-  sort: Sort
-  onToggle: (key: SortKey) => void
-}) {
-  const active = sort.key === sortKey
-  const Icon = !active ? ChevronsUpDown : sort.dir === 'asc' ? ArrowUp : ArrowDown
-  return (
-    <TableHead>
-      <button
-        type="button"
-        onClick={() => onToggle(sortKey)}
-        className="-mx-1 inline-flex items-center gap-1 rounded px-1 font-medium hover:text-foreground/70"
-        aria-label={`Sort by ${label}`}
-      >
-        {label}
-        <Icon className={cn('size-3.5', active ? 'opacity-80' : 'opacity-40')} />
-      </button>
-    </TableHead>
-  )
-}
-
-// ─── Row ──────────────────────────────────────────────────────────────────────
-
-type RowDialog = 'rename' | 'move' | 'share' | 'delete' | null
-
-function SiteRow({ site }: { site: SiteSummary }) {
+// Owner-only visibility control: an optimistic chip that opens the tier picker.
+function OwnerVisibilityCell({ site }: { site: SiteSummary }) {
   const revalidator = useRevalidator()
   const [pendingVis, setPendingVis] = useState<Visibility | null>(null)
-  const [dialog, setDialog] = useState<RowDialog>(null)
   const visibility = pendingVis ?? site.visibility
-  const archived = site.status === 'archived'
-  const refresh = () => revalidator.revalidate()
-  const close = () => setDialog(null)
 
   async function changeVisibility(v: Visibility) {
     setPendingVis(v)
@@ -146,7 +73,7 @@ function SiteRow({ site }: { site: SiteSummary }) {
       await api.patch(`/api/sites/${site.spaceSlug}/${site.siteSlug}`, { visibility: v })
       toast.success('Visibility updated', { description: visibilityLabel(v) })
       setPendingVis(null) // drop the optimistic value; revalidated loader is source of truth
-      refresh()
+      revalidator.revalidate()
     } catch (err) {
       setPendingVis(null)
       toast.error('Could not update visibility', {
@@ -154,6 +81,18 @@ function SiteRow({ site }: { site: SiteSummary }) {
       })
     }
   }
+
+  return <VisibilityMenu trigger="chip" value={visibility} onChange={changeVisibility} />
+}
+
+type RowDialog = 'rename' | 'move' | 'share' | 'delete' | null
+
+// Open + a kebab that collapses Rename / Move / Share / Copy link / Delete.
+function OwnerActions({ site }: { site: SiteSummary }) {
+  const revalidator = useRevalidator()
+  const [dialog, setDialog] = useState<RowDialog>(null)
+  const refresh = () => revalidator.revalidate()
+  const close = () => setDialog(null)
 
   async function copyLink() {
     try {
@@ -165,107 +104,69 @@ function SiteRow({ site }: { site: SiteSummary }) {
   }
 
   return (
-    <TableRow>
-      <TableCell className="max-w-[15rem]">
-        <div className="flex items-center gap-2">
-          <span className="truncate font-medium">{site.title ?? site.siteSlug}</span>
-          {archived && <Badge variant="secondary">archived</Badge>}
-        </div>
-      </TableCell>
-      <TableCell className="max-w-[22rem]">
-        <a
-          href={site.url}
-          target="_blank"
-          rel="noreferrer"
-          className="block truncate font-mono text-sm text-muted-foreground hover:text-foreground hover:underline"
-        >
-          {site.url.replace(/^https?:\/\//, '')}
+    <div className="flex items-center justify-end gap-1">
+      <Button asChild variant="outline" size="sm">
+        <a href={site.url} target="_blank" rel="noreferrer">
+          <ExternalLink />
+          Open
         </a>
-      </TableCell>
-      <TableCell>
-        <VisibilityMenu trigger="chip" value={visibility} onChange={changeVisibility} />
-      </TableCell>
-      <TableCell className="text-sm text-muted-foreground">
-        <time dateTime={site.createdAt} title={new Date(site.createdAt).toLocaleString()}>
-          {timeAgo(site.createdAt)}
-        </time>
-      </TableCell>
-      <TableCell className="text-right">
-        <div className="flex items-center justify-end gap-1">
-          <Button asChild variant="outline" size="sm">
-            <a href={site.url} target="_blank" rel="noreferrer">
-              <ExternalLink />
-              Open
-            </a>
+      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" aria-label="More actions">
+            <MoreVertical />
           </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" aria-label="More actions">
-                <MoreVertical />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-44">
-              <DropdownMenuItem onSelect={() => setDialog('rename')}>
-                <Pencil />
-                Rename
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => setDialog('move')}>
-                <FolderInput />
-                Move
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => setDialog('share')}>
-                <Share2 />
-                Share…
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => void copyLink()}>
-                <Copy />
-                Copy link
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" onSelect={() => setDialog('delete')}>
-                <Trash2 />
-                Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-44">
+          <DropdownMenuItem onSelect={() => setDialog('rename')}>
+            <Pencil />
+            Rename
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setDialog('move')}>
+            <FolderInput />
+            Move
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setDialog('share')}>
+            <Share2 />
+            Share…
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => void copyLink()}>
+            <Copy />
+            Copy link
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem variant="destructive" onSelect={() => setDialog('delete')}>
+            <Trash2 />
+            Delete
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
 
-        {/* Controlled dialogs driven by the kebab (a Dialog trigger can't live inside a menu item
-            cleanly). Each renders only a portaled body — nothing inline in the cell. */}
-        <RenameDialog
-          site={site}
-          open={dialog === 'rename'}
-          onOpenChange={(o) => !o && close()}
-          onDone={refresh}
-        />
-        <MoveDialog
-          site={site}
-          open={dialog === 'move'}
-          onOpenChange={(o) => !o && close()}
-          onDone={refresh}
-        />
-        <ShareDialog
-          spaceSlug={site.spaceSlug}
-          siteSlug={site.siteSlug}
-          title={site.title}
-          open={dialog === 'share'}
-          onOpenChange={(o) => !o && close()}
-        />
-        <ConfirmDialog
-          open={dialog === 'delete'}
-          onOpenChange={(o) => !o && close()}
-          title={`Delete ${site.spaceSlug}/${site.siteSlug}?`}
-          description="This permanently removes the site and all its files."
-          confirmLabel="Delete"
-          destructive
-          onConfirm={async () => {
-            await api.delete(`/api/sites/${site.spaceSlug}/${site.siteSlug}`)
-            toast.success('Site deleted')
-            refresh()
-          }}
-        />
-      </TableCell>
-    </TableRow>
+      {/* Controlled dialogs driven by the kebab (a Dialog trigger can't live inside a menu item
+          cleanly). Each renders only a portaled body — nothing inline in the cell. */}
+      <RenameDialog site={site} open={dialog === 'rename'} onOpenChange={(o) => !o && close()} onDone={refresh} />
+      <MoveDialog site={site} open={dialog === 'move'} onOpenChange={(o) => !o && close()} onDone={refresh} />
+      <ShareDialog
+        spaceSlug={site.spaceSlug}
+        siteSlug={site.siteSlug}
+        title={site.title}
+        open={dialog === 'share'}
+        onOpenChange={(o) => !o && close()}
+      />
+      <ConfirmDialog
+        open={dialog === 'delete'}
+        onOpenChange={(o) => !o && close()}
+        title={`Delete ${site.spaceSlug}/${site.siteSlug}?`}
+        description="This permanently removes the site and all its files."
+        confirmLabel="Delete"
+        destructive
+        onConfirm={async () => {
+          await api.delete(`/api/sites/${site.spaceSlug}/${site.siteSlug}`)
+          toast.success('Site deleted')
+          refresh()
+        }}
+      />
+    </div>
   )
 }
 
