@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { secureHeaders } from 'hono/secure-headers'
 import { withDb } from './db/client'
 import { superadminExists } from './db/repo'
+import { GLANCE_DEMO_HTML, GLANCE_SDK_JS } from './glance-sdk'
 import { buildPublicConfig } from './lib/bootstrap'
 import { INSTALL_SH } from './install-script'
 import { isGoogleEnabled } from './lib/oauth'
@@ -9,6 +10,7 @@ import { requireSameOrigin } from './middleware/auth'
 import { admin } from './routes/admin'
 import { auth } from './routes/auth'
 import { comments } from './routes/comments'
+import { dataApi, dataToken } from './routes/data'
 import { sites } from './routes/sites'
 import { spaces } from './routes/spaces'
 import { upload } from './routes/upload'
@@ -56,6 +58,20 @@ app.get('/api/install', (c) => {
   return c.text(script, 200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' })
 })
 
+// Shared-backend browser SDK + a self-contained demo page. Public GETs (no auth/db) registered
+// before the guards; long-cache the SDK. The demo mints a token same-origin then uses glance.db.
+app.get('/api/glance.js', (c) =>
+  c.body(GLANCE_SDK_JS, 200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' }),
+)
+app.get('/api/glance-demo', (c) =>
+  c.body(GLANCE_DEMO_HTML, 200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }),
+)
+
+// Shared-backend data plane. Registered BEFORE the /api/* guards (like /api/install): it is
+// bearer-token authenticated and cross-origin from the content origin, so it must NOT inherit
+// the cookie-based same-origin CSRF guard, and it manages its own DB + CORS. See routes/data.ts.
+app.route('/api/_data', dataApi)
+
 app.use('/api/*', requireSameOrigin)
 app.use('/api/*', withDb)
 
@@ -79,6 +95,8 @@ app.route('/api/sites', sites)
 // the two-segment site routes above. Mounted separately to keep the comments surface isolated.
 app.route('/api/sites', comments)
 app.route('/api/upload', upload)
+// Session-authenticated mint for shared-backend data tokens (owner → read+write, viewer → read).
+app.route('/api/data-token', dataToken)
 app.route('/api/users', users)
 app.route('/api/admin', admin)
 

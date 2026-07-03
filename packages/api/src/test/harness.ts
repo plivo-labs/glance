@@ -32,6 +32,7 @@ const MIGRATIONS = [
   'drizzle/0002_silly_gertrude_yorkes.sql',
   'drizzle/0003_rename_group_visibility.sql',
   'drizzle/0004_drop_public_visibility.sql',
+  'drizzle/0005_glance_documents.sql',
 ]
 
 /** Fresh in-memory DB with the real schema applied. */

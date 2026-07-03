@@ -142,6 +142,30 @@ export const comments = sqliteTable(
   (t) => [index('comments_thread_created').on(t.threadId, t.createdAt), index('comments_author').on(t.authorId)],
 )
 
+// Generic per-site document store backing the browser `glance.db` SDK (shared backend).
+// One flat table keyed by (siteId, collection, docId) holding an opaque JSON blob — this is
+// what gives the schemaless collection() DX without a migration per collection. INVARIANTS:
+// `siteId` is ALWAYS derived server-side from the verified data token (never a client field),
+// so the composite key is the tenant boundary; `createdBy` is server-set from the token viewer
+// and drives the default per-creator read policy. `json` is stored as TEXT (drizzle json mode).
+export const documents = sqliteTable(
+  'documents',
+  {
+    id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+    siteId: text('siteId').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+    collection: text('collection').notNull(),
+    docId: text('docId').notNull(),
+    json: text('json', { mode: 'json' }).$type<unknown>().notNull(),
+    createdBy: text('createdBy').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
+    updatedAt: text('updatedAt').notNull().$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    unique('documents_site_collection_doc_unq').on(t.siteId, t.collection, t.docId),
+    index('documents_site_collection_creator').on(t.siteId, t.collection, t.createdBy),
+  ],
+)
+
 export type User = typeof users.$inferSelect
 export type NewUser = typeof users.$inferInsert
 export type Space = typeof spaces.$inferSelect
@@ -158,6 +182,8 @@ export type CommentThread = typeof commentThreads.$inferSelect
 export type NewCommentThread = typeof commentThreads.$inferInsert
 export type Comment = typeof comments.$inferSelect
 export type NewComment = typeof comments.$inferInsert
+export type DocumentRow = typeof documents.$inferSelect
+export type NewDocumentRow = typeof documents.$inferInsert
 
 export type Visibility = Site['visibility']
 export type SpaceType = Space['type']

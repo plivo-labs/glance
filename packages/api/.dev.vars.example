@@ -20,6 +20,11 @@ SESSION_SECRET=""
 # Generate: openssl rand -hex 32
 CONTENT_TOKEN_SECRET=""
 
+# Separate HMAC secret for the shared-backend data-plane tokens (glance.db SDK). Keep DISTINCT
+# from CONTENT_TOKEN_SECRET so a leaked content (view) token can't verify as a data token.
+# Leave empty to keep the /api/_data surface inert (feature disabled). Generate: openssl rand -hex 32
+DATA_TOKEN_SECRET=""
+
 # Public base URLs (no trailing slash). Dev defaults shown.
 APP_URL="http://localhost:8787"
 CONTENT_URL="http://localhost:8788"

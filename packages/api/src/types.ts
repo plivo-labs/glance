@@ -15,6 +15,10 @@ export interface Bindings {
   BOOTSTRAP_TOKEN?: string
   SESSION_SECRET: string
   CONTENT_TOKEN_SECRET: string
+  // Optional: separate HMAC secret for the shared-backend data-plane tokens (glance.db SDK).
+  // Distinct from CONTENT_TOKEN_SECRET so a leaked content (view) token can't verify as a data
+  // token. When unset, the /api/_data surface is inert (404) — the feature is opt-in per deploy.
+  DATA_TOKEN_SECRET?: string
   APP_URL: string
   CONTENT_URL: string
   ALLOWED_HD: string
