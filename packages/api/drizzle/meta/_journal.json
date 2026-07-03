@@ -36,6 +36,13 @@
       "when": 1782800000000,
       "tag": "0004_drop_public_visibility",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1783078966943,
+      "tag": "0005_peaceful_onslaught",
+      "breakpoints": true
     }
   ]
 }

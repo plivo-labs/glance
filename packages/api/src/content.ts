@@ -4,8 +4,9 @@ import { type Context, Hono } from 'hono'
 import { Marked } from 'marked'
 import { ANNOTATE_CSS, ANNOTATE_JS, ANNOTATE_VERSION } from './annotate/bundle'
 import { isSpaceMember, resolveIsShared, toSessionUser } from './db/repo'
-import { files, sites, spaces, users } from './db/schema'
+import { type NewEvent, files, sites, spaces, users } from './db/schema'
 import { checkAccess } from './lib/access'
+import { fireAndForget, recordEvent } from './lib/events'
 import { verifyToken } from './lib/token'
 import type { Bindings } from './types'
 
@@ -129,6 +130,20 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
   const object = await c.env.GLANCE_FILES.get(file.storageKey)
   if (!object) return notFound(c)
 
+  // Usage analytics: count this as a viewer hit only for actual page loads (HTML + rendered
+  // markdown), not every CSS/JS/image sub-resource — otherwise one navigation inflates to many.
+  // userId is guaranteed non-null here (anonymous requests 403'd above), so every view is
+  // attributable to a known team member: exact unique-viewer counts, no IP hashing needed.
+  if (/\.(md|markdown)$/i.test(file.path) || isHtmlFile(file.path)) {
+    await trackView(c, db, {
+      type: 'view',
+      action: file.path,
+      userId,
+      siteId: siteRow.id,
+      siteLabel: `${spaceSlug}/${siteSlug}`,
+    })
+  }
+
   const frameAncestors = `frame-ancestors 'self' ${c.env.APP_URL}`
 
   // Markdown → rendered HTML (served as text/html). Use the RESOLVED file's path for
@@ -168,6 +183,13 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
   // that token leaking to third parties via the Referer header on outbound requests.
   headers.set('referrer-policy', 'no-referrer')
   return new Response(object.body, { headers })
+}
+
+// Record a page-view event without blocking the response. fireAndForget hands the D1 write to
+// ctx.waitUntil in the Workers runtime (off the serving critical path) and awaits inline in tests;
+// recordEvent never throws, so a failed insert can never break serving.
+async function trackView(c: Ctx, db: DrizzleD1Database, e: NewEvent): Promise<void> {
+  await fireAndForget(c, recordEvent(db, e))
 }
 
 // Extract the file path after the first `skip` path segments (e.g. /space/site → skip 2).

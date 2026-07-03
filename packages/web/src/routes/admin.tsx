@@ -1,5 +1,19 @@
 import { useState } from 'react'
-import { Archive, ArchiveRestore, Boxes, FolderOpen, Trash2, Users2 } from 'lucide-react'
+import {
+  Activity,
+  Archive,
+  ArchiveRestore,
+  Boxes,
+  Eye,
+  FileText,
+  FolderOpen,
+  HardDrive,
+  MessageSquare,
+  Terminal,
+  Trash2,
+  UserCheck,
+  Users2,
+} from 'lucide-react'
 import {
   type LoaderFunctionArgs,
   redirect,
@@ -9,9 +23,10 @@ import {
 } from 'react-router'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
-import { EmptyState, PageHeader, Spinner } from '@/components/states'
+import { EmptyState, PageHeader, SectionHeader, Spinner } from '@/components/states'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Select,
   SelectContent,
@@ -54,7 +69,7 @@ interface AdminUser {
   createdAt: string
 }
 
-type AdminTab = 'sites' | 'spaces' | 'users'
+type AdminTab = 'overview' | 'sites' | 'spaces' | 'users'
 
 interface SitesData {
   sites: AdminSite[]
@@ -63,15 +78,34 @@ interface SitesData {
   total: number
 }
 
+// Usage-analytics payload from GET /api/admin/stats (see lib/stats.ts).
+interface StatsData {
+  totals: {
+    users: number
+    sites: number
+    files: number
+    storageBytes: number
+    comments: number
+    views: number
+    cliInvocations: number
+    uniqueViewers: number
+  }
+  activeViewers30d: number
+  series: { date: string; signups: number; sites: number; views: number; comments: number; cli: number }[]
+  topSites: { siteId: string | null; siteLabel: string | null; views: number }[]
+  windowDays: number
+}
+
 type LoaderData =
+  | { tab: 'overview'; data: StatsData }
   | { tab: 'sites'; data: SitesData }
   | { tab: 'spaces'; data: AdminSpace[] }
   | { tab: 'users'; data: AdminUser[] }
 
-const TABS: AdminTab[] = ['sites', 'spaces', 'users']
+const TABS: AdminTab[] = ['overview', 'sites', 'spaces', 'users']
 
 function asTab(value: string | null): AdminTab {
-  return value === 'spaces' || value === 'users' ? value : 'sites'
+  return value === 'sites' || value === 'spaces' || value === 'users' ? value : 'overview'
 }
 
 // ── Loader: tab-aware fetch driven by URL searchParams ──────────────────────
@@ -79,6 +113,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url)
   const tab = asTab(url.searchParams.get('tab'))
   try {
+    if (tab === 'overview') {
+      const data = await api.get<StatsData>('/api/admin/stats')
+      return { tab, data } satisfies LoaderData
+    }
     if (tab === 'spaces') {
       const data = await api.get<AdminSpace[]>('/api/admin/spaces')
       return { tab, data } satisfies LoaderData
@@ -139,6 +177,186 @@ function RestoreButton({ siteId }: { siteId: string }) {
       {busy ? <Spinner className="size-3.5" /> : <ArchiveRestore className="size-3.5" />}
       Restore
     </Button>
+  )
+}
+
+// ── Overview (usage analytics) tab ──────────────────────────────────────────
+function formatCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, '')}k`
+  return String(n)
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let value = bytes / 1024
+  let i = 0
+  while (value >= 1024 && i < units.length - 1) {
+    value /= 1024
+    i++
+  }
+  return `${value.toFixed(value >= 100 || value === Math.floor(value) ? 0 : 1)} ${units[i]}`
+}
+
+function StatCard({ icon: Icon, label, value, sub }: { icon: typeof Eye; label: string; value: string; sub?: string }) {
+  return (
+    <Card className="gap-0 py-4">
+      <CardHeader className="px-4 pb-1">
+        <CardTitle className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+          <Icon className="size-3.5" />
+          {label}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="px-4">
+        <div className="text-2xl font-semibold tabular-nums">{value}</div>
+        {sub && <div className="mt-0.5 text-xs text-muted-foreground">{sub}</div>}
+      </CardContent>
+    </Card>
+  )
+}
+
+// Dependency-free inline SVG sparkline. Scales a series to the viewBox; flat/empty series render
+// as a baseline. Purely decorative, so it's aria-hidden — the numbers carry the real information.
+function Sparkline({ values, className }: { values: number[]; className?: string }) {
+  const width = 240
+  const height = 40
+  const max = Math.max(1, ...values)
+  const step = values.length > 1 ? width / (values.length - 1) : width
+  const points = values.map((v, i) => `${(i * step).toFixed(1)},${(height - (v / max) * (height - 4) - 2).toFixed(1)}`)
+  const line = points.join(' ')
+  const area = `0,${height} ${line} ${width},${height}`
+  return (
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="none"
+      className={className}
+      aria-hidden="true"
+      role="presentation"
+    >
+      <polygon points={area} className="fill-primary/10" />
+      <polyline points={line} fill="none" className="stroke-primary" strokeWidth={1.5} strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function TrendCard({
+  icon: Icon,
+  label,
+  total,
+  values,
+}: {
+  icon: typeof Eye
+  label: string
+  total: number
+  values: number[]
+}) {
+  return (
+    <Card className="gap-2 py-4">
+      <CardHeader className="px-4 pb-0">
+        <CardTitle className="flex items-center justify-between text-xs font-medium text-muted-foreground">
+          <span className="flex items-center gap-1.5">
+            <Icon className="size-3.5" />
+            {label}
+          </span>
+          <span className="tabular-nums">{formatCount(total)}</span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="px-4">
+        <Sparkline values={values} className="h-10 w-full" />
+      </CardContent>
+    </Card>
+  )
+}
+
+function StatsPanel({ data }: { data: StatsData }) {
+  const { totals, series, topSites, activeViewers30d, windowDays } = data
+  const sum = (key: 'signups' | 'views' | 'cli' | 'comments') => series.reduce((acc, d) => acc + d[key], 0)
+
+  return (
+    <div className="space-y-6">
+      {/* Headline totals (all-time). */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+        <StatCard icon={Users2} label="Users" value={formatCount(totals.users)} />
+        <StatCard icon={FolderOpen} label="Sites" value={formatCount(totals.sites)} />
+        <StatCard
+          icon={FileText}
+          label="Files hosted"
+          value={formatCount(totals.files)}
+          sub={formatBytes(totals.storageBytes)}
+        />
+        <StatCard icon={HardDrive} label="Storage" value={formatBytes(totals.storageBytes)} />
+        <StatCard
+          icon={Eye}
+          label="Page views"
+          value={formatCount(totals.views)}
+          sub={`${formatCount(totals.uniqueViewers)} unique viewers`}
+        />
+        <StatCard
+          icon={UserCheck}
+          label="Active viewers"
+          value={formatCount(activeViewers30d)}
+          sub={`last ${windowDays} days`}
+        />
+        <StatCard icon={MessageSquare} label="Comments" value={formatCount(totals.comments)} />
+        <StatCard icon={Terminal} label="CLI invocations" value={formatCount(totals.cliInvocations)} />
+      </div>
+
+      {/* 30-day trends. */}
+      <div>
+        <SectionHeader title={`Last ${windowDays} days`}>
+          <span className="text-sm text-muted-foreground">Daily activity</span>
+        </SectionHeader>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <TrendCard icon={Eye} label="Views" total={sum('views')} values={series.map((d) => d.views)} />
+          <TrendCard icon={Users2} label="Signups" total={sum('signups')} values={series.map((d) => d.signups)} />
+          <TrendCard
+            icon={MessageSquare}
+            label="Comments"
+            total={sum('comments')}
+            values={series.map((d) => d.comments)}
+          />
+          <TrendCard icon={Terminal} label="CLI" total={sum('cli')} values={series.map((d) => d.cli)} />
+        </div>
+      </div>
+
+      {/* Most-viewed sites in the window. */}
+      <div>
+        <SectionHeader title="Top sites">
+          <span className="text-sm text-muted-foreground">Most viewed in the last {windowDays} days</span>
+        </SectionHeader>
+        {topSites.length === 0 ? (
+          <div className="mt-3">
+            <EmptyState
+              icon={Activity}
+              title="No views yet"
+              description="Page views will appear here once sites get traffic."
+            />
+          </div>
+        ) : (
+          <div className="mt-3 rounded-xl border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Site</TableHead>
+                  <TableHead className="text-right">Views</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {topSites.map((s) => (
+                  <TableRow key={s.siteId ?? s.siteLabel ?? 'unknown'}>
+                    <TableCell className="font-mono text-xs text-muted-foreground">
+                      /{s.siteLabel ?? 'deleted site'}
+                    </TableCell>
+                    <TableCell className="text-right font-medium tabular-nums">{formatCount(s.views)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -429,11 +647,13 @@ export function Component() {
   const tab = loaderData.tab
 
   const description =
-    loaderData.tab === 'sites'
-      ? `${loaderData.data.total} site${loaderData.data.total === 1 ? '' : 's'}`
-      : loaderData.tab === 'spaces'
-        ? `${loaderData.data.length} space${loaderData.data.length === 1 ? '' : 's'}`
-        : `${loaderData.data.length} user${loaderData.data.length === 1 ? '' : 's'}`
+    loaderData.tab === 'overview'
+      ? 'Usage at a glance'
+      : loaderData.tab === 'sites'
+        ? `${loaderData.data.total} site${loaderData.data.total === 1 ? '' : 's'}`
+        : loaderData.tab === 'spaces'
+          ? `${loaderData.data.length} space${loaderData.data.length === 1 ? '' : 's'}`
+          : `${loaderData.data.length} user${loaderData.data.length === 1 ? '' : 's'}`
 
   function onTabChange(next: string) {
     // Switching tabs starts fresh — drop site-only filters/pagination.
@@ -453,6 +673,7 @@ export function Component() {
           ))}
         </TabsList>
 
+        {loaderData.tab === 'overview' && <StatsPanel data={loaderData.data} />}
         {loaderData.tab === 'sites' && <SitesPanel data={loaderData.data} />}
         {loaderData.tab === 'spaces' && <SpacesPanel spaces={loaderData.data} />}
         {loaderData.tab === 'users' && <UsersPanel users={loaderData.data} />}

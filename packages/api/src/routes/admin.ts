@@ -1,6 +1,7 @@
 import { and, desc, eq, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { sites, spaceMembers, spaces as spacesTable, users } from '../db/schema'
+import { computeStats } from '../lib/stats'
 import { deleteSiteObjects } from '../lib/storage'
 import { isVisibility, normalizeVisibility } from '../lib/visibility'
 import { requireAuth, requireSuperAdmin } from '../middleware/auth'
@@ -120,3 +121,8 @@ admin.get('/users', async (c) => {
     .orderBy(desc(users.createdAt))
   return c.json(rows)
 })
+
+// GET /api/admin/stats — usage-analytics rollups: headline totals (users, sites, files, storage,
+// comments, views, CLI invocations, unique viewers), a 30-day per-day series, and the top sites
+// by views. Read-only aggregation over existing state + the events stream.
+admin.get('/stats', async (c) => c.json(await computeStats(c.get('db'))))

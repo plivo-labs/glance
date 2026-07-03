@@ -142,6 +142,35 @@ export const comments = sqliteTable(
   (t) => [index('comments_thread_created').on(t.threadId, t.createdAt), index('comments_author').on(t.authorId)],
 )
 
+// Usage-analytics event stream. Append-only; one row per tracked action:
+//   type 'view' — a top-level HTML page served by the content worker (action = file path).
+//   type 'cli'  — a Bearer-authenticated API call from the CLI (action = route, e.g. 'upload').
+// User/site FKs are SET NULL (not cascade) so deleting a user or site never erases historical
+// counts — same durability rule the comments table follows. siteLabel denormalizes "space/site"
+// so the row stays human-readable after its site is gone. Writes go through ctx.waitUntil on the
+// serving path, so recording an event never blocks the response.
+export const events = sqliteTable(
+  'events',
+  {
+    id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+    type: text('type', { enum: ['view', 'cli'] }).notNull(),
+    // view: served file path; cli: the API route/command (e.g. 'upload', 'comments', 'read').
+    action: text('action'),
+    userId: text('userId').references(() => users.id, { onDelete: 'set null' }),
+    siteId: text('siteId').references(() => sites.id, { onDelete: 'set null' }),
+    // Denormalized "space/site" slug pair — survives a site delete for readable per-site rollups.
+    siteLabel: text('siteLabel'),
+    // CLI semver from the User-Agent (glance-cli/<version>); null for views and legacy CLIs.
+    cliVersion: text('cliVersion'),
+    createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    index('events_type_created').on(t.type, t.createdAt),
+    index('events_site_created').on(t.siteId, t.createdAt),
+    index('events_user_created').on(t.userId, t.createdAt),
+  ],
+)
+
 export type User = typeof users.$inferSelect
 export type NewUser = typeof users.$inferInsert
 export type Space = typeof spaces.$inferSelect
@@ -158,6 +187,9 @@ export type CommentThread = typeof commentThreads.$inferSelect
 export type NewCommentThread = typeof commentThreads.$inferInsert
 export type Comment = typeof comments.$inferSelect
 export type NewComment = typeof comments.$inferInsert
+export type Event = typeof events.$inferSelect
+export type NewEvent = typeof events.$inferInsert
+export type EventType = Event['type']
 
 export type Visibility = Site['visibility']
 export type SpaceType = Space['type']

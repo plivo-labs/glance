@@ -5,6 +5,7 @@ import { superadminExists } from './db/repo'
 import { buildPublicConfig } from './lib/bootstrap'
 import { INSTALL_SH } from './install-script'
 import { isGoogleEnabled } from './lib/oauth'
+import { trackCliUsage } from './middleware/analytics'
 import { requireSameOrigin } from './middleware/auth'
 import { admin } from './routes/admin'
 import { auth } from './routes/auth'
@@ -58,6 +59,7 @@ app.get('/api/install', (c) => {
 
 app.use('/api/*', requireSameOrigin)
 app.use('/api/*', withDb)
+app.use('/api/*', trackCliUsage)
 
 app.get('/api/health', (c) => c.json({ status: 'ok' }))
 
