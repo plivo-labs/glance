@@ -3,10 +3,9 @@ import { type DrizzleD1Database, drizzle } from 'drizzle-orm/d1'
 import { type Context, Hono } from 'hono'
 import { Marked } from 'marked'
 import { ANNOTATE_CSS, ANNOTATE_JS, ANNOTATE_VERSION } from './annotate/bundle'
-import { isSpaceMember, resolveIsShared, toSessionUser } from './db/repo'
-import { type NewEvent, files, sites, spaces, users } from './db/schema'
-import { checkAccess } from './lib/access'
+import { type NewEvent, files, sites, spaces } from './db/schema'
 import { fireAndForget, recordEvent } from './lib/events'
+import { authorizeViewerById } from './lib/site-access'
 import { verifyToken } from './lib/token'
 import type { Bindings } from './types'
 
@@ -86,21 +85,9 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
     // Untokened request: no public tier exists, so anonymous access is never allowed.
     return c.text('Forbidden', 403)
   } else {
-    // Gated path: reconstruct the bound user from D1 and re-authorize against live state.
-    // The user row, membership and share all key off `userId` (the token-bound id) + siteRow,
-    // never off each other — so resolve them in one round trip instead of three serial ones.
-    const [userRow, isMember, isShared] = await Promise.all([
-      db
-        .select({ id: users.id, email: users.email, name: users.name, role: users.role })
-        .from(users)
-        .where(eq(users.id, userId))
-        .limit(1)
-        .then((rows) => rows[0]),
-      isSpaceMember(db, siteRow.spaceId, userId),
-      resolveIsShared(db, siteRow.id, userId),
-    ])
-    if (!userRow) return c.text('Forbidden', 403)
-    const access = checkAccess(siteRow, toSessionUser(userRow), isMember, isShared)
+    // Gated path: reconstruct the bound user and re-authorize against live state, through the
+    // same authorizeViewerById the data plane uses — both surfaces enforce the SAME rules.
+    const { access } = await authorizeViewerById(db, siteRow, userId)
     if (!access.ok) return c.text('Forbidden', access.status)
   }
 

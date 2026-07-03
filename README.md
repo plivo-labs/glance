@@ -60,7 +60,7 @@ The installer bakes in your instance URL (so `glance login` targets it immediate
 | `logout` | revokes session, removes local token |
 
 Defaults: `--space` = your personal space · `--name` = file/folder name slugified · `--visibility` = `team`.
-Visibility: `team` · `public` · `private` · `members` (own space only).
+Visibility: `team` · `private` · `members` (own space only).
 
 Point at another instance any time with `GLANCE_API_URL=https://… glance <cmd>`.
 
@@ -69,6 +69,36 @@ Point at another instance any time with `GLANCE_API_URL=https://… glance <cmd>
 - **Uploaded HTML/JS is untrusted** — served from a separate content origin (`CONTENT_URL`), so app session cookies never reach it.
 - **Gated links** carry short-lived, single-use HMAC tokens signed with `CONTENT_TOKEN_SECRET`.
 - **Markdown** renders with raw HTML neutralized under a strict CSP, so injected `<script>` is inert.
+
+## Shared backend — `glance.db` (experimental, opt-in)
+
+Hosted sites can get browser-callable persistence — no keys, no config. Off by default; an
+operator enables it per deploy (`DATA_TOKEN_SECRET`, see [DEPLOY.md](DEPLOY.md#2-secrets)).
+
+```js
+// On a page served from the APP origin (hosted-page support lands with the broker, see SHARED_BACKEND.md):
+window.__GLANCE_DB__ = { space: 'sam', site: 'demo' }
+// <script src="/api/glance.js"></script>
+const notes = glance.db.collection('notes')
+await notes.create({ text: 'hello' })      // POST   /api/_data/notes        → {id, data, createdAt, updatedAt}
+await notes.list()                          // GET    /api/_data/notes        → {items: [...]} newest-first, ?limit≤200
+await notes.get(id)                         // GET    /api/_data/notes/:id
+await notes.put(id, { text: 'edited' })     // PUT    /api/_data/notes/:id    (upsert at your own id)
+await notes.delete(id)                      // DELETE /api/_data/notes/:id
+```
+
+Programmatic use (cron jobs, scripts) works today with a CLI token:
+
+```bash
+TOKEN=$(curl -s -X POST -H "Authorization: Bearer $GLANCE_CLI_TOKEN" \
+  "$GLANCE_API_URL/api/data-token/<space>/<site>" | jq -r .token)
+curl -H "Authorization: Bearer $TOKEN" "$GLANCE_API_URL/api/_data/notes"
+```
+
+Rules: docs are JSON objects ≤100KB in named collections · writes need the site **owner** (viewers
+get read-only tokens) · reads return only **your own** documents ("public within site" is a
+planned opt-in) · every request re-checks live site access, so revoking a share cuts data access
+immediately. Design + threat model: [SHARED_BACKEND.md](SHARED_BACKEND.md).
 
 ## Advanced
 
