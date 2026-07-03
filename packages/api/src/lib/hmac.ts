@@ -1,8 +1,8 @@
 // Shared HMAC-SHA256 primitives (base64url) for signing/verifying compact tokens.
 // Verification is constant-time via crypto.subtle.verify — Workers has no
 // crypto.timingSafeEqual, and a naive `mac === mac` string compare would leak timing.
-// lib/token.ts (content tokens) predates this and inlines its own copies; new token
-// formats (see lib/data-token.ts) build on these instead of re-implementing the crypto.
+// THE single copy of this crypto: both token formats (lib/token.ts content tokens,
+// lib/data-token.ts data tokens) build on these — never re-implement or inline them.
 
 const enc = new TextEncoder()
 

@@ -1,7 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
-import { isSpaceMember, resolveIsShared } from '../db/repo'
-import { sites as sitesTable, spaces } from '../db/schema'
+import { isSpaceMember, resolveIsShared, toSessionUser } from '../db/repo'
+import { sites as sitesTable, spaces, users } from '../db/schema'
 import type { Visibility } from '../db/schema'
 import type { SessionUser } from '../types'
 import { type AccessResult, checkAccess } from './access'
@@ -69,4 +69,30 @@ export async function resolveSiteForAccess(
     : [false, false]
   const access = checkAccess(site, user, isMember, isShared)
   return { site, isMember, isShared, access }
+}
+
+export type ViewerAuth = { user: SessionUser | null; access: AccessResult }
+
+/** Reconstruct a token-bound viewer by id and re-authorize against LIVE DB state: user row →
+ *  membership → explicit share → `checkAccess`, resolved in one round trip. Shared by the
+ *  content worker and the data plane so every token-holder re-auth runs through the SAME path —
+ *  a revoked share, tightened visibility, or deleted user blocks access immediately. */
+export async function authorizeViewerById(
+  db: DrizzleD1Database,
+  site: Pick<ResolvedSite, 'id' | 'spaceId' | 'visibility' | 'status' | 'ownerId'>,
+  userId: string,
+): Promise<ViewerAuth> {
+  const [userRow, isMember, isShared] = await Promise.all([
+    db
+      .select({ id: users.id, email: users.email, name: users.name, role: users.role })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1)
+      .then((rows) => rows[0]),
+    isSpaceMember(db, site.spaceId, userId),
+    resolveIsShared(db, site.id, userId),
+  ])
+  if (!userRow) return { user: null, access: { ok: false, status: 403 } }
+  const user = toSessionUser(userRow)
+  return { user, access: checkAccess(site, user, isMember, isShared) }
 }

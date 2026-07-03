@@ -15,8 +15,10 @@ first commit — not retrofitted.
   over a generic `documents(siteId, collection, docId, json, createdBy, …)` table.
 - **`/api/data-token/:space/:site`** (`dataToken`) — session-authenticated mint. Owner/superadmin
   → `read+write`; any other authorized viewer → `read`.
-- **`glance.js` SDK + `/api/glance-demo`** (`glance-sdk.ts`) — the browser DX + a self-contained
-  demo served from the trusted app origin.
+- **`glance.js` SDK** (`glance-sdk.ts`, served at `/api/glance.js`) — the browser DX. Mints
+  same-origin via the session, re-mints before expiry and once on a 401 (long-lived pages keep
+  working across the 300s TTL). Boot global is `__GLANCE_DB__` (`__GLANCE__` belongs to the
+  annotate overlay). No demo page ships — it gets rebuilt broker-side in Phase 2.
 - **D1 migration** `0005_glance_documents.sql` (+ journal + harness `MIGRATIONS`).
 - Feature is **opt-in per deploy**: unset `DATA_TOKEN_SECRET` → `/api/_data` is inert (404).
 
@@ -31,7 +33,7 @@ first commit — not retrofitted.
 | 5 Per-document read policy | `get`/`list` filtered by `createdBy = token.viewerId` (default per-creator) | `data.test.ts` cross-viewer isolation |
 | 6 Tenant isolation (IDOR) | Every query ANDs `siteId = token.siteId`; siteId never from the body | `data.test.ts` (B's siteB token can't reach siteA) |
 | 7 Mass assignment | `siteId`/`createdBy`/timestamps set from the token, never spread from the body | `data.test.ts` (spoofed body keys ignored) |
-| 8 Stored-XSS amplification | No credential in the untrusted page realm; demo renders db values via `textContent` | design/scope; demo code |
+| 8 Stored-XSS amplification | No credential in the untrusted page realm (SDK runs on the trusted app origin only until the broker) | design/scope |
 | 10 Live re-authorization | Every request re-runs `checkAccess` against live DB (revoked share / archived / private) | `data.test.ts` (visibility tighten → 403, archive → 410) |
 | 11 Query-injection | No arbitrary filters shipped; collection/docId allowlisted; all queries drizzle-parameterized | `data.test.ts` validation; deferred filters |
 
@@ -47,8 +49,8 @@ first commit — not retrofitted.
 
 ## Verification
 
-- `bun run test` → 178 API tests pass (23 new: `data-token.test.ts` 9, `data.test.ts` 14),
-  `typecheck` + `biome lint` clean.
+- `bun run test` → 182 API tests pass (27 shared-backend: `data-token.test.ts` 9, `data.test.ts`
+  16, `index.test.ts` 2), `typecheck` + `biome lint` clean.
 - End-to-end on the real wrangler worker: bootstrap → create site → mint token → create/list docs;
   and negatives: no-token/garbage → 401, session-cookie-only → 401 (data plane ignores the cookie),
   CORS preflight from a foreign origin returns `Access-Control-Allow-Origin: <CONTENT_URL>` with no

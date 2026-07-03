@@ -54,6 +54,10 @@ echo "$(openssl rand -hex 32)" | wrangler secret put BOOTSTRAP_TOKEN
 
 - `SESSION_SECRET` — HMAC key for signed cookies + KV session tokens.
 - `CONTENT_TOKEN_SECRET` — HMAC key for short-lived gated-content URL tokens.
+- `DATA_TOKEN_SECRET` (optional, main worker only) — HMAC key for `glance.db` shared-backend data
+  tokens; keep distinct from `CONTENT_TOKEN_SECRET`. While unset, `/api/_data` and the token mint
+  return 404 — the feature is opt-in per deploy. Enable with:
+  `echo "$(openssl rand -hex 32)" | wrangler secret put DATA_TOKEN_SECRET`
 
 ## 3. Ship
 

@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { secureHeaders } from 'hono/secure-headers'
 import { withDb } from './db/client'
 import { superadminExists } from './db/repo'
-import { GLANCE_DEMO_HTML, GLANCE_SDK_JS } from './glance-sdk'
+import { GLANCE_SDK_JS } from './glance-sdk'
 import { buildPublicConfig } from './lib/bootstrap'
 import { INSTALL_SH } from './install-script'
 import { isGoogleEnabled } from './lib/oauth'
@@ -58,13 +58,10 @@ app.get('/api/install', (c) => {
   return c.text(script, 200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' })
 })
 
-// Shared-backend browser SDK + a self-contained demo page. Public GETs (no auth/db) registered
-// before the guards; long-cache the SDK. The demo mints a token same-origin then uses glance.db.
+// Shared-backend browser SDK. Public GET (no auth/db) registered before the guards; no-store so
+// SDK updates land immediately while the surface is young.
 app.get('/api/glance.js', (c) =>
   c.body(GLANCE_SDK_JS, 200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' }),
-)
-app.get('/api/glance-demo', (c) =>
-  c.body(GLANCE_DEMO_HTML, 200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }),
 )
 
 // Shared-backend data plane. Registered BEFORE the /api/* guards (like /api/install): it is

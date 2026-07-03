@@ -1,10 +1,9 @@
-import { and, eq } from 'drizzle-orm'
+import { and, desc, eq } from 'drizzle-orm'
 import { type DrizzleD1Database, drizzle } from 'drizzle-orm/d1'
 import { type Context, Hono } from 'hono'
-import { isSpaceMember, resolveIsShared, toSessionUser } from '../db/repo'
-import { type DocumentRow, type Site, documents, sites, spaces, users } from '../db/schema'
-import { checkAccess } from '../lib/access'
+import { type DocumentRow, type Site, documents, sites } from '../db/schema'
 import { type DataCapability, type DataClaims, hasCap, signDataToken, verifyDataToken } from '../lib/data-token'
+import { authorizeViewerById, resolveSiteForAccess } from '../lib/site-access'
 import { requireAuth } from '../middleware/auth'
 import type { AppEnv, Bindings, SessionUser } from '../types'
 
@@ -24,13 +23,14 @@ const DEFAULT_LIMIT = 50
 const MAX_LIMIT = 200
 const DATA_TOKEN_TTL_SEC = 300
 
-// `injectedDb` lets tests wrap this sub-app and supply the in-memory harness DB (mirrors the
-// content worker's getDb seam); prod leaves it unset and a per-request D1 client is built.
-type DataEnv = { Bindings: Bindings; Variables: { injectedDb?: DrizzleD1Database; ddb: DrizzleD1Database; claims: DataClaims } }
+// `db` is optional: production runs no middleware that sets it, so getDb() falls back to a
+// per-request client from the D1 binding; tests inject the in-memory harness db via c.set('db')
+// — the same seam the content worker uses.
+type DataEnv = { Bindings: Bindings; Variables: { db?: DrizzleD1Database; claims: DataClaims } }
 type DataCtx = Context<DataEnv>
 
 function getDb(c: DataCtx): DrizzleD1Database {
-  return c.get('injectedDb') ?? drizzle(c.env.GLANCE_DB)
+  return c.get('db') ?? drizzle(c.env.GLANCE_DB)
 }
 
 export const dataApi = new Hono<DataEnv>()
@@ -50,10 +50,10 @@ dataApi.use('*', async (c, next) => {
   await next()
 })
 
-// Verify the bearer data token, then LIVE re-authorize against current DB state: recover the
-// site + viewer and re-run the same checkAccess the content worker uses, so a revoked share,
-// tightened visibility, archived site, or deleted user blocks data access immediately — the
-// token is never trusted as a standalone snapshot.
+// Verify the bearer data token, then LIVE re-authorize against current DB state via the same
+// authorizeViewerById the content worker uses, so a revoked share, tightened visibility,
+// archived site, or deleted user blocks data access immediately — the token is never trusted
+// as a standalone snapshot.
 dataApi.use('*', async (c, next) => {
   const header = c.req.header('Authorization')
   const token = header?.startsWith('Bearer ') ? header.slice(7).trim() : null
@@ -76,29 +76,26 @@ dataApi.use('*', async (c, next) => {
   )[0]
   if (!site) return c.json({ error: 'forbidden' }, 403)
 
-  const [userRow, isMember, isShared] = await Promise.all([
-    db
-      .select({ id: users.id, email: users.email, name: users.name, role: users.role })
-      .from(users)
-      .where(eq(users.id, claims.viewerId))
-      .limit(1)
-      .then((r) => r[0]),
-    isSpaceMember(db, site.spaceId, claims.viewerId),
-    resolveIsShared(db, site.id, claims.viewerId),
-  ])
-  if (!userRow) return c.json({ error: 'forbidden' }, 403)
-  const access = checkAccess(site, toSessionUser(userRow), isMember, isShared)
+  const { access } = await authorizeViewerById(db, site, claims.viewerId)
   if (!access.ok) return c.json({ error: 'forbidden' }, access.status)
 
-  c.set('ddb', db)
+  c.set('db', db)
   c.set('claims', claims)
   await next()
 })
 
-// Create a document (server-generated id). Requires the write capability.
+// Method → required capability, enforced structurally for every current AND future route on
+// this surface — a new endpoint cannot ship without a capability check.
+const METHOD_CAP: Record<string, DataCapability> = { GET: 'read', HEAD: 'read', POST: 'write', PUT: 'write', DELETE: 'write' }
+dataApi.use('*', async (c, next) => {
+  const cap = METHOD_CAP[c.req.method]
+  if (!cap || !hasCap(c.get('claims'), cap)) return c.json({ error: 'forbidden' }, 403)
+  await next()
+})
+
+// Create a document (server-generated id).
 dataApi.post('/:collection', async (c) => {
   const claims = c.get('claims')
-  if (!hasCap(claims, 'write')) return c.json({ error: 'forbidden' }, 403)
   const collection = c.req.param('collection')
   if (!COLLECTION_RE.test(collection)) return c.json({ error: 'invalid collection' }, 400)
   const parsed = await readJsonBody(c)
@@ -108,7 +105,7 @@ dataApi.post('/:collection', async (c) => {
   const now = new Date().toISOString()
   // siteId + createdBy come from the verified TOKEN, not the body — a body carrying its own
   // `siteId`/`createdBy` keys just lands inside the opaque `json` blob and changes nothing.
-  await c.get('ddb').insert(documents).values({
+  await getDb(c).insert(documents).values({
     siteId: claims.siteId,
     collection,
     docId,
@@ -120,16 +117,14 @@ dataApi.post('/:collection', async (c) => {
   return c.json({ id: docId, data: parsed.value, createdAt: now, updatedAt: now }, 201)
 })
 
-// Read one document. Requires read; scoped to the token's site + the caller's own rows.
+// Read one document. Scoped to the token's site + the caller's own rows.
 dataApi.get('/:collection/:docId', async (c) => {
   const claims = c.get('claims')
-  if (!hasCap(claims, 'read')) return c.json({ error: 'forbidden' }, 403)
   const collection = c.req.param('collection')
   const docId = c.req.param('docId')
   if (!COLLECTION_RE.test(collection) || !DOCID_RE.test(docId)) return c.json({ error: 'not found' }, 404)
   const row = (
-    await c
-      .get('ddb')
+    await getDb(c)
       .select()
       .from(documents)
       .where(scoped(claims, collection, docId))
@@ -139,15 +134,13 @@ dataApi.get('/:collection/:docId', async (c) => {
   return c.json(toDoc(row))
 })
 
-// List documents in a collection. Requires read; returns ONLY the caller's own rows in this
+// List documents in a collection, newest first. Returns ONLY the caller's own rows in this
 // site+collection (default per-creator read policy — "public within site" is a future opt-in).
 dataApi.get('/:collection', async (c) => {
   const claims = c.get('claims')
-  if (!hasCap(claims, 'read')) return c.json({ error: 'forbidden' }, 403)
   const collection = c.req.param('collection')
   if (!COLLECTION_RE.test(collection)) return c.json({ error: 'invalid collection' }, 400)
-  const rows = await c
-    .get('ddb')
+  const rows = await getDb(c)
     .select()
     .from(documents)
     .where(
@@ -157,31 +150,32 @@ dataApi.get('/:collection', async (c) => {
         eq(documents.createdBy, claims.viewerId),
       ),
     )
+    .orderBy(desc(documents.createdAt))
     .limit(clampLimit(c.req.query('limit')))
   return c.json({ items: rows.map(toDoc) })
 })
 
-// Upsert a document at a caller-chosen id. Requires write; a doc owned by another viewer is
-// invisible (404, not 403 — existence isn't disclosed) and cannot be overwritten.
+// Upsert a document at a caller-chosen id. A doc owned by another viewer is invisible
+// (404, not 403 — existence isn't disclosed) and cannot be overwritten.
 dataApi.put('/:collection/:docId', async (c) => {
   const claims = c.get('claims')
-  if (!hasCap(claims, 'write')) return c.json({ error: 'forbidden' }, 403)
   const collection = c.req.param('collection')
   const docId = c.req.param('docId')
   if (!COLLECTION_RE.test(collection) || !DOCID_RE.test(docId)) return c.json({ error: 'invalid id' }, 400)
   const parsed = await readJsonBody(c)
   if (!parsed.ok) return c.json({ error: parsed.error }, parsed.status)
 
-  const db = c.get('ddb')
-  const existing = (
-    await db
-      .select({ createdBy: documents.createdBy, createdAt: documents.createdAt })
-      .from(documents)
-      .where(and(eq(documents.siteId, claims.siteId), eq(documents.collection, collection), eq(documents.docId, docId)))
-      .limit(1)
-  )[0]
+  const db = getDb(c)
   const now = new Date().toISOString()
-  if (existing) {
+  const updateExisting = async (): Promise<Response | null> => {
+    const existing = (
+      await db
+        .select({ createdBy: documents.createdBy, createdAt: documents.createdAt })
+        .from(documents)
+        .where(and(eq(documents.siteId, claims.siteId), eq(documents.collection, collection), eq(documents.docId, docId)))
+        .limit(1)
+    )[0]
+    if (!existing) return null
     if (existing.createdBy !== claims.viewerId) return c.json({ error: 'not found' }, 404)
     await db
       .update(documents)
@@ -189,26 +183,36 @@ dataApi.put('/:collection/:docId', async (c) => {
       .where(scoped(claims, collection, docId))
     return c.json({ id: docId, data: parsed.value, createdAt: existing.createdAt, updatedAt: now })
   }
-  await db.insert(documents).values({
-    siteId: claims.siteId,
-    collection,
-    docId,
-    json: parsed.value,
-    createdBy: claims.viewerId,
-    createdAt: now,
-    updatedAt: now,
-  })
+
+  const updated = await updateExisting()
+  if (updated) return updated
+  // Fresh id: insert race-safely. onConflictDoNothing + returning() means a concurrent first-PUT
+  // can never 500 on the unique index — an empty return says the row appeared meanwhile, so take
+  // the update path after all (which also yields the correct 404 if the winner was another viewer).
+  const inserted = await db
+    .insert(documents)
+    .values({
+      siteId: claims.siteId,
+      collection,
+      docId,
+      json: parsed.value,
+      createdBy: claims.viewerId,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoNothing()
+    .returning({ id: documents.id })
+  if (inserted.length === 0) return (await updateExisting()) ?? c.json({ error: 'not found' }, 404)
   return c.json({ id: docId, data: parsed.value, createdAt: now, updatedAt: now }, 201)
 })
 
-// Delete a document. Requires write; scoped to the token's site + the caller's own rows.
+// Delete a document. Scoped to the token's site + the caller's own rows.
 dataApi.delete('/:collection/:docId', async (c) => {
   const claims = c.get('claims')
-  if (!hasCap(claims, 'write')) return c.json({ error: 'forbidden' }, 403)
   const collection = c.req.param('collection')
   const docId = c.req.param('docId')
   if (!COLLECTION_RE.test(collection) || !DOCID_RE.test(docId)) return c.json({ error: 'not found' }, 404)
-  await c.get('ddb').delete(documents).where(scoped(claims, collection, docId))
+  await getDb(c).delete(documents).where(scoped(claims, collection, docId))
   return c.body(null, 204)
 })
 
@@ -223,10 +227,19 @@ function scoped(claims: DataClaims, collection: string, docId: string) {
   )
 }
 
+const enc = new TextEncoder()
+
 type Parsed = { ok: true; value: unknown } | { ok: false; error: string; status: 400 | 413 }
 async function readJsonBody(c: DataCtx): Promise<Parsed> {
+  // Cheap reject before buffering when the client declares a size; the byte check after reading
+  // is authoritative (string .length counts UTF-16 units, not bytes — multibyte payloads would
+  // otherwise sneak ~4x past the cap).
+  const declared = Number(c.req.header('content-length'))
+  if (Number.isFinite(declared) && declared > MAX_JSON_BYTES) {
+    return { ok: false, error: 'document too large', status: 413 }
+  }
   const raw = await c.req.text()
-  if (raw.length > MAX_JSON_BYTES) return { ok: false, error: 'document too large', status: 413 }
+  if (enc.encode(raw).byteLength > MAX_JSON_BYTES) return { ok: false, error: 'document too large', status: 413 }
   let value: unknown
   try {
     value = JSON.parse(raw)
@@ -270,27 +283,8 @@ dataToken.post('/:space/:site', async (c) => {
   const db = c.get('db')
   const user = c.get('user')
   const { space, site: siteSlug } = c.req.param()
-  const site = (
-    await db
-      .select({
-        id: sites.id,
-        spaceId: sites.spaceId,
-        visibility: sites.visibility,
-        status: sites.status,
-        ownerId: sites.ownerId,
-      })
-      .from(sites)
-      .innerJoin(spaces, eq(sites.spaceId, spaces.id))
-      .where(and(eq(spaces.slug, space), eq(sites.slug, siteSlug)))
-      .limit(1)
-  )[0]
+  const { site, access } = await resolveSiteForAccess(db, space, siteSlug, user)
   if (!site) return c.json({ error: 'not found' }, 404)
-
-  const [isMember, isShared] = await Promise.all([
-    isSpaceMember(db, site.spaceId, user.id),
-    resolveIsShared(db, site.id, user.id),
-  ])
-  const access = checkAccess(site, user, isMember, isShared)
   if (!access.ok) return c.json({ error: 'forbidden' }, access.status)
 
   const caps = dataCapsFor(user, site)

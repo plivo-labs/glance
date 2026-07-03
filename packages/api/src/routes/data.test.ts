@@ -12,10 +12,9 @@ const HMAC_A = 'glance-test-aaa'
 const ENV = { DATA_TOKEN_SECRET: HMAC_A, CONTENT_URL: 'https://content.example.com' } as never
 
 function mount(db: DrizzleD1Database) {
-  const app = new Hono()
+  const app = new Hono<{ Variables: { db: DrizzleD1Database } }>()
   app.use('*', async (c, next) => {
-    // biome-ignore lint/suspicious/noExplicitAny: test-only injection of the harness db
-    ;(c as any).set('injectedDb', db)
+    c.set('db', db)
     await next()
   })
   app.route('/api/_data', dataApi)
@@ -49,13 +48,15 @@ async function scenario() {
   return { db, app, tokens }
 }
 
-function req(app: Hono, token: string | null, method: string, path: string, body?: unknown) {
+type TestApp = ReturnType<typeof mount>
+
+function req(app: TestApp, token: string | null, method: string, path: string, body?: unknown) {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (token) headers.Authorization = `Bearer ${token}`
   return app.request(`/api/_data${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined }, ENV)
 }
 
-async function create(app: Hono, token: string, collection: string, body: unknown): Promise<string> {
+async function create(app: TestApp, token: string, collection: string, body: unknown): Promise<string> {
   const res = await req(app, token, 'POST', `/${collection}`, body)
   expect(res.status).toBe(201)
   return (await res.json()).id
@@ -201,6 +202,23 @@ describe('auth + validation + inert-when-unconfigured', () => {
     expect((await req(app, tokens.ownerA, 'POST', '/bad%20name', { x: 1 })).status).toBe(400)
     const big = { blob: 'x'.repeat(100_001) }
     expect((await req(app, tokens.ownerA, 'POST', '/posts', big)).status).toBe(413)
+  })
+
+  test('ATTACK: multibyte body cannot sneak past the size cap (bytes, not UTF-16 units)', async () => {
+    const { app, tokens } = await scenario()
+    // 40k '€' chars = 40k UTF-16 units (passes a .length check) but ~120KB of UTF-8 bytes.
+    const sneaky = { blob: '€'.repeat(40_000) }
+    expect((await req(app, tokens.ownerA, 'POST', '/posts', sneaky)).status).toBe(413)
+  })
+
+  test('list returns newest first', async () => {
+    const { db, app, tokens } = await scenario()
+    const oldId = await create(app, tokens.ownerA, 'posts', { title: 'old' })
+    // Force a strictly older createdAt so the ordering assertion can't tie on same-ms writes.
+    await db.update(documents).set({ createdAt: '2020-01-01T00:00:00.000Z' }).where(eq(documents.docId, oldId))
+    await create(app, tokens.ownerA, 'posts', { title: 'new' })
+    const items = (await (await req(app, tokens.ownerA, 'GET', '/posts')).json()).items
+    expect(items.map((d: { data: { title: string } }) => d.data.title)).toEqual(['new', 'old'])
   })
 
   test('inert (404) when DATA_TOKEN_SECRET is unset', async () => {
