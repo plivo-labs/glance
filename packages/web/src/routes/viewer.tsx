@@ -3,6 +3,7 @@ import { MessageSquarePlus } from 'lucide-react'
 import { type LoaderFunctionArgs, useLoaderData, useParams } from 'react-router'
 import { toast } from 'sonner'
 import { api, ApiError } from '@/lib/api'
+import { attachDbBroker } from '@/lib/dbBroker'
 import { toLogin } from '@/lib/nav'
 import { comments, type Thread } from '@/lib/comments'
 import { type DOMRectLike, type Intent, parseIntent } from '@/lib/parseIntent'
@@ -77,6 +78,18 @@ export function Component() {
     () => threads.filter((t) => t.status === 'open' && t.anchorStatus !== 'orphaned').length,
     [threads],
   )
+
+  // glance.db credential broker: the injected SDK in the iframe hands us a MessagePort; we
+  // execute its data-plane requests with OUR token so no credential ever enters the untrusted
+  // frame (P0-1). Bound to THIS site — the page cannot ask for another site's data.
+  useEffect(() => {
+    const broker = attachDbBroker({
+      site: { spaceSlug: site.spaceSlug, siteSlug: site.siteSlug },
+      contentOrigin,
+      getSource: () => iframeRef.current?.contentWindow,
+    })
+    return broker.dispose
+  }, [site.spaceSlug, site.siteSlug, contentOrigin])
 
   // Listen for intents from the iframe. parseIntent re-validates origin+source; it is a filter,
   // not a trust oracle — nothing here writes without a subsequent explicit user action.

@@ -108,32 +108,38 @@ Prints a deployed file's **raw contents** to stdout — the bytes as stored (HTM
 
 `members` = people in the site's own space only (it was renamed from `group`; the old value is still accepted and mapped to `members`). There is no public/anonymous tier — `public` is still accepted on the wire but mapped to `team` (everyone in your org).
 
-## Saving data from scripts — `glance.db` (experimental)
+## Saving data from your pages — `glance.db` (experimental)
 
-Each of your sites gets a small JSON document store. Useful for feeding a deployed dashboard
-fresh data from a script or cron job: the script writes documents, the page reads them.
+Each site gets a small JSON document store, and any HTML page you deploy can use it directly —
+no keys, no setup, no script tag. When someone opens the site through the Glance app, `glance.db`
+is available to the page's JavaScript automatically:
 
-Exchange your CLI token (`~/.glance/config.json`) for a short-lived data token, then call the
-store:
+```js
+const notes = glance.db.collection('notes')
+await notes.create({ text: 'hello' })       // returns {id, data, createdAt, updatedAt}
+await notes.list()                           // your documents, newest first
+await notes.get(id); await notes.put(id, {...}); await notes.delete(id)
+```
+
+So a deployed page can have a working form, notes list, or per-viewer state with just that.
+(Only when viewed through the app — opening the raw content URL directly gives a clear
+"open this site through the Glance app" error.)
+
+Scripts and cron jobs can write to the same store — exchange your CLI token
+(`~/.glance/config.json`) for a short-lived data token:
 
 ```bash
 TOKEN=$(curl -s -X POST -H "Authorization: Bearer <cli-token>" \
   "$GLANCE_API_URL/api/data-token/<space>/<slug>" | jq -r .token)     # valid 5 min
-
 curl -H "Authorization: Bearer $TOKEN" -X POST -d '{"text":"hi"}' \
-  "$GLANCE_API_URL/api/_data/notes"                                   # create
-curl -H "Authorization: Bearer $TOKEN" "$GLANCE_API_URL/api/_data/notes"          # list (newest first)
-# also: GET/PUT/DELETE /api/_data/notes/<id>  (PUT upserts at your chosen id)
+  "$GLANCE_API_URL/api/_data/notes"
+# also: GET /api/_data/notes (list) · GET/PUT/DELETE /api/_data/notes/<id>
 ```
 
 Rules of thumb: documents are JSON objects up to 100KB, grouped into named collections · only
 the site's **owner** can write; other viewers get read-only · you only ever see documents you
 created yourself · access follows the site's sharing — lose access to the site, lose access to
-its data.
-
-Not yet available from inside deployed pages' own JavaScript — script-fed dashboards are the
-pattern for now. If these endpoints return 404, the feature isn't enabled on your Glance — ask
-your admin.
+its data. If it errors with "not enabled", ask your Glance admin to turn the feature on.
 
 ## Gotchas
 - Commands other than `login`/`logout` require a saved token; run `glance login` first.

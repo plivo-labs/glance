@@ -6,11 +6,14 @@ import app from './index'
 const ENV = { CONTENT_URL: 'https://content.example.com', APP_URL: 'https://glance.example.com' } as never
 
 describe('shared-backend routes on the root app', () => {
-  test('/api/glance.js serves the SDK with the global CSP applied', async () => {
+  test('/api/glance.js serves the built SDK with the global CSP applied', async () => {
     const res = await app.request('/api/glance.js', {}, ENV)
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toContain('javascript')
     expect(res.headers.get('content-security-policy')).toContain("script-src 'self'")
+    const body = await res.text()
+    expect(body).toContain('glance:db-hello') // broker transport present
+    expect(body).toContain('__GLANCE_DB__')
   })
 
   test('no demo page ships (deleted — rebuilt broker-side in Phase 2)', async () => {
