@@ -71,6 +71,13 @@ export function Component() {
     [site],
   )
 
+  // Actionable count for the toolbar badge: open, still-anchored threads (mirrors the rail's default
+  // "open" list; resolved + outdated/orphaned are excluded).
+  const openCount = useMemo(
+    () => threads.filter((t) => t.status === 'open' && t.anchorStatus !== 'orphaned').length,
+    [threads],
+  )
+
   // Listen for intents from the iframe. parseIntent re-validates origin+source; it is a filter,
   // not a trust oracle — nothing here writes without a subsequent explicit user action.
   useEffect(() => {
@@ -89,11 +96,12 @@ export function Component() {
     api.get<Me>('/api/auth/me').then(setMe).catch(() => setMe(null))
   }, [])
 
-  // Load threads lazily the first time comments open (and refresh on re-entry). The frame is already
-  // mounted, so this is just a fetch — never a reload.
+  // Load threads once the frame reports ready — powers the toolbar count badge before review opens,
+  // and seeds the rail. The frame is already mounted, so this is just a fetch, never a reload; the
+  // rail then stays fresh via onCreate/onChanged.
   useEffect(() => {
-    if (review && filePath) refresh(filePath)
-  }, [review, filePath, refresh])
+    if (filePath) refresh(filePath)
+  }, [filePath, refresh])
 
   useEffect(paint, [paint])
 
@@ -165,7 +173,7 @@ export function Component() {
           onExit={exitReview}
         />
       ) : (
-        <PreviewToolbar site={site} onReview={() => setReview(true)} />
+        <PreviewToolbar site={site} commentCount={openCount} onReview={() => setReview(true)} />
       )}
     </div>
   )
