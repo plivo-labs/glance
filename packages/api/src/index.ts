@@ -6,6 +6,7 @@ import { GLANCE_SDK_JS } from './glance-sdk'
 import { buildPublicConfig } from './lib/bootstrap'
 import { INSTALL_SH } from './install-script'
 import { isGoogleEnabled } from './lib/oauth'
+import { trackCliUsage } from './middleware/analytics'
 import { requireSameOrigin } from './middleware/auth'
 import { admin } from './routes/admin'
 import { auth } from './routes/auth'
@@ -71,6 +72,7 @@ app.route('/api/_data', dataApi)
 
 app.use('/api/*', requireSameOrigin)
 app.use('/api/*', withDb)
+app.use('/api/*', trackCliUsage)
 
 app.get('/api/health', (c) => c.json({ status: 'ok' }))
 

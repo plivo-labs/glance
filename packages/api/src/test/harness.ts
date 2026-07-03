@@ -11,12 +11,14 @@ import { hashContent } from '../lib/anchor'
 import {
   type NewComment,
   type NewCommentThread,
+  type NewEvent,
   type NewFileRow,
   type NewSite,
   type NewSpace,
   type NewUser,
   comments,
   commentThreads,
+  events,
   files,
   siteGroupShares,
   siteUserShares,
@@ -32,7 +34,8 @@ const MIGRATIONS = [
   'drizzle/0002_silly_gertrude_yorkes.sql',
   'drizzle/0003_rename_group_visibility.sql',
   'drizzle/0004_drop_public_visibility.sql',
-  'drizzle/0005_glance_documents.sql',
+  'drizzle/0005_peaceful_onslaught.sql',
+  'drizzle/0006_glance_documents.sql',
 ]
 
 /** Fresh in-memory DB with the real schema applied. */
@@ -180,6 +183,22 @@ export async function seedComment(
     createdAt: o.createdAt ?? new Date().toISOString(),
     editedAt: o.editedAt ?? null,
     deletedAt: o.deletedAt ?? null,
+  })
+  return id
+}
+
+/** Insert an `events` row; returns its id. Defaults: view type, now. */
+export async function seedEvent(db: DrizzleD1Database, o: Partial<NewEvent> = {}): Promise<string> {
+  const id = o.id ?? nextId('ev')
+  await db.insert(events).values({
+    id,
+    type: o.type ?? 'view',
+    action: o.action ?? null,
+    userId: o.userId ?? null,
+    siteId: o.siteId ?? null,
+    siteLabel: o.siteLabel ?? null,
+    cliVersion: o.cliVersion ?? null,
+    createdAt: o.createdAt ?? new Date().toISOString(),
   })
   return id
 }

@@ -31,6 +31,12 @@ export const requireAuth = createMiddleware<AppEnv>(async (c, next) => {
   const user = await readSessionOrBearer(c)
   if (!user) return c.json({ error: 'unauthorized' }, 401)
   c.set('user', user)
+  // Tag the credential for usage analytics. The CLI sends a Bearer token and never a cookie;
+  // browsers always carry the cookie. Session cookie wins (mirrors readSessionOrBearer), so a
+  // request is 'cli' only when there's no cookie AND a Bearer token is present.
+  const isBearer = c.req.header('Authorization')?.startsWith('Bearer ') ?? false
+  const hasCookie = getCookie(c, SESSION_COOKIE) !== undefined
+  c.set('authKind', !hasCookie && isBearer ? 'cli' : 'web')
   await next()
 })
 

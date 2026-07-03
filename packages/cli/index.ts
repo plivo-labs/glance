@@ -4,7 +4,14 @@ import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync }
 import { homedir, platform } from 'node:os'
 import { basename, join, relative, resolve, sep } from 'node:path'
 import { createInterface } from 'node:readline/promises'
+import pkg from './package.json'
 import { SKILL_MD, SKILL_NAME } from './skill-content'
+
+// Sent as the User-Agent on every authenticated request so the server can attribute CLI usage
+// (and segment by version) in its analytics. Static JSON import → inlined into the compiled
+// binary at `bun build` time; the release workflow stamps the git tag into package.json first,
+// so a released CLI reports its exact release version.
+const USER_AGENT = `glance-cli/${pkg.version}`
 
 // Glance CLI — deploy folders to Glance from the terminal.
 //   glance login | deploy <path> --space <s> --name <s> [--visibility v] | list | delete <space/slug> | move <space/slug> <new-space> | comments <space/slug> | read <space/slug> | logout
@@ -52,7 +59,7 @@ function requireAuth(): Config {
 function authed(cfg: Config, path: string, init: RequestInit = {}): Promise<Response> {
   return fetch(`${cfg.apiUrl}${path}`, {
     ...init,
-    headers: { ...init.headers, Authorization: `Bearer ${cfg.token}` },
+    headers: { ...init.headers, Authorization: `Bearer ${cfg.token}`, 'User-Agent': USER_AGENT },
   })
 }
 

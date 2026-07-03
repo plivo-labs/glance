@@ -19,7 +19,7 @@ first commit — not retrofitted.
   same-origin via the session, re-mints before expiry and once on a 401 (long-lived pages keep
   working across the 300s TTL). Boot global is `__GLANCE_DB__` (`__GLANCE__` belongs to the
   annotate overlay). No demo page ships — it gets rebuilt broker-side in Phase 2.
-- **D1 migration** `0005_glance_documents.sql` (+ journal + harness `MIGRATIONS`).
+- **D1 migration** `0006_glance_documents.sql` (+ journal + harness `MIGRATIONS`).
 - Feature is **opt-in per deploy**: unset `DATA_TOKEN_SECRET` → `/api/_data` is inert (404).
 
 ## P0 coverage (design-review findings → control → test)

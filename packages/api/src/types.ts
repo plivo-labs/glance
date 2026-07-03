@@ -37,6 +37,9 @@ export interface SessionUser {
 export interface Variables {
   db: DrizzleD1Database
   user: SessionUser
+  // Which credential authenticated the request, set by requireAuth. 'cli' = Bearer token,
+  // 'web' = session cookie. Drives CLI-usage analytics. Absent on unauthenticated routes.
+  authKind: 'cli' | 'web'
 }
 
 export type AppEnv = { Bindings: Bindings; Variables: Variables }
