@@ -108,6 +108,33 @@ Prints a deployed file's **raw contents** to stdout — the bytes as stored (HTM
 
 `members` = people in the site's own space only (it was renamed from `group`; the old value is still accepted and mapped to `members`). There is no public/anonymous tier — `public` is still accepted on the wire but mapped to `team` (everyone in your org).
 
+## Saving data from scripts — `glance.db` (experimental)
+
+Each of your sites gets a small JSON document store. Useful for feeding a deployed dashboard
+fresh data from a script or cron job: the script writes documents, the page reads them.
+
+Exchange your CLI token (`~/.glance/config.json`) for a short-lived data token, then call the
+store:
+
+```bash
+TOKEN=$(curl -s -X POST -H "Authorization: Bearer <cli-token>" \
+  "$GLANCE_API_URL/api/data-token/<space>/<slug>" | jq -r .token)     # valid 5 min
+
+curl -H "Authorization: Bearer $TOKEN" -X POST -d '{"text":"hi"}' \
+  "$GLANCE_API_URL/api/_data/notes"                                   # create
+curl -H "Authorization: Bearer $TOKEN" "$GLANCE_API_URL/api/_data/notes"          # list (newest first)
+# also: GET/PUT/DELETE /api/_data/notes/<id>  (PUT upserts at your chosen id)
+```
+
+Rules of thumb: documents are JSON objects up to 100KB, grouped into named collections · only
+the site's **owner** can write; other viewers get read-only · you only ever see documents you
+created yourself · access follows the site's sharing — lose access to the site, lose access to
+its data.
+
+Not yet available from inside deployed pages' own JavaScript — script-fed dashboards are the
+pattern for now. If these endpoints return 404, the feature isn't enabled on your Glance — ask
+your admin.
+
 ## Gotchas
 - Commands other than `login`/`logout` require a saved token; run `glance login` first.
 - Wrong `GLANCE_API_URL` → you'll log in / deploy against the wrong instance silently. Verify with `glance list`.
