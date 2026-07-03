@@ -76,9 +76,9 @@ Hosted sites can get browser-callable persistence — no keys, no config. Off by
 operator enables it per deploy (`DATA_TOKEN_SECRET`, see [DEPLOY.md](DEPLOY.md#2-secrets)).
 
 ```js
-// On a page served from the APP origin (hosted-page support lands with the broker, see SHARED_BACKEND.md):
-window.__GLANCE_DB__ = { space: 'sam', site: 'demo' }
-// <script src="/api/glance.js"></script>
+// In any HTML page you deploy — no setup, no keys, no script tag. When the site is opened
+// through the Glance app, the SDK is injected automatically and every request is brokered by
+// the parent frame (postMessage + MessagePort), so the page NEVER holds a credential.
 const notes = glance.db.collection('notes')
 await notes.create({ text: 'hello' })      // POST   /api/_data/notes        → {id, data, createdAt, updatedAt}
 await notes.list()                          // GET    /api/_data/notes        → {items: [...]} newest-first, ?limit≤200
@@ -86,6 +86,10 @@ await notes.get(id)                         // GET    /api/_data/notes/:id
 await notes.put(id, { text: 'edited' })     // PUT    /api/_data/notes/:id    (upsert at your own id)
 await notes.delete(id)                      // DELETE /api/_data/notes/:id
 ```
+
+Pages on the app origin can use the same client directly: set
+`window.__GLANCE_DB__ = { space, site }` and load `<script src="/api/glance.js"></script>` —
+same five methods, token minted via the session.
 
 Programmatic use (cron jobs, scripts) works today with a CLI token:
 

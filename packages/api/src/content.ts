@@ -3,6 +3,7 @@ import { type DrizzleD1Database, drizzle } from 'drizzle-orm/d1'
 import { type Context, Hono } from 'hono'
 import { Marked } from 'marked'
 import { ANNOTATE_CSS, ANNOTATE_JS, ANNOTATE_VERSION } from './annotate/bundle'
+import { GLANCE_DB_JS, GLANCE_DB_VERSION } from './glancedb/bundle'
 import { type NewEvent, files, sites, spaces } from './db/schema'
 import { fireAndForget, recordEvent } from './lib/events'
 import { authorizeViewerById } from './lib/site-access'
@@ -44,6 +45,9 @@ app.get('/_glance/annotate.js', (c) =>
 )
 app.get('/_glance/annotate.css', (c) =>
   c.body(ANNOTATE_CSS, 200, { 'content-type': 'text/css; charset=utf-8', 'cache-control': IMMUTABLE }),
+)
+app.get('/_glance/db.js', (c) =>
+  c.body(GLANCE_DB_JS, 200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': IMMUTABLE }),
 )
 
 // Gated access: token is bound to the viewer's userId AND scoped to "<space>/<site>".
@@ -145,10 +149,12 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
   }
 
   // Annotate mode: gated HTML + ?glance_annotate=1 → buffer the body and inject the annotate
-  // client + boot payload. Every serve here is already token-gated (anonymous requests 403 above),
-  // so the flag always applies to an authed viewer. The bytes change, so we DROP the ETag and don't cache.
+  // client + boot payload, plus the glance.db SDK (broker mode — the page gets an API, never a
+  // credential; the app viewer's parent frame answers). Every serve here is already token-gated
+  // (anonymous requests 403 above), so the flag always applies to an authed viewer. The bytes
+  // change, so we DROP the ETag and don't cache.
   if (userId !== null && c.req.query('glance_annotate') === '1' && isHtmlFile(file.path)) {
-    const injected = injectAnnotate(await object.text(), {
+    const injected = injectAnnotate(injectDb(await object.text(), c.env.APP_URL), {
       siteId: siteRow.id,
       filePath: file.path, // the RESOLVED path (single-file fallback), not the URL guess
       appOrigin: c.env.APP_URL,
@@ -215,6 +221,20 @@ export function injectAnnotate(html: string, payload: { siteId: string; filePath
   if (html.includes('</body>')) return html.replace('</body>', `${tags}</body>`)
   if (html.includes('</head>')) return html.replace('</head>', `${tags}</head>`)
   return html + tags
+}
+
+/** Inject the glance.db SDK (broker mode) into an HTML document. Goes into <head> and loads
+ *  SYNCHRONOUSLY — unlike the passive annotate client, page scripts call `glance.db` directly,
+ *  so the API must exist before any of them run. Boot carries only the app origin (the
+ *  postMessage target); the parent decides which site requests bind to — the page can't. */
+export function injectDb(html: string, appOrigin: string): string {
+  const json = JSON.stringify({ appOrigin }).replace(/</g, '\\u003c')
+  const tags =
+    `<script>window.__GLANCE_DB__=${json}</script>` +
+    `<script src="/_glance/db.js?v=${GLANCE_DB_VERSION}"></script>`
+  if (html.includes('</head>')) return html.replace('</head>', `${tags}</head>`)
+  if (html.includes('<body')) return html.replace(/<body([^>]*)>/, `<body$1>${tags}`)
+  return tags + html
 }
 
 export function normalizePath(rest: string): string {

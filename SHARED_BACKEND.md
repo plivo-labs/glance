@@ -1,4 +1,4 @@
-# Shared backend — `glance.db` (Phase 0 + 1)
+# Shared backend — `glance.db` (Phase 0 + 1 + broker)
 
 Quick-style shared backend: static sites get browser-callable persistence with no keys and no
 config. This PR lands the **server-side security spine + the `glance.db` document store**. It is
@@ -15,10 +15,18 @@ first commit — not retrofitted.
   over a generic `documents(siteId, collection, docId, json, createdBy, …)` table.
 - **`/api/data-token/:space/:site`** (`dataToken`) — session-authenticated mint. Owner/superadmin
   → `read+write`; any other authorized viewer → `read`.
-- **`glance.js` SDK** (`glance-sdk.ts`, served at `/api/glance.js`) — the browser DX. Mints
-  same-origin via the session, re-mints before expiry and once on a 401 (long-lived pages keep
-  working across the 300s TTL). Boot global is `__GLANCE_DB__` (`__GLANCE__` belongs to the
-  annotate overlay). No demo page ships — it gets rebuilt broker-side in Phase 2.
+- **Browser SDK** (`glancedb/client.ts` → built to `glancedb/bundle.ts` via `bun run build:db`;
+  served at `/api/glance.js` and `/_glance/db.js`) — two transports picked from the
+  `__GLANCE_DB__` boot global: same-origin (app pages: session mint, re-mint before expiry and
+  once on 401) and **broker** (hosted pages: see below). `__GLANCE__` belongs to the annotate
+  overlay.
+- **Parent-frame credential broker** (P0-1's full fix — `web/src/lib/dbBroker.ts` + injection in
+  `content.ts`): the content worker injects the SDK into gated HTML served through the app
+  viewer; the SDK hands the parent a `MessagePort` (`glance:db-hello`); the viewer adopts it only
+  from the exact content-origin iframe it mounted, then executes each shape-validated op with
+  ITS token against `/api/_data` and answers with data only. No credential ever enters the
+  untrusted page realm; the page cannot name another site (requests bind to the viewed site) or
+  reach any other route (op → fixed path template).
 - **D1 migration** `0006_glance_documents.sql` (+ journal + harness `MIGRATIONS`).
 - Feature is **opt-in per deploy**: unset `DATA_TOKEN_SECRET` → `/api/_data` is inert (404).
 
@@ -26,7 +34,7 @@ first commit — not retrofitted.
 
 | P0 | Control | Test |
 |----|---------|------|
-| 1 Confused deputy | No privileged token minted into an untrusted page; SDK/demo run on the trusted app origin (full parent-frame broker deferred, see below) | design/scope |
+| 1 Confused deputy | Parent-frame broker: hosted pages get a MessagePort, never a token; parent validates origin+source+shape and binds every request to the viewed site | `dbBroker.test.ts` (spoofed origin/source, op smuggling, token never crosses) |
 | 2 Token type confusion | Separate secret + `aud`/caps inside the MAC; content token can't verify as data token | `data-token.test.ts` (content-token, aud, widened-caps, tamper) |
 | 3 CORS / CSRF boundary | ACAO pinned to `CONTENT_URL`, no `Allow-Credentials`, cookie ignored on the data plane | `data.test.ts` CORS; live curl (cookie-only → 401) |
 | 4 Write ≠ view | `dataCapsFor` grants write to owner/superadmin only; routes gate on the `write` cap | `data.test.ts` (dataCapsFor + read-only-token → 403) |
@@ -39,10 +47,11 @@ first commit — not retrofitted.
 
 ## Deferred (follow-ups, called out honestly)
 
-- **Parent-frame credential broker** (P0-1/P0-2 full form) — injecting the SDK into untrusted
-  *hosted* pages requires the postMessage broker so no bearer token lives in the page. Until then
-  the SDK is used from the trusted app origin only; it is NOT wired into the content worker.
-- **`glance.fs` / `glance.ai`** (Phase 2/3) — with serve-time non-exec fs serving + AI quotas.
+- **Standalone tabs** — a site opened directly on the content origin has no parent frame, so
+  `glance.db` calls fail with a clear "open this site through the Glance app" error. By design
+  for now.
+- **`glance.fs` / `glance.ai`** (Phase 2/3) — with serve-time non-exec fs serving + AI quotas;
+  both ride the same broker channel.
 - **`glance.config.json` capability manifest** + "public-within-site" read opt-in.
 - **Per-site quotas / rate-limits** (abuse controls).
 - Arbitrary `list()` filters (only ship behind bound JSON paths + a field allowlist).

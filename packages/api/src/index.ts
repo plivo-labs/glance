@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { secureHeaders } from 'hono/secure-headers'
 import { withDb } from './db/client'
 import { superadminExists } from './db/repo'
-import { GLANCE_SDK_JS } from './glance-sdk'
+import { GLANCE_DB_JS } from './glancedb/bundle'
 import { buildPublicConfig } from './lib/bootstrap'
 import { INSTALL_SH } from './install-script'
 import { isGoogleEnabled } from './lib/oauth'
@@ -59,10 +59,11 @@ app.get('/api/install', (c) => {
   return c.text(script, 200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' })
 })
 
-// Shared-backend browser SDK. Public GET (no auth/db) registered before the guards; no-store so
-// SDK updates land immediately while the surface is young.
+// Shared-backend browser SDK (built from src/glancedb/client.ts — bun run build:db). Public GET
+// (no auth/db) registered before the guards; no-store so SDK updates land immediately while the
+// surface is young. Hosted pages get the same client injected by the content worker instead.
 app.get('/api/glance.js', (c) =>
-  c.body(GLANCE_SDK_JS, 200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' }),
+  c.body(GLANCE_DB_JS, 200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' }),
 )
 
 // Shared-backend data plane. Registered BEFORE the /api/* guards (like /api/install): it is
