@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { Hono } from 'hono'
 import contentApp, { contentType, markdown, normalizePath, restOf } from './content'
-import { sites, spaces, users } from './db/schema'
+import { events, sites, spaces, users } from './db/schema'
 import { sanitizePath } from './lib/storage'
 import { signToken, verifyToken } from './lib/token'
 import { makeDb, makeR2, seedFile, seedSite, seedSpace, seedUser } from './test/harness'
@@ -201,6 +201,60 @@ describe('directory listing fallback (no index.html)', () => {
     const res = await app.request(`/_t/${token}/sam/site/`, {}, env)
     expect(res.status).toBe(200)
     expect(await res.text()).toBe('<h1>Report</h1>')
+  })
+})
+
+describe('view analytics (page-view events)', () => {
+  function setup() {
+    const db = makeDb()
+    const r2 = makeR2()
+    const app = new Hono()
+    app.use('*', async (c, next) => {
+      c.set('db', db)
+      await next()
+    })
+    app.route('/', contentApp)
+    return { app, db, r2, env: { APP_URL: 'https://glance.example.com', CONTENT_TOKEN_SECRET: secret, GLANCE_FILES: r2 } }
+  }
+
+  async function gatedSite(db: ReturnType<typeof makeDb>) {
+    const uid = await seedUser(db, { id: 'u1' })
+    const sp = await seedSpace(db, { createdBy: uid, slug: 'sam' })
+    const siteId = await seedSite(db, { spaceId: sp, ownerId: uid, slug: 'site', visibility: 'team' })
+    const token = await signToken(secret, uid, 'sam/site', 300)
+    return { uid, siteId, token }
+  }
+
+  test('serving an HTML page records one view attributed to the viewer + site', async () => {
+    const { app, db, r2, env } = setup()
+    const { uid, siteId, token } = await gatedSite(db)
+    await seedFile(db, r2, siteId, { path: 'index.html', text: '<h1>hi</h1>' })
+
+    await app.request(`/_t/${token}/sam/site/`, {}, env)
+
+    const rows = await db.select().from(events)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ type: 'view', action: 'index.html', userId: uid, siteId, siteLabel: 'sam/site' })
+  })
+
+  test('sub-resources (css/js/images) do NOT record a view — only page loads count', async () => {
+    const { app, db, r2, env } = setup()
+    const { siteId, token } = await gatedSite(db)
+    await seedFile(db, r2, siteId, { path: 'app.css', text: 'body{}', mimeType: 'text/css' })
+
+    await app.request(`/_t/${token}/sam/site/app.css`, {}, env)
+
+    expect(await db.select().from(events)).toHaveLength(0)
+  })
+
+  test('a forbidden (anonymous, untokened) request records no view', async () => {
+    const { app, db, r2, env } = setup()
+    const { siteId } = await gatedSite(db)
+    await seedFile(db, r2, siteId, { path: 'index.html', text: '<h1>hi</h1>' })
+
+    const res = await app.request('/sam/site/', {}, env)
+    expect(res.status).toBe(403)
+    expect(await db.select().from(events)).toHaveLength(0)
   })
 })
 

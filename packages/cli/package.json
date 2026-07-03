@@ -1,6 +1,7 @@
 {
   "name": "@glance/cli",
   "private": true,
+  "version": "0.1.0",
   "description": "CLI for deploying folders to a Glance instance.",
   "type": "module",
   "bin": { "glance": "./index.ts" },

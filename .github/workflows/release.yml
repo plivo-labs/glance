@@ -17,6 +17,16 @@ jobs:
         with:
           bun-version: latest
 
+      # Stamp the release tag (v1.2.3 → 1.2.3) into package.json BEFORE building, so the static
+      # `import pkg from './package.json'` baked into each binary reports the exact release version
+      # in its User-Agent (drives CLI-usage analytics).
+      - name: Stamp version from tag
+        working-directory: packages/cli
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          tmp="$(mktemp)"
+          jq --arg v "$v" '.version = $v' package.json > "$tmp" && mv "$tmp" package.json
+
       - name: Build standalone binaries
         working-directory: packages/cli
         run: |
