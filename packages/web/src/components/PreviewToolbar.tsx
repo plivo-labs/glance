@@ -1,4 +1,3 @@
-import { useRef, useState } from 'react'
 import { Home, MessageSquare } from 'lucide-react'
 import { Link } from 'react-router'
 import type { ViewerSite } from '@/lib/types'
@@ -6,31 +5,22 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { ShareDialog } from '@/components/ShareDialog'
 
-// Liquid-glass floating menu pinned to the bottom of the full-bleed preview: a compact, always-open
-// pill of icon-only actions (Home, Comments, Share). Icon-only so it doesn't hinder the content;
-// labels live on hover (title/aria-label). It idle-fades when the cursor leaves to stay out of the
-// way — timer is event-driven (ref callback arms it, hover wakes it) per the no-useEffect rule.
+// Liquid-glass floating menu pinned to the bottom of the full-bleed preview: a compact, always-open,
+// always-visible pill of icon-only actions (Home, Comments, Share). Icon-only so it doesn't hinder
+// the content; labels live on hover (title/aria-label). The Comments action carries a live count
+// badge of open threads so pending feedback is evident at a glance.
 // The glass look layers three things: (1) an SVG feTurbulence→feDisplacementMap refraction applied
 // to the backdrop (Chromium-only; degrades to plain blur elsewhere), (2) blur+saturate+brightness
 // to lift the backdrop, (3) inset specular highlights + a top sheen for the curved-glass edge.
-export function PreviewToolbar({ site, onReview }: { site: ViewerSite; onReview?: () => void }) {
-  const [dimmed, setDimmed] = useState(false)
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const armed = useRef(false)
-
-  function clear() {
-    if (timer.current) clearTimeout(timer.current)
-    timer.current = null
-  }
-  function arm() {
-    clear()
-    timer.current = setTimeout(() => setDimmed(true), 2800)
-  }
-  function wake() {
-    clear()
-    setDimmed(false)
-  }
-
+export function PreviewToolbar({
+  site,
+  onReview,
+  commentCount = 0,
+}: {
+  site: ViewerSite
+  onReview?: () => void
+  commentCount?: number
+}) {
   return (
     <div className="pointer-events-none fixed inset-x-0 bottom-4 z-50 flex justify-center px-4">
       {/* Refraction filter: organic turbulence warps the backdrop near the pill like real curved
@@ -52,16 +42,7 @@ export function PreviewToolbar({ site, onReview }: { site: ViewerSite; onReview?
         </filter>
       </svg>
       <div
-        ref={(n) => {
-          if (n && !armed.current) {
-            armed.current = true
-            arm()
-          }
-        }}
-        onMouseEnter={wake}
-        onMouseLeave={arm}
         style={{
-          opacity: dimmed ? 0.4 : 1,
           // url() refraction (Chromium) + tone-lift; Safari/-webkit gets glass without the warp.
           backdropFilter: 'url(#liquid-glass) blur(3px) saturate(180%) brightness(1.08)',
           WebkitBackdropFilter: 'blur(3px) saturate(180%) brightness(1.08)',
@@ -72,7 +53,6 @@ export function PreviewToolbar({ site, onReview }: { site: ViewerSite; onReview?
         className={cn(
           'pointer-events-auto relative flex items-center gap-0.5 overflow-hidden rounded-full p-1',
           'border border-white/30 bg-background/45',
-          'transition-opacity duration-500',
         )}
       >
         {/* top sheen — the bright specular highlight of curved glass */}
@@ -97,12 +77,17 @@ export function PreviewToolbar({ site, onReview }: { site: ViewerSite; onReview?
             <Button
               variant="ghost"
               size="icon"
-              className="size-8 rounded-full"
+              className={cn('relative size-8 rounded-full', commentCount > 0 && 'text-primary')}
               onClick={onReview}
-              title="Comments"
-              aria-label="Comments"
+              title={commentCount > 0 ? `${commentCount} open comment${commentCount === 1 ? '' : 's'}` : 'Comments'}
+              aria-label={commentCount > 0 ? `Comments, ${commentCount} open` : 'Comments'}
             >
               <MessageSquare />
+              {commentCount > 0 && (
+                <span className="-top-0.5 -right-0.5 absolute flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 font-semibold text-[10px] text-primary-foreground leading-none tabular-nums">
+                  {commentCount > 9 ? '9+' : commentCount}
+                </span>
+              )}
             </Button>
           )}
           {site.isOwner && <ShareDialog spaceSlug={site.spaceSlug} siteSlug={site.siteSlug} title={site.title} compact />}
