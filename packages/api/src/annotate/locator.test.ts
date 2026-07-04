@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { Window } from 'happy-dom'
-import { computeSelector, describeElement, resolveSelector } from './locator'
+import { computeSelector, describeElement, isPageSpanning, resolveSelector } from './locator'
 
 // Seam S1: the locator is global-free, so we drive it under a constructed happy-dom document and
 // pass nodes in — no GlobalRegistrator, so nothing leaks into the other (server-side) api tests.
@@ -74,6 +74,24 @@ describe('resolveSelector — mutated DOM', () => {
     const doc = docFrom('<div></div>')
     expect(resolveSelector('>>>bad(', doc)).toBeNull()
     expect(resolveSelector('', doc)).toBeNull()
+  })
+})
+
+describe('isPageSpanning — a full-viewport wrapper is not an anchor', () => {
+  const vp = { width: 1000, height: 800 }
+
+  test('an element covering (nearly) the whole viewport in both dims spans the page', () => {
+    expect(isPageSpanning({ width: 1000, height: 800 }, vp)).toBe(true)
+    expect(isPageSpanning({ width: 1000, height: 4000 }, vp)).toBe(true) // taller than the fold
+    expect(isPageSpanning({ width: 920, height: 740 }, vp)).toBe(true) // within the 90% cover
+  })
+
+  test('a full-width but short block (paragraph, code line) is still anchorable', () => {
+    expect(isPageSpanning({ width: 1000, height: 60 }, vp)).toBe(false)
+  })
+
+  test('a tall but narrow column is still anchorable', () => {
+    expect(isPageSpanning({ width: 300, height: 4000 }, vp)).toBe(false)
   })
 })
 

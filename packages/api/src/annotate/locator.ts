@@ -13,6 +13,16 @@
 const PREVIEW_MAX = 120
 const FALLBACK_MAX = 400
 
+/** A comment should anchor to a specific element, not the page shell. An element whose box fills
+ *  (nearly) the whole viewport in BOTH dimensions is a layout wrapper — hovering the empty padding
+ *  around the real content lands on it, and outlining it reads as "the whole site is selected".
+ *  Treat such elements, like <html>/<body>, as non-anchorable. Pure: takes plain dimensions so the
+ *  client can feed it a getBoundingClientRect + window size. */
+const PAGE_COVER = 0.9
+export function isPageSpanning(rect: { width: number; height: number }, viewport: { width: number; height: number }): boolean {
+  return rect.width >= viewport.width * PAGE_COVER && rect.height >= viewport.height * PAGE_COVER
+}
+
 /** 1-based index of `el` among its same-tag element siblings (for `:nth-of-type`). */
 function nthOfType(el: Element): number {
   let i = 1
