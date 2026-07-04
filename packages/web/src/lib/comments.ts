@@ -7,6 +7,16 @@ import type { ViewerSite } from '@/lib/types'
 
 export type ThreadStatus = 'open' | 'resolved'
 
+// An element ("pinpoint") anchor: a client-suggested CSS selector for a whole element (chart,
+// table, image) plus a short preview + text fallback. Mirrors the api ElementAnchor; the annotate
+// client re-resolves `selector` in the rendered DOM to paint an overlay.
+export interface ElementAnchor {
+  selector: string
+  tag: string
+  preview: string
+  textFallback: string
+}
+
 export interface CommentItem {
   id: string
   authorId: string | null
@@ -20,8 +30,9 @@ export interface CommentItem {
 export interface Thread {
   id: string
   filePath: string
-  anchorType: 'text' | 'page'
+  anchorType: 'text' | 'page' | 'element'
   quote: string | null
+  anchor: ElementAnchor | null // element threads only
   status: ThreadStatus
   resolvedBy: string | null
   resolvedByName: string | null
@@ -36,8 +47,22 @@ export interface Thread {
 export interface NewThreadInput {
   filePath: string
   body: string
-  anchorType?: 'text' | 'page'
+  anchorType?: 'text' | 'page' | 'element'
   quote?: string
+  element?: ElementAnchor
+}
+
+// A pending anchor the viewer holds between "user picked an anchor" and "user submitted the
+// comment" — a text selection or an element pinpoint. Kept generic so the composer + create path
+// don't branch on anchor kind everywhere.
+export type PendingAnchor = { kind: 'text'; quote: string } | { kind: 'element'; anchor: ElementAnchor }
+
+/** Pure map: a pending anchor + body → the create payload. Unit-tested (seam S2) so the viewer's
+ *  create path needs no browser to verify. */
+export function pendingToInput(filePath: string, body: string, pending: PendingAnchor): NewThreadInput {
+  return pending.kind === 'element'
+    ? { filePath, body, anchorType: 'element', element: pending.anchor }
+    : { filePath, body, quote: pending.quote }
 }
 
 type SiteRef = Pick<ViewerSite, 'spaceSlug' | 'siteSlug'>

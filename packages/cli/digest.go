@@ -15,13 +15,46 @@ type digestComment struct {
 	Deleted bool    `json:"deleted"`
 }
 
+// An element ("pinpoint") anchor: a comment pinned to a whole element (chart/table/image).
+type elementAnchor struct {
+	Selector     string `json:"selector"`
+	Tag          string `json:"tag"`
+	Preview      string `json:"preview"`
+	TextFallback string `json:"textFallback"`
+}
+
 type digestThread struct {
-	ID       string          `json:"id"`
-	FilePath string          `json:"filePath"`
-	Quote    *string         `json:"quote"`
-	Status   string          `json:"status"` // "open" | "resolved"
-	Comments []digestComment `json:"comments"`
-	raw      json.RawMessage // the untouched original object, for --json passthrough
+	ID         string          `json:"id"`
+	FilePath   string          `json:"filePath"`
+	AnchorType *string         `json:"anchorType"` // "text" | "page" | "element"
+	Quote      *string         `json:"quote"`
+	Anchor     *elementAnchor  `json:"anchor"` // element threads only
+	Status     string          `json:"status"` // "open" | "resolved"
+	Comments   []digestComment `json:"comments"`
+	raw        json.RawMessage // the untouched original object, for --json passthrough
+}
+
+// The anchor context line for a thread: an element's tag + preview, or a text quote. Empty for a
+// page/anchorless thread. Keeps `glance comments` useful for element anchors too.
+func anchorLine(t digestThread) string {
+	if t.AnchorType != nil && *t.AnchorType == "element" && t.Anchor != nil {
+		label := t.Anchor.Preview
+		if label == "" {
+			label = t.Anchor.TextFallback
+		}
+		if label == "" {
+			label = t.Anchor.Selector
+		}
+		tag := t.Anchor.Tag
+		if tag == "" {
+			tag = "element"
+		}
+		return fmt.Sprintf("> [%s] %s", tag, label)
+	}
+	if t.Quote != nil {
+		return `> "` + *t.Quote + `"` // raw interpolation, matches JS (no escaping)
+	}
+	return ""
 }
 
 // Decode a server thread array, keeping each element's original bytes alongside the parsed
@@ -92,8 +125,8 @@ func renderDigest(threads []digestThread, open, jsonOut bool) (string, error) {
 	for _, filePath := range order {
 		for _, t := range byFile[filePath] {
 			lines = append(lines, "", fmt.Sprintf("### %s · %s · %s", filePath, strings.ToUpper(t.Status), t.ID))
-			if t.Quote != nil {
-				lines = append(lines, `> "`+*t.Quote+`"`) // raw interpolation, matches JS (no escaping)
+			if line := anchorLine(t); line != "" {
+				lines = append(lines, line)
 			}
 			for _, c := range t.Comments {
 				author := "unknown"

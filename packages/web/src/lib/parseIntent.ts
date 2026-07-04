@@ -9,7 +9,11 @@
 export type SelectIntent = { type: 'select'; quote: string; rect?: DOMRectLike }
 export type ReadyIntent = { type: 'ready'; filePath: string }
 export type ClearIntent = { type: 'clear' }
-export type Intent = SelectIntent | ReadyIntent | ClearIntent
+/** A suggested element ("pinpoint") anchor — the iframe proposes a selector; the parent turns it
+ *  into a pending element anchor + composer. Untrusted: selector is only ever querySelector'd. */
+export type ElementAnchorIntent = { selector: string; tag: string; preview: string; textFallback: string }
+export type PinpointIntent = { type: 'pinpoint'; anchor: ElementAnchorIntent; rect?: DOMRectLike }
+export type Intent = SelectIntent | ReadyIntent | ClearIntent | PinpointIntent
 
 export type DOMRectLike = { top: number; left: number; width: number; height: number }
 
@@ -43,6 +47,16 @@ export function parseIntent(event: MessageEvent, expected: ExpectedSource): Inte
       const quote = str(d.quote)
       if (!quote) return null
       return { type: 'select', quote, rect: rect(d.rect) }
+    }
+    case 'glance:pinpoint': {
+      const d = data as { selector?: unknown; tag?: unknown; preview?: unknown; textFallback?: unknown; rect?: unknown }
+      const selector = str(d.selector)
+      if (!selector) return null
+      return {
+        type: 'pinpoint',
+        anchor: { selector, tag: str(d.tag) ?? '', preview: str(d.preview) ?? '', textFallback: str(d.textFallback) ?? '' },
+        rect: rect(d.rect),
+      }
     }
     case 'glance:select-clear':
       return { type: 'clear' }

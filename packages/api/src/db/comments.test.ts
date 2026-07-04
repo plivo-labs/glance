@@ -27,9 +27,31 @@ describe('createThread — stores the anchor', () => {
     const threads = await listThreads(db, siteId, path)
     const anchored = threads.find((t) => t.anchorType === 'text')!
     expect(anchored.quote).toBe('brown fox') // normalized (trimmed)
+    expect(anchored.anchor).toBeNull() // char: text threads carry no element anchor
     const page = threads.find((t) => t.id === text.threadId)!
     expect(page.anchorType).toBe('page')
     expect(page.quote).toBeNull()
+    expect(page.anchor).toBeNull()
+  })
+
+  test('create-thread-stores-element-anchor: element anchorType persists selector/tag/preview and reads back', async () => {
+    const { db, siteId, user, path } = await siteWithFile('<div id="chart"><svg></svg></div>')
+
+    const { threadId } = await createThread(db, {
+      siteId,
+      filePath: path,
+      createdBy: user,
+      body: 'this chart is wrong',
+      anchorType: 'element',
+      anchor: { selector: '#chart > svg', tag: 'svg', preview: 'Bar chart', textFallback: 'Revenue' },
+    })
+
+    const [thread] = await listThreads(db, siteId, path)
+    expect(thread.id).toBe(threadId)
+    expect(thread.anchorType).toBe('element')
+    expect(thread.quote).toBeNull()
+    expect(thread.anchor).toEqual({ selector: '#chart > svg', tag: 'svg', preview: 'Bar chart', textFallback: 'Revenue' })
+    expect(thread.comments.map((c) => c.body)).toEqual(['this chart is wrong'])
   })
 })
 

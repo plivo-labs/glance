@@ -136,6 +136,60 @@ describe('comments routes — auth / access / authz', () => {
   })
 })
 
+describe('comments routes — element (pinpoint) anchors', () => {
+  const post = (headers: Record<string, string>, body: unknown) =>
+    ({ method: 'POST', headers, body: JSON.stringify(body) }) as const
+
+  test('element-create-and-readback: valid element payload → 201, thread lists with the element anchor', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    await seedSiteWithFile(db, r2, owner)
+    const res = await app.request(
+      url(),
+      post(auth(owner), {
+        filePath: 'index.html',
+        body: 'this chart is off',
+        anchorType: 'element',
+        anchor: { selector: '#chart', tag: 'div', preview: 'Bar chart', textFallback: 'Revenue' },
+      }),
+      env,
+    )
+    expect(res.status).toBe(201)
+    const list = await (await app.request(url('?filePath=index.html'), { headers: auth(owner) }, env)).json()
+    expect(list[0].anchorType).toBe('element')
+    expect(list[0].anchor).toEqual({ selector: '#chart', tag: 'div', preview: 'Bar chart', textFallback: 'Revenue' })
+    expect(list[0].quote).toBeNull()
+  })
+
+  test('element-missing-selector-rejected: anchorType element with no selector → 400 (no silent coerce to text)', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    await seedSiteWithFile(db, r2, owner)
+    const res = await app.request(url(), post(auth(owner), { filePath: 'index.html', body: 'x', anchorType: 'element', anchor: { tag: 'div' } }), env)
+    expect(res.status).toBe(400)
+  })
+
+  test('element-oversize-field-rejected: over-cap selector → 400', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    await seedSiteWithFile(db, r2, owner)
+    const res = await app.request(url(), post(auth(owner), { filePath: 'index.html', body: 'x', anchorType: 'element', anchor: { selector: 'a'.repeat(2000) } }), env)
+    expect(res.status).toBe(400)
+  })
+
+  test('text-create-unchanged: a text payload still creates a text thread (char)', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    await seedSiteWithFile(db, r2, owner)
+    const res = await app.request(url(), post(auth(owner), { filePath: 'index.html', body: 'here', quote: 'fox' }), env)
+    expect(res.status).toBe(201)
+    const list = await (await app.request(url('?filePath=index.html'), { headers: auth(owner) }, env)).json()
+    expect(list[0].anchorType).toBe('text')
+    expect(list[0].quote).toBe('fox')
+    expect(list[0].anchor).toBeNull()
+  })
+})
+
 describe('comments routes — site-wide list (filePath optional)', () => {
   /** Seed acme/doc with TWO files, each carrying one thread + opening comment. */
   async function seedSiteWithTwoFiles(

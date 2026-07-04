@@ -41,6 +41,28 @@ describe('parseIntent', () => {
     expect(parseIntent(ev({ data: { type: 'glance:select-clear' } }), expected)).toEqual({ type: 'clear' })
   })
 
+  const validPinpoint = { type: 'glance:pinpoint', selector: '#chart > svg', tag: 'svg', preview: 'Bar chart', textFallback: 'Revenue' }
+
+  test('parses a pinpoint intent (selector required, fields carried)', () => {
+    expect(parseIntent(ev({ data: validPinpoint }), expected)).toEqual({
+      type: 'pinpoint',
+      anchor: { selector: '#chart > svg', tag: 'svg', preview: 'Bar chart', textFallback: 'Revenue' },
+    })
+  })
+
+  test('pinpoint carries an optional rect and defaults missing fields to empty', () => {
+    expect(parseIntent(ev({ data: { type: 'glance:pinpoint', selector: '#x', rect: { top: 1, left: 2, width: 3, height: 4 } } }), expected)).toEqual({
+      type: 'pinpoint',
+      anchor: { selector: '#x', tag: '', preview: '', textFallback: '' },
+      rect: { top: 1, left: 2, width: 3, height: 4 },
+    })
+  })
+
+  test('pinpoint without a selector, or over-cap selector → null', () => {
+    expect(parseIntent(ev({ data: { type: 'glance:pinpoint', tag: 'svg' } }), expected)).toBeNull()
+    expect(parseIntent(ev({ data: { type: 'glance:pinpoint', selector: 'x'.repeat(9000) } }), expected)).toBeNull()
+  })
+
   test('accepts a ready handshake; missing source check is skippable', () => {
     expect(parseIntent(ev({ data: { type: 'glance:ready', filePath: 'index.html' } }), expected)).toEqual({
       type: 'ready',

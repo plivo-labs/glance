@@ -98,14 +98,16 @@ export const commentThreads = sqliteTable(
     id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
     siteId: text('siteId').notNull().references(() => sites.id, { onDelete: 'cascade' }),
     filePath: text('filePath').notNull(),
-    // 'text' = anchored to a quote; 'page' = whole-page (markdown, or anchoring fallback).
-    anchorType: text('anchorType', { enum: ['text', 'page'] }).notNull().default('text'),
-    // The quote the client painter re-finds in the rendered DOM. The ONLY anchor data written/read.
+    // 'text' = anchored to a quote; 'page' = whole-page (markdown, or anchoring fallback);
+    // 'element' = a pinpoint anchor on a whole element (chart/table/image) — payload in `anchor`.
+    // Widening this enum needs NO migration: it's a plain text column with no CHECK constraint.
+    anchorType: text('anchorType', { enum: ['text', 'page', 'element'] }).notNull().default('text'),
+    // The quote the text painter re-finds in the rendered DOM. Null for page/element threads.
     quote: text('quote'),
-    // DEPRECATED (kept to avoid a destructive D1 migration): the server no longer resolves or
-    // reconciles anchors — painting is client-side against the rendered DOM. `anchor` held the old
-    // {quote, prefix, suffix} model (prefix/suffix now unused, quote denormalized above). New rows
-    // leave these at their defaults; nothing reads them. Drop in a future migration when convenient.
+    // For an 'element' thread, the client-suggested {selector, tag, preview, textFallback} (see
+    // lib/anchor buildElementAnchor). For legacy text/page rows this column may still hold the old,
+    // now-unused {quote, prefix, suffix} model — readElementAnchor gates on anchorType so that never
+    // leaks. prefix/suffix are dead; quote is denormalized to its own column above.
     anchor: text('anchor', { mode: 'json' }),
     contentHash: text('contentHash'),
     anchorStatus: text('anchorStatus', { enum: ['anchored', 'shifted', 'suggested', 'orphaned'] })
