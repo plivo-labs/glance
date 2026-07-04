@@ -37,8 +37,8 @@ first commit — not retrofitted.
 | 1 Confused deputy | Parent-frame broker: hosted pages get a MessagePort, never a token; parent validates origin+source+shape and binds every request to the viewed site | `dbBroker.test.ts` (spoofed origin/source, op smuggling, token never crosses) |
 | 2 Token type confusion | Separate secret + `aud`/caps inside the MAC; content token can't verify as data token | `data-token.test.ts` (content-token, aud, widened-caps, tamper) |
 | 3 CORS / CSRF boundary | ACAO pinned to `CONTENT_URL`, no `Allow-Credentials`, cookie ignored on the data plane | `data.test.ts` CORS; live curl (cookie-only → 401) |
-| 4 Write ≠ view | `dataCapsFor` grants write to owner/superadmin only; routes gate on the `write` cap | `data.test.ts` (dataCapsFor + read-only-token → 403) |
-| 5 Per-document read policy | `get`/`list` filtered by `createdBy = token.viewerId` (default per-creator) | `data.test.ts` cross-viewer isolation |
+| 4 Modify ≠ view | Every viewer gets `read`+`create` (attributed submissions); `write` (put/delete) is owner/superadmin-only — a viewer cannot touch any existing document | `data.test.ts` (dataCapsFor + viewer put/delete → 403) |
+| 5 Per-document read policy | Default `createdBy = token.viewerId`; opt-outs: `shared-*` collections (all viewers) and `read_all` tokens (owner sees + moderates everything) | `data.test.ts` (policy v2 block) |
 | 6 Tenant isolation (IDOR) | Every query ANDs `siteId = token.siteId`; siteId never from the body | `data.test.ts` (B's siteB token can't reach siteA) |
 | 7 Mass assignment | `siteId`/`createdBy`/timestamps set from the token, never spread from the body | `data.test.ts` (spoofed body keys ignored) |
 | 8 Stored-XSS amplification | No credential in the untrusted page realm (SDK runs on the trusted app origin only until the broker) | design/scope |
@@ -52,7 +52,8 @@ first commit — not retrofitted.
   for now.
 - **`glance.fs` / `glance.ai`** (Phase 2/3) — with serve-time non-exec fs serving + AI quotas;
   both ride the same broker channel.
-- **`glance.config.json` capability manifest** + "public-within-site" read opt-in.
+- **`glance.config.json` capability manifest** (the `shared-*` naming convention covers the
+  read opt-in for now); resolving `createdBy` ids to display names.
 - **Per-site quotas / rate-limits** (abuse controls).
 - Arbitrary `list()` filters (only ship behind bound JSON paths + a field allowlist).
 

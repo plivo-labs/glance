@@ -99,10 +99,12 @@ TOKEN=$(curl -s -X POST -H "Authorization: Bearer $GLANCE_CLI_TOKEN" \
 curl -H "Authorization: Bearer $TOKEN" "$GLANCE_API_URL/api/_data/notes"
 ```
 
-Rules: docs are JSON objects ≤100KB in named collections · writes need the site **owner** (viewers
-get read-only tokens) · reads return only **your own** documents ("public within site" is a
-planned opt-in) · every request re-checks live site access, so revoking a share cuts data access
-immediately. Design + threat model: [SHARED_BACKEND.md](SHARED_BACKEND.md).
+Rules: docs are JSON objects ≤100KB in named collections · every viewer can **create**
+(submissions are attributed to them) and read **their own** docs · collections named `shared-*`
+are readable by every viewer of the site (polls, boards) · the site **owner** additionally reads
+everything and can update/delete (moderation) — viewers can never modify existing docs · every
+request re-checks live site access, so revoking a share cuts data access immediately. Design +
+threat model: [SHARED_BACKEND.md](SHARED_BACKEND.md).
 
 ## Advanced
 

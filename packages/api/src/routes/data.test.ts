@@ -36,14 +36,19 @@ async function scenario() {
   await seedSite(db, { id: 'siteB', spaceId: sp2, ownerId: 'userB', slug: 'bobsite', visibility: 'team' })
 
   const app = mount(db)
+  const OWNER_CAPS: Parameters<typeof signDataToken>[1]['caps'] = ['read', 'create', 'write', 'read_all']
   const tokens = {
-    ownerA: await signDataToken(HMAC_A, { siteId: 'siteA', viewerId: 'userA', caps: ['read', 'write'] }),
+    ownerA: await signDataToken(HMAC_A, { siteId: 'siteA', viewerId: 'userA', caps: OWNER_CAPS }),
+    // What the mint actually issues a viewer: read (own rows + shared-*) and create.
+    viewerB: await signDataToken(HMAC_A, { siteId: 'siteA', viewerId: 'userB', caps: ['read', 'create'] }),
+    // Legacy pre-policy-v2 read-only token — still verifies, still read-only.
     viewerB_read: await signDataToken(HMAC_A, { siteId: 'siteA', viewerId: 'userB', caps: ['read'] }),
     // Over-privileged B token for siteA (simulates a compromised mint) — used to prove that even
-    // WITH write+read caps, B still cannot reach A's rows (createdBy scoping is independent of caps).
-    viewerB_write: await signDataToken(HMAC_A, { siteId: 'siteA', viewerId: 'userB', caps: ['read', 'write'] }),
+    // WITH write caps (but no read_all), B still cannot reach A's rows (createdBy scoping is
+    // independent of write caps).
+    viewerB_write: await signDataToken(HMAC_A, { siteId: 'siteA', viewerId: 'userB', caps: ['read', 'create', 'write'] }),
     // B's legitimate token for their OWN site — used to prove cross-tenant reach is impossible.
-    B_siteB: await signDataToken(HMAC_A, { siteId: 'siteB', viewerId: 'userB', caps: ['read', 'write'] }),
+    B_siteB: await signDataToken(HMAC_A, { siteId: 'siteB', viewerId: 'userB', caps: OWNER_CAPS }),
   }
   return { db, app, tokens }
 }
@@ -88,18 +93,25 @@ describe('glance.db data plane — happy path', () => {
   })
 })
 
-describe('P0-4/P0-3: write authority is distinct from view authority', () => {
-  test('dataCapsFor: owner + superadmin get write; a mere viewer gets read-only', () => {
-    expect(dataCapsFor({ id: 'userA', role: 'member' }, { ownerId: 'userA' })).toEqual(['read', 'write'])
-    expect(dataCapsFor({ id: 'root', role: 'superadmin' }, { ownerId: 'userA' })).toEqual(['read', 'write'])
-    expect(dataCapsFor({ id: 'userB', role: 'member' }, { ownerId: 'userA' })).toEqual(['read'])
+describe('P0-4/P0-3: modify authority is distinct from view authority', () => {
+  test('dataCapsFor: owner + superadmin get write/read_all; a viewer gets read+create only', () => {
+    expect(dataCapsFor({ id: 'userA', role: 'member' }, { ownerId: 'userA' })).toEqual(['read', 'create', 'write', 'read_all'])
+    expect(dataCapsFor({ id: 'root', role: 'superadmin' }, { ownerId: 'userA' })).toEqual(['read', 'create', 'write', 'read_all'])
+    expect(dataCapsFor({ id: 'userB', role: 'member' }, { ownerId: 'userA' })).toEqual(['read', 'create'])
   })
 
-  test('ATTACK: a read-only token cannot write (create/put/delete → 403)', async () => {
+  test('ATTACK: a viewer token cannot modify — put/delete → 403; legacy read-only also blocked from create', async () => {
     const { app, tokens } = await scenario()
+    expect((await req(app, tokens.viewerB, 'PUT', '/posts/x', { x: 1 })).status).toBe(403)
+    expect((await req(app, tokens.viewerB, 'DELETE', '/posts/x')).status).toBe(403)
     expect((await req(app, tokens.viewerB_read, 'POST', '/posts', { x: 1 })).status).toBe(403)
-    expect((await req(app, tokens.viewerB_read, 'PUT', '/posts/x', { x: 1 })).status).toBe(403)
-    expect((await req(app, tokens.viewerB_read, 'DELETE', '/posts/x')).status).toBe(403)
+  })
+
+  test('a viewer CAN create — the submission is attributed to them, not the owner', async () => {
+    const { db, app, tokens } = await scenario()
+    const id = await create(app, tokens.viewerB, 'feedback', { msg: 'from B' })
+    const row = (await db.select().from(documents).where(eq(documents.docId, id)))[0]
+    expect(row.createdBy).toBe('userB')
   })
 })
 
@@ -114,6 +126,50 @@ describe('P0-6: per-document read policy (cross-viewer isolation)', () => {
     expect((await req(app, tokens.viewerB_read, 'GET', `/secrets/${id}`)).status).toBe(404)
     // ...not even with a write-capable token (caps do not widen the read scope).
     expect((await req(app, tokens.viewerB_write, 'GET', `/secrets/${id}`)).status).toBe(404)
+  })
+})
+
+describe('policy v2: owner read_all + shared-* collections', () => {
+  test("owner sees viewers' submissions (read_all) — the feedback-form story", async () => {
+    const { app, tokens } = await scenario()
+    const id = await create(app, tokens.viewerB, 'feedback', { msg: 'B says hi' })
+    const items = (await (await req(app, tokens.ownerA, 'GET', '/feedback')).json()).items
+    expect(items).toHaveLength(1)
+    expect(items[0].createdBy).toBe('userB')
+    expect((await req(app, tokens.ownerA, 'GET', `/feedback/${id}`)).status).toBe(200)
+  })
+
+  test('shared-* collection: every viewer reads every row; modification stays locked', async () => {
+    const { app, tokens } = await scenario()
+    const id = await create(app, tokens.ownerA, 'shared-votes', { v: 'A' })
+    await create(app, tokens.viewerB, 'shared-votes', { v: 'B' })
+    // B sees both rows (and who wrote them)...
+    const items = (await (await req(app, tokens.viewerB, 'GET', '/shared-votes')).json()).items
+    expect(items).toHaveLength(2)
+    expect(new Set(items.map((d: { createdBy: string }) => d.createdBy))).toEqual(new Set(['userA', 'userB']))
+    expect((await req(app, tokens.viewerB, 'GET', `/shared-votes/${id}`)).status).toBe(200)
+    // ...but ATTACK: shared visibility must not widen write reach — B cannot touch A's row.
+    expect((await req(app, tokens.viewerB, 'PUT', `/shared-votes/${id}`, { v: 'hacked' })).status).toBe(403)
+    expect((await req(app, tokens.viewerB, 'DELETE', `/shared-votes/${id}`)).status).toBe(403)
+    expect((await req(app, tokens.viewerB_write, 'DELETE', `/shared-votes/${id}`)).status).toBe(204) // scoped: removes 0 rows
+    expect((await req(app, tokens.ownerA, 'GET', `/shared-votes/${id}`)).status).toBe(200)
+  })
+
+  test('owner can delete ANY document in their site (moderation), and only in their site', async () => {
+    const { app, tokens } = await scenario()
+    const spam = await create(app, tokens.viewerB, 'feedback', { msg: 'spam' })
+    expect((await req(app, tokens.ownerA, 'DELETE', `/feedback/${spam}`)).status).toBe(204)
+    expect((await req(app, tokens.ownerA, 'GET', `/feedback/${spam}`)).status).toBe(404)
+    // Cross-tenant: B's owner-tier token for siteB cannot moderate siteA's rows.
+    const keep = await create(app, tokens.viewerB, 'feedback', { msg: 'keep' })
+    expect((await req(app, tokens.B_siteB, 'DELETE', `/feedback/${keep}`)).status).toBe(204) // siteB-scoped: removes 0 rows
+    expect((await req(app, tokens.ownerA, 'GET', `/feedback/${keep}`)).status).toBe(200)
+  })
+
+  test('non-shared collections stay per-creator for viewers (unchanged default)', async () => {
+    const { app, tokens } = await scenario()
+    await create(app, tokens.ownerA, 'notes', { private: 'A only' })
+    expect((await (await req(app, tokens.viewerB, 'GET', '/notes')).json()).items).toHaveLength(0)
   })
 })
 
