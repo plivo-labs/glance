@@ -1,6 +1,6 @@
 ---
 name: glance-cli
-description: Use the `glance` CLI to deploy a local folder of static files (HTML/markdown/assets) to a Glance instance and get a URL, to PULL a deployed site's review comments back to the terminal so a coding agent can act on them, and to REPLY to a comment thread from the terminal. Use when the user wants to publish/upload/deploy a folder, list their Glance sites, delete a site, log in/out of Glance from the terminal, fetch/read/pull the review comments (feedback left in the browser) on a site to address them, reply to a comment thread after making a change, or read a deployed file's raw contents back to the terminal. Closes the review loop: deploy → comment in the browser → `glance comments` to pull → edit → `glance reply` to respond → redeploy (anchors re-resolve server-side). Covers pointing the CLI at a self-hosted instance via GLANCE_API_URL.
+description: Use the `glance` CLI to deploy a local folder of static files (HTML/markdown/assets) to a Glance instance and get a URL, to PULL a deployed site's review comments back to the terminal so a coding agent can act on them, and to REPLY to a comment thread from the terminal. Use when the user wants to publish/upload/deploy a folder, list their Glance sites, delete a site, log in/out of Glance from the terminal, fetch/read/pull the review comments (feedback left in the browser) on a site to address them, reply to a comment thread after making a change, or read a deployed file's raw contents back to the terminal. Closes the review loop: deploy → comment in the browser → `glance comments` to pull → edit → `glance reply` to respond → redeploy. Covers pointing the CLI at a self-hosted instance via GLANCE_API_URL.
 ---
 
 # Glance CLI
@@ -79,22 +79,21 @@ Default output is a **markdown digest**:
 ```
 # 1 open · 1 resolved
 
-### index.md · ✓ · OPEN · k3f9q2
+### index.md · OPEN · k3f9q2
 > "the quoted span this thread anchors to"
 - @Ada: please reword this paragraph
 - @Bob (deleted): [deleted]
 
-### guide.md · ⚠ · RESOLVED · p1x7d4
+### guide.md · RESOLVED · p1x7d4
 - @Ada: fixed in the latest deploy
 ```
 
 - A header line counts `open` vs `resolved` over the shown threads.
-- Threads are **grouped by file** (first-appearance order); each thread is a `###` heading `<filePath> · <glyph> · <STATUS> · <threadId>`. The trailing **threadId** is what you pass to `glance reply` to respond on that thread.
-- The glyph is the **anchor status**: `✓` anchored · `~` shifted · `?` suggested · `⚠` orphaned (the warning glyph means the quoted span drifted out of the document and the anchor was lost).
+- Threads are **grouped by file** (first-appearance order); each thread is a `###` heading `<filePath> · <STATUS> · <threadId>`. The trailing **threadId** is what you pass to `glance reply` to respond on that thread.
 - A present quote renders as a `> "…"` blockquote; each comment is a `- @<author>: <body>` line. Deleted comments show `- @<author> (deleted): [deleted]` (original text is gone); a missing author falls back to `@unknown`.
 - Empty result prints `No comments.`.
 
-**Agent loop** — this command closes the review loop without a browser: `glance comments <space/slug> --open` to pull outstanding feedback → edit the local doc to address it → `glance reply <space/slug> <threadId>` to note what you changed on the thread → `glance deploy` to redeploy. Anchors re-resolve **server-side** on the new content (a thread whose quote still matches stays `anchored`/`shifted`; one whose span vanished goes `orphaned`/`⚠`), so re-running `glance comments` reflects the new state.
+**Agent loop** — this command closes the review loop without a browser: `glance comments <space/slug> --open` to pull outstanding feedback → edit the local doc to address it → `glance reply <space/slug> <threadId>` to note what you changed on the thread → `glance deploy` to redeploy, then re-run `glance comments` to see the updated threads. A comment's highlight is re-located in the page when you reopen it in the browser; the comment itself always stays in the digest regardless.
 
 ### reply
 Posts a reply to an existing comment thread — so you can respond after addressing feedback, right from the terminal.

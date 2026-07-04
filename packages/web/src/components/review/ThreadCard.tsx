@@ -4,12 +4,7 @@ import { toast } from 'sonner'
 import { ApiError } from '@/lib/api'
 import { comments, type Thread } from '@/lib/comments'
 import type { Me, ViewerSite } from '@/lib/types'
-import { Badge } from '@/components/ui/badge'
 import { Composer } from '@/components/review/Composer'
-
-// Anchor-status badges. anchored is the silent default (no badge); the rest signal that the
-// underlying text drifted and a human should glance at it.
-const STATUS_LABEL: Record<string, string> = { shifted: 'Moved', suggested: 'Review', orphaned: 'Outdated' }
 
 export function ThreadCard({
   site,
@@ -26,7 +21,6 @@ export function ThreadCard({
 }) {
   const [replying, setReplying] = useState(false)
   const canModerate = site.isOwner || me?.role === 'superadmin'
-  const badge = STATUS_LABEL[thread.anchorStatus]
 
   async function run(fn: () => Promise<unknown>) {
     try {
@@ -50,11 +44,6 @@ export function ThreadCard({
           </button>
         ) : (
           <span className="text-muted-foreground text-xs">Page comment</span>
-        )}
-        {badge && (
-          <Badge variant="outline" className="shrink-0 text-[10px]">
-            {badge}
-          </Badge>
         )}
       </div>
 

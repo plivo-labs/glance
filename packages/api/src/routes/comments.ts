@@ -21,10 +21,9 @@ import type { AppEnv, SessionUser } from '../types'
 // are already global on /api/* in index.ts; do NOT re-add them here.
 
 const MAX_COMMENT_BODY = 10_000
-// Caps on the anchor fields. parseIntent bounds these for iframe-sourced messages, but a direct
-// API call bypasses it; without a cap a huge quote bloats the DB and blows up the browser regex
-// the annotate client builds from it. prefix/suffix are sliced to 64 by buildAnchor, but cap the
-// raw input too so we never NFKC-fold a multi-MB string just to throw it away.
+// Cap on the quote. parseIntent bounds it for iframe-sourced messages, but a direct API call
+// bypasses that; without a cap a huge quote bloats the DB and blows up the browser regex the
+// annotate client builds from it, so cap the raw input before we NFKC-fold it.
 const MAX_QUOTE = 8_000
 const MAX_PATH = 1_024
 
@@ -65,19 +64,20 @@ function cleanBody(v: unknown): string | null {
 // Every route in this router is a comment route, so auth is required on all of them.
 comments.use('*', requireAuth)
 
-// GET — list threads (+ reconciled anchors + ordered comments). With ?filePath, one file's
-// threads (as before); with NO filePath at all, the whole site's threads. Authz is site-level
-// (siteOrError), so the site-wide list exposes nothing the per-file list didn't.
+// GET — list threads (+ ordered comments). With ?filePath, one file's threads; with NO filePath
+// at all, the whole site's threads. Authz is site-level (siteOrError), so the site-wide list
+// exposes nothing the per-file list didn't.
 comments.get('/:space/:site/comments', async (c) => {
   const site = await siteOrError(c)
   if (site instanceof Response) return site
   const filePath = c.req.query('filePath')
-  if (filePath === undefined) return c.json(await listSiteThreads(c.get('db'), c.env.GLANCE_FILES, site.id))
+  if (filePath === undefined) return c.json(await listSiteThreads(c.get('db'), site.id))
   if (!filePath || tooLong(filePath, MAX_PATH)) return c.json({ error: 'filePath required' }, 400)
-  return c.json(await listThreads(c.get('db'), c.env.GLANCE_FILES, site.id, filePath))
+  return c.json(await listThreads(c.get('db'), site.id, filePath))
 })
 
-// POST — create a thread + its opening comment (anchor resolved server-side).
+// POST — create a thread + its opening comment. The anchor is stored, not resolved (the client
+// paints it against the rendered DOM at view time).
 comments.post('/:space/:site/comments', async (c) => {
   const site = await siteOrError(c)
   if (site instanceof Response) return site
@@ -86,18 +86,15 @@ comments.post('/:space/:site/comments', async (c) => {
   if (!body) return c.json({ error: 'invalid body' }, 400)
   if (typeof raw?.filePath !== 'string' || !raw.filePath || tooLong(raw.filePath, MAX_PATH))
     return c.json({ error: 'filePath required' }, 400)
-  if ([raw.quote, raw.prefix, raw.suffix].some((v) => tooLong(v, MAX_QUOTE)))
-    return c.json({ error: 'anchor too long' }, 400)
+  if (tooLong(raw.quote, MAX_QUOTE)) return c.json({ error: 'quote too long' }, 400)
   const anchorType = raw.anchorType === 'page' ? 'page' : 'text'
-  const out = await createThread(c.get('db'), c.env.GLANCE_FILES, {
+  const out = await createThread(c.get('db'), {
     siteId: site.id,
     filePath: raw.filePath,
     createdBy: c.get('user').id,
     body,
     anchorType,
     quote: typeof raw.quote === 'string' ? raw.quote : undefined,
-    prefix: typeof raw.prefix === 'string' ? raw.prefix : undefined,
-    suffix: typeof raw.suffix === 'string' ? raw.suffix : undefined,
   })
   return c.json(out, 201)
 })

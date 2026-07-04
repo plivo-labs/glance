@@ -7,12 +7,12 @@ import { Button } from '@/components/ui/button'
 import { Composer } from '@/components/review/Composer'
 import { ThreadCard } from '@/components/review/ThreadCard'
 
-type Pending = { quote: string; prefix: string; suffix: string }
+type Pending = { quote: string }
 
 const byUpdatedDesc = (a: Thread, b: Thread) => b.updatedAt.localeCompare(a.updatedAt)
 
 // Persistent right-rail for review mode: filter (open/resolved), a quote-prefilled composer on
-// select, the thread list, and an Outdated group for anchors that no longer resolve.
+// select, and the thread list.
 export function ReviewRail({
   site,
   me,
@@ -36,11 +36,7 @@ export function ReviewRail({
 }) {
   const [filter, setFilter] = useState<ThreadStatus>('open')
 
-  const { active, outdated } = useMemo(() => {
-    const outdated = threads.filter((t) => t.anchorStatus === 'orphaned').sort(byUpdatedDesc)
-    const active = threads.filter((t) => t.anchorStatus !== 'orphaned' && t.status === filter).sort(byUpdatedDesc)
-    return { active, outdated }
-  }, [threads, filter])
+  const active = useMemo(() => threads.filter((t) => t.status === filter).sort(byUpdatedDesc), [threads, filter])
 
   return (
     <aside className="flex max-h-[55vh] w-full shrink-0 flex-col border-t bg-background md:max-h-none md:h-full md:w-[360px] md:border-t-0 md:border-l">
@@ -85,15 +81,6 @@ export function ReviewRail({
         {active.map((t) => (
           <ThreadCard key={t.id} site={site} me={me} thread={t} onChanged={onChanged} onFocusAnchor={onFocusAnchor} />
         ))}
-
-        {outdated.length > 0 && (
-          <div className="mt-2 flex flex-col gap-3">
-            <p className="px-1 font-medium text-muted-foreground text-xs uppercase tracking-wide">Outdated</p>
-            {outdated.map((t) => (
-              <ThreadCard key={t.id} site={site} me={me} thread={t} onChanged={onChanged} onFocusAnchor={onFocusAnchor} />
-            ))}
-          </div>
-        )}
       </div>
     </aside>
   )

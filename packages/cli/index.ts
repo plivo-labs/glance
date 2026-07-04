@@ -319,18 +319,9 @@ type DigestComment = {
 type DigestThread = {
   id: string // thread id — the reply target (`glance reply <space/slug> <id>`)
   filePath: string
-  anchorStatus: 'anchored' | 'shifted' | 'suggested' | 'orphaned'
   quote: string | null
   status: 'open' | 'resolved'
   comments: DigestComment[]
-}
-
-// anchorStatus → glyph; orphaned is a loud warning so a drifted anchor stands out.
-const ANCHOR_GLYPH: Record<DigestThread['anchorStatus'], string> = {
-  anchored: '✓',
-  shifted: '~',
-  suggested: '?',
-  orphaned: '⚠',
 }
 
 // Render a site's comment threads as a markdown digest (or raw JSON). PURE — no I/O.
@@ -352,7 +343,7 @@ export function renderDigest(threads: DigestThread[], opts: { open?: boolean; js
 
   for (const [filePath, group] of byFile) {
     for (const t of group) {
-      lines.push('', `### ${filePath} · ${ANCHOR_GLYPH[t.anchorStatus]} · ${t.status.toUpperCase()} · ${t.id}`)
+      lines.push('', `### ${filePath} · ${t.status.toUpperCase()} · ${t.id}`)
       if (t.quote) lines.push(`> "${t.quote}"`)
       for (const c of t.comments) {
         const author = c.author ?? 'unknown'

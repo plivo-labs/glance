@@ -3,7 +3,6 @@ import { Hono } from 'hono'
 import { isSpaceMember } from '../db/repo'
 import type { NewFileRow } from '../db/schema'
 import { files, sites, spaces } from '../db/schema'
-import { hashContent } from '../lib/anchor'
 import { isValidSlug } from '../lib/slug'
 import { deleteKeys, MAX_FILE_BYTES, sanitizePath } from '../lib/storage'
 import { isVisibility, normalizeVisibility } from '../lib/visibility'
@@ -12,11 +11,6 @@ import type { AppEnv } from '../types'
 
 // Phase 4: multipart create-or-replace upload. Mounted at /api/upload.
 // Accepts a browser cookie OR a CLI Bearer token (both resolved by requireAuth).
-
-// HTML is the only anchorable type (v1 anchors over static HTML source text), so it's the only
-// type we read-and-hash at upload; everything else streams straight through with a null hash.
-const isHtmlUpload = (path: string, mime: string): boolean =>
-  /\.(html?|xhtml)$/i.test(path) || mime === 'text/html'
 
 export const upload = new Hono<AppEnv>()
 
@@ -100,16 +94,7 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
   for (const { path, file } of items) {
     const storageKey = `${prefix}/${path}`
     const contentType = file.type || 'application/octet-stream'
-    // HTML: read the body once, store contentHash for the re-anchor gate, and put the text we
-    // already read (no double read). Everything else streams straight to R2 with a null hash.
-    let contentHash: string | null = null
-    if (isHtmlUpload(path, file.type)) {
-      const text = await file.text()
-      contentHash = await hashContent(text)
-      await c.env.GLANCE_FILES.put(storageKey, text, { httpMetadata: { contentType } })
-    } else {
-      await c.env.GLANCE_FILES.put(storageKey, file.stream(), { httpMetadata: { contentType } })
-    }
+    await c.env.GLANCE_FILES.put(storageKey, file.stream(), { httpMetadata: { contentType } })
     newRows.push({
       id: crypto.randomUUID(),
       siteId,
@@ -117,7 +102,6 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
       storageKey,
       mimeType: file.type || null,
       size: file.size,
-      contentHash,
     })
   }
 

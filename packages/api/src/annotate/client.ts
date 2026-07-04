@@ -7,14 +7,15 @@
 // persisted status. Paint instructions are accepted only from the trusted parent origin. All
 // anchor resolution that matters happens server-side; this is thin glue.
 //
-// v1 honest limitation: anchors are located by re-finding the quote TEXT in the rendered DOM
-// (whitespace-flexible). For reports/decks rendered ≈ source, so it works; JS-rendered DOM that
-// diverges from source simply won't paint (the parent shows the thread in its Outdated group).
+// Anchors are located by re-finding the quote TEXT in the rendered DOM. This is the SINGLE source
+// of paintability — the server no longer resolves anchors. Matching is whitespace-FLEXIBLE (tokens
+// may be separated by any run of whitespace OR none, since adjacent text nodes across block/inline
+// element boundaries concatenate with no separator) and case-insensitive (CSS text-transform can
+// uppercase rendered text vs. its source node). A quote it can't locate simply isn't highlighted.
 
 type Boot = { siteId: string; filePath: string; appOrigin: string }
 type PaintAnchor = { id: string; quote: string }
 
-const CONTEXT = 48 // chars of prefix/suffix sent with a selection
 const DEBOUNCE = 150
 
 const boot = (window as unknown as { __GLANCE__?: Boot }).__GLANCE__
@@ -30,13 +31,6 @@ function toParent(msg: unknown): void {
 
 // --- selection capture: emit an intent the parent turns into a composer ------------------
 
-function rangeText(start: [Node, number], end: [Node, number]): string {
-  const r = document.createRange()
-  r.setStart(start[0], start[1])
-  r.setEnd(end[0], end[1])
-  return r.toString()
-}
-
 function captureSelection(): void {
   const sel = window.getSelection()
   const quote = sel && !sel.isCollapsed && sel.rangeCount > 0 ? sel.toString().trim() : ''
@@ -44,17 +38,10 @@ function captureSelection(): void {
     toParent({ type: 'glance:select-clear' })
     return
   }
-
-  const range = sel.getRangeAt(0)
-  const body = document.body
-  const prefix = rangeText([body, 0], [range.startContainer, range.startOffset]).slice(-CONTEXT)
-  const suffix = rangeText([range.endContainer, range.endOffset], [body, body.childNodes.length]).slice(0, CONTEXT)
-  const box = range.getBoundingClientRect()
+  const box = sel.getRangeAt(0).getBoundingClientRect()
   toParent({
     type: 'glance:select',
     quote,
-    prefix,
-    suffix,
     rect: { top: box.top, left: box.left, width: box.width, height: box.height },
   })
 }
@@ -72,12 +59,13 @@ function escapeRegExp(s: string): string {
 }
 
 /** Locate an anchor quote in the rendered DOM, whitespace-flexibly, and return a Range. The
- *  stored quote is whitespace-normalized, so we match its tokens across any run of whitespace
- *  the rendered text may use. Null if not found. */
+ *  stored quote is whitespace-normalized, so we match its tokens across ANY run of whitespace the
+ *  rendered text may use — including none, since text nodes across element boundaries concatenate
+ *  with no separator. Case-insensitive to survive CSS text-transform. Null if not found. */
 function findRange(quote: string): Range | null {
   const tokens = quote.split(' ').filter(Boolean).map(escapeRegExp)
   if (tokens.length === 0) return null
-  const re = new RegExp(tokens.join('\\s+'))
+  const re = new RegExp(tokens.join('\\s*'), 'i')
 
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
   const segs: { node: Text; start: number }[] = []

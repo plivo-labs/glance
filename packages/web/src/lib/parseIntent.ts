@@ -6,7 +6,7 @@
 // constraint 1): an iframe message may only OPEN UI or SUGGEST an anchor; every mutation is
 // parent-initiated after an explicit user action, and all anchor resolution is server-side.
 
-export type SelectIntent = { type: 'select'; quote: string; prefix: string; suffix: string; rect?: DOMRectLike }
+export type SelectIntent = { type: 'select'; quote: string; rect?: DOMRectLike }
 export type ReadyIntent = { type: 'ready'; filePath: string }
 export type ClearIntent = { type: 'clear' }
 export type Intent = SelectIntent | ReadyIntent | ClearIntent
@@ -15,8 +15,7 @@ export type DOMRectLike = { top: number; left: number; width: number; height: nu
 
 export type ExpectedSource = { origin: string; source: MessageEventSource | Window | null }
 
-const MAX_FIELD = 2000 // chars per text field
-const MAX_TOTAL = 8000 // total across fields, bounds a single message
+const MAX_FIELD = 2000 // chars per text field, bounds a single message
 
 const str = (v: unknown, max = MAX_FIELD): string | null =>
   typeof v === 'string' && v.length <= max ? v : null
@@ -40,12 +39,10 @@ export function parseIntent(event: MessageEvent, expected: ExpectedSource): Inte
 
   switch ((data as { type?: unknown }).type) {
     case 'glance:select': {
-      const d = data as { quote?: unknown; prefix?: unknown; suffix?: unknown; rect?: unknown }
+      const d = data as { quote?: unknown; rect?: unknown }
       const quote = str(d.quote)
-      const prefix = str(d.prefix) ?? ''
-      const suffix = str(d.suffix) ?? ''
-      if (!quote || quote.length + prefix.length + suffix.length > MAX_TOTAL) return null
-      return { type: 'select', quote, prefix, suffix, rect: rect(d.rect) }
+      if (!quote) return null
+      return { type: 'select', quote, rect: rect(d.rect) }
     }
     case 'glance:select-clear':
       return { type: 'clear' }

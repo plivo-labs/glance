@@ -92,12 +92,11 @@ describe('renderDigest', () => {
     expect(out).toContain('one.md')
   })
 
-  test('renderDigest-deleted-and-orphan-markers', () => {
+  test('renderDigest-deleted-marker-never-leaks-body', () => {
     const threads = [
       thread({
         id: 'a',
         filePath: 'one.md',
-        anchorStatus: 'orphaned',
         quote: null,
         comments: [
           // Defense-in-depth: even if a body somehow rides along on a deleted comment, the
@@ -118,7 +117,6 @@ describe('renderDigest', () => {
     expect(out).toContain('(deleted)')
     expect(out).toContain('[deleted]')
     expect(out).not.toContain('SECRET_DELETED_BODY') // original body never rendered for deleted
-    expect(out).toContain('⚠') // orphaned warning glyph
   })
 
   test('renderDigest-empty-friendly', () => {
@@ -134,10 +132,10 @@ describe('renderDigest', () => {
   })
 
   test('DIG-id-in-heading: thread id renders on the ### heading (reply target)', () => {
-    const threads = [thread({ id: 't1', filePath: 'index.md', anchorStatus: 'anchored', status: 'open' })] as never
+    const threads = [thread({ id: 't1', filePath: 'index.md', status: 'open' })] as never
     const out = renderDigest(threads, {})
     // The id is what `glance reply` targets — it must be visible on the plain digest heading.
-    expect(out).toContain('### index.md · ✓ · OPEN · t1')
+    expect(out).toContain('### index.md · OPEN · t1')
   })
 })
 
