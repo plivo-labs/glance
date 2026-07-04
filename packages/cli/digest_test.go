@@ -80,6 +80,17 @@ func TestRenderDigest(t *testing.T) {
 		}
 	})
 
+	t.Run("element-anchor-line", func(t *testing.T) {
+		// an element (pinpoint) thread renders `> [tag] preview`, not a blank line
+		threads := mustThreads(t, `[
+			{"id":"e1","filePath":"chart.html","anchorType":"element","quote":null,"anchor":{"selector":"#chart > svg","tag":"svg","preview":"Bar chart","textFallback":"Revenue"},"status":"open","comments":[]}
+		]`)
+		out, _ := renderDigest(threads, false, false)
+		if !strings.Contains(out, "> [svg] Bar chart") {
+			t.Errorf("element anchor line missing:\n%s", out)
+		}
+	})
+
 	t.Run("json-passthrough-preserves-all-server-fields", func(t *testing.T) {
 		// Full ThreadView shape incl. fields the digest never reads. --json must NOT drop them.
 		input := `[
