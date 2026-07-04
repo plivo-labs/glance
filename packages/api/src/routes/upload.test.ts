@@ -1,14 +1,12 @@
 import { describe, expect, test } from 'bun:test'
-import { eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { files } from '../db/schema'
-import { hashContent } from '../lib/anchor'
 import { makeDb, makeKv, makeR2, seedMember, seedSite, seedSpace, seedUser } from '../test/harness'
 import type { AppEnv } from '../types'
 import { upload } from './upload'
 
-// Upload now (Step 2) stamps files.contentHash and (Step 3) rejects duplicate paths before any
-// R2 write — closing the blind-insert gap that would otherwise 500 post-constraint.
+// Upload rejects duplicate paths before any R2 write — closing the blind-insert gap that would
+// otherwise 500 post-constraint.
 
 const APP_URL = 'https://glance.example.com'
 
@@ -43,23 +41,7 @@ function postFiles(app: Hono<AppEnv>, env: AppEnv['Bindings'], slug: string, par
   return app.request(`/api/upload/acme/${slug}${query}`, { method: 'POST', headers: { Authorization: 'Bearer tok' }, body: fd }, env)
 }
 
-describe('upload — contentHash + duplicate-path guard', () => {
-  test('files-contentHash-persisted-on-upload: create then replace both stamp the normalized digest', async () => {
-    const { app, env, db } = await setup()
-    const createText = '<html><body><p>The quick brown fox.</p></body></html>'
-    const res = await postFiles(app, env, 'doc', [new File([createText], 'index.html', { type: 'text/html' })])
-    expect(res.status).toBe(200)
-    let row = (await db.select().from(files).where(eq(files.path, 'index.html')))[0]
-    expect(row.contentHash).toBe(await hashContent(createText))
-
-    const replaceText = '<html><body><p>A wholly different sentence.</p></body></html>'
-    const res2 = await postFiles(app, env, 'doc', [new File([replaceText], 'index.html', { type: 'text/html' })], '?replace=true')
-    expect(res2.status).toBe(200)
-    row = (await db.select().from(files).where(eq(files.path, 'index.html')))[0]
-    expect(row.contentHash).toBe(await hashContent(replaceText))
-    expect(row.contentHash).not.toBe(await hashContent(createText))
-  })
-
+describe('upload — duplicate-path guard', () => {
   test('upload-rejects-duplicate-path: collapsing paths → 400 before any R2 write, no rows', async () => {
     const { app, env, db, r2 } = await setup()
     // 'a/b.html' and 'a\b.html' both sanitize to 'a/b.html'.

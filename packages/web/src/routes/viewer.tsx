@@ -48,15 +48,14 @@ export function Component() {
   const [selection, setSelection] = useState<Pending | null>(null)
   const [composing, setComposing] = useState<Pending | null>(null)
 
-  // Paint the (non-orphaned) anchors back into the iframe via the trusted parent→child channel —
-  // only while reviewing; leaving review repaints with [] so the highlights clear.
+  // Paint the text anchors back into the iframe via the trusted parent→child channel — only while
+  // reviewing; leaving review repaints with [] so the highlights clear. The iframe re-finds each
+  // quote in the rendered DOM (best-effort); a quote it can't locate simply isn't highlighted.
   const paint = useCallback(() => {
     const win = iframeRef.current?.contentWindow
     if (!win) return
     const anchors = review
-      ? threads
-          .filter((t) => t.anchorType === 'text' && t.quote && t.anchorStatus !== 'orphaned')
-          .map((t) => ({ id: t.id, quote: t.quote as string }))
+      ? threads.filter((t) => t.anchorType === 'text' && t.quote).map((t) => ({ id: t.id, quote: t.quote as string }))
       : []
     win.postMessage({ type: 'glance:paint', anchors }, contentOrigin)
   }, [threads, contentOrigin, review])
@@ -72,12 +71,8 @@ export function Component() {
     [site],
   )
 
-  // Actionable count for the toolbar badge: open, still-anchored threads (mirrors the rail's default
-  // "open" list; resolved + outdated/orphaned are excluded).
-  const openCount = useMemo(
-    () => threads.filter((t) => t.status === 'open' && t.anchorStatus !== 'orphaned').length,
-    [threads],
-  )
+  // Actionable count for the toolbar badge: open threads (mirrors the rail's default "open" list).
+  const openCount = useMemo(() => threads.filter((t) => t.status === 'open').length, [threads])
 
   // glance.db credential broker: the injected SDK in the iframe hands us a MessagePort; we
   // execute its data-plane requests with OUR token so no credential ever enters the untrusted

@@ -7,7 +7,6 @@ import { join } from 'node:path'
 import { Database } from 'bun:sqlite'
 import { drizzle } from 'drizzle-orm/bun-sqlite'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
-import { hashContent } from '../lib/anchor'
 import {
   type NewComment,
   type NewCommentThread,
@@ -116,21 +115,19 @@ export async function seedGroupShare(db: DrizzleD1Database, siteId: string, spac
   await db.insert(siteGroupShares).values({ siteId, spaceId })
 }
 
-// --- S-SEED+ : files (with contentHash + R2 body), threads, comments. ---
+// --- S-SEED+ : files (+ R2 body), threads, comments. ---
 
 /** Insert a `files` row and, if an R2 mock is given, store its body under the storageKey.
- *  `contentHash` is derived from `text` via the shared hasher (overridable). Returns the
- *  storageKey so reconcile/inject tests can read the same object the row points at. */
+ *  Returns the storageKey so tests can read the same object the row points at. */
 export async function seedFile(
   db: DrizzleD1Database,
   r2: { put: (key: string, value: string, opts?: unknown) => Promise<void> } | null,
   siteId: string,
-  o: { path: string; text?: string; mimeType?: string; contentHash?: string | null; storageKey?: string } & Partial<NewFileRow>,
+  o: { path: string; text?: string; mimeType?: string; storageKey?: string } & Partial<NewFileRow>,
 ): Promise<string> {
   const id = o.id ?? nextId('file')
   const storageKey = o.storageKey ?? `${id}/${o.path}`
   const text = o.text ?? ''
-  const contentHash = o.contentHash !== undefined ? o.contentHash : await hashContent(text)
   await db.insert(files).values({
     id,
     siteId,
@@ -138,7 +135,6 @@ export async function seedFile(
     storageKey,
     mimeType: o.mimeType ?? 'text/html',
     size: text.length,
-    contentHash,
   })
   if (r2) await r2.put(storageKey, text, { httpMetadata: { contentType: o.mimeType ?? 'text/html' } })
   return storageKey

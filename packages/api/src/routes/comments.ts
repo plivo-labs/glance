@@ -65,19 +65,20 @@ function cleanBody(v: unknown): string | null {
 // Every route in this router is a comment route, so auth is required on all of them.
 comments.use('*', requireAuth)
 
-// GET — list threads (+ reconciled anchors + ordered comments). With ?filePath, one file's
-// threads (as before); with NO filePath at all, the whole site's threads. Authz is site-level
-// (siteOrError), so the site-wide list exposes nothing the per-file list didn't.
+// GET — list threads (+ ordered comments). With ?filePath, one file's threads; with NO filePath
+// at all, the whole site's threads. Authz is site-level (siteOrError), so the site-wide list
+// exposes nothing the per-file list didn't.
 comments.get('/:space/:site/comments', async (c) => {
   const site = await siteOrError(c)
   if (site instanceof Response) return site
   const filePath = c.req.query('filePath')
-  if (filePath === undefined) return c.json(await listSiteThreads(c.get('db'), c.env.GLANCE_FILES, site.id))
+  if (filePath === undefined) return c.json(await listSiteThreads(c.get('db'), site.id))
   if (!filePath || tooLong(filePath, MAX_PATH)) return c.json({ error: 'filePath required' }, 400)
-  return c.json(await listThreads(c.get('db'), c.env.GLANCE_FILES, site.id, filePath))
+  return c.json(await listThreads(c.get('db'), site.id, filePath))
 })
 
-// POST — create a thread + its opening comment (anchor resolved server-side).
+// POST — create a thread + its opening comment. The anchor is stored, not resolved (the client
+// paints it against the rendered DOM at view time).
 comments.post('/:space/:site/comments', async (c) => {
   const site = await siteOrError(c)
   if (site instanceof Response) return site
@@ -89,7 +90,7 @@ comments.post('/:space/:site/comments', async (c) => {
   if ([raw.quote, raw.prefix, raw.suffix].some((v) => tooLong(v, MAX_QUOTE)))
     return c.json({ error: 'anchor too long' }, 400)
   const anchorType = raw.anchorType === 'page' ? 'page' : 'text'
-  const out = await createThread(c.get('db'), c.env.GLANCE_FILES, {
+  const out = await createThread(c.get('db'), {
     siteId: site.id,
     filePath: raw.filePath,
     createdBy: c.get('user').id,

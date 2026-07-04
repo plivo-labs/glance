@@ -2,9 +2,9 @@ import { api } from '@/lib/api'
 import type { ViewerSite } from '@/lib/types'
 
 // Web client for the comments API (mirrors packages/api db/comments ThreadView). Thin wrappers
-// over the `api` fetch helper — anchor resolution + authz all live server-side.
+// over the `api` fetch helper. Anchors are stored, not resolved server-side — the annotate client
+// paints each quote by re-finding it in the rendered DOM.
 
-export type AnchorStatus = 'anchored' | 'shifted' | 'suggested' | 'orphaned'
 export type ThreadStatus = 'open' | 'resolved'
 
 export interface CommentItem {
@@ -22,9 +22,6 @@ export interface Thread {
   filePath: string
   anchorType: 'text' | 'page'
   quote: string | null
-  anchorStatus: AnchorStatus
-  start: number | null
-  end: number | null
   status: ThreadStatus
   resolvedBy: string | null
   resolvedByName: string | null
@@ -51,8 +48,7 @@ const base = (s: SiteRef) => `/api/sites/${s.spaceSlug}/${s.siteSlug}/comments`
 
 export const comments = {
   list: (s: SiteRef, filePath: string) => api.get<Thread[]>(`${base(s)}?filePath=${encodeURIComponent(filePath)}`),
-  create: (s: SiteRef, input: NewThreadInput) =>
-    api.post<{ threadId: string; anchorStatus: AnchorStatus }>(base(s), input),
+  create: (s: SiteRef, input: NewThreadInput) => api.post<{ threadId: string }>(base(s), input),
   reply: (s: SiteRef, threadId: string, body: string) =>
     api.post<{ id: string }>(`${base(s)}/${threadId}/replies`, { body }),
   setStatus: (s: SiteRef, threadId: string, status: ThreadStatus) =>
