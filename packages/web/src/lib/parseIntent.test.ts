@@ -12,7 +12,7 @@ const ev = (over: { origin?: string; source?: unknown; data?: unknown }): Messag
   ({ origin: over.origin ?? CONTENT, source: over.source ?? iframeWin, data: over.data }) as unknown as MessageEvent
 
 const expected = { origin: CONTENT, source: iframeWin }
-const validSelect = { type: 'glance:select', quote: 'the quick brown fox', prefix: 'said ', suffix: ' jumped' }
+const validSelect = { type: 'glance:select', quote: 'the quick brown fox' }
 
 describe('parseIntent', () => {
   test('parseintent-rejects-wrong-origin', () => {
@@ -34,8 +34,6 @@ describe('parseIntent', () => {
     expect(parseIntent(ev({ data: validSelect }), expected)).toEqual({
       type: 'select',
       quote: 'the quick brown fox',
-      prefix: 'said ',
-      suffix: ' jumped',
     })
   })
 

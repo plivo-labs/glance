@@ -1,6 +1,6 @@
 ---
 name: glance-cli
-description: Use the `glance` CLI to deploy a local folder of static files (HTML/markdown/assets) to a Glance instance and get a URL, and to PULL a deployed site's review comments back to the terminal so a coding agent can act on them. Use when the user wants to publish/upload/deploy a folder, list their Glance sites, delete a site, log in/out of Glance from the terminal, or fetch/read/pull the review comments (feedback left in the browser) on a site to address them, or read a deployed file's raw contents back to the terminal. Closes the review loop: deploy → comment in the browser → `glance comments` to pull → edit → redeploy (anchors re-resolve server-side). Covers pointing the CLI at a self-hosted instance via GLANCE_API_URL.
+description: Use the `glance` CLI to deploy a local folder of static files (HTML/markdown/assets) to a Glance instance and get a URL, and to PULL a deployed site's review comments back to the terminal so a coding agent can act on them. Use when the user wants to publish/upload/deploy a folder, list their Glance sites, delete a site, log in/out of Glance from the terminal, or fetch/read/pull the review comments (feedback left in the browser) on a site to address them, or read a deployed file's raw contents back to the terminal. Closes the review loop: deploy → comment in the browser → `glance comments` to pull → edit → redeploy. Covers pointing the CLI at a self-hosted instance via GLANCE_API_URL.
 ---
 
 # Glance CLI
@@ -78,22 +78,21 @@ Default output is a **markdown digest**:
 ```
 # 1 open · 1 resolved
 
-### index.md · ✓ · OPEN
+### index.md · OPEN
 > "the quoted span this thread anchors to"
 - @Ada: please reword this paragraph
 - @Bob (deleted): [deleted]
 
-### guide.md · ⚠ · RESOLVED
+### guide.md · RESOLVED
 - @Ada: fixed in the latest deploy
 ```
 
 - A header line counts `open` vs `resolved` over the shown threads.
-- Threads are **grouped by file** (first-appearance order); each thread is a `###` heading `<filePath> · <glyph> · <STATUS>`.
-- The glyph is the **anchor status**: `✓` anchored · `~` shifted · `?` suggested · `⚠` orphaned (the warning glyph means the quoted span drifted out of the document and the anchor was lost).
+- Threads are **grouped by file** (first-appearance order); each thread is a `###` heading `<filePath> · <STATUS>`.
 - A present quote renders as a `> "…"` blockquote; each comment is a `- @<author>: <body>` line. Deleted comments show `- @<author> (deleted): [deleted]` (original text is gone); a missing author falls back to `@unknown`.
 - Empty result prints `No comments.`.
 
-**Agent loop** — this command closes the review loop without a browser: `glance comments <space/slug> --open` to pull outstanding feedback → edit the local doc to address it → `glance deploy` to redeploy. Anchors re-resolve **server-side** on the new content (a thread whose quote still matches stays `anchored`/`shifted`; one whose span vanished goes `orphaned`/`⚠`), so re-running `glance comments` reflects the new state.
+**Agent loop** — this command closes the review loop without a browser: `glance comments <space/slug> --open` to pull outstanding feedback → edit the local doc to address it → `glance deploy` to redeploy, then re-run `glance comments` to see the updated threads. A comment's highlight is re-located in the page when you reopen it in the browser; the comment itself always stays in the digest regardless.
 
 ### read
 Prints a deployed file's **raw contents** to stdout — the bytes as stored (HTML stays HTML; markdown stays markdown source, NOT the server-rendered HTML).
