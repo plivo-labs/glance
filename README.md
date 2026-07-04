@@ -5,7 +5,7 @@
 No more screenshotting your agent's output and pasting it back into the chat.
 
 <p align="center">
-  <img src="https://github.com/plivo-labs/glance/releases/download/assets-readme/landing.png" alt="Glance — the human-in-the-loop review loop for coding agents" width="900">
+  <img src="https://github.com/plivo-labs/glance/releases/download/assets-readme/glance-demo.gif" alt="Glance demo: an agent deploys a folder to a URL, you leave review comments in the browser, and the agent reads the comments and fixes it" width="900">
 </p>
 
 ```
