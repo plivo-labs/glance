@@ -13,7 +13,7 @@
 //               tracks scroll/resize/DOM-mutation. Unresolved selectors aren't painted and are
 //               reported back so the parent can flag them orphaned.
 
-import { computeSelector, describeElement, resolveSelector } from './locator'
+import { computeSelector, describeElement, isPageSpanning, resolveSelector } from './locator'
 
 type Boot = { siteId: string; filePath: string; appOrigin: string }
 type Mode = 'read' | 'annotate'
@@ -68,7 +68,11 @@ function isAnnotatable(el: Element | null): el is Element {
   if (el?.nodeType !== 1) return false
   if (overlayRoot?.contains(el)) return false
   const tag = el.tagName.toLowerCase()
-  return tag !== 'html' && tag !== 'body'
+  if (tag === 'html' || tag === 'body') return false
+  // A page-spanning wrapper is the empty-padding fallback target, not a real anchor — skip it so
+  // hovering the gaps between blocks never outlines the whole site.
+  const r = el.getBoundingClientRect()
+  return !isPageSpanning(r, { width: window.innerWidth, height: window.innerHeight })
 }
 
 document.addEventListener('mousemove', (e) => {
@@ -76,6 +80,13 @@ document.addEventListener('mousemove', (e) => {
   const el = e.target as Element | null
   if (isAnnotatable(el)) drawHover(el)
   else clearHover()
+})
+
+// The hover box lives in the iframe, so moving the pointer out to the parent (rail/composer) fires
+// no further mousemove to clear it. Drop it when the pointer leaves the document so no stray outline
+// lingers while you type a comment.
+document.addEventListener('mouseout', (e) => {
+  if (!e.relatedTarget) clearHover()
 })
 
 document.addEventListener(
