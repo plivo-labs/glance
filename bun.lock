@@ -24,16 +24,6 @@
         "wrangler": "^4.100.0",
       },
     },
-    "packages/cli": {
-      "name": "@glance/cli",
-      "bin": {
-        "glance": "./index.ts",
-      },
-      "devDependencies": {
-        "@types/node": "^26.0.0",
-        "typescript": "^6.0.3",
-      },
-    },
     "packages/web": {
       "name": "@glance/web",
       "dependencies": {
@@ -173,8 +163,6 @@
     "@floating-ui/utils": ["@floating-ui/utils@0.2.11", "", {}, "sha512-RiB/yIh78pcIxl6lLMG0CgBXAZ2Y0eVHqMPYugu+9U0AeT6YBeiJpf7lbdJNIugFP5SIjwNRgo4DhR1Qxi26Gg=="],
 
     "@glance/api": ["@glance/api@workspace:packages/api"],
-
-    "@glance/cli": ["@glance/cli@workspace:packages/cli"],
 
     "@glance/web": ["@glance/web@workspace:packages/web"],
 
