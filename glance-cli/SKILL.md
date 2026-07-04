@@ -136,10 +136,13 @@ curl -H "Authorization: Bearer $TOKEN" -X POST -d '{"text":"hi"}' \
 # also: GET /api/_data/notes (list) · GET/PUT/DELETE /api/_data/notes/<id>
 ```
 
-Rules of thumb: documents are JSON objects up to 100KB, grouped into named collections · only
-the site's **owner** can write; other viewers get read-only · you only ever see documents you
-created yourself · access follows the site's sharing — lose access to the site, lose access to
-its data. If it errors with "not enabled", ask your Glance admin to turn the feature on.
+Rules of thumb: documents are JSON objects up to 100KB, grouped into named collections ·
+**anyone viewing the site can add** documents (attributed to them) — so forms and surveys just
+work · by default you only see documents **you** created; name a collection `shared-…` and every
+viewer sees all of it (polls, boards) · the site **owner** sees everything and can edit/delete
+any document (moderation); other viewers can never change existing documents · access follows
+the site's sharing — lose access to the site, lose access to its data. If it errors with "not
+enabled", ask your Glance admin to turn the feature on.
 
 ## Gotchas
 - Commands other than `login`/`logout` require a saved token; run `glance login` first.

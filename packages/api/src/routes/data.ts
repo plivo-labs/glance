@@ -22,6 +22,11 @@ const MAX_JSON_BYTES = 100_000
 const DEFAULT_LIMIT = 50
 const MAX_LIMIT = 200
 const DATA_TOKEN_TTL_SEC = 300
+// Read-policy opt-in by naming convention: documents in a `shared-*` collection are readable by
+// EVERY authorized viewer of the site (polls, boards, tallies). Writes are unaffected — put and
+// delete stay creator-scoped, so a shared collection is many-writers-of-their-own-rows, never a
+// free-for-all.
+const SHARED_PREFIX = 'shared-'
 
 // `db` is optional: production runs no middleware that sets it, so getDb() falls back to a
 // per-request client from the D1 binding; tests inject the in-memory harness db via c.set('db')
@@ -85,8 +90,9 @@ dataApi.use('*', async (c, next) => {
 })
 
 // Method → required capability, enforced structurally for every current AND future route on
-// this surface — a new endpoint cannot ship without a capability check.
-const METHOD_CAP: Record<string, DataCapability> = { GET: 'read', HEAD: 'read', POST: 'write', PUT: 'write', DELETE: 'write' }
+// this surface — a new endpoint cannot ship without a capability check. POST maps to `create`
+// (every viewer may submit attributed documents); PUT/DELETE stay behind `write` (owner-only).
+const METHOD_CAP: Record<string, DataCapability> = { GET: 'read', HEAD: 'read', POST: 'create', PUT: 'write', DELETE: 'write' }
 dataApi.use('*', async (c, next) => {
   const cap = METHOD_CAP[c.req.method]
   if (!cap || !hasCap(c.get('claims'), cap)) return c.json({ error: 'forbidden' }, 403)
@@ -117,7 +123,8 @@ dataApi.post('/:collection', async (c) => {
   return c.json({ id: docId, data: parsed.value, createdAt: now, updatedAt: now }, 201)
 })
 
-// Read one document. Scoped to the token's site + the caller's own rows.
+// Read one document. Default: the caller's own rows; site-wide when the collection is
+// `shared-*` or the token carries `read_all` (owner/superadmin).
 dataApi.get('/:collection/:docId', async (c) => {
   const claims = c.get('claims')
   const collection = c.req.param('collection')
@@ -127,15 +134,15 @@ dataApi.get('/:collection/:docId', async (c) => {
     await getDb(c)
       .select()
       .from(documents)
-      .where(scoped(claims, collection, docId))
+      .where(and(...docWhere(claims, collection, docId), ...readCreatorWhere(claims, collection)))
       .limit(1)
   )[0]
   if (!row) return c.json({ error: 'not found' }, 404)
   return c.json(toDoc(row))
 })
 
-// List documents in a collection, newest first. Returns ONLY the caller's own rows in this
-// site+collection (default per-creator read policy — "public within site" is a future opt-in).
+// List documents in a collection, newest first. Default: ONLY the caller's own rows; the whole
+// site's rows for `shared-*` collections (any viewer) or a `read_all` token (owner/superadmin).
 dataApi.get('/:collection', async (c) => {
   const claims = c.get('claims')
   const collection = c.req.param('collection')
@@ -147,7 +154,7 @@ dataApi.get('/:collection', async (c) => {
       and(
         eq(documents.siteId, claims.siteId),
         eq(documents.collection, collection),
-        eq(documents.createdBy, claims.viewerId),
+        ...readCreatorWhere(claims, collection),
       ),
     )
     .orderBy(desc(documents.createdAt))
@@ -206,18 +213,38 @@ dataApi.put('/:collection/:docId', async (c) => {
   return c.json({ id: docId, data: parsed.value, createdAt: now, updatedAt: now }, 201)
 })
 
-// Delete a document. Scoped to the token's site + the caller's own rows.
+// Delete a document. Creator-scoped by default; a `read_all` token (owner/superadmin — always
+// paired with `write` at mint) deletes ANY document in the site: that is the moderation story
+// for viewer-submitted content (spam in a feedback form, a hostile poll entry).
 dataApi.delete('/:collection/:docId', async (c) => {
   const claims = c.get('claims')
   const collection = c.req.param('collection')
   const docId = c.req.param('docId')
   if (!COLLECTION_RE.test(collection) || !DOCID_RE.test(docId)) return c.json({ error: 'not found' }, 404)
-  await getDb(c).delete(documents).where(scoped(claims, collection, docId))
+  const where = hasCap(claims, 'read_all')
+    ? and(...docWhere(claims, collection, docId))
+    : scoped(claims, collection, docId)
+  await getDb(c).delete(documents).where(where)
   return c.body(null, 204)
 })
 
-// Every single-doc query is scoped by (token siteId + collection + docId + token viewer) so a
-// docId from another site or another viewer can never be reached (tenant + creator isolation).
+// Tenant wall for a single doc: token siteId + collection + docId. NEVER used without either
+// the creator wall or an owner-tier cap on top.
+function docWhere(claims: DataClaims, collection: string, docId: string) {
+  return [eq(documents.siteId, claims.siteId), eq(documents.collection, collection), eq(documents.docId, docId)]
+}
+
+// The creator wall for READS, dropped only for `shared-*` collections (opt-in by name, visible
+// to every viewer) or a `read_all` token. Returned as a spreadable list so callers AND it in.
+function readCreatorWhere(claims: DataClaims, collection: string) {
+  return collection.startsWith(SHARED_PREFIX) || hasCap(claims, 'read_all')
+    ? []
+    : [eq(documents.createdBy, claims.viewerId)]
+}
+
+// Every single-doc WRITE query is scoped by (token siteId + collection + docId + token viewer)
+// so a docId from another site or another viewer can never be touched (tenant + creator
+// isolation) — shared-* read visibility never widens write reach.
 function scoped(claims: DataClaims, collection: string, docId: string) {
   return and(
     eq(documents.siteId, claims.siteId),
@@ -258,17 +285,24 @@ function clampLimit(q: string | undefined): number {
   return Math.min(Math.floor(n), MAX_LIMIT)
 }
 
+// createdBy is exposed (an opaque user id): shared collections and owner reads need to group
+// and attribute rows — resolving ids to names stays a follow-up.
 function toDoc(row: DocumentRow) {
-  return { id: row.docId, data: row.json, createdAt: row.createdAt, updatedAt: row.updatedAt }
+  return { id: row.docId, data: row.json, createdBy: row.createdBy, createdAt: row.createdAt, updatedAt: row.updatedAt }
 }
 
 // --- Session-authenticated mint (trusted app origin) ---
 
-// The single source of truth for "who gets write". WRITE is the site owner (or a superadmin)
-// ONLY; everyone else who can access the site gets READ. Pure + exported so the write≠view
-// invariant is unit-tested directly, independent of the request/session plumbing.
+// The single source of truth for capability bundles. Every authorized viewer may READ (their
+// own rows + shared-* collections) and CREATE (attributed submissions — this is what makes
+// forms/polls possible). Only the site owner or a superadmin gets WRITE (update/delete) and
+// READ_ALL (see + moderate every row). "Can view" still never implies "can modify": a viewer
+// cannot touch any existing document, not even their own. Pure + exported so the invariant is
+// unit-tested directly, independent of the request/session plumbing.
 export function dataCapsFor(user: Pick<SessionUser, 'id' | 'role'>, site: Pick<Site, 'ownerId'>): DataCapability[] {
-  return user.role === 'superadmin' || site.ownerId === user.id ? ['read', 'write'] : ['read']
+  return user.role === 'superadmin' || site.ownerId === user.id
+    ? ['read', 'create', 'write', 'read_all']
+    : ['read', 'create']
 }
 
 export const dataToken = new Hono<AppEnv>()

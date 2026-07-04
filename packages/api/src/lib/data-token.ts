@@ -10,7 +10,12 @@ import { b64urlDecode, b64urlEncode, hmacSign, hmacVerify } from './hmac'
 //      have its capabilities widened without invalidating the signature (P0: token forgery).
 // Wire format: base64url(JSON(claims)) '.' base64url(hmac(body)).
 
-export type DataCapability = 'read' | 'write'
+// read     — read your own documents (and any `shared-*` collection)
+// create   — add new documents, always attributed to you (every authorized viewer gets this)
+// write    — update/delete documents (scoped to your own; owner-only)
+// read_all — read every document in the site regardless of creator; with write, also delete
+//            any document (owner/superadmin moderation)
+export type DataCapability = 'read' | 'create' | 'write' | 'read_all'
 
 export interface DataClaims {
   aud: 'data'
@@ -23,7 +28,7 @@ export interface DataClaims {
 const enc = new TextEncoder()
 const dec = new TextDecoder()
 
-const CAPS: ReadonlySet<string> = new Set<DataCapability>(['read', 'write'])
+const CAPS: ReadonlySet<string> = new Set<DataCapability>(['read', 'create', 'write', 'read_all'])
 
 /** Mint a data token binding the viewer to a single site + capability set for `ttlSec`. */
 export async function signDataToken(
