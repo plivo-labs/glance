@@ -66,6 +66,20 @@ describe('renderDigest', () => {
     expect(out.lastIndexOf('one.md')).toBeLessThan(out.indexOf('two.md'))
   })
 
+  test('renderDigest-element-anchor-line: shows [tag] preview, not a blank line', () => {
+    const threads = [
+      thread({
+        id: 'e1',
+        filePath: 'chart.html',
+        anchorType: 'element',
+        quote: null,
+        anchor: { selector: '#chart > svg', tag: 'svg', preview: 'Bar chart', textFallback: 'Revenue' },
+      }),
+    ] as never
+    const out = renderDigest(threads, {})
+    expect(out).toContain('> [svg] Bar chart')
+  })
+
   test('renderDigest-open-filter-hides-resolved', () => {
     const threads = [
       thread({ id: 'a', filePath: 'one.md', status: 'open', comments: [] }),

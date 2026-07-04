@@ -319,9 +319,21 @@ type DigestComment = {
 type DigestThread = {
   id: string // thread id — the reply target (`glance reply <space/slug> <id>`)
   filePath: string
+  anchorType?: 'text' | 'page' | 'element'
   quote: string | null
+  anchor?: { selector: string; tag: string; preview: string; textFallback: string } | null // element anchors
   status: 'open' | 'resolved'
   comments: DigestComment[]
+}
+
+/** The anchor context line for a thread: an element's tag + preview, or a text quote. Empty for a
+ *  page/anchorless thread. Keeps the pull-back digest useful for element comments too. */
+function anchorLine(t: DigestThread): string | null {
+  if (t.anchorType === 'element' && t.anchor) {
+    const label = t.anchor.preview || t.anchor.textFallback || t.anchor.selector
+    return `> [${t.anchor.tag || 'element'}] ${label}`
+  }
+  return t.quote ? `> "${t.quote}"` : null
 }
 
 // Render a site's comment threads as a markdown digest (or raw JSON). PURE — no I/O.
@@ -344,7 +356,8 @@ export function renderDigest(threads: DigestThread[], opts: { open?: boolean; js
   for (const [filePath, group] of byFile) {
     for (const t of group) {
       lines.push('', `### ${filePath} · ${t.status.toUpperCase()} · ${t.id}`)
-      if (t.quote) lines.push(`> "${t.quote}"`)
+      const anchor = anchorLine(t)
+      if (anchor) lines.push(anchor)
       for (const c of t.comments) {
         const author = c.author ?? 'unknown'
         if (c.deleted) lines.push(`- @${author} (deleted): [deleted]`)

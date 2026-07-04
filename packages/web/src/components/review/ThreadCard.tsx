@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import { ApiError } from '@/lib/api'
 import { comments, type Thread } from '@/lib/comments'
 import type { Me, ViewerSite } from '@/lib/types'
+import { AnchorChip } from '@/components/review/AnchorChip'
 import { Composer } from '@/components/review/Composer'
 
 export function ThreadCard({
@@ -17,7 +18,7 @@ export function ThreadCard({
   me: Me | null
   thread: Thread
   onChanged: () => void
-  onFocusAnchor: (quote: string) => void
+  onFocusAnchor: (thread: Thread) => void
 }) {
   const [replying, setReplying] = useState(false)
   const canModerate = site.isOwner || me?.role === 'superadmin'
@@ -34,10 +35,14 @@ export function ThreadCard({
   return (
     <div className="rounded-lg border bg-card p-3 text-card-foreground">
       <div className="mb-2 flex items-start justify-between gap-2">
-        {thread.quote ? (
+        {thread.anchorType === 'element' && thread.anchor ? (
+          <button type="button" onClick={() => onFocusAnchor(thread)} className="text-left hover:opacity-80">
+            <AnchorChip tag={thread.anchor.tag} preview={thread.anchor.preview} />
+          </button>
+        ) : thread.quote ? (
           <button
             type="button"
-            onClick={() => onFocusAnchor(thread.quote as string)}
+            onClick={() => onFocusAnchor(thread)}
             className="line-clamp-2 border-primary/40 border-l-2 pl-2 text-left text-muted-foreground text-xs italic hover:text-foreground"
           >
             “{thread.quote}”

@@ -52,6 +52,19 @@ export interface NewThreadInput {
   element?: ElementAnchor
 }
 
+// A pending anchor the viewer holds between "user picked an anchor" and "user submitted the
+// comment" — a text selection or an element pinpoint. Kept generic so the composer + create path
+// don't branch on anchor kind everywhere.
+export type PendingAnchor = { kind: 'text'; quote: string } | { kind: 'element'; anchor: ElementAnchor }
+
+/** Pure map: a pending anchor + body → the create payload. Unit-tested (seam S2) so the viewer's
+ *  create path needs no browser to verify. */
+export function pendingToInput(filePath: string, body: string, pending: PendingAnchor): NewThreadInput {
+  return pending.kind === 'element'
+    ? { filePath, body, anchorType: 'element', element: pending.anchor }
+    : { filePath, body, quote: pending.quote }
+}
+
 type SiteRef = Pick<ViewerSite, 'spaceSlug' | 'siteSlug'>
 
 const base = (s: SiteRef) => `/api/sites/${s.spaceSlug}/${s.siteSlug}/comments`

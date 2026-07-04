@@ -5,7 +5,7 @@ import { toast } from 'sonner'
 import { api, ApiError } from '@/lib/api'
 import { attachDbBroker } from '@/lib/dbBroker'
 import { toLogin } from '@/lib/nav'
-import { comments, type Thread } from '@/lib/comments'
+import { comments, type PendingAnchor, pendingToInput, type Thread } from '@/lib/comments'
 import { type DOMRectLike, type Intent, parseIntent } from '@/lib/parseIntent'
 import type { Me, ViewerSite } from '@/lib/types'
 import { Spinner } from '@/components/states'
@@ -23,7 +23,13 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
   }
 }
 
-type Pending = { quote: string; rect?: DOMRectLike }
+// A pending anchor (text selection or element pinpoint) plus its on-screen rect for positioning
+// the floating "Comment" button.
+type Pending = PendingAnchor & { rect?: DOMRectLike }
+type ReviewMode = 'read' | 'annotate'
+// The paint payload the iframe understands: a text anchor (re-find quote) or an element anchor
+// (re-resolve selector). Mirrors the annotate client's PaintAnchor.
+type PaintMsgAnchor = { id: string; anchorType: 'text'; quote: string } | { id: string; anchorType: 'element'; selector: string }
 
 // One persistent iframe hosts the deployed HTML for the whole tab; opening comments slides a rail
 // in beside it WITHOUT reloading the frame. Every site is review-capable (there is no public tier),
@@ -41,6 +47,9 @@ export function Component() {
   const src = useMemo(() => withAnnotate(appendPath(site.contentUrl, sitePath)), [site.contentUrl, sitePath])
 
   const [review, setReview] = useState(false)
+  // Within review, Read = normal browsing + text-select-to-comment; Annotate = also hover/click an
+  // element to pinpoint it. Default annotate on entering review so element commenting works.
+  const [reviewMode, setReviewMode] = useState<ReviewMode>('annotate')
   const [loaded, setLoaded] = useState(false)
   const [me, setMe] = useState<Me | null>(null)
   const [filePath, setFilePath] = useState<string | null>(null)
@@ -48,17 +57,31 @@ export function Component() {
   const [selection, setSelection] = useState<Pending | null>(null)
   const [composing, setComposing] = useState<Pending | null>(null)
 
-  // Paint the text anchors back into the iframe via the trusted parent→child channel — only while
-  // reviewing; leaving review repaints with [] so the highlights clear. The iframe re-finds each
-  // quote in the rendered DOM (best-effort); a quote it can't locate simply isn't highlighted.
+  // Paint anchors back into the iframe via the trusted parent→child channel — only while reviewing;
+  // leaving review repaints with [] so highlights/overlays clear. Text anchors re-find their quote
+  // in the rendered DOM; element anchors re-resolve their selector to an overlay box. Either kind an
+  // iframe can't locate simply isn't painted (element misses come back as orphaned).
   const paint = useCallback(() => {
     const win = iframeRef.current?.contentWindow
     if (!win) return
-    const anchors = review
-      ? threads.filter((t) => t.anchorType === 'text' && t.quote).map((t) => ({ id: t.id, quote: t.quote as string }))
+    const anchors: PaintMsgAnchor[] = review
+      ? threads.flatMap((t): PaintMsgAnchor[] => {
+          if (t.anchorType === 'text' && t.quote) return [{ id: t.id, anchorType: 'text', quote: t.quote }]
+          if (t.anchorType === 'element' && t.anchor) return [{ id: t.id, anchorType: 'element', selector: t.anchor.selector }]
+          return []
+        })
       : []
     win.postMessage({ type: 'glance:paint', anchors }, contentOrigin)
   }, [threads, contentOrigin, review])
+
+  // Tell the iframe which mode it's in: read outside review, else the review sub-mode. Gates the
+  // in-page pinpoint hover/click (the annotate client ignores it in read mode). Re-posts live on
+  // toggle; `loaded` gates the first post until the client has booted its message listener.
+  const postMode = useCallback(() => {
+    const win = iframeRef.current?.contentWindow
+    if (!win || !loaded) return
+    win.postMessage({ type: 'glance:mode', mode: review ? reviewMode : 'read' }, contentOrigin)
+  }, [review, reviewMode, loaded, contentOrigin])
 
   const refresh = useCallback(
     async (fp: string) => {
@@ -93,8 +116,11 @@ export function Component() {
       const intent: Intent | null = parseIntent(e, { origin: contentOrigin, source: iframeRef.current?.contentWindow ?? null })
       if (!intent) return
       if (intent.type === 'ready') setFilePath(intent.filePath)
-      else if (intent.type === 'select') setSelection({ quote: intent.quote, rect: intent.rect })
-      else if (intent.type === 'clear') setSelection(null)
+      else if (intent.type === 'select') setSelection({ kind: 'text', quote: intent.quote, rect: intent.rect })
+      else if (intent.type === 'pinpoint') setSelection({ kind: 'element', anchor: intent.anchor, rect: intent.rect })
+      // select-clear fires when a text selection collapses (including right after an element click) —
+      // it must only drop a TEXT pending, never the element one we just captured.
+      else if (intent.type === 'clear') setSelection((s) => (s?.kind === 'text' ? null : s))
     }
     window.addEventListener('message', onMsg)
     return () => window.removeEventListener('message', onMsg)
@@ -112,16 +138,29 @@ export function Component() {
   }, [filePath, refresh])
 
   useEffect(paint, [paint])
+  useEffect(postMode, [postMode])
 
   const startComposer = () => {
     setComposing(selection)
     setSelection(null)
   }
 
+  // Focus an anchor in the iframe: element → scroll its selector into view; text → its quote.
+  const focusAnchor = useCallback(
+    (thread: Thread) => {
+      const win = iframeRef.current?.contentWindow
+      if (!win) return
+      if (thread.anchorType === 'element' && thread.anchor)
+        win.postMessage({ type: 'glance:focus', selector: thread.anchor.selector }, contentOrigin)
+      else if (thread.quote) win.postMessage({ type: 'glance:focus', quote: thread.quote }, contentOrigin)
+    },
+    [contentOrigin],
+  )
+
   async function createThread(body: string) {
     if (!filePath || !composing) return
     try {
-      await comments.create(site, { filePath, body, quote: composing.quote })
+      await comments.create(site, pendingToInput(filePath, body, composing))
       setComposing(null)
       await refresh(filePath)
     } catch (err) {
@@ -174,10 +213,12 @@ export function Component() {
           me={me}
           threads={threads}
           composing={composing}
+          mode={reviewMode}
+          onMode={setReviewMode}
           onCancelComposer={() => setComposing(null)}
           onCreate={createThread}
           onChanged={() => filePath && refresh(filePath)}
-          onFocusAnchor={(quote) => iframeRef.current?.contentWindow?.postMessage({ type: 'glance:focus', quote }, contentOrigin)}
+          onFocusAnchor={focusAnchor}
           onExit={exitReview}
         />
       ) : (
