@@ -101,7 +101,6 @@ describe('listSiteThreads — site-wide listing', () => {
       siteId,
       filePath: 'ghost.html',
       anchorType: 'text',
-      anchor: { quote: 'ghost quote', prefix: '', suffix: '' },
       quote: 'ghost quote',
     })
     await seedComment(db, { threadId: ghost, body: 'survives' })

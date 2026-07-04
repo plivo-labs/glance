@@ -1,5 +1,4 @@
 import { index, integer, primaryKey, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core'
-import type { Anchor } from '../lib/anchor'
 
 // Column names mirror the spec's SQL exactly (camelCase) so raw `wrangler d1 execute`
 // queries in the runbook keep working. IDs are app-generated UUIDs; timestamps are ISO-8601.
@@ -101,13 +100,13 @@ export const commentThreads = sqliteTable(
     filePath: text('filePath').notNull(),
     // 'text' = anchored to a quote; 'page' = whole-page (markdown, or anchoring fallback).
     anchorType: text('anchorType', { enum: ['text', 'page'] }).notNull().default('text'),
-    // The stored anchor {quote, prefix, suffix} (lib/anchor). Null for page-level threads.
-    anchor: text('anchor', { mode: 'json' }).$type<Anchor>(),
-    // Denormalized quote for display and for the client painter to re-find in the rendered DOM.
+    // The quote the client painter re-finds in the rendered DOM. The ONLY anchor data written/read.
     quote: text('quote'),
     // DEPRECATED (kept to avoid a destructive D1 migration): the server no longer resolves or
-    // reconciles anchors — painting is client-side against the rendered DOM. New rows leave these
-    // at their defaults; nothing reads them. Drop in a future migration when convenient.
+    // reconciles anchors — painting is client-side against the rendered DOM. `anchor` held the old
+    // {quote, prefix, suffix} model (prefix/suffix now unused, quote denormalized above). New rows
+    // leave these at their defaults; nothing reads them. Drop in a future migration when convenient.
+    anchor: text('anchor', { mode: 'json' }),
     contentHash: text('contentHash'),
     anchorStatus: text('anchorStatus', { enum: ['anchored', 'shifted', 'suggested', 'orphaned'] })
       .notNull()

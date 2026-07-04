@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Composer } from '@/components/review/Composer'
 import { ThreadCard } from '@/components/review/ThreadCard'
 
-type Pending = { quote: string; prefix: string; suffix: string }
+type Pending = { quote: string }
 
 const byUpdatedDesc = (a: Thread, b: Thread) => b.updatedAt.localeCompare(a.updatedAt)
 

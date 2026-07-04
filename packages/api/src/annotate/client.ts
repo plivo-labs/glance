@@ -16,7 +16,6 @@
 type Boot = { siteId: string; filePath: string; appOrigin: string }
 type PaintAnchor = { id: string; quote: string }
 
-const CONTEXT = 48 // chars of prefix/suffix sent with a selection
 const DEBOUNCE = 150
 
 const boot = (window as unknown as { __GLANCE__?: Boot }).__GLANCE__
@@ -32,13 +31,6 @@ function toParent(msg: unknown): void {
 
 // --- selection capture: emit an intent the parent turns into a composer ------------------
 
-function rangeText(start: [Node, number], end: [Node, number]): string {
-  const r = document.createRange()
-  r.setStart(start[0], start[1])
-  r.setEnd(end[0], end[1])
-  return r.toString()
-}
-
 function captureSelection(): void {
   const sel = window.getSelection()
   const quote = sel && !sel.isCollapsed && sel.rangeCount > 0 ? sel.toString().trim() : ''
@@ -46,17 +38,10 @@ function captureSelection(): void {
     toParent({ type: 'glance:select-clear' })
     return
   }
-
-  const range = sel.getRangeAt(0)
-  const body = document.body
-  const prefix = rangeText([body, 0], [range.startContainer, range.startOffset]).slice(-CONTEXT)
-  const suffix = rangeText([range.endContainer, range.endOffset], [body, body.childNodes.length]).slice(0, CONTEXT)
-  const box = range.getBoundingClientRect()
+  const box = sel.getRangeAt(0).getBoundingClientRect()
   toParent({
     type: 'glance:select',
     quote,
-    prefix,
-    suffix,
     rect: { top: box.top, left: box.left, width: box.width, height: box.height },
   })
 }

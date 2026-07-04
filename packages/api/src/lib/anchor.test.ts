@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test'
-import { buildAnchor, normalizeText } from './anchor'
+import { normalizeText } from './anchor'
 
-// Anchor storage helpers. No resolution lives server-side anymore (the client paints against the
-// rendered DOM), so these just pin the normalization used to store a quote + bounded context.
+// No resolution lives server-side anymore (the client paints against the rendered DOM), so the
+// only anchor logic left is normalizing the stored quote.
 
-describe('normalizeText — folds whitespace + unicode', () => {
+describe('normalizeText — folds whitespace + unicode + trims', () => {
   test('collapses whitespace runs and trims', () => {
     expect(normalizeText('  a  \n\t b   ')).toBe('a b')
   })
@@ -16,24 +16,5 @@ describe('normalizeText — folds whitespace + unicode', () => {
   })
   test('folds compatibility chars (NFKC) — ligature ﬁ → fi', () => {
     expect(normalizeText('ﬁle')).toBe('file')
-  })
-})
-
-describe('buildAnchor — normalizes quote, keeps bounded boundary context', () => {
-  test('trims the quote but preserves boundary space on prefix/suffix', () => {
-    const a = buildAnchor({ quote: '  brown fox  ', prefix: 'quick ', suffix: ' jumps' })
-    expect(a.quote).toBe('brown fox')
-    expect(a.prefix).toBe('quick ')
-    expect(a.suffix).toBe(' jumps')
-  })
-  test('bounds prefix/suffix to the last/first 64 chars', () => {
-    const a = buildAnchor({ quote: 'q', prefix: 'p'.repeat(100), suffix: 's'.repeat(100) })
-    expect(a.prefix).toHaveLength(64)
-    expect(a.suffix).toHaveLength(64)
-  })
-  test('missing prefix/suffix default to empty', () => {
-    const a = buildAnchor({ quote: 'q' })
-    expect(a.prefix).toBe('')
-    expect(a.suffix).toBe('')
   })
 })

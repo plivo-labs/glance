@@ -1,6 +1,6 @@
 import { and, eq, inArray } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
-import { type Anchor, buildAnchor } from '../lib/anchor'
+import { normalizeText } from '../lib/anchor'
 import { type Comment, type CommentThread, comments, commentThreads, users } from './schema'
 
 // Comments repo: create/list/reply/resolve/edit/soft-delete. Anchors are STORED here but never
@@ -31,7 +31,6 @@ export type ThreadView = {
   id: string
   filePath: string
   anchorType: 'text' | 'page'
-  anchor: Anchor | null
   quote: string | null
   status: 'open' | 'resolved'
   resolvedBy: string | null
@@ -89,7 +88,6 @@ export async function buildThreadViews(db: DrizzleD1Database, threads: CommentTh
     id: t.id,
     filePath: t.filePath,
     anchorType: t.anchorType,
-    anchor: t.anchor as Anchor | null,
     quote: t.quote,
     status: t.status,
     resolvedBy: t.resolvedBy,
@@ -143,27 +141,18 @@ export type CreateThreadInput = {
   body: string
   anchorType?: 'text' | 'page'
   quote?: string
-  prefix?: string
-  suffix?: string
 }
 
-/** Create a thread + its opening comment atomically. A text anchor stores the normalized
- *  {quote, prefix, suffix}; a missing quote (or an explicit page anchor) stores a page thread.
- *  No resolution — the client paints the quote against the rendered DOM at view time. */
+/** Create a thread + its opening comment atomically. A text anchor stores the normalized quote; a
+ *  missing quote (or an explicit page anchor) stores a page thread. No resolution — the client
+ *  paints the quote against the rendered DOM at view time. */
 export async function createThread(
   db: DrizzleD1Database,
   input: CreateThreadInput,
 ): Promise<{ threadId: string }> {
   const wantsText = (input.anchorType ?? 'text') === 'text' && Boolean(input.quote)
-  let anchorType: 'text' | 'page' = 'page'
-  let anchor: Anchor | null = null
-  let quote: string | null = null
-
-  if (wantsText) {
-    anchorType = 'text'
-    anchor = buildAnchor({ quote: input.quote as string, prefix: input.prefix, suffix: input.suffix })
-    quote = anchor.quote
-  }
+  const anchorType: 'text' | 'page' = wantsText ? 'text' : 'page'
+  const quote = wantsText ? normalizeText(input.quote as string) : null
 
   const threadId = crypto.randomUUID()
   await db.batch([
@@ -172,7 +161,6 @@ export async function createThread(
       siteId: input.siteId,
       filePath: input.filePath,
       anchorType,
-      anchor,
       quote,
       status: 'open',
       createdBy: input.createdBy,

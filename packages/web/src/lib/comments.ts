@@ -38,8 +38,6 @@ export interface NewThreadInput {
   body: string
   anchorType?: 'text' | 'page'
   quote?: string
-  prefix?: string
-  suffix?: string
 }
 
 type SiteRef = Pick<ViewerSite, 'spaceSlug' | 'siteSlug'>
