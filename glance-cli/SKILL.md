@@ -1,6 +1,6 @@
 ---
 name: glance-cli
-description: Use the `glance` CLI to deploy a local folder of static files (HTML/markdown/assets) to a Glance instance and get a URL, and to PULL a deployed site's review comments back to the terminal so a coding agent can act on them. Use when the user wants to publish/upload/deploy a folder, list their Glance sites, delete a site, log in/out of Glance from the terminal, or fetch/read/pull the review comments (feedback left in the browser) on a site to address them, or read a deployed file's raw contents back to the terminal. Closes the review loop: deploy → comment in the browser → `glance comments` to pull → edit → redeploy (anchors re-resolve server-side). Covers pointing the CLI at a self-hosted instance via GLANCE_API_URL.
+description: Use the `glance` CLI to deploy a local folder of static files (HTML/markdown/assets) to a Glance instance and get a URL, to PULL a deployed site's review comments back to the terminal so a coding agent can act on them, and to REPLY to a comment thread from the terminal. Use when the user wants to publish/upload/deploy a folder, list their Glance sites, delete a site, log in/out of Glance from the terminal, fetch/read/pull the review comments (feedback left in the browser) on a site to address them, reply to a comment thread after making a change, or read a deployed file's raw contents back to the terminal. Closes the review loop: deploy → comment in the browser → `glance comments` to pull → edit → `glance reply` to respond → redeploy (anchors re-resolve server-side). Covers pointing the CLI at a self-hosted instance via GLANCE_API_URL.
 ---
 
 # Glance CLI
@@ -38,6 +38,7 @@ Put it in your shell profile to make it permanent. Token + URL are saved to `~/.
 | `glance delete <space/slug>` | confirms (y/N), then deletes |
 | `glance move <space/slug> <new-space>` | moves a site to another space you belong to (keeps its files, comments, shares) |
 | `glance comments <space/slug> [--file <path>] [--open] [--json]` | prints a site's review comments as a markdown digest (or raw JSON) |
+| `glance reply <space/slug> <threadId> [message] [--tag <label>\|--no-tag]` | posts a reply to a comment thread (get the `threadId` from `glance comments`) |
 | `glance read <space/slug> [--file <path>]` | prints a deployed file's raw contents to stdout (HTML as stored) |
 | `glance logout` | revokes the server session and removes the local token |
 
@@ -78,22 +79,43 @@ Default output is a **markdown digest**:
 ```
 # 1 open · 1 resolved
 
-### index.md · ✓ · OPEN
+### index.md · ✓ · OPEN · k3f9q2
 > "the quoted span this thread anchors to"
 - @Ada: please reword this paragraph
 - @Bob (deleted): [deleted]
 
-### guide.md · ⚠ · RESOLVED
+### guide.md · ⚠ · RESOLVED · p1x7d4
 - @Ada: fixed in the latest deploy
 ```
 
 - A header line counts `open` vs `resolved` over the shown threads.
-- Threads are **grouped by file** (first-appearance order); each thread is a `###` heading `<filePath> · <glyph> · <STATUS>`.
+- Threads are **grouped by file** (first-appearance order); each thread is a `###` heading `<filePath> · <glyph> · <STATUS> · <threadId>`. The trailing **threadId** is what you pass to `glance reply` to respond on that thread.
 - The glyph is the **anchor status**: `✓` anchored · `~` shifted · `?` suggested · `⚠` orphaned (the warning glyph means the quoted span drifted out of the document and the anchor was lost).
 - A present quote renders as a `> "…"` blockquote; each comment is a `- @<author>: <body>` line. Deleted comments show `- @<author> (deleted): [deleted]` (original text is gone); a missing author falls back to `@unknown`.
 - Empty result prints `No comments.`.
 
-**Agent loop** — this command closes the review loop without a browser: `glance comments <space/slug> --open` to pull outstanding feedback → edit the local doc to address it → `glance deploy` to redeploy. Anchors re-resolve **server-side** on the new content (a thread whose quote still matches stays `anchored`/`shifted`; one whose span vanished goes `orphaned`/`⚠`), so re-running `glance comments` reflects the new state.
+**Agent loop** — this command closes the review loop without a browser: `glance comments <space/slug> --open` to pull outstanding feedback → edit the local doc to address it → `glance reply <space/slug> <threadId>` to note what you changed on the thread → `glance deploy` to redeploy. Anchors re-resolve **server-side** on the new content (a thread whose quote still matches stays `anchored`/`shifted`; one whose span vanished goes `orphaned`/`⚠`), so re-running `glance comments` reflects the new state.
+
+### reply
+Posts a reply to an existing comment thread — so you can respond after addressing feedback, right from the terminal.
+
+- `<space/slug>` is required and must contain the slash (e.g. `docs/api-reference`).
+- `<threadId>` is required — copy it from the `###` heading in `glance comments` output (the value after the status).
+- The reply body comes from **either** a positional `[message]` **or** stdin:
+  - **stdin is the recommended channel** for anything an agent writes, or any multiline/arbitrary text — pipe it in: `echo "done — reworded the intro" | glance reply docs/api-reference k3f9q2`. A here-doc works for multiple lines.
+  - A positional `[message]` is fine for a short, one-line note: `glance reply docs/api-reference k3f9q2 "fixed in the latest deploy"`. Quote it so the shell keeps it as one argument.
+  - A positional message that **starts with a dash** is taken as a flag unless you put `--` first: `glance reply docs/api-reference k3f9q2 -- "-- see the note above"`. (Everything after `--` is literal.) For anything tricky, prefer stdin.
+- **Tagging / attribution.** A reply is attributed **server-side to the logged-in account** — there is no separate "agent" identity. So the body is prefixed to mark authorship:
+  - default: `[agent] ` — signals the reply was written by an agent (the **only** signal of that; the author on record is still the human who's logged in).
+  - `--tag <label>`: use a custom prefix, e.g. `--tag claude` → `[claude] …`.
+  - `--no-tag`: no prefix — a plain reply as the logged-in human.
+- Empty bodies are rejected; a body over the server's size limit fails with the server's error. Prints `✓ Replied to <threadId>` on success.
+
+```bash
+glance comments docs/api-reference --open                 # find the threadId on the heading
+echo "reworded the intro as requested" | glance reply docs/api-reference k3f9q2
+glance reply docs/api-reference k3f9q2 "typo fixed" --no-tag
+```
 
 ### read
 Prints a deployed file's **raw contents** to stdout — the bytes as stored (HTML stays HTML; markdown stays markdown source, NOT the server-rendered HTML).
