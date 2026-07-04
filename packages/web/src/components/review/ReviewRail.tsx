@@ -1,43 +1,37 @@
 import { useMemo, useState } from 'react'
-import { X } from 'lucide-react'
 import type { PendingAnchor, Thread, ThreadStatus } from '@/lib/comments'
 import type { Me, ViewerSite } from '@/lib/types'
 import { cn } from '@/lib/utils'
-import { Button } from '@/components/ui/button'
 import { AnchorChip } from '@/components/review/AnchorChip'
 import { Composer } from '@/components/review/Composer'
 import { ThreadCard } from '@/components/review/ThreadCard'
 
+// Read·Annotate lives on the ViewerTopBar; the type is shared from here (the rail owns the review
+// vocabulary).
 export type ReviewMode = 'read' | 'annotate'
 
 const byUpdatedDesc = (a: Thread, b: Thread) => b.updatedAt.localeCompare(a.updatedAt)
 
-// Persistent right-rail for review mode: a Read·Annotate toggle, filter (open/resolved), an
-// anchor-prefilled composer on select/pinpoint, and the thread list.
+// Persistent right-rail for review mode: filter (open/resolved), an anchor-prefilled composer on
+// select/pinpoint, and the thread list. Mode toggle + Done live in the ViewerTopBar.
 export function ReviewRail({
   site,
   me,
   threads,
   composing,
-  mode,
-  onMode,
   onCancelComposer,
   onCreate,
   onChanged,
   onFocusAnchor,
-  onExit,
 }: {
   site: ViewerSite
   me: Me | null
   threads: Thread[]
   composing: PendingAnchor | null
-  mode: ReviewMode
-  onMode: (mode: ReviewMode) => void
   onCancelComposer: () => void
   onCreate: (body: string) => void | Promise<void>
   onChanged: () => void
   onFocusAnchor: (thread: Thread) => void
-  onExit: () => void
 }) {
   const [filter, setFilter] = useState<ThreadStatus>('open')
 
@@ -47,27 +41,6 @@ export function ReviewRail({
     <aside className="flex max-h-[55vh] w-full shrink-0 flex-col border-t bg-background md:max-h-none md:h-full md:w-[360px] md:border-t-0 md:border-l">
       <header className="flex items-center justify-between gap-2 border-b px-4 py-3">
         <h2 className="font-semibold text-sm">Comments</h2>
-        <div className="flex items-center gap-2">
-          <div className="flex rounded-md bg-muted p-0.5">
-            {(['read', 'annotate'] as const).map((m) => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => onMode(m)}
-                aria-pressed={mode === m}
-                className={cn(
-                  'rounded px-2 py-0.5 text-xs capitalize transition-colors',
-                  mode === m ? 'bg-background font-medium text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-                )}
-              >
-                {m}
-              </button>
-            ))}
-          </div>
-          <Button variant="ghost" size="icon" onClick={onExit} aria-label="Exit review mode">
-            <X className="size-4" />
-          </Button>
-        </div>
       </header>
 
       {composing && (
