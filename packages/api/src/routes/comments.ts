@@ -94,7 +94,7 @@ comments.post('/:space/:site/comments', async (c) => {
   // a 400 (element without a selector must NOT silently coerce to text).
   let anchor: ElementAnchor | undefined
   if (anchorType === 'element') {
-    const parsed = parseElementAnchor(raw.anchor)
+    const parsed = parseElementAnchor(raw.element)
     if ('error' in parsed) return c.json({ error: parsed.error }, 400)
     anchor = parsed.anchor
   }

@@ -150,7 +150,7 @@ describe('comments routes — element (pinpoint) anchors', () => {
         filePath: 'index.html',
         body: 'this chart is off',
         anchorType: 'element',
-        anchor: { selector: '#chart', tag: 'div', preview: 'Bar chart', textFallback: 'Revenue' },
+        element: { selector: '#chart', tag: 'div', preview: 'Bar chart', textFallback: 'Revenue' },
       }),
       env,
     )
@@ -165,7 +165,7 @@ describe('comments routes — element (pinpoint) anchors', () => {
     const { app, env, db, r2, kv } = await setup()
     const owner = await mintUser(db, kv, { id: 'owner' })
     await seedSiteWithFile(db, r2, owner)
-    const res = await app.request(url(), post(auth(owner), { filePath: 'index.html', body: 'x', anchorType: 'element', anchor: { tag: 'div' } }), env)
+    const res = await app.request(url(), post(auth(owner), { filePath: 'index.html', body: 'x', anchorType: 'element', element: { tag: 'div' } }), env)
     expect(res.status).toBe(400)
   })
 
@@ -173,7 +173,7 @@ describe('comments routes — element (pinpoint) anchors', () => {
     const { app, env, db, r2, kv } = await setup()
     const owner = await mintUser(db, kv, { id: 'owner' })
     await seedSiteWithFile(db, r2, owner)
-    const res = await app.request(url(), post(auth(owner), { filePath: 'index.html', body: 'x', anchorType: 'element', anchor: { selector: 'a'.repeat(2000) } }), env)
+    const res = await app.request(url(), post(auth(owner), { filePath: 'index.html', body: 'x', anchorType: 'element', element: { selector: 'a'.repeat(2000) } }), env)
     expect(res.status).toBe(400)
   })
 
