@@ -114,9 +114,15 @@ const ANCHOR_STYLE =
   'position:fixed;pointer-events:none;box-sizing:border-box;outline:2px solid rgba(255,170,0,.95);background:rgba(255,213,0,.18);border-radius:2px;'
 const HOVER_STYLE =
   'position:fixed;pointer-events:none;box-sizing:border-box;outline:2px dashed rgba(59,130,246,.95);background:rgba(59,130,246,.12);border-radius:2px;'
+// The element just pinpointed — a solid (not dashed) blue box that PERSISTS while the composer is
+// open, so you keep seeing what you're commenting on after the transient hover box is gone.
+const PENDING_STYLE =
+  'position:fixed;pointer-events:none;box-sizing:border-box;outline:2px solid rgba(59,130,246,.95);background:rgba(59,130,246,.12);border-radius:2px;'
 
 let overlayRoot: HTMLElement | null = null
 let hoverBox: HTMLElement | null = null
+let pendingBox: HTMLElement | null = null
+let pendingSelector: string | null = null
 let elementAnchors: { id: string; selector: string }[] = []
 
 function ensureOverlayRoot(): HTMLElement {
@@ -159,6 +165,7 @@ let lastResolutionKey = ''
  *  scroll would spam the parent with an identical message every frame. */
 function reposition(): void {
   const root = ensureOverlayRoot()
+  repositionPending(root)
   for (const b of Array.from(root.querySelectorAll('[data-glance-anchor]'))) b.remove()
   if (elementAnchors.length === 0) {
     lastResolutionKey = ''
@@ -208,6 +215,32 @@ function ensureReflowWatchers(): void {
 function paintElements(anchors: PaintAnchor[]): void {
   elementAnchors = anchors.filter((a) => a.selector).map((a) => ({ id: a.id, selector: a.selector as string }))
   if (elementAnchors.length > 0) ensureReflowWatchers()
+  reposition()
+}
+
+/** Lay (or clear) the persistent selection box over the element the parent reports as pending. Runs
+ *  inside reposition so the box tracks scroll/resize/DOM mutation like an anchor. Separate from the
+ *  hover box (which follows the cursor) so the outline survives after you move off to the composer. */
+function repositionPending(root: HTMLElement): void {
+  const el = pendingSelector ? resolveSelector(pendingSelector, document) : null
+  if (!el) {
+    pendingBox?.remove()
+    pendingBox = null
+    return
+  }
+  if (!pendingBox?.isConnected) {
+    pendingBox = document.createElement('div')
+    pendingBox.style.cssText = PENDING_STYLE
+    root.appendChild(pendingBox)
+  }
+  place(pendingBox, rectOf(el))
+}
+
+/** Parent tells us which element is pending (just pinpointed / has an open composer), or null to
+ *  clear. Outlives the hover box so the selection stays visible while you type. */
+function setPending(selector: string | null): void {
+  pendingSelector = selector
+  if (selector) ensureReflowWatchers()
   reposition()
 }
 
@@ -291,6 +324,7 @@ window.addEventListener('message', (e: MessageEvent) => {
   if (d?.type === 'glance:paint' && Array.isArray(d.anchors)) paint(d.anchors)
   else if (d?.type === 'glance:focus') focus({ quote: d.quote, selector: d.selector })
   else if (d?.type === 'glance:mode' && (d.mode === 'read' || d.mode === 'annotate')) setMode(d.mode)
+  else if (d?.type === 'glance:pending') setPending(typeof d.selector === 'string' ? d.selector : null)
 })
 
 // Boot handshake: tell the parent which file is mounted (intent-only; parent re-validates).

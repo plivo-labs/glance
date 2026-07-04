@@ -84,6 +84,21 @@ export function Component() {
     win.postMessage({ type: 'glance:mode', mode: review ? reviewMode : 'read' }, contentOrigin)
   }, [review, reviewMode, loaded, contentOrigin])
 
+  // The element the user is currently pinpointing — while the floating Comment button is up
+  // (selection) OR the composer is open (composing). Its selector is pushed to the iframe so the
+  // annotate client paints a PERSISTENT selection outline on it; the transient hover box alone would
+  // vanish the moment the pointer moves off to the composer. null (text pending / nothing) clears it.
+  const pendingSelector = useMemo(() => {
+    const p = composing ?? selection
+    return p?.kind === 'element' ? p.anchor.selector : null
+  }, [composing, selection])
+
+  const postPending = useCallback(() => {
+    const win = iframeRef.current?.contentWindow
+    if (!win || !loaded) return
+    win.postMessage({ type: 'glance:pending', selector: pendingSelector }, contentOrigin)
+  }, [pendingSelector, loaded, contentOrigin])
+
   const refresh = useCallback(
     async (fp: string) => {
       try {
@@ -140,6 +155,7 @@ export function Component() {
 
   useEffect(paint, [paint])
   useEffect(postMode, [postMode])
+  useEffect(postPending, [postPending])
 
   const startComposer = () => {
     setComposing(selection)
