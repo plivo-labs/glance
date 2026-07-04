@@ -1,6 +1,6 @@
 import { and, eq, inArray } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
-import { normalizeText } from '../lib/anchor'
+import { type ElementAnchor, normalizeText, readElementAnchor } from '../lib/anchor'
 import { type Comment, type CommentThread, comments, commentThreads, users } from './schema'
 
 // Comments repo: create/list/reply/resolve/edit/soft-delete. Anchors are STORED here but never
@@ -30,8 +30,9 @@ export type CommentView = {
 export type ThreadView = {
   id: string
   filePath: string
-  anchorType: 'text' | 'page'
+  anchorType: 'text' | 'page' | 'element'
   quote: string | null
+  anchor: ElementAnchor | null // element threads only; null for text/page (legacy JSON never leaks)
   status: 'open' | 'resolved'
   resolvedBy: string | null
   resolvedByName: string | null
@@ -89,6 +90,7 @@ export async function buildThreadViews(db: DrizzleD1Database, threads: CommentTh
     filePath: t.filePath,
     anchorType: t.anchorType,
     quote: t.quote,
+    anchor: readElementAnchor(t.anchorType, t.anchor),
     status: t.status,
     resolvedBy: t.resolvedBy,
     resolvedByName: displayName(t.resolvedBy),
@@ -139,20 +141,24 @@ export type CreateThreadInput = {
   filePath: string
   createdBy: string
   body: string
-  anchorType?: 'text' | 'page'
+  anchorType?: 'text' | 'page' | 'element'
   quote?: string
+  anchor?: ElementAnchor // a built element anchor (see lib/anchor); required when anchorType='element'
 }
 
-/** Create a thread + its opening comment atomically. A text anchor stores the normalized quote; a
- *  missing quote (or an explicit page anchor) stores a page thread. No resolution — the client
- *  paints the quote against the rendered DOM at view time. */
+/** Create a thread + its opening comment atomically. An element anchor stores its built selector
+ *  payload in the JSON `anchor` column; a text anchor stores the normalized quote; a missing quote
+ *  (or an explicit page anchor) stores a page thread. No resolution — the client paints the anchor
+ *  against the rendered DOM at view time. */
 export async function createThread(
   db: DrizzleD1Database,
   input: CreateThreadInput,
 ): Promise<{ threadId: string }> {
-  const wantsText = (input.anchorType ?? 'text') === 'text' && Boolean(input.quote)
-  const anchorType: 'text' | 'page' = wantsText ? 'text' : 'page'
+  const isElement = input.anchorType === 'element' && input.anchor != null
+  const wantsText = !isElement && (input.anchorType ?? 'text') === 'text' && Boolean(input.quote)
+  const anchorType: 'text' | 'page' | 'element' = isElement ? 'element' : wantsText ? 'text' : 'page'
   const quote = wantsText ? normalizeText(input.quote as string) : null
+  const anchor = isElement ? (input.anchor as ElementAnchor) : null
 
   const threadId = crypto.randomUUID()
   await db.batch([
@@ -162,6 +168,7 @@ export async function createThread(
       filePath: input.filePath,
       anchorType,
       quote,
+      anchor,
       status: 'open',
       createdBy: input.createdBy,
     }),

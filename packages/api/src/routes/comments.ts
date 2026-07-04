@@ -1,4 +1,5 @@
 import { type Context, Hono } from 'hono'
+import { type ElementAnchor, parseElementAnchor } from '../lib/anchor'
 import {
   addComment,
   createThread,
@@ -87,7 +88,17 @@ comments.post('/:space/:site/comments', async (c) => {
   if (typeof raw?.filePath !== 'string' || !raw.filePath || tooLong(raw.filePath, MAX_PATH))
     return c.json({ error: 'filePath required' }, 400)
   if (tooLong(raw.quote, MAX_QUOTE)) return c.json({ error: 'quote too long' }, 400)
-  const anchorType = raw.anchorType === 'page' ? 'page' : 'text'
+  const anchorType = raw.anchorType === 'page' ? 'page' : raw.anchorType === 'element' ? 'element' : 'text'
+
+  // An element anchor is validated + built in the canonical layer; the route only maps its error to
+  // a 400 (element without a selector must NOT silently coerce to text).
+  let anchor: ElementAnchor | undefined
+  if (anchorType === 'element') {
+    const parsed = parseElementAnchor(raw.anchor)
+    if ('error' in parsed) return c.json({ error: parsed.error }, 400)
+    anchor = parsed.anchor
+  }
+
   const out = await createThread(c.get('db'), {
     siteId: site.id,
     filePath: raw.filePath,
@@ -95,6 +106,7 @@ comments.post('/:space/:site/comments', async (c) => {
     body,
     anchorType,
     quote: typeof raw.quote === 'string' ? raw.quote : undefined,
+    anchor,
   })
   return c.json(out, 201)
 })

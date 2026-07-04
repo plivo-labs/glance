@@ -7,6 +7,16 @@ import type { ViewerSite } from '@/lib/types'
 
 export type ThreadStatus = 'open' | 'resolved'
 
+// An element ("pinpoint") anchor: a client-suggested CSS selector for a whole element (chart,
+// table, image) plus a short preview + text fallback. Mirrors the api ElementAnchor; the annotate
+// client re-resolves `selector` in the rendered DOM to paint an overlay.
+export interface ElementAnchor {
+  selector: string
+  tag: string
+  preview: string
+  textFallback: string
+}
+
 export interface CommentItem {
   id: string
   authorId: string | null
@@ -20,8 +30,9 @@ export interface CommentItem {
 export interface Thread {
   id: string
   filePath: string
-  anchorType: 'text' | 'page'
+  anchorType: 'text' | 'page' | 'element'
   quote: string | null
+  anchor: ElementAnchor | null // element threads only
   status: ThreadStatus
   resolvedBy: string | null
   resolvedByName: string | null
@@ -36,8 +47,9 @@ export interface Thread {
 export interface NewThreadInput {
   filePath: string
   body: string
-  anchorType?: 'text' | 'page'
+  anchorType?: 'text' | 'page' | 'element'
   quote?: string
+  element?: ElementAnchor
 }
 
 type SiteRef = Pick<ViewerSite, 'spaceSlug' | 'siteSlug'>
