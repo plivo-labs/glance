@@ -13,34 +13,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-go@v5
         with:
-          bun-version: latest
+          go-version: '1.26'
 
-      # Stamp the release tag (v1.2.3 → 1.2.3) into package.json BEFORE building, so the static
-      # `import pkg from './package.json'` baked into each binary reports the exact release version
-      # in its User-Agent (drives CLI-usage analytics).
-      - name: Stamp version from tag
-        working-directory: packages/cli
-        run: |
-          v="${GITHUB_REF_NAME#v}"
-          tmp="$(mktemp)"
-          jq --arg v "$v" '.version = $v' package.json > "$tmp" && mv "$tmp" package.json
-
+      # The CLI is a stdlib-only Go program. All 4 darwin/linux x arm64/x64 targets cross-compile
+      # from this one runner via GOOS/GOARCH - no bun, no cross toolchain, no per-OS runners. Asset
+      # names (glance-<arch>-<os>) + the gz + .sha256 contract match the old bun build exactly, so
+      # install.sh and the CLI self-update path are unchanged.
       - name: Build standalone binaries
         working-directory: packages/cli
         run: |
           mkdir -p dist
-          while read -r target out; do
-            bun build ./index.ts --compile --minify --target="$target" --outfile "dist/$out"
-            # Checksum the uncompressed binary (what actually runs), then gzip to shrink the
-            # download ~2-3x. The installer verifies the decompressed bytes against this sum.
+          # Stamp the release tag (v1.2.3 -> 1.2.3) into the binary via -ldflags -X so it reports the
+          # exact release version in its User-Agent (drives CLI-usage analytics) and self-update compare.
+          v="${GITHUB_REF_NAME#v}"
+          while read -r goos goarch out; do
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+              go build -trimpath -ldflags="-s -w -X main.version=$v" -o "dist/$out" .
+            # Checksum the uncompressed binary (what actually runs), then gzip to shrink the download.
+            # The installer + self-update verify the decompressed bytes against this sum.
             ( cd dist && shasum -a 256 "$out" | awk '{print $1}' > "$out.sha256" && gzip -9 "$out" )
           done <<'EOF'
-          bun-darwin-arm64 glance-arm64-darwin
-          bun-darwin-x64   glance-x64-darwin
-          bun-linux-arm64  glance-arm64-linux
-          bun-linux-x64    glance-x64-linux
+          darwin arm64 glance-arm64-darwin
+          darwin amd64 glance-x64-darwin
+          linux  arm64 glance-arm64-linux
+          linux  amd64 glance-x64-linux
           EOF
 
       - name: Publish release
