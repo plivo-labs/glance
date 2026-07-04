@@ -1,10 +1,22 @@
 # Glance
 
-Self-hostable static-file hosting on Cloudflare's free tier. Drop a folder of HTML/markdown/assets → get a URL. $0/month.
+**The human-in-the-loop review layer for coding agents.** Your agent builds something, deploys it to a URL with one command — you review it in the browser and drop comments like a Google Doc — and the agent reads your comments and fixes it.
+
+No more screenshotting your agent's output and pasting it back into the chat.
 
 <p align="center">
-  <img src="https://github.com/plivo-labs/glance/releases/download/assets-readme/landing.png" alt="Glance — ship static sites instantly, no build step" width="900">
+  <img src="https://github.com/plivo-labs/glance/releases/download/assets-readme/landing.png" alt="Glance — the human-in-the-loop review loop for coding agents" width="900">
 </p>
+
+```
+  agent builds  →  glance deploy → URL
+       ↑                              ↓
+  reads comments, fixes  ←  you comment in the browser
+```
+
+Self-hosted on **Cloudflare's free tier** — $0/month, you own the whole loop. Ships with a CLI and an AI-agent skill, so agents drive deploy → pull comments → reply → redeploy with no human in the copy-paste path.
+
+**Why not just Cloudflare Pages?** Pages is a git-and-build pipeline for one account. Glance is an agent-native review loop on the same free infra: agents drop a folder (no build, no git), you comment on the result, agents read the comments back and fix it. Untrusted uploads are sandboxed, and it's multi-tenant with per-link gating.
 
 Stack: Cloudflare Workers + Hono · React Router v7 · D1 · R2 · KV.
 
