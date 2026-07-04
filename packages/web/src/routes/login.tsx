@@ -4,9 +4,13 @@ import { api, ApiError } from '../lib/api'
 import { safeNext } from '../lib/nav'
 import type { Me, PublicConfig } from '../lib/types'
 import { BlueprintField } from '@/components/BlueprintField'
+import { CopyButton } from '@/components/CopyButton'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import '@/tailwind.css'
+
+// Public source — surfaced in the header + footer so a self-hoster can find the repo.
+const REPO_URL = 'https://github.com/plivo-labs/glance'
 
 const ERRORS: Record<string, string> = {
   denied: 'Wrong door — Glance is restricted to approved Google Workspace accounts.',
@@ -25,8 +29,8 @@ const BOOTSTRAP_ERRORS: Record<number, string> = {
 
 const FEATURES = [
   {
-    label: 'Google SSO, your domain only',
-    detail: 'Your work Google login is the whole story — no new account, no shared password.',
+    label: 'SSO for your domain',
+    detail: 'Sign in with your work Google account — no new account, no shared password.',
   },
   {
     label: 'Drag-drop or CLI',
@@ -42,20 +46,15 @@ const FEATURES = [
   },
 ]
 
-const TERMINAL = [
-  {
-    prompt: 'glance deploy ./runbook --space infra --name deploy-guide',
-    output: 'uploading 14 files…  ✓ live → glance.example.com/infra/deploy-guide · 0.4s',
-  },
-  {
-    prompt: 'glance deploy ./design-system --visibility team',
-    output: '✓ live → glance.example.com/frontend/design-system · team',
-  },
-  {
-    prompt: 'glance list',
-    output: 'infra/deploy-guide   team   glance.example.com/infra/deploy-guide',
-  },
-]
+// The real getting-started flow: install → login → deploy. `host` is this deployment's own
+// origin so the demo mirrors what the visitor will actually see, not a placeholder domain.
+function terminalSteps(installCmd: string, host: string) {
+  return [
+    { prompt: installCmd, output: '✓ installed glance → ~/.local/bin/glance' },
+    { prompt: 'glance login', output: '✓ device approved in the browser · signed in' },
+    { prompt: 'glance deploy ./site --visibility team', output: `✓ live → ${host}/you/site · 0.4s` },
+  ]
+}
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const next = safeNext(new URL(request.url).searchParams.get('next'))
@@ -84,6 +83,13 @@ export function Component() {
   const next = params.get('next')
   const hasAnyMethod = googleEnabled || bootstrapAvailable || import.meta.env.DEV
 
+  // This deployment's own origin drives the copy-paste install one-liner and the demo output,
+  // so what a visitor copies is pre-pointed at THIS instance (mirrors GET /api/install).
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+  const host = origin.replace(/^https?:\/\//, '') || 'glance.example.com'
+  const installCmd = `curl -fsSL ${origin}/api/install | sh`
+  const terminal = terminalSteps(installCmd, host)
+
   return (
     <div className="dark relative min-h-screen w-full overflow-hidden bg-[#070b16] font-sans text-foreground antialiased">
       {/* centerpiece animated background */}
@@ -104,7 +110,18 @@ export function Component() {
             <span className="inline-block size-2.5 rounded-[3px] bg-primary shadow-[0_0_14px_2px_rgba(245,158,11,0.5)]" />
             glance
           </div>
-          <span className="font-mono text-xs text-muted-foreground">self-hosted</span>
+          <div className="flex items-center gap-4 font-mono text-xs">
+            <a
+              href={REPO_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-1.5 text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <GithubGlyph />
+              GitHub
+            </a>
+            <span className="text-muted-foreground">self-hosted</span>
+          </div>
         </header>
 
         <main className="grid flex-1 items-center gap-12 py-10 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16">
@@ -118,9 +135,9 @@ export function Component() {
               className="bp-rise mt-5 font-mono text-5xl font-semibold leading-[1.04] tracking-tight [text-shadow:0_2px_30px_rgba(7,11,22,0.85)] sm:text-6xl"
               style={{ animationDelay: '120ms' }}
             >
-              Folder in.
+              Ship static
               <br />
-              URL out.
+              sites instantly.
               <br />
               <span className="text-primary">No build step.</span>
             </h1>
@@ -160,9 +177,17 @@ export function Component() {
                 <span className="size-3 rounded-full bg-white/15" />
                 <span className="size-3 rounded-full bg-white/15" />
                 <span className="ml-2 font-mono text-xs text-muted-foreground">glance — zsh</span>
+                <CopyButton
+                  text={installCmd}
+                  label="copy install"
+                  copiedMessage="Install command copied"
+                  variant="ghost"
+                  size="sm"
+                  className="ml-auto h-7 gap-1.5 px-2 font-mono text-[11px] text-muted-foreground hover:text-foreground [&_svg]:size-3"
+                />
               </div>
               <div className="space-y-3 p-4 font-mono text-[12.5px] leading-relaxed">
-                {TERMINAL.map((line) => (
+                {terminal.map((line) => (
                   <div key={line.prompt}>
                     <div className="flex gap-2">
                       <span className="shrink-0 select-none text-primary">$</span>
@@ -234,7 +259,15 @@ export function Component() {
           style={{ animationDelay: '440ms' }}
         >
           <span>$0/month · Workers + R2 + D1 + KV</span>
-          <span className="hidden sm:inline">drop a folder, get a URL</span>
+          <a
+            href={REPO_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center gap-1.5 transition-colors hover:text-foreground"
+          >
+            <GithubGlyph />
+            View source
+          </a>
         </footer>
       </div>
     </div>
@@ -294,6 +327,20 @@ function SetupPanel({ next, withDivider }: { next: string | null; withDivider: b
         {busy ? 'setting up…' : 'Complete setup'}
       </Button>
     </form>
+  )
+}
+
+// GitHub mark — lucide 1.x dropped brand icons, so this is inlined (like GoogleGlyph).
+function GithubGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" className="size-3.5" fill="currentColor" aria-hidden>
+      <title>GitHub</title>
+      <path
+        fillRule="evenodd"
+        clipRule="evenodd"
+        d="M12 2C6.48 2 2 6.48 2 12c0 4.42 2.87 8.17 6.84 9.5.5.09.68-.22.68-.48 0-.24-.01-.87-.01-1.7-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.89 1.53 2.34 1.09 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.02.8-.22 1.65-.33 2.5-.33.85 0 1.7.11 2.5.33 1.91-1.29 2.75-1.02 2.75-1.02.55 1.38.2 2.4.1 2.65.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.69-4.57 4.94.36.31.68.92.68 1.85 0 1.34-.01 2.42-.01 2.75 0 .27.18.58.69.48A10.01 10.01 0 0 0 22 12c0-5.52-4.48-10-10-10z"
+      />
+    </svg>
   )
 }
 

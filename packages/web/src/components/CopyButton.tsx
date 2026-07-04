@@ -8,12 +8,14 @@ import { Button } from '@/components/ui/button'
 export function CopyButton({
   text,
   label = 'Copy link',
+  copiedMessage = 'Link copied',
   className,
   variant = 'outline',
   size = 'sm',
 }: {
   text: string
   label?: string
+  copiedMessage?: string
   className?: string
   variant?: React.ComponentProps<typeof Button>['variant']
   size?: React.ComponentProps<typeof Button>['size']
@@ -29,7 +31,7 @@ export function CopyButton({
         try {
           await navigator.clipboard.writeText(text)
           setCopied(true)
-          toast.success('Link copied', { description: text })
+          toast.success(copiedMessage, { description: text })
           setTimeout(() => setCopied(false), 1500)
         } catch {
           toast.error("Couldn't copy to clipboard")
