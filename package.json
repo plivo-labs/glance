@@ -17,7 +17,7 @@
   "engines": {
     "node": ">=20"
   },
-  "workspaces": ["packages/*"],
+  "workspaces": ["packages/api", "packages/web"],
   "scripts": {
     "dev": "trap 'kill 0' SIGINT; bun run dev:api & bun run dev:content & bun run dev:web & wait",
     "dev:api": "cd packages/api && bunx wrangler dev --port 8787 --persist-to ../../.wrangler-shared",
