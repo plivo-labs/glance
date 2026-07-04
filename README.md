@@ -2,6 +2,10 @@
 
 Self-hostable static-file hosting on Cloudflare's free tier. Drop a folder of HTML/markdown/assets → get a URL. $0/month.
 
+<p align="center">
+  <img src="https://github.com/plivo-labs/glance/releases/download/assets-readme/landing.png" alt="Glance — ship static sites instantly, no build step" width="900">
+</p>
+
 Stack: Cloudflare Workers + Hono · React Router v7 · D1 · R2 · KV.
 
 ## Deploy in one command
@@ -31,6 +35,20 @@ bun run dev           # main :8787 + content :8788 + vite :5173
 ```
 
 Open http://localhost:5173.
+
+## The app
+
+Pick a space, drop a folder, and your sites are live behind private/members/team visibility:
+
+<p align="center">
+  <img src="https://github.com/plivo-labs/glance/releases/download/assets-readme/dashboard.png" alt="Glance dashboard — deploy panel and your sites" width="900">
+</p>
+
+Superadmins get usage at a glance — users, sites, storage, page views, comments, and CLI activity:
+
+<p align="center">
+  <img src="https://github.com/plivo-labs/glance/releases/download/assets-readme/admin.png" alt="Glance admin — usage overview with stat tiles and 30-day activity" width="900">
+</p>
 
 ## Layout
 
