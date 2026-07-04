@@ -6,6 +6,7 @@ import { basename, join, relative, resolve, sep } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import pkg from './package.json'
 import { SKILL_MD, SKILL_NAME } from './skill-content'
+import { announceUpdate, maybeAutoUpdate, upgradeCmd } from './upgrade'
 
 // Sent as the User-Agent on every authenticated request so the server can attribute CLI usage
 // (and segment by version) in its analytics. Static JSON import → inlined into the compiled
@@ -14,7 +15,7 @@ import { SKILL_MD, SKILL_NAME } from './skill-content'
 const USER_AGENT = `glance-cli/${pkg.version}`
 
 // Glance CLI — deploy folders to Glance from the terminal.
-//   glance login | deploy <path> --space <s> --name <s> [--visibility v] | list | delete <space/slug> | move <space/slug> <new-space> | comments <space/slug> | read <space/slug> | logout
+//   glance login | deploy <path> --space <s> --name <s> [--visibility v] | list | delete <space/slug> | move <space/slug> <new-space> | comments <space/slug> | read <space/slug> | upgrade | version | logout
 
 const CONFIG_DIR = join(homedir(), '.glance')
 const CONFIG_PATH = join(CONFIG_DIR, 'config.json')
@@ -402,7 +403,8 @@ async function read(argv: string[]): Promise<void> {
 }
 
 if (import.meta.main) {
-  const [cmd, ...rest] = process.argv.slice(2)
+  const [raw, ...rest] = process.argv.slice(2)
+  const cmd = raw === '--version' ? 'version' : raw
   const commands: Record<string, () => Promise<void>> = {
     login,
     deploy: () => deploy(rest),
@@ -412,7 +414,16 @@ if (import.meta.main) {
     comments: () => comments(rest),
     read: () => read(rest),
     skill: async () => skillCmd(rest),
+    upgrade: () => upgradeCmd(rest),
+    version: async () => console.log(pkg.version),
     logout,
+  }
+  // Self-update hooks, skipped for machine-invoked commands: `upgrade` IS the updater, and `skill`
+  // is run by install.sh and by the post-swap refresh child — which would otherwise consume the
+  // pending "auto-updated" notice before the user ever sees it.
+  if (cmd !== 'upgrade' && cmd !== 'skill') {
+    announceUpdate()
+    maybeAutoUpdate()
   }
   const run = commands[cmd ?? '']
   if (!run) {
@@ -425,6 +436,8 @@ if (import.meta.main) {
     console.log('  glance comments <space/slug> [--file <path>] [--open] [--json]')
     console.log('  glance read <space/slug> [--file <path>]')
     console.log('  glance skill install')
+    console.log('  glance upgrade')
+    console.log('  glance version')
     console.log('  glance logout')
     process.exit(cmd ? 1 : 0)
   }

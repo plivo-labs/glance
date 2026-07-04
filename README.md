@@ -57,12 +57,18 @@ The installer bakes in your instance URL (so `glance login` targets it immediate
 | `list` | your sites, with visibility + URL |
 | `delete <space/slug>` | confirms, then deletes |
 | `move <space/slug> <new-space>` | moves a site (keeps files/comments/shares; URL changes) |
+| `upgrade` | updates the CLI to the latest release now |
+| `version` | prints the CLI version |
 | `logout` | revokes session, removes local token |
 
 Defaults: `--space` = your personal space · `--name` = file/folder name slugified · `--visibility` = `team`.
 Visibility: `team` · `private` · `members` (own space only).
 
 Point at another instance any time with `GLANCE_API_URL=https://… glance <cmd>`.
+
+The CLI keeps itself current: at most once a day it checks for a new release in the background,
+swaps the binary in place, and mentions it on the next run. Opt out with `GLANCE_NO_UPDATE=1`
+(checks are also skipped in CI).
 
 ## Security model
 
