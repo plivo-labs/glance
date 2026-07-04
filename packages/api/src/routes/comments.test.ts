@@ -217,3 +217,69 @@ describe('comments routes — site-wide list (filePath optional)', () => {
     expect(onGroupNonMember.status).toBe(403)
   })
 })
+
+// The endpoint `glance reply` depends on. Not unit-testable through the CLI (token auth needs
+// OAuth locally), so pin it here via the same cli:<token> KV harness the other routes use.
+describe('comments routes — POST …/:threadId/replies (glance reply)', () => {
+  const reply = (threadId: string) => url(`/${threadId}/replies`)
+
+  test('RR-success: authed reply → 201 {id} and the reply appears in the thread list', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    const { siteId } = await seedSiteWithFile(db, r2, owner)
+    const threadId = await seedThread(db, { siteId, filePath: 'index.html', createdBy: owner })
+    await seedComment(db, { threadId, authorId: owner, body: 'opening' })
+
+    const res = await app.request(reply(threadId), { method: 'POST', headers: auth(owner), body: JSON.stringify({ body: '[agent] fixed it' }) }, env)
+    expect(res.status).toBe(201)
+    expect((await res.json()).id).toBeTruthy()
+
+    const list = await (await app.request(url('?filePath=index.html'), { headers: auth(owner) }, env)).json()
+    const thread = list.find((t: { id: string }) => t.id === threadId)
+    expect(thread.comments.map((c: { body: string }) => c.body)).toContain('[agent] fixed it')
+  })
+
+  test('RR-wrong-site-404: a threadId from another site → 404', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    await seedSiteWithFile(db, r2, owner)
+    // A thread that lives on a DIFFERENT site — resolving acme/doc succeeds, but the thread
+    // isn't in it, so the site-scoping check must 404 (never leak a cross-site reply).
+    const otherSpace = await seedSpace(db, { createdBy: owner, slug: 'other' })
+    const otherSite = await seedSite(db, { spaceId: otherSpace, ownerId: owner, slug: 'doc2', visibility: 'team' })
+    const foreignThread = await seedThread(db, { siteId: otherSite, filePath: 'index.html', createdBy: owner })
+
+    const res = await app.request(reply(foreignThread), { method: 'POST', headers: auth(owner), body: JSON.stringify({ body: 'hi' }) }, env)
+    expect(res.status).toBe(404)
+  })
+
+  test('RR-empty-400: whitespace-only body → 400', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    const { siteId } = await seedSiteWithFile(db, r2, owner)
+    const threadId = await seedThread(db, { siteId, filePath: 'index.html', createdBy: owner })
+
+    const res = await app.request(reply(threadId), { method: 'POST', headers: auth(owner), body: JSON.stringify({ body: '   ' }) }, env)
+    expect(res.status).toBe(400)
+  })
+
+  test('RR-oversize-400: over-cap body → 400 (the server 400 the CLI surfaces, no client cap)', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    const { siteId } = await seedSiteWithFile(db, r2, owner)
+    const threadId = await seedThread(db, { siteId, filePath: 'index.html', createdBy: owner })
+
+    const res = await app.request(reply(threadId), { method: 'POST', headers: auth(owner), body: JSON.stringify({ body: 'x'.repeat(10_001) }) }, env)
+    expect(res.status).toBe(400)
+  })
+
+  test('RR-unauth-401: no token → 401', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    const { siteId } = await seedSiteWithFile(db, r2, owner)
+    const threadId = await seedThread(db, { siteId, filePath: 'index.html', createdBy: owner })
+
+    const res = await app.request(reply(threadId), { method: 'POST', headers: { Origin: APP_URL, 'Content-Type': 'application/json' }, body: JSON.stringify({ body: 'hi' }) }, env)
+    expect(res.status).toBe(401)
+  })
+})
