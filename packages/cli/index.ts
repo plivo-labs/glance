@@ -15,7 +15,7 @@ import { announceUpdate, maybeAutoUpdate, upgradeCmd } from './upgrade'
 const USER_AGENT = `glance-cli/${pkg.version}`
 
 // Glance CLI — deploy folders to Glance from the terminal.
-//   glance login | deploy <path> --space <s> --name <s> [--visibility v] | list | delete <space/slug> | move <space/slug> <new-space> | comments <space/slug> | read <space/slug> | upgrade | version | logout
+//   glance login | deploy <path> --space <s> --name <s> [--visibility v] | list | delete <space/slug> | move <space/slug> <new-space> | comments <space/slug> | reply <space/slug> <threadId> [message] | read <space/slug> | upgrade | version | logout
 
 const CONFIG_DIR = join(homedir(), '.glance')
 const CONFIG_PATH = join(CONFIG_DIR, 'config.json')
@@ -317,6 +317,7 @@ type DigestComment = {
   deleted: boolean
 }
 type DigestThread = {
+  id: string // thread id — the reply target (`glance reply <space/slug> <id>`)
   filePath: string
   anchorStatus: 'anchored' | 'shifted' | 'suggested' | 'orphaned'
   quote: string | null
@@ -351,7 +352,7 @@ export function renderDigest(threads: DigestThread[], opts: { open?: boolean; js
 
   for (const [filePath, group] of byFile) {
     for (const t of group) {
-      lines.push('', `### ${filePath} · ${ANCHOR_GLYPH[t.anchorStatus]} · ${t.status.toUpperCase()}`)
+      lines.push('', `### ${filePath} · ${ANCHOR_GLYPH[t.anchorStatus]} · ${t.status.toUpperCase()} · ${t.id}`)
       if (t.quote) lines.push(`> "${t.quote}"`)
       for (const c of t.comments) {
         const author = c.author ?? 'unknown'
@@ -402,6 +403,94 @@ async function read(argv: string[]): Promise<void> {
   process.stdout.write(await res.text())
 }
 
+// --- reply (post a reply to an existing comment thread) ---------------------
+// A reply carries a free-form message that `parseArgs` can't handle safely (dash-leading text,
+// `--tag`/`--no-tag`), so it gets its own pure parser. Positionals are pinned: [0]=space/slug,
+// [1]=threadId, [2]=message. A `--` sentinel stops flag parsing so a dash-leading or literal
+// message survives. PURE — no I/O.
+export function parseReplyArgs(argv: string[]):
+  | { error: string }
+  | { space: string; site: string; threadId: string; message?: string; tag?: string; noTag?: boolean } {
+  const usage = 'Usage: glance reply <space/slug> <threadId> [message] [--tag <label> | --no-tag]'
+  const positional: string[] = []
+  let tag: string | undefined
+  let sawTag = false
+  let noTag = false
+  let literal = false
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]!
+    if (!literal && a === '--') {
+      literal = true // everything after `--` is a literal positional (e.g. a dash-leading message)
+    } else if (!literal && a.startsWith('--')) {
+      const key = a.slice(2)
+      if (key === 'no-tag') noTag = true
+      else if (key === 'tag') {
+        sawTag = true
+        tag = argv[++i] ?? '' // trailing `--tag` → '' → rejected below (needs a label)
+      } else return { error: `Unknown flag: ${a}\n${usage}` }
+    } else {
+      positional.push(a)
+    }
+  }
+  if (sawTag && noTag) return { error: `Use either --tag or --no-tag, not both.\n${usage}` }
+  if (sawTag && !tag) return { error: `--tag needs a label, e.g. --tag claude.\n${usage}` }
+
+  // Exactly two non-empty segments — never the loose includes('/') check, which would let
+  // `acme/` or `/doc` through.
+  const segs = positional[0]?.split('/') ?? []
+  if (segs.length !== 2 || !segs[0] || !segs[1]) return { error: `Expected <space/slug>.\n${usage}` }
+  // Require a real threadId — never shift the message into an empty threadId slot.
+  if (!positional[1]) return { error: `Missing <threadId> (see \`glance comments\`).\n${usage}` }
+  return { space: segs[0], site: segs[1], threadId: positional[1], message: positional[2], tag, noTag: noTag || undefined }
+}
+
+// Pure body resolver: positional message wins over stdin; trim and reject empty BEFORE tagging so
+// a tag can't rescue an empty body; then apply the attribution prefix. No client-side length cap —
+// the server's MAX_COMMENT_BODY 400 surfaces via die(). PURE — no I/O.
+export function resolveReplyBody(o: { message?: string; stdin?: string; tag?: string; noTag?: boolean }):
+  | { body: string }
+  | { error: string } {
+  const trimmed = (o.message ?? o.stdin ?? '').trim()
+  if (!trimmed) return { error: 'Empty reply body. Pass a message or pipe one via stdin.' }
+  if (o.noTag) return { body: trimmed }
+  return { body: `[${o.tag ?? 'agent'}] ${trimmed}` }
+}
+
+// Read all of stdin as UTF-8 (piped agent/multiline bodies). Only called when there is no
+// positional message and stdin is not a TTY, so it never blocks an interactive prompt.
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = []
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer)
+  return Buffer.concat(chunks).toString('utf8')
+}
+
+async function reply(argv: string[]): Promise<void> {
+  const parsed = parseReplyArgs(argv)
+  if ('error' in parsed) die(parsed.error)
+  const { space, site, threadId, message, tag, noTag } = parsed
+  const cfg = requireAuth()
+
+  // stdin is the recommended channel for agent/arbitrary bodies. Read it only when no positional
+  // message was given AND stdin isn't a TTY — otherwise a bare `glance reply a/b t1` at a prompt
+  // would silently hang on stdin; instead it's a clear usage error.
+  let stdin: string | undefined
+  if (message === undefined) {
+    if (process.stdin.isTTY) die('No reply body. Pass a message argument or pipe one via stdin.')
+    stdin = await readStdin()
+  }
+
+  const resolved = resolveReplyBody({ message, stdin, tag, noTag })
+  if ('error' in resolved) die(resolved.error)
+
+  const res = await authed(cfg, `/api/sites/${space}/${site}/comments/${encodeURIComponent(threadId)}/replies`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ body: resolved.body }),
+  })
+  if (!res.ok) die(`Reply failed (${res.status}): ${(await res.text()).slice(0, 200)}`)
+  console.log(`✓ Replied to ${threadId}`)
+}
+
 if (import.meta.main) {
   const [raw, ...rest] = process.argv.slice(2)
   const cmd = raw === '--version' ? 'version' : raw
@@ -412,6 +501,7 @@ if (import.meta.main) {
     delete: () => del(rest),
     move: () => move(rest),
     comments: () => comments(rest),
+    reply: () => reply(rest),
     read: () => read(rest),
     skill: async () => skillCmd(rest),
     upgrade: () => upgradeCmd(rest),
@@ -434,6 +524,7 @@ if (import.meta.main) {
     console.log('  glance delete <space/slug>')
     console.log('  glance move <space/slug> <new-space>')
     console.log('  glance comments <space/slug> [--file <path>] [--open] [--json]')
+    console.log('  glance reply <space/slug> <threadId> [message] [--tag <label> | --no-tag]')
     console.log('  glance read <space/slug> [--file <path>]')
     console.log('  glance skill install')
     console.log('  glance upgrade')
