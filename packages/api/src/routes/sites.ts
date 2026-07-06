@@ -35,6 +35,34 @@ export const sites = new Hono<AppEnv>()
 // non-openable candidates and still fill the cap.
 const SEARCH_SCAN_CAP = 200
 
+// D1 caps a single statement at 100 bound parameters, so an `inArray` over a candidate id list
+// must be split into batches and the per-batch results unioned — otherwise a large member-space /
+// shared-site list throws. Kept under 100 to leave room for the query's other bound values.
+const D1_MAX_IN = 90
+
+function chunk<T>(xs: T[], size: number): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < xs.length; i += size) out.push(xs.slice(i, i + size))
+  return out
+}
+
+// Escape LIKE metacharacters (`%`, `_`, and the `\` escape char itself) so a user's literal
+// `%`/`_` can't act as wildcards. Pair the bound value with `ESCAPE '\'` in the query.
+function escapeLike(s: string): string {
+  return s.replace(/[\\%_]/g, (ch) => `\\${ch}`)
+}
+
+// createdAt is ISO-8601, so a plain string compare orders chronologically. Newest first.
+function byCreatedAtDesc(a: { createdAt: string }, b: { createdAt: string }): number {
+  return a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0
+}
+
+// SQLite/D1 UNIQUE-constraint violation (both bun:sqlite and D1's wrapped D1_ERROR carry the text).
+function isUniqueConstraintError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err)
+  return /unique constraint failed/i.test(msg)
+}
+
 export type SearchRow = {
   id: string
   spaceId: string
@@ -48,11 +76,12 @@ export type SearchRow = {
 }
 
 /**
- * cmdk site search. ONE bounded candidate query over *active* sites the caller might open
- * (owner / member-space / team / explicitly-shared; superadmin ⇒ all active), then a
- * final in-memory checkAccess pass — the single source of truth — using precomputed
- * membership/share sets so it stays O(rows), not N+1. "Openable" semantics: the result is
- * exactly what checkAccess admits. q matches site title/slug or its space slug/name.
+ * cmdk site search. Bounded candidate queries over *active* sites the caller might open
+ * (owner / member-space / team / explicitly-shared; superadmin ⇒ all active) — chunked + unioned
+ * to stay under D1's bound-parameter cap — then a final in-memory checkAccess pass (the single
+ * source of truth) using precomputed membership/share sets so it stays O(rows), not N+1.
+ * "Openable" semantics: the result is exactly what checkAccess admits. q matches site title/slug
+ * or its space slug/name (LIKE metacharacters in q are escaped).
  */
 export async function searchSites(
   db: AppEnv['Variables']['db'],
@@ -60,40 +89,55 @@ export async function searchSites(
   q: string,
   limit = 20,
 ): Promise<SearchRow[]> {
-  const term = `%${q.trim().toLowerCase()}%`
-  const qMatch = sql`(lower(${sitesTable.title}) like ${term} or lower(${sitesTable.slug}) like ${term} or lower(${spaces.slug}) like ${term} or lower(${spaces.name}) like ${term})`
+  const term = `%${escapeLike(q.trim().toLowerCase())}%`
+  const qMatch = sql`(lower(${sitesTable.title}) like ${term} escape '\\' or lower(${sitesTable.slug}) like ${term} escape '\\' or lower(${spaces.slug}) like ${term} escape '\\' or lower(${spaces.name}) like ${term} escape '\\')`
 
   const isSuper = user.role === 'superadmin'
   const memberSpaces = isSuper ? new Set<string>() : await memberSpaceIds(db, user.id)
   const shared = isSuper ? new Set<string>() : await sharedSiteIds(db, user.id)
 
-  let where = and(eq(sitesTable.status, 'active'), qMatch)
-  if (!isSuper) {
-    const reach = [eq(sitesTable.ownerId, user.id), eq(sitesTable.visibility, 'team')]
-    if (memberSpaces.size) reach.push(inArray(sitesTable.spaceId, [...memberSpaces]))
-    if (shared.size) reach.push(inArray(sitesTable.id, [...shared]))
-    where = and(where, or(...reach))
+  // Candidate reach as a set of bounded WHERE clauses, unioned in memory: `X AND (A OR B OR C)`
+  // ≡ union of `X AND A`, `X AND B`, `X AND C`, and no single statement's `inArray` can exceed
+  // D1's 100-param cap (member-space / shared id lists are chunked). superadmin ⇒ every active
+  // match (undefined reach, which `and` drops).
+  const active = eq(sitesTable.status, 'active')
+  const reaches = isSuper
+    ? [undefined]
+    : [
+        or(eq(sitesTable.ownerId, user.id), eq(sitesTable.visibility, 'team')),
+        ...chunk([...memberSpaces], D1_MAX_IN).map((ids) => inArray(sitesTable.spaceId, ids)),
+        ...chunk([...shared], D1_MAX_IN).map((ids) => inArray(sitesTable.id, ids)),
+      ]
+
+  const cols = {
+    id: sitesTable.id,
+    spaceId: sitesTable.spaceId,
+    spaceSlug: spaces.slug,
+    siteSlug: sitesTable.slug,
+    title: sitesTable.title,
+    visibility: sitesTable.visibility,
+    status: sitesTable.status,
+    ownerId: sitesTable.ownerId,
+    createdAt: sitesTable.createdAt,
   }
+  const batches = await Promise.all(
+    reaches.map((reach) =>
+      db
+        .select(cols)
+        .from(sitesTable)
+        .innerJoin(spaces, eq(sitesTable.spaceId, spaces.id))
+        .where(and(active, qMatch, reach))
+        .orderBy(desc(sitesTable.createdAt))
+        .limit(SEARCH_SCAN_CAP),
+    ),
+  )
 
-  const rows = await db
-    .select({
-      id: sitesTable.id,
-      spaceId: sitesTable.spaceId,
-      spaceSlug: spaces.slug,
-      siteSlug: sitesTable.slug,
-      title: sitesTable.title,
-      visibility: sitesTable.visibility,
-      status: sitesTable.status,
-      ownerId: sitesTable.ownerId,
-      createdAt: sitesTable.createdAt,
-    })
-    .from(sitesTable)
-    .innerJoin(spaces, eq(sitesTable.spaceId, spaces.id))
-    .where(where)
-    .orderBy(desc(sitesTable.createdAt))
-    .limit(SEARCH_SCAN_CAP)
-
-  return rows
+  // Union the batches (dedupe by id — a row can satisfy more than one reach), newest first, then
+  // the checkAccess pass (the single source of truth) over precomputed membership/share sets.
+  const byId = new Map<string, SearchRow>()
+  for (const rows of batches) for (const r of rows) byId.set(r.id, r)
+  return [...byId.values()]
+    .sort(byCreatedAtDesc)
     .filter((r) => checkAccess(r, user, memberSpaces.has(r.spaceId), shared.has(r.id)).ok)
     .slice(0, limit)
 }
@@ -136,17 +180,24 @@ sites.post('/', requireAuth, async (c) => {
       .where(and(eq(sitesTable.spaceId, space.id), eq(sitesTable.slug, siteSlug)))
       .limit(1)
   )[0]
-  if (existing) return c.json({ error: 'site already exists' }, 409)
+  if (existing) return c.json({ error: 'site already exists', conflict: true }, 409)
 
   const id = crypto.randomUUID()
-  await db.insert(sitesTable).values({
-    id,
-    spaceId: space.id,
-    slug: siteSlug,
-    title: typeof title === 'string' ? title : null,
-    visibility: isVisibility(vis) ? vis : 'team',
-    ownerId: user.id,
-  })
+  try {
+    await db.insert(sitesTable).values({
+      id,
+      spaceId: space.id,
+      slug: siteSlug,
+      title: typeof title === 'string' ? title : null,
+      visibility: isVisibility(vis) ? vis : 'team',
+      ownerId: user.id,
+    })
+  } catch (err) {
+    // Lost the check-then-insert race on unique(spaceId, slug) to a concurrent create — return the
+    // same 409 the pre-check would, not a 500.
+    if (isUniqueConstraintError(err)) return c.json({ error: 'site already exists', conflict: true }, 409)
+    throw err
+  }
 
   return c.json({ id, spaceSlug, siteSlug, url: `${c.env.APP_URL}/${spaceSlug}/${siteSlug}` }, 201)
 })
@@ -190,21 +241,27 @@ sites.get('/shared', requireAuth, async (c) => {
   const db = c.get('db')
   const ids = [...(await sharedSiteIds(db, user.id))]
   if (ids.length === 0) return c.json([])
-  const rows = await db
-    .select({
-      id: sitesTable.id,
-      spaceSlug: spaces.slug,
-      slug: sitesTable.slug,
-      title: sitesTable.title,
-      visibility: sitesTable.visibility,
-      status: sitesTable.status,
-      ownerId: sitesTable.ownerId,
-      createdAt: sitesTable.createdAt,
-    })
-    .from(sitesTable)
-    .innerJoin(spaces, eq(sitesTable.spaceId, spaces.id))
-    .where(inArray(sitesTable.id, ids))
-    .orderBy(desc(sitesTable.createdAt))
+  // Chunk the shared-id list under D1's 100-param cap and union — ids are unique across chunks,
+  // so no dedupe is needed; re-sort newest-first in memory (per-batch order is lost on flatten).
+  const batches = await Promise.all(
+    chunk(ids, D1_MAX_IN).map((batch) =>
+      db
+        .select({
+          id: sitesTable.id,
+          spaceSlug: spaces.slug,
+          slug: sitesTable.slug,
+          title: sitesTable.title,
+          visibility: sitesTable.visibility,
+          status: sitesTable.status,
+          ownerId: sitesTable.ownerId,
+          createdAt: sitesTable.createdAt,
+        })
+        .from(sitesTable)
+        .innerJoin(spaces, eq(sitesTable.spaceId, spaces.id))
+        .where(inArray(sitesTable.id, batch)),
+    ),
+  )
+  const rows = batches.flat().sort(byCreatedAtDesc)
   return c.json(
     rows
       .filter((r) => r.status === 'active' && r.ownerId !== user.id)
@@ -290,6 +347,12 @@ sites.get('/:spaceSlug/:siteSlug/exists', requireAuth, async (c) => {
   const { spaceSlug, siteSlug } = c.req.param()
   const site = await resolveSite(db, spaceSlug, siteSlug)
   if (!site) return c.json({ exists: false })
+  // Existence is disclosed only to someone who could legitimately act on it — the site's space
+  // members (slug availability is per-space), its owner, or a superadmin. Anyone else gets the
+  // same not-found shape so an unauthorized caller can't probe cross-space for a site's existence.
+  const authorized =
+    user.role === 'superadmin' || site.ownerId === user.id || (await isSpaceMember(db, site.spaceId, user.id))
+  if (!authorized) return c.json({ exists: false })
   return c.json({ exists: true, owned: site.ownerId === user.id })
 })
 
@@ -299,13 +362,17 @@ sites.get('/:spaceSlug/:siteSlug/exists', requireAuth, async (c) => {
 sites.get('/:spaceSlug/:siteSlug', async (c) => {
   const db = c.get('db')
   const { spaceSlug, siteSlug } = c.req.param()
-  const site = await resolveSite(db, spaceSlug, siteSlug)
+
+  // FCP hotpath: the session read is independent of the site lookup, so resolve both concurrently.
+  // Cookie (browser viewer) OR CLI Bearer token (`glance read`) — both mint the same gated URL.
+  const [site, user] = await Promise.all([resolveSite(db, spaceSlug, siteSlug), readSessionOrBearer(c)])
+  // Existence (404) is still decided before any auth-dependent branch, so a missing site never
+  // leaks — running the session read early doesn't change the not-found-before-auth ordering.
   if (!site) return c.json({ error: 'not found' }, 404)
 
-  // Cookie (browser viewer) OR CLI Bearer token (`glance read`) — both mint the same gated URL.
-  const user = await readSessionOrBearer(c)
-  const isMember = user ? await isSpaceMember(db, site.spaceId, user.id) : false
-  const isShared = user ? await resolveIsShared(db, site.id, user.id) : false
+  const [isMember, isShared] = user
+    ? await Promise.all([isSpaceMember(db, site.spaceId, user.id), resolveIsShared(db, site.id, user.id)])
+    : [false, false]
   const access = checkAccess(site, user, isMember, isShared)
   if (!access.ok) return c.json({ error: 'forbidden' }, access.status)
 
@@ -339,7 +406,7 @@ sites.get('/:spaceSlug/:siteSlug/shares', requireAuth, async (c) => {
   const { spaceSlug, siteSlug } = c.req.param()
   const site = await resolveSite(db, spaceSlug, siteSlug)
   if (!site) return c.json({ error: 'not found' }, 404)
-  if (site.ownerId !== user.id) return c.json({ error: 'forbidden' }, 403)
+  if (site.ownerId !== user.id && user.role !== 'superadmin') return c.json({ error: 'forbidden' }, 403)
   return c.json(await listSiteShares(db, site.id))
 })
 
@@ -350,7 +417,7 @@ sites.put('/:spaceSlug/:siteSlug/shares', requireAuth, async (c) => {
   const { spaceSlug, siteSlug } = c.req.param()
   const site = await resolveSite(db, spaceSlug, siteSlug)
   if (!site) return c.json({ error: 'not found' }, 404)
-  if (site.ownerId !== user.id) return c.json({ error: 'forbidden' }, 403)
+  if (site.ownerId !== user.id && user.role !== 'superadmin') return c.json({ error: 'forbidden' }, 403)
 
   const body = await c.req.json().catch(() => null)
   const asIds = (v: unknown) =>
@@ -383,7 +450,7 @@ sites.patch('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
   const { spaceSlug, siteSlug } = c.req.param()
   const site = await resolveSite(db, spaceSlug, siteSlug)
   if (!site) return c.json({ error: 'not found' }, 404)
-  if (site.ownerId !== user.id) return c.json({ error: 'forbidden' }, 403)
+  if (site.ownerId !== user.id && user.role !== 'superadmin') return c.json({ error: 'forbidden' }, 403)
 
   const body = await c.req.json().catch(() => null)
   if (!body || typeof body !== 'object') return c.json({ error: 'invalid body' }, 400)

@@ -27,7 +27,7 @@ export const spaceMembers = sqliteTable(
     spaceId: text('spaceId').notNull().references(() => spaces.id, { onDelete: 'cascade' }),
     userId: text('userId').notNull().references(() => users.id, { onDelete: 'cascade' }),
   },
-  (t) => [primaryKey({ columns: [t.spaceId, t.userId] })],
+  (t) => [primaryKey({ columns: [t.spaceId, t.userId] }), index('space_members_user').on(t.userId)],
 )
 
 export const sites = sqliteTable(
@@ -44,7 +44,7 @@ export const sites = sqliteTable(
     ownerId: text('ownerId').notNull().references(() => users.id, { onDelete: 'cascade' }),
     createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
   },
-  (t) => [unique('sites_space_slug_unq').on(t.spaceId, t.slug)],
+  (t) => [unique('sites_space_slug_unq').on(t.spaceId, t.slug), index('sites_owner').on(t.ownerId)],
 )
 
 export const files = sqliteTable(
@@ -56,9 +56,10 @@ export const files = sqliteTable(
     storageKey: text('storageKey').notNull().unique(),
     mimeType: text('mimeType'),
     size: integer('size'),
-    // Normalized-text digest (lib/anchor `normalizeText`) of the file body, computed at upload.
-    // Nullable: pre-existing rows + non-text files have none. The cheap "hash unchanged → skip
-    // re-anchor" gate (Step 8) keys off this.
+    // RESERVED / currently unused. Was intended to hold a normalized-text digest (lib/anchor
+    // `normalizeText`) of the file body to power a "hash unchanged → skip re-anchor" gate, but
+    // nothing writes or reads it today (anchors are painted client-side, not reconciled server-
+    // side). Kept nullable for a possible future wiring — do NOT drop the column.
     contentHash: text('contentHash'),
     createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
   },
@@ -76,7 +77,7 @@ export const siteUserShares = sqliteTable(
     siteId: text('siteId').notNull().references(() => sites.id, { onDelete: 'cascade' }),
     userId: text('userId').notNull().references(() => users.id, { onDelete: 'cascade' }),
   },
-  (t) => [primaryKey({ columns: [t.siteId, t.userId] })],
+  (t) => [primaryKey({ columns: [t.siteId, t.userId] }), index('site_user_shares_user').on(t.userId)],
 )
 
 // Explicit per-group sharing: grant every member of a (group) space access to a site.
@@ -86,7 +87,7 @@ export const siteGroupShares = sqliteTable(
     siteId: text('siteId').notNull().references(() => sites.id, { onDelete: 'cascade' }),
     spaceId: text('spaceId').notNull().references(() => spaces.id, { onDelete: 'cascade' }),
   },
-  (t) => [primaryKey({ columns: [t.siteId, t.spaceId] })],
+  (t) => [primaryKey({ columns: [t.siteId, t.spaceId] }), index('site_group_shares_space').on(t.spaceId)],
 )
 
 // Anchored, threaded review comments on a deployed site's files. A thread anchors to a quote
@@ -109,6 +110,7 @@ export const commentThreads = sqliteTable(
     // now-unused {quote, prefix, suffix} model — readElementAnchor gates on anchorType so that never
     // leaks. prefix/suffix are dead; quote is denormalized to its own column above.
     anchor: text('anchor', { mode: 'json' }),
+    // RESERVED / currently unused (mirrors files.contentHash above): no code writes or reads it.
     contentHash: text('contentHash'),
     anchorStatus: text('anchorStatus', { enum: ['anchored', 'shifted', 'suggested', 'orphaned'] })
       .notNull()

@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"io"
-	"strings"
 )
 
 func (c *client) comments(argv []string) error {
@@ -12,11 +11,10 @@ func (c *client) comments(argv []string) error {
 	if len(positional) > 0 {
 		target = positional[0]
 	}
-	if !strings.Contains(target, "/") {
+	space, name, err := splitSpaceSlug(target)
+	if err != nil {
 		return fmt.Errorf("Usage: glance comments <space/slug> [--file <path>] [--open] [--json]")
 	}
-	parts := strings.Split(target, "/")
-	space, name := parts[0], parts[1]
 	if err := c.requireAuth(); err != nil {
 		return err
 	}

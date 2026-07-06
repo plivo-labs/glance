@@ -5,7 +5,7 @@ import { Hono } from 'hono'
 import { documents, sites } from '../db/schema'
 import { signDataToken } from '../lib/data-token'
 import { makeDb, seedMember, seedSite, seedSpace, seedUser } from '../test/harness'
-import { dataApi, dataCapsFor } from './data'
+import { MAX_DOCS_PER_SITE, dataApi, dataCapsFor } from './data'
 
 const HMAC_A = 'glance-test-aaa'
 // getDb() prefers the injected harness db, so GLANCE_DB is never touched; CONTENT_URL drives CORS.
@@ -65,6 +65,22 @@ async function create(app: TestApp, token: string, collection: string, body: unk
   const res = await req(app, token, 'POST', `/${collection}`, body)
   expect(res.status).toBe(201)
   return (await res.json()).id
+}
+
+// Bulk-seed n rows straight into the table (bypassing the route) to fill a site to its quota
+// without thousands of HTTP round-trips. Chunked to stay under SQLite's bound-parameter limit.
+async function seedDocs(db: DrizzleD1Database, siteId: string, collection: string, n: number, createdBy: string) {
+  const at = '2020-01-01T00:00:00.000Z'
+  const rows = Array.from({ length: n }, (_, i) => ({
+    siteId,
+    collection,
+    docId: `seed-${i}`,
+    json: {},
+    createdBy,
+    createdAt: at,
+    updatedAt: at,
+  }))
+  for (let i = 0; i < rows.length; i += 400) await db.insert(documents).values(rows.slice(i, i + 400))
 }
 
 describe('glance.db data plane — happy path', () => {
@@ -244,6 +260,42 @@ describe('P0-3: CORS is exact-origin and credential-less', () => {
   })
 })
 
+describe('#10: per-site document quota (DoS guard on unbounded creation)', () => {
+  test('POST is blocked with 429 once the site is at MAX_DOCS_PER_SITE', async () => {
+    const { db, app, tokens } = await scenario()
+    await seedDocs(db, 'siteA', 'bulk', MAX_DOCS_PER_SITE, 'userA')
+    const res = await req(app, tokens.ownerA, 'POST', '/posts', { x: 1 })
+    expect(res.status).toBe(429)
+    // A viewer's create is capped the same way — the quota is site-wide, not per-caller.
+    expect((await req(app, tokens.viewerB, 'POST', '/feedback', { x: 1 })).status).toBe(429)
+  })
+
+  test('a fresh-id PUT (new row) is capped, but an in-place PUT update is exempt', async () => {
+    const { db, app, tokens } = await scenario()
+    await seedDocs(db, 'siteA', 'bulk', MAX_DOCS_PER_SITE, 'userA')
+    // Fresh id → would grow the table → 429.
+    expect((await req(app, tokens.ownerA, 'PUT', '/posts/brand-new', { v: 1 })).status).toBe(429)
+    // Overwriting an existing own row adds no row, so it succeeds even at quota.
+    const upd = await req(app, tokens.ownerA, 'PUT', '/bulk/seed-0', { v: 2 })
+    expect(upd.status).toBe(200)
+    expect((await upd.json()).data.v).toBe(2)
+  })
+
+  test('just under the cap still creates (boundary is inclusive at the cap)', async () => {
+    const { db, app, tokens } = await scenario()
+    await seedDocs(db, 'siteA', 'bulk', MAX_DOCS_PER_SITE - 1, 'userA')
+    expect((await req(app, tokens.ownerA, 'POST', '/posts', { x: 1 })).status).toBe(201)
+    // ...and that create tips the site to the cap, so the next one is refused.
+    expect((await req(app, tokens.ownerA, 'POST', '/posts', { x: 1 })).status).toBe(429)
+  })
+
+  test("another site's fullness never blocks writes to this site (quota is per-site)", async () => {
+    const { db, app, tokens } = await scenario()
+    await seedDocs(db, 'siteB', 'bulk', MAX_DOCS_PER_SITE, 'userB')
+    expect((await req(app, tokens.ownerA, 'POST', '/posts', { x: 1 })).status).toBe(201)
+  })
+})
+
 describe('auth + validation + inert-when-unconfigured', () => {
   test('no token / garbage token → 401', async () => {
     const { app, tokens } = await scenario()
@@ -265,6 +317,30 @@ describe('auth + validation + inert-when-unconfigured', () => {
     // 40k '€' chars = 40k UTF-16 units (passes a .length check) but ~120KB of UTF-8 bytes.
     const sneaky = { blob: '€'.repeat(40_000) }
     expect((await req(app, tokens.ownerA, 'POST', '/posts', sneaky)).status).toBe(413)
+  })
+
+  test('#41: an oversized body with NO declared content-length is still capped (post-read guard)', async () => {
+    const { app, tokens } = await scenario()
+    // A ReadableStream body carries no content-length, so the declared-length precheck can't fire
+    // — the post-read byte cap is the only thing standing between us and an unbounded document.
+    const raw = new TextEncoder().encode(JSON.stringify({ blob: 'x'.repeat(100_001) }))
+    const body = new ReadableStream({
+      start(ctrl) {
+        ctrl.enqueue(raw)
+        ctrl.close()
+      },
+    })
+    const res = await app.request(
+      '/api/_data/posts',
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokens.ownerA}`, 'Content-Type': 'application/json' },
+        body,
+        duplex: 'half',
+      } as RequestInit,
+      ENV,
+    )
+    expect(res.status).toBe(413)
   })
 
   test('list returns newest first', async () => {

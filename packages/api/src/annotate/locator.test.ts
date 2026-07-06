@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { Window } from 'happy-dom'
-import { computeSelector, describeElement, isPageSpanning, resolveSelector } from './locator'
+import { computeSelector, describeElement, findRange, isPageSpanning, resolveSelector } from './locator'
 
 // Seam S1: the locator is global-free, so we drive it under a constructed happy-dom document and
 // pass nodes in — no GlobalRegistrator, so nothing leaks into the other (server-side) api tests.
@@ -92,6 +92,49 @@ describe('isPageSpanning — a full-viewport wrapper is not an anchor', () => {
 
   test('a tall but narrow column is still anchorable', () => {
     expect(isPageSpanning({ width: 300, height: 4000 }, vp)).toBe(false)
+  })
+})
+
+describe('findRange — re-find a stored quote in the rendered DOM', () => {
+  test('matches a quote across element boundaries + any run of whitespace', () => {
+    const doc = docFrom('<p>Hello   <b>brave</b>\n  world</p>')
+    const range = findRange('Hello brave world', doc)!
+    expect(range).not.toBeNull()
+    expect(range.toString()).toBe('Hello   brave\n  world') // spans the real DOM text between the ends
+  })
+
+  test('is case-insensitive (survives CSS text-transform)', () => {
+    const doc = docFrom('<p>SHOUTING HEADLINE</p>')
+    expect(findRange('shouting headline', doc)).not.toBeNull()
+  })
+
+  test('a quote that also appears in a <script> anchors to the VISIBLE occurrence', () => {
+    // The words appear FIRST in an inline chart-data <script> (unrendered) and again in a paragraph.
+    const doc = docFrom('<script>const q = "Total revenue grew"</script><p>Total revenue grew last year</p>')
+    const range = findRange('Total revenue grew', doc)!
+    expect(range).not.toBeNull()
+    expect((range.startContainer as Text).parentElement?.tagName).toBe('P') // NOT the SCRIPT
+    expect(range.toString()).toBe('Total revenue grew')
+  })
+
+  test('a quote present ONLY inside non-rendered tags does not anchor', () => {
+    const doc = docFrom('<script>secret token phrase</script><style>secret token phrase</style><p>visible text</p>')
+    expect(findRange('secret token phrase', doc)).toBeNull()
+  })
+
+  test('NFKC-equivalent DOM text matches an NFKC-folded quote (ligature)', () => {
+    const doc = docFrom('<p>the ﬁle is here</p>') // ﬁ is the U+FB01 ligature; the stored quote uses "fi"
+    expect(findRange('the file is here', doc)).not.toBeNull()
+  })
+
+  test('NFKC-equivalent DOM text matches an NFKC-folded quote (full-width)', () => {
+    const doc = docFrom('<p>ＨＥＬＬＯ world</p>') // full-width latin folds to ASCII under NFKC
+    expect(findRange('HELLO world', doc)).not.toBeNull()
+  })
+
+  test('an absent quote returns null', () => {
+    const doc = docFrom('<p>nothing to see here</p>')
+    expect(findRange('a phrase that is not present', doc)).toBeNull()
   })
 })
 

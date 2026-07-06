@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { makeDb } from '../test/harness'
 import { spaceMembers, spaces, users } from './schema'
 import { findOrCreateUser } from '../routes/auth'
 import type { AppEnv } from '../types'
-import { bootstrapSuperadminByEmail, superadminExists } from './repo'
+import { bootstrapSuperadminByEmail, createPersonalSpace, createSpace, getUserById, superadminExists } from './repo'
 
 describe('superadminExists', () => {
   test('superadminExists-reflects-rows: false with no superadmin, true once one exists', async () => {
@@ -59,6 +59,68 @@ describe('bootstrapSuperadminByEmail', () => {
     expect(second.role).toBe('superadmin')
     const all = await db.select().from(users)
     expect(all).toHaveLength(1)
+  })
+})
+
+describe('getUserById', () => {
+  test('returns-identity-fields: existing user resolves to id/email/name/role', async () => {
+    const db = makeDb()
+    await db.insert(users).values({ id: 'u1', email: 'a@x.com', name: 'Ada', role: 'superadmin' })
+    const u = await getUserById(db, 'u1')
+    expect(u).toEqual({ id: 'u1', email: 'a@x.com', name: 'Ada', role: 'superadmin' })
+  })
+
+  test('null-when-missing: an unknown id resolves to null (a deleted user is logged out)', async () => {
+    const db = makeDb()
+    expect(await getUserById(db, 'ghost')).toBeNull()
+  })
+})
+
+describe('createPersonalSpace — slug-conflict resilience (#27)', () => {
+  test('retries-next-candidate-on-unique-conflict: base slug taken → uses base-1, never strands', async () => {
+    const db = makeDb()
+    // A racing signup already owns the base slug derived from the handle ('alice').
+    await db.insert(users).values({ id: 'racer', email: 'racer@x.com', role: 'member' })
+    await createSpace(db, { slug: 'alice', name: 'alice', type: 'personal', createdBy: 'racer' })
+
+    await db.insert(users).values({ id: 'alice', email: 'alice@example.com', role: 'member' })
+    await createPersonalSpace(db, 'alice', 'alice@example.com')
+
+    // The pre-existing 'alice' space is untouched; the new user got 'alice-1' + a membership.
+    const base = await db.select().from(spaces).where(eq(spaces.slug, 'alice'))
+    expect(base[0]?.createdBy).toBe('racer')
+    const mine = await db.select().from(spaces).where(eq(spaces.slug, 'alice-1'))
+    expect(mine[0]?.createdBy).toBe('alice')
+    expect(mine[0]?.type).toBe('personal')
+    const membership = await db.select().from(spaceMembers).where(eq(spaceMembers.userId, 'alice'))
+    expect(membership).toHaveLength(1)
+    expect(membership[0].spaceId).toBe(mine[0].id)
+  })
+
+  test('skips-multiple-taken-candidates: base and base-1 taken → uses base-2', async () => {
+    const db = makeDb()
+    await db.insert(users).values({ id: 'racer', email: 'racer@x.com', role: 'member' })
+    await createSpace(db, { slug: 'bob', name: 'bob', type: 'personal', createdBy: 'racer' })
+    await createSpace(db, { slug: 'bob-1', name: 'bob-1', type: 'group', createdBy: 'racer' })
+
+    await db.insert(users).values({ id: 'bob', email: 'bob@example.com', role: 'member' })
+    await createPersonalSpace(db, 'bob', 'bob@example.com')
+
+    const mine = await db.select().from(spaces).where(eq(spaces.slug, 'bob-2'))
+    expect(mine[0]?.createdBy).toBe('bob')
+  })
+})
+
+describe('indexes (0007 migration reaches the harness)', () => {
+  test('new-perf-indexes-exist: 0007 is applied by makeDb (guards the silent S-MIGRATE seam)', async () => {
+    const db = makeDb()
+    const rows = (await (
+      db as unknown as { all: (q: unknown) => Promise<Array<Record<string, unknown>>> }
+    ).all(sql`SELECT name FROM sqlite_master WHERE type = 'index'`)) as Array<Record<string, unknown>>
+    const names = new Set(rows.map((r) => String(r.name ?? Object.values(r)[0])))
+    for (const idx of ['sites_owner', 'space_members_user', 'site_user_shares_user', 'site_group_shares_space']) {
+      expect(names.has(idx)).toBe(true)
+    }
   })
 })
 

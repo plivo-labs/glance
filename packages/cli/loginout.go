@@ -74,11 +74,20 @@ func (c *client) login() error {
 	}
 }
 
-// logout revokes the server session (best-effort) and removes the local token.
+// logout asks the server to revoke the session, then removes the local token. The local token is
+// ALWAYS cleared, but we're honest about server-side revocation: if the request fails to send or
+// returns a non-2xx, the token may still be valid server-side, so we warn instead of lying.
 func (c *client) logout() error {
 	if c.token != "" {
-		if resp, err := c.authed("POST", "/api/auth/logout", nil, nil); err == nil {
+		resp, err := c.authed("POST", "/api/auth/logout", nil, nil)
+		if err != nil {
+			fmt.Fprintln(c.errOut, "warning: could not reach the server to revoke your session; the token may remain valid until it expires.")
+		} else {
+			revoked := ok(resp)
 			resp.Body.Close()
+			if !revoked {
+				fmt.Fprintf(c.errOut, "warning: server did not confirm session revocation (%d); the token may remain valid until it expires.\n", resp.StatusCode)
+			}
 		}
 	}
 	_ = os.Remove(configPath())

@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
-import { files } from '../db/schema'
+import { files, sites } from '../db/schema'
 
 export const MAX_FILE_BYTES = 20 * 1024 * 1024 // 20MB/file (spec resolved decision #3)
 
@@ -40,5 +40,16 @@ export async function deleteKeys(bucket: R2Bucket, keys: string[]): Promise<void
 /** Delete all R2 objects recorded for a site (exact keys from the files table, batched ≤1000). */
 export async function deleteSiteObjects(db: DrizzleD1Database, bucket: R2Bucket, siteId: string): Promise<void> {
   const rows = await db.select({ storageKey: files.storageKey }).from(files).where(eq(files.siteId, siteId))
+  await deleteKeys(bucket, rows.map((r) => r.storageKey))
+}
+
+/** Delete all R2 objects for EVERY site in a space in ONE query (files ⨝ sites on siteId, filtered
+ *  by spaceId), batched ≤1000. Replaces the N+1 per-site `deleteSiteObjects` loop on space delete. */
+export async function deleteSpaceObjects(db: DrizzleD1Database, bucket: R2Bucket, spaceId: string): Promise<void> {
+  const rows = await db
+    .select({ storageKey: files.storageKey })
+    .from(files)
+    .innerJoin(sites, eq(files.siteId, sites.id))
+    .where(eq(sites.spaceId, spaceId))
   await deleteKeys(bucket, rows.map((r) => r.storageKey))
 }

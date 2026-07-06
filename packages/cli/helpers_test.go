@@ -63,3 +63,11 @@ func readAll(r interface{ Read([]byte) (int, error) }) []byte {
 	_, _ = buf.ReadFrom(r)
 	return buf.Bytes()
 }
+
+// The shared http.Client must set a Timeout; without one a hung/slow server wedges a command forever.
+func TestClientHasTimeout(t *testing.T) {
+	c := newClient("http://x", "", io.Discard)
+	if c.http.Timeout <= 0 {
+		t.Fatal("client http.Client must set a Timeout so commands can't hang forever")
+	}
+}

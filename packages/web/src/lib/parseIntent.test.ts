@@ -23,11 +23,18 @@ describe('parseIntent', () => {
     expect(parseIntent(ev({ source: otherWin, data: validSelect }), expected)).toBeNull()
   })
 
-  test('parseintent-rejects-bad-shape-or-oversize', () => {
+  test('parseintent-rejects-bad-shape', () => {
     expect(parseIntent(ev({ data: { type: 'glance:unknown' } }), expected)).toBeNull()
     expect(parseIntent(ev({ data: 'not-an-object' }), expected)).toBeNull()
     expect(parseIntent(ev({ data: { type: 'glance:select' } }), expected)).toBeNull() // missing quote
-    expect(parseIntent(ev({ data: { type: 'glance:select', quote: 'x'.repeat(9000) } }), expected)).toBeNull()
+    expect(parseIntent(ev({ data: { type: 'glance:select', quote: '' } }), expected)).toBeNull() // empty quote
+  })
+
+  test('parseintent-truncates-long-select-quote', () => {
+    // A selection longer than the 2000-char cap must TRUNCATE (preserving the anchor + opening the
+    // composer), not be dropped — regression for #30.
+    const res = parseIntent(ev({ data: { type: 'glance:select', quote: 'y'.repeat(9000) } }), expected)
+    expect(res).toEqual({ type: 'select', quote: 'y'.repeat(2000) })
   })
 
   test('parseintent-accepts-valid-select', () => {

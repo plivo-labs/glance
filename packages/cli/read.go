@@ -16,11 +16,10 @@ func (c *client) read(argv []string) error {
 	if len(positional) > 0 {
 		target = positional[0]
 	}
-	if !strings.Contains(target, "/") {
+	space, name, err := splitSpaceSlug(target)
+	if err != nil {
 		return fmt.Errorf("Usage: glance read <space/slug> [--file <path>]")
 	}
-	parts := strings.Split(target, "/")
-	space, name := parts[0], parts[1]
 	file, _ := flags["file"].(string)
 	if err := c.requireAuth(); err != nil {
 		return err

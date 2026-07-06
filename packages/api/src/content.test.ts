@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { Hono } from 'hono'
-import contentApp, { contentType, markdown, normalizePath, restOf } from './content'
+import contentApp, { contentType, injectAnnotate, markdown, normalizePath, restOf } from './content'
 import { events, sites, spaces, users } from './db/schema'
 import { sanitizePath } from './lib/storage'
 import { signToken, verifyToken } from './lib/token'
@@ -274,5 +274,108 @@ describe('contentType', () => {
   test('falls back to the stored type (charset-pinned when textual)', () => {
     expect(contentType('weird.ext', 'text/csv')).toBe('text/csv; charset=utf-8')
     expect(contentType('weird.ext', 'application/zip')).toBe('application/zip')
+  })
+})
+
+describe('injectAnnotate replacement safety (#46: $-specials in filePath stay verbatim)', () => {
+  test('$&, $$, $1 in the payload are inserted byte-for-byte, not interpreted as replacement specials', () => {
+    // A String.prototype.replace with a STRING replacement would expand $& → the matched '</body>'
+    // and $$ → '$', corrupting the user-controlled path. The replacement FUNCTION inserts it verbatim.
+    const html = '<html><head></head><body><p>x</p></body></html>'
+    const out = injectAnnotate(html, {
+      siteId: 's1',
+      filePath: 'weird$&$$$1name.html',
+      appOrigin: 'https://glance.example.com',
+    })
+    expect(out).toContain('"filePath":"weird$&$$$1name.html"')
+    // Still anchored before </body> (the preferred injection point), not the append fallback.
+    expect(out.indexOf('window.__GLANCE__=')).toBeLessThan(out.indexOf('</body>'))
+  })
+
+  test('no </body>/</head> → appends after the document, keeping any leading doctype first (no quirks flip)', () => {
+    const html = '<!doctype html><p>bare</p>'
+    const out = injectAnnotate(html, { siteId: 's1', filePath: 'a.html', appOrigin: 'https://glance.example.com' })
+    expect(out.startsWith('<!doctype html>')).toBe(true)
+    expect(out).toContain('window.__GLANCE__=')
+    expect(out.indexOf('<p>bare</p>')).toBeLessThan(out.indexOf('window.__GLANCE__='))
+  })
+})
+
+describe('gated file serving: cache-control, conditional 304, archive-through-checkAccess', () => {
+  function setup() {
+    const db = makeDb()
+    const r2 = makeR2()
+    const app = new Hono()
+    app.use('*', async (c, next) => {
+      c.set('db', db)
+      await next()
+    })
+    app.route('/', contentApp)
+    return { app, db, r2, env: { APP_URL: 'https://glance.example.com', CONTENT_TOKEN_SECRET: secret, GLANCE_FILES: r2 } }
+  }
+
+  // Seed sam/site (gated `team` tier) owned by `owner` with one index.html, returning a bound token.
+  async function seedServable(
+    db: ReturnType<typeof makeDb>,
+    r2: ReturnType<typeof makeR2>,
+    o: { role?: 'member' | 'superadmin'; status?: 'active' | 'archived'; text?: string } = {},
+  ) {
+    const uid = await seedUser(db, { id: 'u1', role: o.role ?? 'member' })
+    const sp = await seedSpace(db, { createdBy: uid, slug: 'sam' })
+    const siteId = await seedSite(db, {
+      spaceId: sp,
+      ownerId: uid,
+      slug: 'site',
+      visibility: 'team',
+      status: o.status ?? 'active',
+    })
+    await seedFile(db, r2, siteId, { path: 'index.html', text: o.text ?? '<h1>hi</h1>' })
+    const token = await signToken(secret, uid, 'sam/site', 300)
+    return { uid, siteId, token }
+  }
+
+  test('gated response carries Cache-Control: private, no-cache (shared/proxy caches never retain private bytes)', async () => {
+    const { app, db, r2, env } = setup()
+    const { token } = await seedServable(db, r2)
+    const res = await app.request(`/_t/${token}/sam/site/`, {}, env)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('cache-control')).toBe('private, no-cache')
+  })
+
+  test('If-None-Match matching the ETag → 304 with an empty body and the caching headers preserved', async () => {
+    const { app, db, r2, env } = setup()
+    const { token } = await seedServable(db, r2)
+    const first = await app.request(`/_t/${token}/sam/site/`, {}, env)
+    const etag = first.headers.get('etag')
+    expect(etag).not.toBeNull()
+
+    const revalidate = await app.request(`/_t/${token}/sam/site/`, { headers: { 'if-none-match': etag as string } }, env)
+    expect(revalidate.status).toBe(304)
+    expect(revalidate.headers.get('etag')).toBe(etag)
+    expect(revalidate.headers.get('cache-control')).toBe('private, no-cache')
+    expect(await revalidate.text()).toBe('')
+  })
+
+  test('a stale/non-matching If-None-Match streams the body (200, not 304)', async () => {
+    const { app, db, r2, env } = setup()
+    const { token } = await seedServable(db, r2)
+    const res = await app.request(`/_t/${token}/sam/site/`, { headers: { 'if-none-match': '"stale"' } }, env)
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('<h1>hi</h1>')
+  })
+
+  test('superadmin views an ARCHIVED site (archive routed through checkAccess, not a blanket early 410)', async () => {
+    const { app, db, r2, env } = setup()
+    const { token } = await seedServable(db, r2, { role: 'superadmin', status: 'archived', text: '<h1>archived</h1>' })
+    const res = await app.request(`/_t/${token}/sam/site/`, {}, env)
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('<h1>archived</h1>')
+  })
+
+  test('non-superadmin gets 410 on an archived site (single-source-of-truth archive rule holds)', async () => {
+    const { app, db, r2, env } = setup()
+    const { token } = await seedServable(db, r2, { role: 'member', status: 'archived' })
+    const res = await app.request(`/_t/${token}/sam/site/`, {}, env)
+    expect(res.status).toBe(410)
   })
 })

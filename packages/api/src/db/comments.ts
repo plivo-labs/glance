@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { type ElementAnchor, normalizeText, readElementAnchor } from '../lib/anchor'
 import { type Comment, type CommentThread, comments, commentThreads, users } from './schema'
@@ -55,7 +55,14 @@ export async function buildThreadViews(db: DrizzleD1Database, threads: CommentTh
 
   // One query for every thread's comments, ordered as today; group by thread.
   const ids = threads.map((t) => t.id)
-  const rows = await db.select().from(comments).where(inArray(comments.threadId, ids)).orderBy(comments.createdAt)
+  // rowid (insertion order) is the tiebreaker so same-millisecond rows order totally AND stay
+  // chronological (a reply never sorts before its opener) — a random `id` UUID would be stable
+  // but reorder same-ms rows. Safe: these are rowid tables (text PK, not WITHOUT ROWID).
+  const rows = await db
+    .select()
+    .from(comments)
+    .where(inArray(comments.threadId, ids))
+    .orderBy(comments.createdAt, sql`rowid`)
   const byThread = new Map<string, Comment[]>()
   for (const c of rows) {
     const list = byThread.get(c.threadId)
@@ -109,7 +116,7 @@ export async function listThreads(db: DrizzleD1Database, siteId: string, filePat
     .select()
     .from(commentThreads)
     .where(and(eq(commentThreads.siteId, siteId), eq(commentThreads.filePath, filePath)))
-    .orderBy(commentThreads.createdAt)
+    .orderBy(commentThreads.createdAt, sql`rowid`)
   return buildThreadViews(db, threads)
 }
 
@@ -119,7 +126,7 @@ export async function listSiteThreads(db: DrizzleD1Database, siteId: string): Pr
     .select()
     .from(commentThreads)
     .where(eq(commentThreads.siteId, siteId))
-    .orderBy(commentThreads.filePath, commentThreads.createdAt)
+    .orderBy(commentThreads.filePath, commentThreads.createdAt, sql`rowid`)
   return buildThreadViews(db, threads)
 }
 

@@ -79,6 +79,22 @@ describe('listThreads — ordering + soft-delete shape', () => {
     expect(thread.comments.map((c) => c.body)).toEqual(['first', 'second', 'third'])
   })
 
+  test('same-millisecond-comments-stay-chronological: identical createdAt orders by insertion, not random id', async () => {
+    const db = makeDb()
+    const user = await seedUser(db)
+    const sp = await seedSpace(db, { createdBy: user })
+    const siteId = await seedSite(db, { spaceId: sp, ownerId: user })
+    const threadId = await seedThread(db, { siteId, filePath: 'index.html', anchorType: 'page' })
+    // All three share the exact same millisecond timestamp — the createdAt tiebreaker decides
+    // order. Random-UUID ids would scramble them; the rowid (insertion) tiebreaker must not.
+    const ts = '2026-02-02T00:00:00.000Z'
+    await seedComment(db, { threadId, body: 'one', createdAt: ts })
+    await seedComment(db, { threadId, body: 'two', createdAt: ts })
+    await seedComment(db, { threadId, body: 'three', createdAt: ts })
+    const [thread] = await listThreads(db, siteId, 'index.html')
+    expect(thread.comments.map((c) => c.body)).toEqual(['one', 'two', 'three'])
+  })
+
   test('soft-delete-keeps-thread-shape: deleted comment row stays, body redacted', async () => {
     const { db, siteId, user, path } = await siteWithFile('<p>hi there</p>')
     const { threadId } = await createThread(db, { siteId, filePath: path, createdBy: user, body: 'keep me', quote: 'hi' })

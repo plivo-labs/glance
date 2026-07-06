@@ -162,10 +162,20 @@ function DashboardTabs({
   team: TeamUpload[]
 }) {
   const groupSpaces = spaces.filter((s) => s.type === 'group')
+  const [searchParams] = useSearchParams()
+  // Controlled tabs (Radix Tabs is otherwise uncontrolled) so we can steer the active tab in two
+  // cases the URL/feeds dictate. Reconcile during render, not in an effect (the repo's idiom):
+  const [tab, setTab] = useState('sites')
+  // #6 — a deep link ?new=space (from CommandPalette/ShareDialog, even while already on /dashboard)
+  // must select the Spaces tab so NewSpaceDialog mounts + opens.
+  if (searchParams.get('new') === 'space' && tab !== 'spaces') setTab('spaces')
+  // #38 — the Shared tab exists only while something is shared; if that feed empties during a
+  // revalidation while it's active, fall back to Your sites so the panel never blanks.
+  if (tab === 'shared' && shared.length === 0) setTab('sites')
 
   return (
     <div className="space-y-10">
-      <Tabs defaultValue="sites" className="gap-6">
+      <Tabs value={tab} onValueChange={setTab} className="gap-6">
         <TabsList variant="line">
           <TabsTrigger value="sites">
             Your sites
@@ -445,7 +455,15 @@ function DeployCard({ spaces }: { spaces: SpaceSummary[] }) {
         <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto]">
           <div className="space-y-1.5">
             <Label htmlFor="deploy-space">Space</Label>
-            <SpaceSelect id="deploy-space" value={space} onChange={setSpace} spaces={spaces} />
+            <SpaceSelect
+              id="deploy-space"
+              value={space}
+              onChange={(v) => {
+                setSpace(v)
+                setConflict(null) // the slug's availability is space-scoped — re-check under the new space
+              }}
+              spaces={spaces}
+            />
           </div>
 
           <div className="space-y-1.5">
@@ -453,7 +471,10 @@ function DeployCard({ spaces }: { spaces: SpaceSummary[] }) {
             <Input
               id="deploy-slug"
               value={slug}
-              onChange={(e) => setSlug(e.target.value.toLowerCase())}
+              onChange={(e) => {
+                setSlug(e.target.value.toLowerCase())
+                setConflict(null) // invalidate the stale check until re-run (onBlur / deploy)
+              }}
               onBlur={() => checkSlug()}
               placeholder="my-runbook"
               className="font-mono"
@@ -748,12 +769,30 @@ function SpaceCard({ space }: { space: SpaceSummary }) {
 function NewSpaceDialog() {
   const navigate = useNavigate()
   const revalidator = useRevalidator()
-  const [searchParams] = useSearchParams()
-  // Open immediately when arriving via ?new=space — read in the initializer, not an effect.
-  const [open, setOpen] = useState(() => searchParams.get('new') === 'space')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [internalOpen, setInternalOpen] = useState(false)
   const [slug, setSlug] = useState('')
   const [name, setName] = useState('')
   const [saving, setSaving] = useState(false)
+
+  // Open LIVE from the URL: CommandPalette/ShareDialog navigate to ?new=space while already on
+  // /dashboard, so a mount-time initializer (which never re-runs) would silently no-op (#6).
+  // Reading the param each render catches every arrival.
+  const open = internalOpen || searchParams.get('new') === 'space'
+  const setOpen = (o: boolean) => {
+    setInternalOpen(o)
+    // Clear the param on close so the still-present URL doesn't immediately reopen the dialog.
+    if (!o && searchParams.get('new') === 'space') {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev)
+          next.delete('new')
+          return next
+        },
+        { replace: true },
+      )
+    }
+  }
 
   async function create() {
     if (!slug.trim() || !name.trim()) {

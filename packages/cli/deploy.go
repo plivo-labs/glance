@@ -15,8 +15,11 @@ type deployEntry struct {
 	rel string // POSIX in-site path
 }
 
-// walk lists files under dir recursively, skipping .git, node_modules, and .DS_Store.
-func walk(dir string) ([]string, error) {
+// walk lists regular files under dir recursively. It always skips VCS/build noise (.git,
+// node_modules, .DS_Store) and NEVER follows symlinks - a symlink could point outside the deploy
+// root (e.g. /etc/passwd or ~/.ssh) and leak its target. Unless includeHidden is set it also skips
+// dotfiles/dot-dirs (.env, .npmrc, .netrc, …) so secrets aren't uploaded by accident.
+func walk(dir string, includeHidden bool) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
@@ -27,9 +30,15 @@ func walk(dir string) ([]string, error) {
 		if name == ".git" || name == "node_modules" || name == ".DS_Store" {
 			continue
 		}
+		if !includeHidden && strings.HasPrefix(name, ".") {
+			continue
+		}
+		if e.Type()&os.ModeSymlink != 0 {
+			continue // don't follow symlinks (target may escape the deploy root)
+		}
 		abs := filepath.Join(dir, name)
 		if e.IsDir() {
-			sub, err := walk(abs)
+			sub, err := walk(abs, includeHidden)
 			if err != nil {
 				return nil, err
 			}
@@ -70,15 +79,18 @@ func (c *client) personalSpace() (string, error) {
 }
 
 func (c *client) deploy(argv []string) error {
-	positional, flags := parseArgs(argv, nil)
+	positional, flags := parseArgs(argv, boolSet("include-hidden"))
 	path := ""
 	if len(positional) > 0 {
 		path = positional[0]
 	}
+	includeHidden := flags["include-hidden"] == true
 
 	visibility := "team"
+	visibilitySet := false
 	if raw, present := flags["visibility"]; present {
 		visibility = raw.(string)
+		visibilitySet = true
 	}
 	// `group` was renamed to `members`; keep old commands working (server normalizes too).
 	if visibility == "group" {
@@ -91,7 +103,7 @@ func (c *client) deploy(argv []string) error {
 		visibility = "team"
 	}
 	if path == "" {
-		return fmt.Errorf("Usage: glance deploy <path> [--space <slug>] [--name <slug>] [--visibility team|private|members]")
+		return fmt.Errorf("Usage: glance deploy <path> [--space <slug>] [--name <slug>] [--visibility team|private|members] [--include-hidden]")
 	}
 	if err := c.requireAuth(); err != nil {
 		return err
@@ -111,7 +123,7 @@ func (c *client) deploy(argv []string) error {
 	var entries []deployEntry
 	var derived string
 	if info.IsDir() {
-		files, err := walk(root)
+		files, err := walk(root, includeHidden)
 		if err != nil {
 			return err
 		}
@@ -150,33 +162,48 @@ func (c *client) deploy(argv []string) error {
 		space = s
 	}
 
-	// Replace prompt if the site already exists and the caller owns it.
-	replace := false
-	if exResp, err := c.authed("GET", "/api/sites/"+space+"/"+name+"/exists", nil, nil); err == nil {
-		var ex struct {
-			Exists bool `json:"exists"`
-			Owned  bool `json:"owned"`
-		}
-		_ = json.NewDecoder(exResp.Body).Decode(&ex)
-		exResp.Body.Close()
-		if ex.Exists {
-			if !ex.Owned {
-				return fmt.Errorf("%s/%s is taken by another user.", space, name)
-			}
-			ans := c.prompt(fmt.Sprintf("Site exists at %s/%s. Replace? (y/N) ", space, name))
-			if strings.ToLower(ans) != "y" {
-				fmt.Fprintln(c.out, "Cancelled.")
-				return nil
-			}
-			replace = true
-		}
-	} else {
+	// Replace prompt if the site already exists and the caller owns it. Don't treat a failed check
+	// as "does not exist": a non-2xx status or an undecodable body must abort, not silently upload
+	// (which could clobber a site or race an unexpected server state).
+	exResp, err := c.authed("GET", "/api/sites/"+space+"/"+name+"/exists", nil, nil)
+	if err != nil {
 		return err
+	}
+	if !ok(exResp) {
+		code := exResp.StatusCode
+		exResp.Body.Close()
+		return fmt.Errorf("Could not check whether %s/%s already exists (%d).", space, name, code)
+	}
+	var ex struct {
+		Exists bool `json:"exists"`
+		Owned  bool `json:"owned"`
+	}
+	decErr := json.NewDecoder(exResp.Body).Decode(&ex)
+	exResp.Body.Close()
+	if decErr != nil {
+		return fmt.Errorf("Could not read the existence check for %s/%s: %w", space, name, decErr)
+	}
+	replace := false
+	if ex.Exists {
+		if !ex.Owned {
+			return fmt.Errorf("%s/%s is taken by another user.", space, name)
+		}
+		ans := c.prompt(fmt.Sprintf("Site exists at %s/%s. Replace? (y/N) ", space, name))
+		if strings.ToLower(ans) != "y" {
+			fmt.Fprintln(c.out, "Cancelled.")
+			return nil
+		}
+		replace = true
 	}
 
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
-	_ = mw.WriteField("visibility", visibility)
+	// Send visibility on create, but on replace only when --visibility was explicitly passed. The
+	// default is "team", so unconditionally sending it would silently re-tier an existing (e.g.
+	// private) site to team on a routine content update. Absent on replace → server keeps the tier.
+	if visibilitySet || !replace {
+		_ = mw.WriteField("visibility", visibility)
+	}
 	for _, e := range entries {
 		data, err := os.ReadFile(e.abs)
 		if err != nil {
@@ -195,6 +222,9 @@ func (c *client) deploy(argv []string) error {
 	}
 
 	fmt.Fprintf(c.out, "Uploading %d file(s) to %s/%s…\n", len(entries), space, name)
+	for _, e := range entries {
+		fmt.Fprintf(c.out, "  %s\n", e.rel) // surface the exact set so the user isn't blind to what ships
+	}
 	uploadPath := "/api/upload/" + space + "/" + name
 	if replace {
 		uploadPath += "?replace=true"

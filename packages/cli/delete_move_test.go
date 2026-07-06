@@ -42,6 +42,19 @@ func TestDeleteCommand(t *testing.T) {
 			t.Fatal("want usage error")
 		}
 	})
+
+	// Extra path segments must be rejected, not silently truncated to space/slug (a/b/c -> a/b).
+	t.Run("extra-segments-rejected", func(t *testing.T) {
+		srv, reqs := recordingServer(t, func(r *capturedReq) (int, string) { return 200, `{}` })
+		c, _ := newTestClient(srv.URL, "tok")
+		c.in = strings.NewReader("y\n")
+		if err := c.del([]string{"space/slug/extra"}); err == nil {
+			t.Fatal("want usage error for extra segments")
+		}
+		if len(*reqs) != 0 {
+			t.Fatalf("must not send a request for a malformed target, got %+v", *reqs)
+		}
+	})
 }
 
 func TestMoveCommand(t *testing.T) {
@@ -69,6 +82,18 @@ func TestMoveCommand(t *testing.T) {
 		c, _ := newTestClient("http://unused", "tok")
 		if err := c.move([]string{"docs/api"}); err == nil {
 			t.Fatal("want usage error")
+		}
+	})
+
+	// A/b/c must not be truncated to a/b: reject the malformed source before hitting the network.
+	t.Run("extra-segments-rejected", func(t *testing.T) {
+		srv, reqs := recordingServer(t, func(r *capturedReq) (int, string) { return 200, `{}` })
+		c, _ := newTestClient(srv.URL, "tok")
+		if err := c.move([]string{"docs/api/extra", "team"}); err == nil {
+			t.Fatal("want usage error for extra segments")
+		}
+		if len(*reqs) != 0 {
+			t.Fatalf("must not send a request for a malformed target, got %+v", *reqs)
 		}
 	})
 }

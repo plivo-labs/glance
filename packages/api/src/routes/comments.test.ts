@@ -337,3 +337,66 @@ describe('comments routes — POST …/:threadId/replies (glance reply)', () => 
     expect(res.status).toBe(401)
   })
 })
+
+describe('comments routes — input sanitization + lifecycle guards', () => {
+  test('quote-nfkc-overcap-rejected: under the raw cap but > MAX_QUOTE once NFKC-folded → 400', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    await seedSiteWithFile(db, r2, owner)
+    // U+FDFA folds to ~18 chars under NFKC; 1000 raw code units (< MAX_QUOTE 8000) explode past it.
+    const quote = 'ﷺ'.repeat(1000)
+    expect(quote.length).toBeLessThan(8_000) // a naive raw-length cap would accept it…
+    expect(quote.normalize('NFKC').length).toBeGreaterThan(8_000) // …but the stored (folded) quote blows the cap
+    const res = await app.request(url(), { method: 'POST', headers: auth(owner), body: JSON.stringify({ filePath: 'index.html', body: 'hi', quote }) }, env)
+    expect(res.status).toBe(400)
+  })
+
+  test('control-chars-stripped: ANSI escapes removed from body + quote on input; newline/tab preserved', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    await seedSiteWithFile(db, r2, owner)
+    const esc = '[31mred[0m' // ESC (0x1B) + SGR: raw terminal injection if printed unescaped
+    await app.request(url(), { method: 'POST', headers: auth(owner), body: JSON.stringify({ filePath: 'index.html', body: `esc ${esc}`, quote: `fox ${esc}` }) }, env)
+    await app.request(url(), { method: 'POST', headers: auth(owner), body: JSON.stringify({ filePath: 'index.html', body: 'multi\nline\tkept' }) }, env)
+
+    const list = await (await app.request(url('?filePath=index.html'), { headers: auth(owner) }, env)).json()
+    const escThread = list.find((t: { comments: { body: string }[] }) => t.comments[0].body.startsWith('esc'))
+    const nlThread = list.find((t: { comments: { body: string }[] }) => t.comments[0].body.startsWith('multi'))
+    // Any surviving C0 (0x00-0x1F) or DEL (0x7F) char, excluding the allowed tab/newline.
+    const controlCodes = (s: string) =>
+      [...s].map((ch) => ch.charCodeAt(0)).filter((code) => (code < 32 || code === 127) && code !== 9 && code !== 10)
+    expect(controlCodes(escThread.comments[0].body)).toEqual([]) // ESC stripped, printable payload survives
+    expect(escThread.comments[0].body).toContain('[31mred')
+    expect(controlCodes(escThread.quote)).toEqual([])
+    // Newline + tab are legitimate multi-line comment text and MUST survive.
+    expect(nlThread.comments[0].body).toBe('multi\nline\tkept')
+  })
+
+  test('edit-deleted-comment-404: editing or re-deleting an already soft-deleted comment → 404', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    const { siteId } = await seedSiteWithFile(db, r2, owner)
+    const threadId = await seedThread(db, { siteId, filePath: 'index.html', createdBy: owner })
+    const commentId = await seedComment(db, { threadId, authorId: owner, body: 'mine' })
+    const path = url(`/${threadId}/messages/${commentId}`)
+
+    const del = await app.request(path, { method: 'DELETE', headers: auth(owner) }, env)
+    expect(del.status).toBe(200)
+    // The author would otherwise pass the authz check — the deleted guard must 404 first.
+    const editAfter = await app.request(path, { method: 'PATCH', headers: auth(owner), body: JSON.stringify({ body: 'resurrect' }) }, env)
+    expect(editAfter.status).toBe(404)
+    const delAgain = await app.request(path, { method: 'DELETE', headers: auth(owner) }, env)
+    expect(delAgain.status).toBe(404)
+  })
+
+  test('archived-site-410: a comment request on an archived site → 410 (checkAccess gone, not 403)', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    const sp = await seedSpace(db, { createdBy: owner, slug: 'acme' })
+    const siteId = await seedSite(db, { spaceId: sp, ownerId: owner, slug: 'doc', visibility: 'team', status: 'archived' })
+    await seedFile(db, r2, siteId, { path: 'index.html', text: '<p>x</p>' })
+
+    const res = await app.request(url('?filePath=index.html'), { headers: auth(owner) }, env)
+    expect(res.status).toBe(410)
+  })
+})

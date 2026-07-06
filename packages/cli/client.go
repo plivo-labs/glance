@@ -36,9 +36,11 @@ type client struct {
 
 func newClient(baseURL, token string, out io.Writer) *client {
 	return &client{
-		baseURL:     baseURL,
-		token:       token,
-		http:        &http.Client{},
+		baseURL: baseURL,
+		token:   token,
+		// A timeout so a hung/slow server can't wedge a command forever. Per-request (each login
+		// poll is its own request), and the self-updater builds its own longer-lived clients.
+		http:        &http.Client{Timeout: 30 * time.Second},
 		out:         out,
 		errOut:      os.Stderr,
 		in:          os.Stdin,

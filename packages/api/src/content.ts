@@ -83,16 +83,19 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
       .limit(1)
   )[0]
   if (!siteRow) return notFound(c)
-  if (siteRow.status === 'archived') return c.text('This site has been archived', 410)
 
   if (userId === null) {
     // Untokened request: no public tier exists, so anonymous access is never allowed.
     return c.text('Forbidden', 403)
-  } else {
-    // Gated path: reconstruct the bound user and re-authorize against live state, through the
-    // same authorizeViewerById the data plane uses — both surfaces enforce the SAME rules.
-    const { access } = await authorizeViewerById(db, siteRow, userId)
-    if (!access.ok) return c.text('Forbidden', access.status)
+  }
+  // Gated path: reconstruct the bound user and re-authorize against live state, through the same
+  // authorizeViewerById → checkAccess the data plane uses — both surfaces enforce the SAME rules.
+  // The archive decision lives THERE (410 for everyone except superadmin), so routing it through
+  // checkAccess lets a superadmin still view an archived site instead of a blanket early 410.
+  const { access } = await authorizeViewerById(db, siteRow, userId)
+  if (!access.ok) {
+    if (access.status === 410) return c.text('This site has been archived', 410)
+    return c.text('Forbidden', access.status)
   }
 
   const reqPath = normalizePath(rest)
@@ -144,6 +147,7 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
     const html = await markdown.parse(await object.text())
     return c.html(renderMarkdownDoc(file.path, html), 200, {
       'content-security-policy': markdownCsp(frameAncestors),
+      'x-content-type-options': 'nosniff',
       'referrer-policy': 'no-referrer',
     })
   }
@@ -175,6 +179,13 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
   // Uploaded HTML lives at a path that carries the gated-content token; no-referrer stops
   // that token leaking to third parties via the Referer header on outbound requests.
   headers.set('referrer-policy', 'no-referrer')
+  // These bytes are per-viewer (the URL carries a user-bound token): `private` keeps shared/proxy
+  // caches from retaining them, while `no-cache` lets the viewer's OWN browser store-and-revalidate
+  // against the ETag (→ the 304 below), so a revalidation costs a header round-trip, not the body.
+  headers.set('cache-control', 'private, no-cache')
+  // Honor the conditional request: when the viewer already holds this exact ETag, answer 304 and
+  // skip re-streaming the body (the caching headers still ride along so the cached entry stays fresh).
+  if (c.req.header('if-none-match') === object.httpEtag) return new Response(null, { status: 304, headers })
   return new Response(object.body, { headers })
 }
 
@@ -218,8 +229,12 @@ export function injectAnnotate(html: string, payload: { siteId: string; filePath
     `<link rel="stylesheet" href="/_glance/annotate.css?v=${ANNOTATE_VERSION}">` +
     `<script>window.__GLANCE__=${json}</script>` +
     `<script src="/_glance/annotate.js?v=${ANNOTATE_VERSION}" defer></script>`
-  if (html.includes('</body>')) return html.replace('</body>', `${tags}</body>`)
-  if (html.includes('</head>')) return html.replace('</head>', `${tags}</head>`)
+  // Replacement FUNCTIONS, not strings: `tags` embeds a user-controlled filePath, and `$&`/`$1`/`$$`
+  // in a replacement STRING are special (they'd corrupt output). A function's return is used verbatim.
+  if (html.includes('</body>')) return html.replace('</body>', () => `${tags}</body>`)
+  if (html.includes('</head>')) return html.replace('</head>', () => `${tags}</head>`)
+  // No close tag to anchor to: append after the document. The client is `defer`, so it still runs
+  // after parse, and appending (never prepending) keeps any leading doctype first — no quirks flip.
   return html + tags
 }
 
@@ -232,8 +247,14 @@ export function injectDb(html: string, appOrigin: string): string {
   const tags =
     `<script>window.__GLANCE_DB__=${json}</script>` +
     `<script src="/_glance/db.js?v=${GLANCE_DB_VERSION}"></script>`
-  if (html.includes('</head>')) return html.replace('</head>', `${tags}</head>`)
-  if (html.includes('<body')) return html.replace(/<body([^>]*)>/, `<body$1>${tags}`)
+  // Replacement FUNCTIONS so any `$`-sequence inside `tags` is inserted verbatim (and `$1` stays the
+  // captured <body> attributes). db.js loads SYNCHRONOUSLY, so anchor it as early as possible.
+  if (html.includes('</head>')) return html.replace('</head>', () => `${tags}</head>`)
+  if (/<body[^>]*>/i.test(html)) return html.replace(/<body([^>]*)>/i, (_m, attrs) => `<body${attrs}>${tags}`)
+  // No <head>/<body> to anchor to: insert right AFTER any leading doctype rather than before it —
+  // prepending `tags` ahead of the doctype would push it off the first line and flip into quirks mode.
+  const doctype = /^\s*<!doctype[^>]*>/i.exec(html)
+  if (doctype) return html.slice(0, doctype[0].length) + tags + html.slice(doctype[0].length)
   return tags + html
 }
 
