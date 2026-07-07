@@ -53,6 +53,10 @@ function Viewer() {
   const sitePath = useParams()['*'] ?? ''
 
   const iframeRef = useRef<HTMLIFrameElement>(null)
+  // Latest file path reported by the iframe's 'ready' intent, stashed unconditionally so the
+  // me-resolution effect below can flush it even when 'ready' beats the /api/auth/me fetch on a
+  // fresh load (see the recordVisit gate in the intent handler).
+  const lastReadyPathRef = useRef<string | null>(null)
   const contentOrigin = useMemo(() => new URL(site.contentUrl).origin, [site.contentUrl])
   const src = useMemo(() => withAnnotate(appendPath(site.contentUrl, sitePath)), [site.contentUrl, sitePath])
 
@@ -144,9 +148,11 @@ function Viewer() {
       if (!intent) return
       if (intent.type === 'ready') {
         setFilePath(intent.filePath)
+        lastReadyPathRef.current = intent.filePath
         // Every in-iframe navigation fires 'ready' with the real current file — the only place the
         // SPA learns it, since the URL doesn't change on in-page navigation. Skip until Me resolves
-        // (never record to an unknown/shared-machine user).
+        // (never record to an unknown/shared-machine user); the me-effect below flushes the ref once
+        // Me resolves, so a 'ready' that beats the /api/auth/me fetch on a fresh load isn't dropped.
         if (me) recordVisit(me.id, { spaceSlug: site.spaceSlug, siteSlug: site.siteSlug, title: site.title, filePath: intent.filePath })
       } else if (intent.type === 'select') setSelection({ kind: 'text', quote: intent.quote, rect: intent.rect })
       else if (intent.type === 'pinpoint') setSelection({ kind: 'element', anchor: intent.anchor, rect: intent.rect })
@@ -166,6 +172,11 @@ function Viewer() {
         // Site-level visit (filePath '') — recorded once Me is known, independent of any in-iframe
         // navigation (which may never report a file, e.g. a single-page site with no postMessage).
         recordVisit(m.id, { spaceSlug: site.spaceSlug, siteSlug: site.siteSlug, title: site.title, filePath: '' })
+        // Flush whatever file the iframe already reported ready for — on a fresh load 'ready' usually
+        // beats this fetch, and the intent handler's `if (me)` gate above would otherwise drop it.
+        if (lastReadyPathRef.current) {
+          recordVisit(m.id, { spaceSlug: site.spaceSlug, siteSlug: site.siteSlug, title: site.title, filePath: lastReadyPathRef.current })
+        }
       })
       .catch(() => setMe(null))
   }, [site.spaceSlug, site.siteSlug, site.title])

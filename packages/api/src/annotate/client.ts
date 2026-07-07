@@ -13,6 +13,7 @@
 //               tracks scroll/resize/DOM-mutation. Unresolved selectors aren't painted and are
 //               reported back so the parent can flag them orphaned.
 
+import { withAnnotateParam } from './linkRewrite'
 import { computeSelector, describeElement, findRange, isPageSpanning, resolveSelector } from './locator'
 
 type Boot = { siteId: string; filePath: string; appOrigin: string }
@@ -103,6 +104,30 @@ document.addEventListener(
     toParent({ type: 'glance:pinpoint', selector: computeSelector(el), tag, preview, textFallback, rect: rectOf(el) })
   },
   true, // capture phase: suggest the anchor before the page's own handlers can swallow the click
+)
+
+// --- link navigation: propagate ?glance_annotate=1 across in-iframe navigation -----------
+// content.ts only injects this client when the request carries ?glance_annotate=1 — relative links
+// inside the uploaded page never carry it, so the NEXT page loads without us: no glance:ready, so
+// the sidebar misses the navigation and the viewer's filePath goes stale (misattributing subsequent
+// comments). Rewrite the href just before the browser navigates, for every same-origin, plain
+// (no modifier key, no download/new-tab) left click on a link. Registered after the pinpoint handler
+// above so its `defaultPrevented` check (same capture phase, same node) correctly skips a click the
+// pinpoint handler already claimed; otherwise this listener is side-effect-free beyond the href
+// mutation and never calls preventDefault, so ordinary navigation proceeds unmodified.
+document.addEventListener(
+  'click',
+  (e) => {
+    if (e.defaultPrevented || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return
+    const target = e.target as Element | null
+    const a = target?.closest?.('a[href]') as HTMLAnchorElement | null
+    if (!a || a.hasAttribute('download')) return
+    const linkTarget = a.getAttribute('target')
+    if (linkTarget && linkTarget !== '_self') return
+    const rewritten = withAnnotateParam(a.getAttribute('href') ?? '', document.baseURI)
+    if (rewritten && rewritten !== a.href) a.href = rewritten
+  },
+  true,
 )
 
 // --- overlay layer: paint element anchors + the hover outline ----------------------------

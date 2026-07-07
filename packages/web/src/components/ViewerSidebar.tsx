@@ -29,7 +29,7 @@ export function ViewerSidebar({
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="left" className="w-80 gap-0 p-0 sm:max-w-xs">
-        <SheetHeader className="flex-row items-center justify-between gap-2 border-b px-4 py-3">
+        <SheetHeader className="flex-row items-center justify-between gap-2 border-b py-3 pr-10 pl-4">
           <div>
             <SheetTitle className="text-sm">Recently opened</SheetTitle>
             <SheetDescription className="sr-only">Sites and files you've opened recently.</SheetDescription>
