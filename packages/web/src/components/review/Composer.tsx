@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
@@ -10,6 +10,7 @@ export function Composer({
   onSubmit,
   onCancel,
   autoFocus,
+  focusOn,
   className,
 }: {
   placeholder: string
@@ -17,11 +18,20 @@ export function Composer({
   onSubmit: (body: string) => void | Promise<void>
   onCancel?: () => void
   autoFocus?: boolean
+  // Refocus the textarea whenever this value changes identity. `autoFocus` only fires on mount, so
+  // a click that re-anchors an already-open composer would leave focus in the iframe — pass the
+  // pending anchor here so every select/pinpoint puts the caret back in the box.
+  focusOn?: unknown
   className?: string
 }) {
   const [body, setBody] = useState('')
   const [busy, setBusy] = useState(false)
   const trimmed = body.trim()
+
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    if (focusOn !== undefined) textareaRef.current?.focus()
+  }, [focusOn])
 
   async function submit() {
     if (!trimmed || busy) return
@@ -37,6 +47,7 @@ export function Composer({
   return (
     <div className={cn('flex flex-col gap-2', className)}>
       <textarea
+        ref={textareaRef}
         // biome-ignore lint/a11y/noAutofocus: composer is opened by an explicit user action.
         autoFocus={autoFocus}
         value={body}

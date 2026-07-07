@@ -52,7 +52,7 @@ export function ReviewRail({
               <p className="line-clamp-2 border-primary/40 border-l-2 pl-2 text-muted-foreground text-xs italic">“{composing.quote}”</p>
             )}
           </div>
-          <Composer autoFocus placeholder="Add a comment…" submitLabel="Comment" onSubmit={onCreate} onCancel={onCancelComposer} />
+          <Composer autoFocus focusOn={composing} placeholder="Add a comment…" submitLabel="Comment" onSubmit={onCreate} onCancel={onCancelComposer} />
         </div>
       )}
 
