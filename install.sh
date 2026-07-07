@@ -68,16 +68,26 @@ detect_arch() {
     esac
 }
 
+# Resolve the latest release tag WITHOUT the GitHub API (anonymous api.github.com is capped at
+# 60 req/hr/IP — shared NATs/CI hit it and the install silently fails). Mirrors the CLI's own
+# self-update path (packages/cli/upgrade_io.go): the /releases/latest page 302-redirects to
+# /releases/tag/<tag>, so the tag rides in the redirect target's Location header — no API, no token.
 latest_version() {
+    latest_url="https://github.com/${REPO}/releases/latest"
+    location=""
     if command -v curl > /dev/null 2>&1; then
-        curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null \
-            | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/'
+        # -I HEAD (no body), no -L: read the single 302's Location header. --fail does not trip on 3xx.
+        location="$(curl -fsSI "$latest_url" 2>/dev/null \
+            | awk 'tolower($1) == "location:" { print $2 }' | tail -1)"
     elif command -v wget > /dev/null 2>&1; then
-        wget -qO- "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null \
-            | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/'
+        # wget follows redirects; -S dumps each response's headers to stderr — grab the last Location.
+        location="$(wget -S -O /dev/null "$latest_url" 2>&1 \
+            | awk 'tolower($1) == "location:" { loc = $2 } END { print loc }')"
     else
         err "curl or wget is required"
     fi
+    # Extract <tag> from .../releases/tag/<tag>; the [^...] class stops at any trailing CR/query.
+    echo "$location" | sed -n 's|.*/tag/\([^/?#[:space:]]*\).*|\1|p'
 }
 
 download() {

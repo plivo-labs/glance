@@ -16,6 +16,20 @@ export function toSessionUser(u: Pick<User, 'id' | 'email' | 'name' | 'role'>): 
   return { id: u.id, email: u.email, name: u.name, role: u.role }
 }
 
+/** Single indexed (PK) row read of a user's identity fields — null if the row is gone. Lets
+ *  requireAuth re-check the live role each request rather than trusting a stale session copy. */
+export async function getUserById(
+  db: DrizzleD1Database,
+  id: string,
+): Promise<Pick<User, 'id' | 'email' | 'name' | 'role'> | null> {
+  const row = await db
+    .select({ id: users.id, email: users.email, name: users.name, role: users.role })
+    .from(users)
+    .where(eq(users.id, id))
+    .limit(1)
+  return row[0] ?? null
+}
+
 /** True iff at least one user row has role='superadmin'. Drives bootstrap availability. */
 export async function superadminExists(db: DrizzleD1Database): Promise<boolean> {
   const row = await db.select({ id: users.id }).from(users).where(eq(users.role, 'superadmin')).limit(1)
@@ -36,17 +50,36 @@ export async function superadminStatus(
   }
 }
 
-/** Pick a free personal-space slug from the email handle, then create the space + membership. */
+/** True for a SQLite/D1 UNIQUE-constraint violation (message carries "UNIQUE constraint failed"
+ *  in both the bun:sqlite harness and D1's wrapped `D1_ERROR`). */
+function isUniqueConstraintError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err)
+  return /unique constraint failed/i.test(msg)
+}
+
+/**
+ * Create the user's personal space + membership, deriving a free slug from the email handle.
+ * Attempts each candidate slug DIRECTLY (no check-then-create TOCTOU): on the unique(spaces.slug)
+ * conflict a concurrent same-handle signup would otherwise trigger, it falls through to the next
+ * candidate instead of 500ing — so the caller (findOrCreateUser / bootstrapSuperadminByEmail),
+ * which has already inserted the user row, never strands a user with no personal space.
+ */
 export async function createPersonalSpace(db: DrizzleD1Database, userId: string, email: string): Promise<void> {
   let base = slugifyHandle(email)
   if (RESERVED_SLUGS.has(base)) base = `${base}-1`
-  let slug = base
-  for (let i = 1; i <= 25; i++) {
-    const taken = await db.select({ id: spaces.id }).from(spaces).where(eq(spaces.slug, slug)).limit(1)
-    if (taken.length === 0) break
-    slug = `${base}-${i}`
+  const candidates = [base, ...Array.from({ length: 25 }, (_, i) => `${base}-${i + 1}`)]
+  for (let i = 0; i < candidates.length; i++) {
+    const slug = candidates[i]
+    try {
+      await createSpace(db, { slug, name: email.split('@')[0] ?? slug, type: 'personal', createdBy: userId })
+      return
+    } catch (err) {
+      // Slug taken by a racing signup → try the next candidate; anything else (or exhausting the
+      // bounded list) is a real failure the caller must see.
+      if (isUniqueConstraintError(err) && i < candidates.length - 1) continue
+      throw err
+    }
   }
-  await createSpace(db, { slug, name: email.split('@')[0] ?? slug, type: 'personal', createdBy: userId })
 }
 
 /**

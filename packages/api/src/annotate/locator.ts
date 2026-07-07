@@ -89,3 +89,73 @@ export function describeElement(el: Element): { tag: string; preview: string; te
   const preview = (labelled || text || tag).trim().slice(0, PREVIEW_MAX)
   return { tag, preview, textFallback: text.slice(0, FALLBACK_MAX) }
 }
+
+// --- text-quote anchoring ---------------------------------------------------------------------
+// Re-find a stored comment quote in the RENDERED DOM and return a Range for the CSS Custom Highlight
+// painter. Kept here (not in client.ts) so it is global-free and unit-testable under happy-dom.
+
+// The WHATWG NodeFilter constants, as literals — the bundle runs in a real browser (where the
+// `NodeFilter` global exists) but the unit tests drive this under happy-dom, which does NOT register
+// `NodeFilter` globally. These numeric values are fixed by the DOM spec.
+const SHOW_TEXT = 0x4
+const FILTER_ACCEPT = 1
+const FILTER_REJECT = 2
+
+// Text inside these never renders (or isn't laid-out content), so a quote whose words happen to also
+// appear there — most often an inline chart-data <script> — must not anchor to it.
+const NON_RENDERED_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA', 'TEMPLATE'])
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/** True when a text node is rendered, anchorable content: no SCRIPT/STYLE/NOSCRIPT/TEXTAREA/TEMPLATE
+ *  ancestor, and a parent that occupies layout (`getClientRects` is empty for a `display:none`
+ *  subtree in a real browser). happy-dom reports rects for everything, so the rect check never
+ *  over-rejects under test — the tag filter carries the covered behavior. */
+function isRenderedText(node: Text): boolean {
+  for (let el = node.parentElement; el; el = el.parentElement) if (NON_RENDERED_TAGS.has(el.tagName)) return false
+  const parent = node.parentElement
+  return !!parent && parent.getClientRects().length > 0
+}
+
+/** Locate an anchor quote in the rendered DOM, whitespace-flexibly, and return a Range. The stored
+ *  quote is NFKC-folded + whitespace-collapsed (`lib/anchor` normalizeText), so we (1) NFKC-fold the
+ *  DOM text to match on the SAME axis (else a ligature/NBSP/full-width mismatch fails to anchor), and
+ *  (2) match its tokens across ANY run of whitespace (`\s*`, including none). Case-insensitive to
+ *  survive CSS text-transform. Only RENDERED text is walked (see isRenderedText), so the FIRST match
+ *  is inside visible content — a quote that also appears in a <script> anchors to the visible one.
+ *  Null if absent. */
+export function findRange(quote: string, doc: Document): Range | null {
+  const tokens = quote.split(' ').filter(Boolean).map(escapeRegExp)
+  if (tokens.length === 0 || !doc.body) return null
+  const re = new RegExp(tokens.join('\\s*'), 'i')
+
+  const walker = doc.createTreeWalker(doc.body, SHOW_TEXT, {
+    acceptNode: (n) => (isRenderedText(n as Text) ? FILTER_ACCEPT : FILTER_REJECT),
+  })
+  const segs: { node: Text; start: number }[] = []
+  let acc = ''
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const t = n as Text
+    // Fold NFKC (only) so both sides match on the same axis; whitespace flex is the `\s*` join above.
+    // Offsets stay in this folded space — a per-node NFKC length delta is clamped below, never thrown.
+    segs.push({ node: t, start: acc.length })
+    acc += t.data.normalize('NFKC')
+  }
+  const m = re.exec(acc)
+  if (!m) return null
+  const lo = m.index
+  const hi = m.index + m[0].length
+  const at = (pos: number): [Text, number] | null => {
+    for (let i = segs.length - 1; i >= 0; i--) if (pos >= segs[i].start) return [segs[i].node, Math.min(pos - segs[i].start, segs[i].node.data.length)]
+    return null
+  }
+  const s = at(lo)
+  const e = at(hi)
+  if (!s || !e) return null
+  const range = doc.createRange()
+  range.setStart(s[0], s[1])
+  range.setEnd(e[0], e[1])
+  return range
+}

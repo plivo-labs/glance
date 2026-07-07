@@ -45,6 +45,7 @@ export function CommandPalette({
     (node: HTMLDivElement | null) => {
       if (!node) {
         if (timer.current) clearTimeout(timer.current)
+        ++reqSeq.current // invalidate any in-flight search so a late response can't repopulate on reopen
         setQuery('')
         setSites([])
         return
@@ -66,6 +67,9 @@ export function CommandPalette({
     if (timer.current) clearTimeout(timer.current)
     const q = v.trim()
     if (!q) {
+      // Bump the seq so an in-flight fetch for the PRIOR query fails its id===reqSeq guard and
+      // can't repopulate results after the input was cleared (#39).
+      ++reqSeq.current
       setSites([])
       return
     }

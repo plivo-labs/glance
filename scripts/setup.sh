@@ -118,7 +118,23 @@ CONTENT_URL="$(deploy_url $CONTENT)"
 # them on the content worker, so both workers MUST carry the identical value. We set a given
 # secret only when BOTH workers lack it (clean first run) — otherwise we can't read it back
 # to guarantee a match, so we keep what's there and warn on a partial state.
-has_secret() { wrangler secret list "${@:2}" 2>/dev/null | grep -q "\"$1\""; }
+# Returns 0 if secret $1 is present on the target worker, 1 if it is GENUINELY absent. If the
+# underlying `wrangler secret list` call itself fails (network/auth/transient), it ABORTS the whole
+# script rather than reporting "absent" — misreading a transient failure as absent would trip the
+# clean-first-run branch below and rotate live SESSION_SECRET/CONTENT_TOKEN_SECRET with fresh
+# openssl, silently invalidating every session and gated token. ($1 = secret name, $2.. = worker
+# selector flags, e.g. $CONTENT.)
+has_secret() {
+  local name="$1"; shift
+  local out rc=0
+  out="$(wrangler secret list "$@" 2>&1)" || rc=$?
+  if [[ $rc -ne 0 ]]; then
+    echo "$out" >&2
+    echo "   wrangler secret list failed (exit $rc) — aborting so live secrets are NOT rotated." >&2
+    exit 1
+  fi
+  grep -q "\"$name\"" <<<"$out"
+}
 put_both() { # name value
   printf '%s' "$2" | wrangler secret put "$1" >/dev/null
   # shellcheck disable=SC2086

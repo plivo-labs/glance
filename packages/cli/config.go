@@ -35,14 +35,37 @@ func readConfig() *Config {
 }
 
 func writeConfig(cfg Config) error {
-	if err := os.MkdirAll(configDir(), 0o755); err != nil {
+	dir := configDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(configPath(), data, 0o600)
+	// os.WriteFile's mode only applies on CREATE: install.sh seeds config.json at 0644 and login
+	// truncate-rewrites it, so a plain WriteFile would leave the bearer token world-readable. Write
+	// a fresh temp file (CreateTemp opens 0600) then rename(2) over the target - this both forces
+	// 0600 and makes the swap atomic (no torn config on a crash mid-write).
+	tmp, err := os.CreateTemp(dir, "config-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Chmod(tmpName, 0o600); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return os.Rename(tmpName, configPath())
 }
 
 // Instance URL precedence: explicit env override -> persisted config -> local dev default. Uses

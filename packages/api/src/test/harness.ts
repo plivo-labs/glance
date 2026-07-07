@@ -35,6 +35,7 @@ const MIGRATIONS = [
   'drizzle/0004_drop_public_visibility.sql',
   'drizzle/0005_peaceful_onslaught.sql',
   'drizzle/0006_glance_documents.sql',
+  'drizzle/0007_add_indexes.sql',
 ]
 
 /** Fresh in-memory DB with the real schema applied. */

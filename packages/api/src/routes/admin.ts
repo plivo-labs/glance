@@ -1,6 +1,7 @@
 import { and, desc, eq, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { sites, spaceMembers, spaces as spacesTable, users } from '../db/schema'
+import { revokeUserCliTokens } from '../lib/session'
 import { computeStats } from '../lib/stats'
 import { deleteSiteObjects } from '../lib/storage'
 import { isVisibility, normalizeVisibility } from '../lib/visibility'
@@ -120,6 +121,14 @@ admin.get('/users', async (c) => {
     .from(users)
     .orderBy(desc(users.createdAt))
   return c.json(rows)
+})
+
+// POST /api/admin/users/:id/revoke-cli — offboarding kill-switch: revoke EVERY CLI token the user
+// holds (enumerated via the per-user `cli_index:` prefix). Idempotent — a no-op for a user with no
+// tokens (or an already-deleted one). Superadmin-only via the router-wide requireSuperAdmin above.
+admin.post('/users/:id/revoke-cli', async (c) => {
+  await revokeUserCliTokens(c, c.req.param('id'))
+  return c.json({ ok: true })
 })
 
 // GET /api/admin/stats — usage-analytics rollups: headline totals (users, sites, files, storage,

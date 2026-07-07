@@ -13,7 +13,7 @@
 //               tracks scroll/resize/DOM-mutation. Unresolved selectors aren't painted and are
 //               reported back so the parent can flag them orphaned.
 
-import { computeSelector, describeElement, isPageSpanning, resolveSelector } from './locator'
+import { computeSelector, describeElement, findRange, isPageSpanning, resolveSelector } from './locator'
 
 type Boot = { siteId: string; filePath: string; appOrigin: string }
 type Mode = 'read' | 'annotate'
@@ -246,43 +246,6 @@ function setPending(selector: string | null): void {
 
 // --- painting text anchors (CSS Custom Highlight) ----------------------------------------
 
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-/** Locate an anchor quote in the rendered DOM, whitespace-flexibly, and return a Range. The stored
- *  quote is whitespace-normalized, so we match its tokens across ANY run of whitespace the rendered
- *  text may use — including none. Case-insensitive to survive CSS text-transform. Null if absent. */
-function findRange(quote: string): Range | null {
-  const tokens = quote.split(' ').filter(Boolean).map(escapeRegExp)
-  if (tokens.length === 0) return null
-  const re = new RegExp(tokens.join('\\s*'), 'i')
-
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
-  const segs: { node: Text; start: number }[] = []
-  let acc = ''
-  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-    const t = n as Text
-    segs.push({ node: t, start: acc.length })
-    acc += t.data
-  }
-  const m = re.exec(acc)
-  if (!m) return null
-  const lo = m.index
-  const hi = m.index + m[0].length
-  const at = (pos: number): [Text, number] | null => {
-    for (let i = segs.length - 1; i >= 0; i--) if (pos >= segs[i].start) return [segs[i].node, pos - segs[i].start]
-    return null
-  }
-  const s = at(lo)
-  const e = at(hi)
-  if (!s || !e) return null
-  const range = document.createRange()
-  range.setStart(s[0], s[1])
-  range.setEnd(e[0], e[1])
-  return range
-}
-
 const supportsHighlight = typeof CSS !== 'undefined' && 'highlights' in CSS
 
 function paintTexts(anchors: PaintAnchor[]): void {
@@ -290,7 +253,7 @@ function paintTexts(anchors: PaintAnchor[]): void {
   const highlight = new Highlight()
   for (const a of anchors) {
     if (!a.quote) continue
-    const range = findRange(a.quote)
+    const range = findRange(a.quote, document)
     if (range) highlight.add(range)
   }
   CSS.highlights.set('glance-comment', highlight)
@@ -308,7 +271,7 @@ function focus(target: { quote?: string; selector?: string }): void {
     resolveSelector(target.selector, document)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     return
   }
-  if (target.quote) findRange(target.quote)?.startContainer.parentElement?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  if (target.quote) findRange(target.quote, document)?.startContainer.parentElement?.scrollIntoView({ behavior: 'smooth', block: 'center' })
 }
 
 function setMode(next: Mode): void {

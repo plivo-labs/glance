@@ -1,5 +1,5 @@
 import { type Context, Hono } from 'hono'
-import { type ElementAnchor, parseElementAnchor } from '../lib/anchor'
+import { type ElementAnchor, normalizeText, parseElementAnchor } from '../lib/anchor'
 import {
   addComment,
   createThread,
@@ -24,11 +24,26 @@ import type { AppEnv, SessionUser } from '../types'
 const MAX_COMMENT_BODY = 10_000
 // Cap on the quote. parseIntent bounds it for iframe-sourced messages, but a direct API call
 // bypasses that; without a cap a huge quote bloats the DB and blows up the browser regex the
-// annotate client builds from it, so cap the raw input before we NFKC-fold it.
+// annotate client builds from it. The cap is enforced AFTER NFKC folding: a decomposed payload
+// (e.g. U+FDFA) expands ~18x once folded, so a raw-length cap would let the stored quote blow far
+// past this — normalize first, then measure.
 const MAX_QUOTE = 8_000
 const MAX_PATH = 1_024
 
 const tooLong = (v: unknown, max: number): boolean => typeof v === 'string' && v.length > max
+
+/** Strip ASCII control chars (C0 range 0x00-0x1F + DEL 0x7F) that would inject raw terminal escape
+ *  sequences when the Go CLI prints a comment. Newline + tab survive (legitimate in multi-line
+ *  comment text and harmless to a terminal); everything else in the range is dropped at this
+ *  untrusted-input boundary. Written without control-char source literals. */
+function stripControlChars(s: string): string {
+  let out = ''
+  for (const ch of s) {
+    const code = ch.charCodeAt(0)
+    if (code === 9 || code === 10 || (code > 31 && code !== 127)) out += ch
+  }
+  return out
+}
 
 export const comments = new Hono<AppEnv>()
 
@@ -50,14 +65,18 @@ async function siteOrError(c: Context<AppEnv>): Promise<ResolvedSite | Response>
   const { space, site } = c.req.param()
   const { site: row, access } = await resolveSiteForAccess(c.get('db'), space, site, user)
   if (!row) return c.json({ error: 'not found' }, 404)
-  if (!canComment(row, access)) return c.json({ error: 'forbidden' }, 403)
+  // Surface checkAccess's real status so an archived site returns 410 (gone), not a flat 403;
+  // `canComment` stays the gate (access.ok ⇒ a non-access refusal would still be 403).
+  if (!canComment(row, access)) return c.json({ error: 'forbidden' }, access.ok ? 403 : access.status)
   return row
 }
 
-/** Validate a comment body: non-empty string within the cap. Null ⇒ caller returns 400. */
+/** Validate a comment body: strip control chars, then require a non-empty string within the cap.
+ *  Control chars are stripped BEFORE the cap so it bounds the value we actually store. Null ⇒
+ *  caller returns 400. */
 function cleanBody(v: unknown): string | null {
   if (typeof v !== 'string') return null
-  const body = v.trim()
+  const body = stripControlChars(v).trim()
   if (!body || body.length > MAX_COMMENT_BODY) return null
   return body
 }
@@ -87,7 +106,11 @@ comments.post('/:space/:site/comments', async (c) => {
   if (!body) return c.json({ error: 'invalid body' }, 400)
   if (typeof raw?.filePath !== 'string' || !raw.filePath || tooLong(raw.filePath, MAX_PATH))
     return c.json({ error: 'filePath required' }, 400)
-  if (tooLong(raw.quote, MAX_QUOTE)) return c.json({ error: 'quote too long' }, 400)
+  // Fold (NFKC) + strip control chars BEFORE the cap so it bounds the value we actually store —
+  // a decomposed payload can expand ~18x under NFKC, past a raw-length cap. This is the same
+  // normalizer createThread applies, so the check measures the stored quote exactly.
+  const quote = typeof raw.quote === 'string' ? normalizeText(stripControlChars(raw.quote)) : undefined
+  if (quote !== undefined && quote.length > MAX_QUOTE) return c.json({ error: 'quote too long' }, 400)
   const anchorType = raw.anchorType === 'page' ? 'page' : raw.anchorType === 'element' ? 'element' : 'text'
 
   // An element anchor is validated + built in the canonical layer; the route only maps its error to
@@ -105,7 +128,7 @@ comments.post('/:space/:site/comments', async (c) => {
     createdBy: c.get('user').id,
     body,
     anchorType,
-    quote: typeof raw.quote === 'string' ? raw.quote : undefined,
+    quote,
     anchor,
   })
   return c.json(out, 201)
@@ -170,6 +193,9 @@ async function commentInSite(c: Context<AppEnv>, siteId: string) {
   const { threadId, commentId } = c.req.param()
   const comment = await getComment(c.get('db'), commentId)
   if (!comment || comment.threadId !== threadId) return c.json({ error: 'not found' }, 404)
+  // An already soft-deleted comment is gone: editing / re-deleting it is a silent no-op that could
+  // resurface a redacted thread, so treat it as not found.
+  if (comment.deletedAt !== null) return c.json({ error: 'not found' }, 404)
   const thread = await getThread(c.get('db'), comment.threadId)
   if (!thread || thread.siteId !== siteId) return c.json({ error: 'not found' }, 404)
   return comment

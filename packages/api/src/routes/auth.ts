@@ -7,7 +7,7 @@ import { bootstrapSuperadminByEmail, createPersonalSpace, superadminStatus, toSe
 import { requireAuth } from '../middleware/auth'
 import { bootstrapDecision } from '../lib/bootstrap'
 import { createGoogle, isGoogleEnabled, OAUTH_SCOPES } from '../lib/oauth'
-import { createCliToken, createSession, destroySession } from '../lib/session'
+import { createCliToken, createSession, destroyCliToken, destroySession } from '../lib/session'
 import type { AppEnv, Bindings, SessionUser } from '../types'
 
 const OAUTH_COOKIE = 'glance_oauth'
@@ -86,6 +86,10 @@ auth.get('/callback', async (c) => {
 
 auth.post('/logout', async (c) => {
   await destroySession(c)
+  // `glance logout` authenticates with a Bearer CLI token and no cookie, so also revoke that
+  // token server-side — otherwise the logged-out CLI credential stays valid for its full 30d TTL.
+  const header = c.req.header('Authorization')
+  if (header?.startsWith('Bearer ')) await destroyCliToken(c, header.slice(7))
   return c.json({ ok: true })
 })
 
@@ -112,6 +116,11 @@ auth.post('/dev-login', async (c) => {
 // history, and Referer). On first run there is no session cookie, so middleware
 // `requireSameOrigin` is a no-op; this route does its OWN same-origin check.
 
+// Persistent (no TTL) one-shot marker set AFTER the first bootstrap session is minted. While a
+// configured superadmin exists but this is unset, the decision still allows a retry (anti-lockout);
+// once set, bootstrap is 410 forever — so a still-set BOOTSTRAP_TOKEN is not a permanent credential.
+const BOOTSTRAP_COMPLETE_KEY = 'bootstrap_complete'
+
 auth.post('/bootstrap', async (c) => {
   const appOrigin = new URL(c.env.APP_URL).origin
   const sameOrigin = c.req.header('Origin') === appOrigin || c.req.header('Sec-Fetch-Site') === 'same-origin'
@@ -124,17 +133,21 @@ auth.post('/bootstrap', async (c) => {
 
   const body = await c.req.json<{ token?: string }>().catch(() => ({}) as { token?: string })
   const db = c.get('db')
+  const alreadyCompleted = (await c.env.GLANCE_SESSIONS.get(BOOTSTRAP_COMPLETE_KEY)) !== null
   const decision = await bootstrapDecision({
     expectedToken: c.env.BOOTSTRAP_TOKEN,
     providedToken: body.token,
+    alreadyCompleted,
     status: () => superadminStatus(db, c.env.SUPERADMIN_EMAIL),
   })
   if (!decision.ok) return c.json({ error: 'bootstrap_unavailable' }, decision.status)
 
-  // Session (KV) is confirmed before the run is "done"; the idempotent decision lets a
-  // retry recover if KV write failed mid-way without re-locking the deploy.
+  // Session (KV) is confirmed before the run is marked "done"; the flag is set only AFTER a
+  // successful mint, so a KV failure mid-way leaves it unset and the (anti-lockout) decision
+  // lets a retry recover without re-locking the deploy. Once set, bootstrap is one-shot (410).
   const user = await bootstrapSuperadminByEmail(db, c.env.SUPERADMIN_EMAIL, null)
   await createSession(c, user)
+  await c.env.GLANCE_SESSIONS.put(BOOTSTRAP_COMPLETE_KEY, '1')
   return c.json({ ok: true, user })
 })
 

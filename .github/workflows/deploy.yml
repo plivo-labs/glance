@@ -17,22 +17,29 @@ on:
   push:
     branches: [main]
 
-# Never run two deploys at once; cancel an in-flight deploy if a newer commit lands.
+# Never run two deploys at once; a newer commit QUEUES behind the running deploy rather than
+# cancelling it. Killing a half-applied deploy (migrations + one worker done, the other not) leaves
+# the two workers on mismatched code — worse than waiting, so cancel-in-progress stays false.
 concurrency:
   group: deploy-${{ github.ref }}
   cancel-in-progress: false
 
+# Least privilege for the persisted GITHUB_TOKEN: this job authenticates to Cloudflare via
+# CLOUDFLARE_API_TOKEN (a repo secret), never the GitHub token — so it only needs to read the repo.
+permissions:
+  contents: read
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: latest
+          # Pin bun (not `latest`): the token-bearing wrangler steps below must never run on an
+          # unvetted, just-published Bun release.
+          bun-version: 1.3.14
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -51,6 +58,13 @@ jobs:
           # Allowed Google Workspace domain (e.g. plivo.com). Non-secret config — the OAuth callback
           # re-verifies the signed hd claim, so the value is safe to substitute in plaintext here.
           CF_ALLOWED_HD: ${{ vars.CF_ALLOWED_HD }}
+          # First-run superadmin email (e.g. you@plivo.com). REQUIRED repo Actions Variable. Kept
+          # SEPARATE from CF_ALLOWED_HD: the committed sentinel `you@yourcompany.com` shares the
+          # `yourcompany.com` substring with the ALLOWED_HD sentinel, so the domain substitution must
+          # NOT be allowed to mangle the email into `you@<hd>` (see the ordered sed below). Not a
+          # secret (an email address isn't sensitive), and wrangler replaces worker vars wholesale
+          # each deploy — so this value must be correct here or the first admin is locked out.
+          CF_SUPERADMIN_EMAIL: ${{ vars.CF_SUPERADMIN_EMAIL }}
           # Optional custom-domain public URLs (served via CloudFront in front of the *.workers.dev
           # origins). When set, the user-facing URLs (APP_URL / CONTENT_URL / SPA frame-src) are
           # repointed off *.workers.dev to these; the workers KEEP their *.workers.dev endpoints
@@ -63,15 +77,26 @@ jobs:
           : "${CF_KV_NAMESPACE_ID:?set repo Actions variable CF_KV_NAMESPACE_ID}"
           : "${CF_WORKERS_SUBDOMAIN:?set repo Actions variable CF_WORKERS_SUBDOMAIN}"
           : "${CF_ALLOWED_HD:?set repo Actions variable CF_ALLOWED_HD}"
+          : "${CF_SUPERADMIN_EMAIL:?set repo Actions variable CF_SUPERADMIN_EMAIL}"
           for f in packages/api/wrangler.jsonc packages/api/wrangler.content.jsonc packages/web/public/_headers; do
+            # ORDER MATTERS: substitute the full `you@yourcompany.com` email sentinel BEFORE the bare
+            # `yourcompany.com` domain sentinel. Reversed, the domain sub fires first and rewrites the
+            # email's domain too (you@yourcompany.com -> you@<hd>), shipping a bogus superadmin.
             sed -i \
               -e "s/YOUR_ACCOUNT_ID/${CF_ACCOUNT_ID}/g" \
               -e "s/YOUR_D1_DATABASE_ID/${CF_D1_DATABASE_ID}/g" \
               -e "s/YOUR_KV_NAMESPACE_ID/${CF_KV_NAMESPACE_ID}/g" \
               -e "s/YOUR-SUBDOMAIN/${CF_WORKERS_SUBDOMAIN}/g" \
+              -e "s/you@yourcompany.com/${CF_SUPERADMIN_EMAIL}/g" \
               -e "s/yourcompany.com/${CF_ALLOWED_HD}/g" \
               "$f"
           done
+          # Fail loud if the superadmin sentinel survived: a leftover `you@` in SUPERADMIN_EMAIL would
+          # lock the intended first admin out of their own instance.
+          if grep -q 'you@' packages/api/wrangler.jsonc; then
+            echo "SUPERADMIN_EMAIL still carries the 'you@' sentinel after substitution — aborting." >&2
+            exit 1
+          fi
           # Repoint public URLs to the custom domains, if configured (CloudFront cutover). Runs
           # AFTER the subdomain substitution above (so glance[-content].$CF_WORKERS_SUBDOMAIN.workers.dev
           # exist to match) and BEFORE build:web (so dist/_headers carries the real content origin).
@@ -89,14 +114,35 @@ jobs:
       - name: Build web
         run: bun run build:web
 
+      # Regenerate the COMMITTED string-module bundles from source so a stale checkout can't ship an
+      # old annotate client, glance.db client, or installer. The workers have no asset pipeline — they
+      # import these bundles at build time — and build:install also refreshes the /api/install script
+      # from the repo-root install.sh. Deploy what the source says, not whatever the commit happened
+      # to carry. (No Cloudflare token needed here, so it runs before the token-bearing steps.)
+      - name: Regenerate committed bundles
+        working-directory: packages/api
+        run: |
+          bun run build:annotate
+          bun run build:db
+          bun run build:install
+
+      # CLOUDFLARE_API_TOKEN is scoped to ONLY the wrangler steps (not the whole job) so it never
+      # sits in the env of `bun install` / `build:web` / the bundle build, which execute third-party
+      # JS before any Cloudflare call.
       - name: Apply D1 migrations (remote)
         working-directory: packages/api
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: bunx wrangler d1 migrations apply glance-db --remote
 
       - name: Deploy main worker
         working-directory: packages/api
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: bunx wrangler deploy
 
       - name: Deploy content worker
         working-directory: packages/api
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: bunx wrangler deploy --config wrangler.content.jsonc

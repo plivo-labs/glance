@@ -108,6 +108,14 @@ function asTab(value: string | null): AdminTab {
   return value === 'sites' || value === 'spaces' || value === 'users' ? value : 'overview'
 }
 
+// If the requested page overshoots the available pages — e.g. the last row of the last page was
+// just deleted, stranding the admin on an empty "Page N of M" past the end (#36) — return the last
+// VALID page to redirect to; otherwise null. Pure so it's unit-testable without the loader.
+export function overflowPage(data: SitesData): number | null {
+  const totalPages = Math.max(1, Math.ceil(data.total / data.pageSize))
+  return data.page > totalPages ? totalPages : null
+}
+
 // ── Loader: tab-aware fetch driven by URL searchParams ──────────────────────
 export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url)
@@ -133,6 +141,16 @@ export async function loader({ request }: LoaderFunctionArgs) {
     if (visibility) qs.set('visibility', visibility)
     qs.set('page', page)
     const data = await api.get<SitesData>(`/api/admin/sites?${qs.toString()}`)
+    // Clamp an out-of-range page (e.g. after deleting the last row of the last page) to the last
+    // valid page so the admin never lands on an empty ghost page. Re-throwing the redirect through
+    // the catch below is a no-op (a Response isn't an ApiError), and the redirected load lands
+    // in-range so it can't loop.
+    const overflow = overflowPage(data)
+    if (overflow !== null) {
+      qs.set('page', String(overflow))
+      qs.set('tab', 'sites')
+      throw redirect(`/admin?${qs.toString()}`)
+    }
     return { tab, data } satisfies LoaderData
   } catch (err) {
     // 401 → login; 403 (non-superadmin) bubbles to the route ErrorBoundary.

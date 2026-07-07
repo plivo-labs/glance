@@ -24,6 +24,11 @@ const MAX_FIELD = 2000 // chars per text field, bounds a single message
 const str = (v: unknown, max = MAX_FIELD): string | null =>
   typeof v === 'string' && v.length <= max ? v : null
 
+// Like `str`, but CLAMPS an over-cap string to the cap rather than rejecting it — used for the
+// free-text selection quote so a long highlight still opens the composer (anchored on the head of
+// the quote) instead of being silently dropped. Selectors, by contrast, must never be truncated.
+const clamp = (v: unknown, max = MAX_FIELD): string | null => (typeof v === 'string' ? v.slice(0, max) : null)
+
 const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
 
 /** Best-effort selection rectangle (iframe-viewport coords). Untrusted — used only to position
@@ -44,7 +49,7 @@ export function parseIntent(event: MessageEvent, expected: ExpectedSource): Inte
   switch ((data as { type?: unknown }).type) {
     case 'glance:select': {
       const d = data as { quote?: unknown; rect?: unknown }
-      const quote = str(d.quote)
+      const quote = clamp(d.quote)
       if (!quote) return null
       return { type: 'select', quote, rect: rect(d.rect) }
     }

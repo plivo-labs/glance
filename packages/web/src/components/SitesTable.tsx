@@ -63,6 +63,11 @@ export function SitesTable({ sites }: { sites: SiteSummary[] }) {
 function OwnerVisibilityCell({ site }: { site: SiteSummary }) {
   const revalidator = useRevalidator()
   const [pendingVis, setPendingVis] = useState<Visibility | null>(null)
+  // Hold the optimistic tier until the revalidated loader reflects it. Clearing on PATCH success
+  // (before revalidate lands) flickered the chip back to the OLD tier for the whole round-trip
+  // (#37). Reconcile during render — React's derive-from-props pattern — rather than an effect:
+  // once the fresh `site.visibility` catches up to the pending value, drop the override.
+  if (pendingVis !== null && site.visibility === pendingVis) setPendingVis(null)
   const visibility = pendingVis ?? site.visibility
 
   async function changeVisibility(v: Visibility) {
@@ -70,8 +75,7 @@ function OwnerVisibilityCell({ site }: { site: SiteSummary }) {
     try {
       await api.patch(`/api/sites/${site.spaceSlug}/${site.siteSlug}`, { visibility: v })
       toast.success('Visibility updated', { description: visibilityLabel(v) })
-      setPendingVis(null) // drop the optimistic value; revalidated loader is source of truth
-      revalidator.revalidate()
+      revalidator.revalidate() // pendingVis stays until the revalidated data matches (see above)
     } catch (err) {
       setPendingVis(null)
       toast.error('Could not update visibility', {
@@ -179,7 +183,11 @@ function RenameDialog({
   const [title, setTitle] = useState(site.title ?? '')
   const [saving, setSaving] = useState(false)
 
-  // Reset the field each time the dialog opens (Radix mounts content on open) — no effect.
+  // Reseed the field each time the dialog opens. The ref lives on a plain sensor <div> below (NOT
+  // on DialogContent): Radix composes the content ref and RE-ATTACHES it on every render, so a
+  // ref-callback there re-runs on every keystroke — snapping the input back to site.title and making
+  // rename impossible (#1). A plain element's ref is uncomposed, so this fires once per open. (cf.
+  // MoveDialog/ShareDialog.)
   const seed = useCallback(
     (node: HTMLDivElement | null) => {
       if (node) setTitle(site.title ?? '')
@@ -205,7 +213,8 @@ function RenameDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !saving && onOpenChange(o)}>
-      <DialogContent ref={seed}>
+      <DialogContent>
+        <div ref={seed} hidden aria-hidden="true" />
         <DialogHeader>
           <DialogTitle>Rename site</DialogTitle>
           <DialogDescription className="font-mono">{site.url}</DialogDescription>

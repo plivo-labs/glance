@@ -16,7 +16,11 @@ export function uploadFiles(
   opts: { visibility?: string; replace?: boolean; onProgress?: (pct: number) => void },
 ): Promise<UploadResult> {
   const form = new FormData()
-  if (opts.visibility) form.append('visibility', opts.visibility)
+  // Only send visibility on CREATE. On replace the picker still defaults to 'team', so sending it
+  // would silently re-tier (e.g. widen a private site to team) on a routine content update — the
+  // server only writes visibility on replace when the field is present, so omit it here and let the
+  // existing tier stand. Change a live site's tier via the visibility menu (PATCH), not a re-upload.
+  if (opts.visibility && !opts.replace) form.append('visibility', opts.visibility)
   // Drop the shared top-level folder so index.html serves at the site root.
   for (const { file, path } of stripCommonRoot(files)) form.append('files', file, path)
 

@@ -90,6 +90,8 @@ describe('annotate injection', () => {
     const body = await res.text()
     expect(body).not.toContain('/_glance/annotate.js')
     expect(res.headers.get('content-security-policy')).toContain("script-src 'none'")
+    // #54: the markdown branch must also send nosniff (parity with the html branch).
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff')
   })
 
   test('untokened-serve-forbidden: anonymous request → 403 (no public tier), nothing injected', async () => {

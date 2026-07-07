@@ -67,23 +67,51 @@ func TestLoginCommand(t *testing.T) {
 }
 
 func TestLogoutCommand(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	_ = writeConfig(Config{ApiUrl: "https://x", Token: "tok"})
-	srv, reqs := recordingServer(t, func(r *capturedReq) (int, string) { return 200, `{}` })
-	c, out := newTestClient(srv.URL, "tok")
-	if err := c.logout(); err != nil {
-		t.Fatalf("logout: %v", err)
-	}
-	if len(*reqs) != 1 || (*reqs)[0].method != "POST" || (*reqs)[0].path != "/api/auth/logout" {
-		t.Fatalf("request = %+v", *reqs)
-	}
-	if (*reqs)[0].auth != "Bearer tok" {
-		t.Fatalf("auth = %q", (*reqs)[0].auth)
-	}
-	if readConfig() != nil {
-		t.Error("config file should be removed after logout")
-	}
-	if !strings.Contains(out.String(), "Logged out") {
-		t.Fatalf("out = %q", out.String())
-	}
+	t.Run("revoked-clears-and-confirms", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		_ = writeConfig(Config{ApiUrl: "https://x", Token: "tok"})
+		srv, reqs := recordingServer(t, func(r *capturedReq) (int, string) { return 200, `{}` })
+		c, out := newTestClient(srv.URL, "tok")
+		if err := c.logout(); err != nil {
+			t.Fatalf("logout: %v", err)
+		}
+		if len(*reqs) != 1 || (*reqs)[0].method != "POST" || (*reqs)[0].path != "/api/auth/logout" {
+			t.Fatalf("request = %+v", *reqs)
+		}
+		if (*reqs)[0].auth != "Bearer tok" {
+			t.Fatalf("auth = %q", (*reqs)[0].auth)
+		}
+		if readConfig() != nil {
+			t.Error("config file should be removed after logout")
+		}
+		if !strings.Contains(out.String(), "Logged out") {
+			t.Fatalf("out = %q", out.String())
+		}
+	})
+
+	// On a failed server-side revocation the local token still gets cleared, but we must NOT lie and
+	// claim the session was revoked — a warning goes to stderr so the user knows the token may live on.
+	t.Run("server-500-warns-but-still-clears-local", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		_ = writeConfig(Config{ApiUrl: "https://x", Token: "tok"})
+		srv, reqs := recordingServer(t, func(r *capturedReq) (int, string) { return 500, `boom` })
+		c, out := newTestClient(srv.URL, "tok")
+		var warn strings.Builder
+		c.errOut = &warn
+		if err := c.logout(); err != nil {
+			t.Fatalf("logout: %v", err)
+		}
+		if len(*reqs) != 1 {
+			t.Fatalf("expected one revoke attempt, got %+v", *reqs)
+		}
+		if readConfig() != nil {
+			t.Error("local token must be cleared even when revocation fails")
+		}
+		if !strings.Contains(warn.String(), "may remain valid") {
+			t.Fatalf("want a revocation warning on 500, stderr = %q", warn.String())
+		}
+		if !strings.Contains(out.String(), "Logged out") {
+			t.Fatalf("out = %q", out.String())
+		}
+	})
 }

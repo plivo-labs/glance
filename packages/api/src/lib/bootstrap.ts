@@ -35,6 +35,11 @@ export interface BootstrapDecisionInput {
   expectedToken: string | undefined
   /** Token from the request body. */
   providedToken: string | undefined
+  /** Whether a prior bootstrap already completed (the KV `bootstrap_complete` marker, set only
+   *  AFTER the first session mint). Fed as a fact so this core stays pure. Closes the one-shot:
+   *  once set, a re-mint for the already-configured superadmin is refused (410) instead of
+   *  handing out a fresh superadmin session forever while BOOTSTRAP_TOKEN stays set. */
+  alreadyCompleted: boolean
   /** Lazily-read DB state — only awaited once the token verifies, so reject paths
    *  (inert / bad token) never touch the database. */
   status: () => Promise<SuperadminStatus>
@@ -46,15 +51,18 @@ export type BootstrapDecision = { ok: true } | { ok: false; status: 404 | 401 | 
  * Verdict for a bootstrap attempt. Order matters: an unset expected token is inert (404)
  * before any token compare; a bad token is rejected (401) before any DB state is consulted
  * (so attackers learn nothing about superadmin existence, and the reject path does no I/O).
- * Idempotent to avoid lockout — allowed when no superadmin exists OR the only superadmin is
- * already the configured email (re-mint a session); 410 only when a *different* superadmin
- * already owns the deploy.
+ * One-shot but anti-lockout: allowed when no superadmin exists at all (fresh deploy or recovery
+ * after the superadmin row was deleted), OR when the only superadmin is the configured email AND
+ * bootstrap has not yet completed (so a mid-run KV failure can still retry into a session). Once
+ * completed, a still-set BOOTSTRAP_TOKEN is inert for the configured superadmin (410) — no longer
+ * a permanent credential. A *different* superadmin already owning the deploy is always 410.
  */
 export async function bootstrapDecision(input: BootstrapDecisionInput): Promise<BootstrapDecision> {
   if (!input.expectedToken) return { ok: false, status: 404 }
   if (!(await secretEquals(input.providedToken ?? '', input.expectedToken))) return { ok: false, status: 401 }
   const { hasSuperadmin, superadminIsConfiguredEmail } = await input.status()
-  if (!hasSuperadmin || superadminIsConfiguredEmail) return { ok: true }
+  if (!hasSuperadmin) return { ok: true }
+  if (superadminIsConfiguredEmail && !input.alreadyCompleted) return { ok: true }
   return { ok: false, status: 410 }
 }
 

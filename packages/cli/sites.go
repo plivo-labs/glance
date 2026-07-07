@@ -14,16 +14,26 @@ func (c *client) prompt(question string) string {
 	return strings.TrimSpace(line)
 }
 
+// splitSpaceSlug parses a `<space/slug>` target into exactly two non-empty segments. A loose
+// `strings.Contains(target, "/")` + `Split` would silently truncate extra segments (`a/b/c` -> a/b)
+// or accept `a/` / `/b`, sending a malformed path to the server; this rejects those up front.
+func splitSpaceSlug(target string) (space, slug string, err error) {
+	segs := strings.Split(target, "/")
+	if len(segs) != 2 || segs[0] == "" || segs[1] == "" {
+		return "", "", fmt.Errorf("Expected <space/slug>, got %q", target)
+	}
+	return segs[0], segs[1], nil
+}
+
 func (c *client) del(argv []string) error {
 	target := ""
 	if len(argv) > 0 {
 		target = argv[0]
 	}
-	if !strings.Contains(target, "/") {
+	space, name, err := splitSpaceSlug(target)
+	if err != nil {
 		return fmt.Errorf("Usage: glance delete <space/slug>")
 	}
-	parts := strings.Split(target, "/")
-	space, name := parts[0], parts[1]
 	if err := c.requireAuth(); err != nil {
 		return err
 	}
@@ -52,11 +62,10 @@ func (c *client) move(argv []string) error {
 	if len(argv) > 1 {
 		dest = argv[1]
 	}
-	if !strings.Contains(target, "/") || dest == "" {
+	space, name, err := splitSpaceSlug(target)
+	if err != nil || dest == "" {
 		return fmt.Errorf("Usage: glance move <space/slug> <new-space>")
 	}
-	parts := strings.Split(target, "/")
-	space, name := parts[0], parts[1]
 	if err := c.requireAuth(); err != nil {
 		return err
 	}

@@ -113,3 +113,41 @@ describe('POST /api/sites/:space/:site/move', () => {
     expect((await move(app, env, 'mine', 'doc', 'admin', { space: 'acme' })).status).toBe(200)
   })
 })
+
+// The other owner-only site-moderation guards (PATCH visibility/title, GET/PUT shares) must admit
+// a superadmin too — the same admin story as `move` above (fix #29). Exercised here alongside move
+// since this suite already drives the ownership guards end to end (Bearer + same-origin).
+describe('superadmin moderation of owner-only site endpoints', () => {
+  async function othersSite() {
+    const { db, kv, app, env } = await setup()
+    await mintUser(db, kv, 'admin', 'superadmin')
+    await mintUser(db, kv, 'rando') // authed, but neither owner nor a member
+    const sp = await seedSpace(db, { createdBy: 'u1', slug: 'mine' })
+    await seedSite(db, { spaceId: sp, ownerId: 'u1', slug: 'doc', visibility: 'team' })
+    return { db, kv, app, env }
+  }
+
+  const patch = (app: Hono<AppEnv>, env: AppEnv['Bindings'], id: string, body: unknown) =>
+    app.request('/api/sites/mine/doc', { method: 'PATCH', headers: auth(id), body: JSON.stringify(body) }, env)
+
+  test('superadmin can PATCH a site they do not own; an unrelated user cannot', async () => {
+    const { app, env } = await othersSite()
+    expect((await patch(app, env, 'admin', { visibility: 'private' })).status).toBe(200)
+    expect((await patch(app, env, 'rando', { visibility: 'private' })).status).toBe(403)
+  })
+
+  test('superadmin can read and replace shares on a site they do not own; an unrelated user cannot', async () => {
+    const { app, env } = await othersSite()
+    const getShares = (id: string) => app.request('/api/sites/mine/doc/shares', { headers: auth(id) }, env)
+    const putShares = (id: string, body: unknown) =>
+      app.request('/api/sites/mine/doc/shares', { method: 'PUT', headers: auth(id), body: JSON.stringify(body) }, env)
+
+    expect((await getShares('admin')).status).toBe(200)
+    const put = await putShares('admin', { userIds: [], groupIds: [] })
+    expect(put.status).toBe(200)
+    expect(await put.json()).toMatchObject({ ok: true })
+
+    expect((await getShares('rando')).status).toBe(403)
+    expect((await putShares('rando', { userIds: [] })).status).toBe(403)
+  })
+})

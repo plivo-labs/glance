@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm'
+import { and, count, desc, eq } from 'drizzle-orm'
 import { type DrizzleD1Database, drizzle } from 'drizzle-orm/d1'
 import { type Context, Hono } from 'hono'
 import { type DocumentRow, type Site, documents, sites } from '../db/schema'
@@ -21,6 +21,9 @@ const DOCID_RE = /^[a-zA-Z0-9_-]{1,128}$/
 const MAX_JSON_BYTES = 100_000
 const DEFAULT_LIMIT = 50
 const MAX_LIMIT = 200
+// Per-site document quota: a modest DoS guard so an authorized viewer cannot create unbounded
+// rows (forms/polls are viewer-writable). Exported so the boundary is unit-tested directly.
+export const MAX_DOCS_PER_SITE = 5000
 const DATA_TOKEN_TTL_SEC = 300
 // Read-policy opt-in by naming convention: documents in a `shared-*` collection are readable by
 // EVERY authorized viewer of the site (polls, boards, tallies). Writes are unaffected — put and
@@ -107,11 +110,14 @@ dataApi.post('/:collection', async (c) => {
   const parsed = await readJsonBody(c)
   if (!parsed.ok) return c.json({ error: parsed.error }, parsed.status)
 
+  const db = getDb(c)
+  if (await atSiteDocQuota(db, claims.siteId)) return c.json({ error: 'site document quota exceeded' }, 429)
+
   const docId = crypto.randomUUID()
   const now = new Date().toISOString()
   // siteId + createdBy come from the verified TOKEN, not the body — a body carrying its own
   // `siteId`/`createdBy` keys just lands inside the opaque `json` blob and changes nothing.
-  await getDb(c).insert(documents).values({
+  await db.insert(documents).values({
     siteId: claims.siteId,
     collection,
     docId,
@@ -193,6 +199,9 @@ dataApi.put('/:collection/:docId', async (c) => {
 
   const updated = await updateExisting()
   if (updated) return updated
+  // A fresh id adds a NEW row, so it is subject to the per-site quota (the update path above never
+  // grows the table). Checked here — after the update fast-path — so overwrites are never blocked.
+  if (await atSiteDocQuota(db, claims.siteId)) return c.json({ error: 'site document quota exceeded' }, 429)
   // Fresh id: insert race-safely. onConflictDoNothing + returning() means a concurrent first-PUT
   // can never 500 on the unique index — an empty return says the row appeared meanwhile, so take
   // the update path after all (which also yields the correct 404 if the winner was another viewer).
@@ -254,13 +263,26 @@ function scoped(claims: DataClaims, collection: string, docId: string) {
   )
 }
 
+// Cheap per-site row COUNT (siteId is the leftmost column of documents_site_collection_creator,
+// so this is a covering index scan) gating every INSERT — an authorized viewer can't create
+// unbounded documents. A SOFT cap: the COUNT→insert window is racy under concurrency, acceptable
+// for a modest DoS guard. Reads and in-place updates are unaffected (updates never add a row).
+async function atSiteDocQuota(db: DrizzleD1Database, siteId: string): Promise<boolean> {
+  const [row] = await db.select({ n: count() }).from(documents).where(eq(documents.siteId, siteId))
+  return (row?.n ?? 0) >= MAX_DOCS_PER_SITE
+}
+
 const enc = new TextEncoder()
 
 type Parsed = { ok: true; value: unknown } | { ok: false; error: string; status: 400 | 413 }
 async function readJsonBody(c: DataCtx): Promise<Parsed> {
   // Cheap reject before buffering when the client declares a size; the byte check after reading
   // is authoritative (string .length counts UTF-16 units, not bytes — multibyte payloads would
-  // otherwise sneak ~4x past the cap).
+  // otherwise sneak ~4x past the cap). A missing/unparseable/understated content-length yields a
+  // non-finite (or too-small) value here, so it FALLS THROUGH to the post-read byte cap below —
+  // that check, not this precheck, is the real guard. Until the read completes we lean on the
+  // Workers runtime's platform request-size limit as the backstop against an unbounded chunked
+  // (no content-length) body; a per-chunk stream cap would be over-engineering at this severity.
   const declared = Number(c.req.header('content-length'))
   if (Number.isFinite(declared) && declared > MAX_JSON_BYTES) {
     return { ok: false, error: 'document too large', status: 413 }

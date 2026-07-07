@@ -12,8 +12,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.26'
 
@@ -42,7 +42,10 @@ jobs:
           EOF
 
       - name: Publish release
-        uses: softprops/action-gh-release@v3
+        # Pinned to a full commit SHA (not the mutable @v3 tag): this action publishes the binaries +
+        # .sha256 that install.sh and CLI self-update verify against, so a compromised tag re-point
+        # could ship tampered artifacts that still "pass" their own checksums.
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3
         with:
           files: |
             packages/cli/dist/glance-*-*.gz

@@ -32,14 +32,17 @@ async function setup() {
   return { db, kv, app, env }
 }
 
-async function mintUser(db: ReturnType<typeof makeDb>, kv: ReturnType<typeof makeKv>, id: string) {
-  await seedUser(db, { id, role: 'member' })
-  await kv.put(`cli:tok-${id}`, JSON.stringify({ id, email: `${id}@example.com`, name: null, role: 'member' }))
+async function mintUser(db: ReturnType<typeof makeDb>, kv: ReturnType<typeof makeKv>, id: string, role: 'member' | 'superadmin' = 'member') {
+  await seedUser(db, { id, role })
+  await kv.put(`cli:tok-${id}`, JSON.stringify({ id, email: `${id}@example.com`, name: null, role }))
   return id
 }
 
 const view = (app: Hono<AppEnv>, env: AppEnv['Bindings'], space: string, site: string, headers: Record<string, string> = {}) =>
   app.request(`/api/sites/${space}/${site}`, { headers }, env)
+
+const exists = (app: Hono<AppEnv>, env: AppEnv['Bindings'], space: string, site: string, id: string) =>
+  app.request(`/api/sites/${space}/${site}/exists`, { headers: { Authorization: `Bearer tok-${id}` } }, env)
 
 describe('GET /api/sites/:space/:site (viewer metadata)', () => {
   test('CLI Bearer token mints a gated content URL', async () => {
@@ -68,5 +71,55 @@ describe('GET /api/sites/:space/:site (viewer metadata)', () => {
     const { db, kv, app, env } = await setup()
     await mintUser(db, kv, 'u1')
     expect((await view(app, env, 'docs', 'nope', { Authorization: 'Bearer tok-u1' })).status).toBe(404)
+  })
+
+  test('unknown site with NO auth → 404, not 401 (existence decided before auth)', async () => {
+    // The concurrent site+session read must still return 404 for a missing site before any
+    // auth-dependent branch — a nonexistent site never leaks as a 401 that a real one would 200.
+    const { app, env } = await setup()
+    expect((await view(app, env, 'docs', 'ghost')).status).toBe(404)
+  })
+})
+
+// The slug-availability probe discloses existence ONLY to someone who could legitimately act on it
+// (owner / space member / superadmin). Everyone else gets the identical not-found shape, so an
+// unauthorized caller can't distinguish a real site from a missing one (fix #14).
+describe('GET /api/sites/:space/:site/exists (slug-availability probe)', () => {
+  async function seedProbe() {
+    const { db, kv, app, env } = await setup()
+    await mintUser(db, kv, 'owner')
+    const space = await seedSpace(db, { createdBy: 'owner', slug: 'docs' })
+    await seedMember(db, space, 'owner')
+    await seedSite(db, { spaceId: space, ownerId: 'owner', slug: 'report', visibility: 'private' })
+    return { db, kv, app, env, space }
+  }
+
+  test('owner sees the site exists (owned)', async () => {
+    const { app, env } = await seedProbe()
+    const res = await exists(app, env, 'docs', 'report', 'owner')
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ exists: true, owned: true })
+  })
+
+  test('a space member (non-owner) sees it exists but not owned', async () => {
+    const { db, kv, app, env, space } = await seedProbe()
+    await mintUser(db, kv, 'mate')
+    await seedMember(db, space, 'mate')
+    expect(await (await exists(app, env, 'docs', 'report', 'mate')).json()).toEqual({ exists: true, owned: false })
+  })
+
+  test('superadmin (non-member) sees it exists', async () => {
+    const { db, kv, app, env } = await seedProbe()
+    await mintUser(db, kv, 'admin', 'superadmin')
+    expect(await (await exists(app, env, 'docs', 'report', 'admin')).json()).toMatchObject({ exists: true })
+  })
+
+  test('an unrelated authed user cannot distinguish a real site from a missing one', async () => {
+    const { db, kv, app, env } = await seedProbe()
+    await mintUser(db, kv, 'stranger') // neither owner nor a member of docs
+    const real = await exists(app, env, 'docs', 'report', 'stranger') // the site EXISTS
+    const missing = await exists(app, env, 'docs', 'ghost', 'stranger') // this one does NOT
+    expect(await real.json()).toEqual({ exists: false })
+    expect(await missing.json()).toEqual({ exists: false })
   })
 })
