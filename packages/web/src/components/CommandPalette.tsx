@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/command'
 import { toggleTheme } from '@/components/theme'
 import { api } from '@/lib/api'
-import { groupBySite, useRecents } from '@/lib/recents'
+import { entryLabel, useRecents } from '@/lib/recents'
 import type { Me, SiteSummary, SpaceSummary } from '@/lib/types'
 
 const SEARCH_DEBOUNCE_MS = 200
@@ -39,9 +39,10 @@ export function CommandPalette({
   const term = query.trim()
 
   // Same store the viewer's recents sidebar reads — shown only in the empty (no-search) state,
-  // like the sites/spaces search results it'd otherwise compete with.
+  // like the sites/spaces search results it'd otherwise compete with. Entries are already
+  // most-recent-first, one row per visited page (see recents.ts), so top-5 is just a slice.
   const recentEntries = useRecents(user?.id ?? null)
-  const recentSites = useMemo(() => groupBySite(recentEntries).slice(0, 5), [recentEntries])
+  const recentRows = useMemo(() => recentEntries.slice(0, 5), [recentEntries])
 
   // Radix mounts the dialog content on open and unmounts it on close — for EVERY trigger
   // (header button, ⌘K, Escape), unlike onOpenChange which the externally-controlled `open`
@@ -111,21 +112,27 @@ export function CommandPalette({
       <CommandList>
         <div ref={onPaletteMount} className="hidden" aria-hidden="true" />
         <CommandEmpty>{term ? 'No matching sites.' : 'No results.'}</CommandEmpty>
-        {!term && recentSites.length > 0 && (
+        {!term && recentRows.length > 0 && (
           <CommandGroup heading="Recent">
-            {recentSites.map((s) => (
-              <CommandItem
-                key={`${s.spaceSlug}/${s.siteSlug}`}
-                value={`recent ${s.spaceSlug}/${s.siteSlug} ${s.title ?? ''}`}
-                onSelect={() => run(() => navigate(`/${s.spaceSlug}/${s.siteSlug}`))}
-              >
-                <History />
-                <span className="truncate">
-                  {s.title ? `${s.title} · ` : ''}
-                  {s.spaceSlug}/{s.siteSlug}
-                </span>
-              </CommandItem>
-            ))}
+            {recentRows.map((e) => {
+              const { primary, secondary } = entryLabel(e)
+              const href = e.filePath
+                ? `/${e.spaceSlug}/${e.siteSlug}/${e.filePath.split('/').map(encodeURIComponent).join('/')}`
+                : `/${e.spaceSlug}/${e.siteSlug}`
+              return (
+                <CommandItem
+                  key={`${e.spaceSlug}/${e.siteSlug}/${e.filePath}`}
+                  value={`recent ${e.spaceSlug}/${e.siteSlug}/${e.filePath} ${primary} ${secondary ?? ''}`}
+                  onSelect={() => run(() => navigate(href))}
+                >
+                  <History />
+                  <span className="truncate">
+                    {primary}
+                    {secondary ? ` · ${secondary}` : ''}
+                  </span>
+                </CommandItem>
+              )
+            })}
           </CommandGroup>
         )}
         {sites.length > 0 && (

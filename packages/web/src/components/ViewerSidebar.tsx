@@ -1,6 +1,6 @@
 import { X } from 'lucide-react'
 import { Link } from 'react-router'
-import { clear, groupBySite, type RecentSite, removeEntry, useRecents } from '@/lib/recents'
+import { clear, entryLabel, type RecentEntry, removeEntry, useRecents } from '@/lib/recents'
 import { timeAgo } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -8,6 +8,9 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 
 // An overlay Sheet (not a persistent panel) so it never fights the right-hand ReviewRail for
 // width, in the viewer's already-tight full-bleed layout (ViewerTopBar + canvas [+ rail]).
+//
+// Flat, most-recent-first list — one row per visited page (most Glance sites are single-page, so
+// a site→files tree was mostly noise; see `entryLabel` for the row-label rules).
 export function ViewerSidebar({
   open,
   onOpenChange,
@@ -22,7 +25,6 @@ export function ViewerSidebar({
   currentSiteSlug: string
 }) {
   const entries = useRecents(userId)
-  const sites = groupBySite(entries)
 
   const close = () => onOpenChange(false)
 
@@ -32,9 +34,9 @@ export function ViewerSidebar({
         <SheetHeader className="flex-row items-center justify-between gap-2 border-b py-3 pr-10 pl-4">
           <div>
             <SheetTitle className="text-sm">Recently opened</SheetTitle>
-            <SheetDescription className="sr-only">Sites and files you've opened recently.</SheetDescription>
+            <SheetDescription className="sr-only">Pages you've opened recently.</SheetDescription>
           </div>
-          {userId && sites.length > 0 && (
+          {userId && entries.length > 0 && (
             <Button
               size="sm"
               variant="ghost"
@@ -47,14 +49,16 @@ export function ViewerSidebar({
         </SheetHeader>
 
         <div className="flex-1 overflow-y-auto py-2">
-          {sites.length === 0 ? (
-            <p className="px-4 py-8 text-center text-muted-foreground text-sm">Sites you open will show up here.</p>
+          {entries.length === 0 ? (
+            <p className="px-4 py-8 text-center text-muted-foreground text-sm">Pages you open will show up here.</p>
           ) : (
-            sites.map((s) => (
-              <SiteGroup
-                key={`${s.spaceSlug}/${s.siteSlug}`}
-                site={s}
-                current={s.spaceSlug === currentSpaceSlug && s.siteSlug === currentSiteSlug}
+            entries.map((e) => (
+              <Row
+                key={`${e.spaceSlug}/${e.siteSlug}/${e.filePath}`}
+                entry={e}
+                // Root-row highlight only: an exact per-row match would need the current in-iframe
+                // filePath threaded down here too, which the flatten kept out of scope.
+                current={e.spaceSlug === currentSpaceSlug && e.siteSlug === currentSiteSlug && e.filePath === ''}
                 userId={userId}
                 onNavigate={close}
               />
@@ -66,75 +70,48 @@ export function ViewerSidebar({
   )
 }
 
-function fileHref(spaceSlug: string, siteSlug: string, filePath: string): string {
-  return `/${spaceSlug}/${siteSlug}/${filePath.split('/').map(encodeURIComponent).join('/')}`
+function entryHref(spaceSlug: string, siteSlug: string, filePath: string): string {
+  return filePath ? `/${spaceSlug}/${siteSlug}/${filePath.split('/').map(encodeURIComponent).join('/')}` : `/${spaceSlug}/${siteSlug}`
 }
 
-function SiteGroup({
-  site,
+function Row({
+  entry,
   current,
   userId,
   onNavigate,
 }: {
-  site: RecentSite
+  entry: RecentEntry
   current: boolean
   userId: string | null
   onNavigate: () => void
 }) {
+  const { primary, secondary } = entryLabel(entry)
   return (
     <div className="px-2 py-1">
       <div className={cn('group flex items-center gap-1 rounded-md px-2 py-1.5', current && 'bg-foreground/5')}>
         <Link
-          to={`/${site.spaceSlug}/${site.siteSlug}`}
+          to={entryHref(entry.spaceSlug, entry.siteSlug, entry.filePath)}
           onClick={onNavigate}
-          className={cn(
-            'min-w-0 flex-1 truncate text-sm',
-            current ? 'font-medium text-foreground' : 'text-foreground/90 hover:text-foreground',
-          )}
-          title={`${site.spaceSlug}/${site.siteSlug}`}
+          className="min-w-0 flex-1 truncate text-sm"
+          title={`${entry.spaceSlug}/${entry.siteSlug}${entry.filePath ? `/${entry.filePath}` : ''}`}
         >
-          {site.title ?? site.siteSlug}
+          <span className={cn(current ? 'font-medium text-foreground' : 'text-foreground/90 group-hover:text-foreground')}>
+            {primary}
+          </span>
+          {secondary && <span className="ml-1.5 truncate text-muted-foreground text-xs">{secondary}</span>}
         </Link>
-        <span className="shrink-0 text-[11px] text-muted-foreground">{timeAgo(site.at)}</span>
+        <span className="shrink-0 text-[11px] text-muted-foreground">{timeAgo(entry.at)}</span>
         {userId && (
           <button
             type="button"
-            aria-label={`Remove ${site.title ?? site.siteSlug} from recents`}
+            aria-label={`Remove ${primary} from recents`}
             className="shrink-0 rounded-sm p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
-            onClick={() => removeEntry(userId, { spaceSlug: site.spaceSlug, siteSlug: site.siteSlug })}
+            onClick={() => removeEntry(userId, { spaceSlug: entry.spaceSlug, siteSlug: entry.siteSlug, filePath: entry.filePath })}
           >
             <X className="size-3.5" />
           </button>
         )}
       </div>
-
-      {site.files.length > 0 && (
-        <ul className="ml-3 border-l pl-2">
-          {site.files.map((f) => (
-            <li key={f.filePath} className="group flex items-center gap-1 rounded-md px-2 py-1 hover:bg-foreground/5">
-              <Link
-                to={fileHref(site.spaceSlug, site.siteSlug, f.filePath)}
-                onClick={onNavigate}
-                className="min-w-0 flex-1 truncate text-muted-foreground text-xs hover:text-foreground"
-                title={f.filePath}
-              >
-                {f.filePath}
-              </Link>
-              <span className="shrink-0 text-[10px] text-muted-foreground">{timeAgo(f.at)}</span>
-              {userId && (
-                <button
-                  type="button"
-                  aria-label={`Remove ${f.filePath} from recents`}
-                  className="shrink-0 rounded-sm p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
-                  onClick={() => removeEntry(userId, { spaceSlug: site.spaceSlug, siteSlug: site.siteSlug, filePath: f.filePath })}
-                >
-                  <X className="size-3" />
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
     </div>
   )
 }

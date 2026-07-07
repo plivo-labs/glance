@@ -4,9 +4,11 @@ import { useSyncExternalStore } from 'react'
 // can jump back. Namespaced by user id (`glance:recents:<userId>`) — a shared machine must not
 // leak another user's history, so every call site skips recording until Me has resolved.
 //
-// The module is split in two: PURE list logic (dedupe/cap/ordering/grouping — unit-tested below,
-// no DOM needed) and a thin localStorage + custom-window-event wrapper mirroring `theme.ts`
-// (untested here, browser-only; `useRecents` subscribes via useSyncExternalStore, not useEffect).
+// The module is split in two: PURE list logic (canonicalize/dedupe/cap/ordering/labeling —
+// unit-tested below, no DOM needed) and a thin localStorage + custom-window-event wrapper
+// mirroring `theme.ts` (untested here, browser-only; `useRecents` subscribes via
+// useSyncExternalStore, not useEffect). The sidebar/palette render a FLAT most-recent-first list —
+// one row per visited page — so there's no grouping step, just `entryLabel` per row.
 
 export interface RecentEntry {
   spaceSlug: string
@@ -16,16 +18,6 @@ export interface RecentEntry {
   filePath: string
   /** ISO timestamp of the visit. */
   at: string
-}
-
-export interface RecentSite {
-  spaceSlug: string
-  siteSlug: string
-  title: string | null
-  /** Most recent visit to this site, across its site-level entry and every file. */
-  at: string
-  /** Opened files (filePath !== ''), most-recent-first. */
-  files: RecentEntry[]
 }
 
 const EVENT = 'glance:recents'
@@ -42,12 +34,20 @@ function siteKey(e: { spaceSlug: string; siteSlug: string }): string {
 
 // --- Pure logic (unit-tested; no localStorage/window) ------------------------------------------
 
+// The site-open entry (filePath '') and the iframe-ready entry for the same root page are really
+// one visit — canonicalize the exact top-level `index.html` down to '' so they dedupe into a
+// single row. A NESTED index.html (e.g. `docs/index.html`) is a distinct page and stays as-is.
+export function normalizeFilePath(filePath: string): string {
+  return filePath === 'index.html' ? '' : filePath
+}
+
 // Insert/refresh `entry` most-recent-first, dedup'd by (spaceSlug, siteSlug, filePath), then cap.
 export function applyVisit(entries: RecentEntry[], entry: RecentEntry): RecentEntry[] {
+  const normalized = { ...entry, filePath: normalizeFilePath(entry.filePath) }
   const withoutDup = entries.filter(
-    (e) => !(e.spaceSlug === entry.spaceSlug && e.siteSlug === entry.siteSlug && e.filePath === entry.filePath),
+    (e) => !(e.spaceSlug === normalized.spaceSlug && e.siteSlug === normalized.siteSlug && e.filePath === normalized.filePath),
   )
-  return capEntries([entry, ...withoutDup])
+  return capEntries([normalized, ...withoutDup])
 }
 
 // `filePath` omitted → drop the whole site (every entry, site-level + files). `filePath` given
@@ -74,26 +74,25 @@ function capEntries(entries: RecentEntry[]): RecentEntry[] {
   return entries.filter((e) => keptSites.has(siteKey(e))).slice(0, MAX_ENTRIES)
 }
 
-// Groups entries by site, most-recent-first (by the site's own `at`, the max across its rows).
-// Files (filePath !== '') are sorted most-recent-first within each group.
-export function groupBySite(entries: RecentEntry[]): RecentSite[] {
-  const order: string[] = []
-  const sites = new Map<string, RecentSite>()
-  for (const e of entries) {
-    const k = siteKey(e)
-    let site = sites.get(k)
-    if (!site) {
-      site = { spaceSlug: e.spaceSlug, siteSlug: e.siteSlug, title: e.title, at: e.at, files: [] }
-      sites.set(k, site)
-      order.push(k)
-    } else if (e.at > site.at) {
-      site.at = e.at
-      site.title = e.title
-    }
-    if (e.filePath) site.files.push(e)
-  }
-  for (const site of sites.values()) site.files.sort((a, b) => b.at.localeCompare(a.at))
-  return order.map((k) => sites.get(k) as RecentSite).sort((a, b) => b.at.localeCompare(a.at))
+const STRIPPED_EXTENSIONS = ['.html', '.htm', '.md']
+
+function stripKnownExtension(path: string): string {
+  const ext = STRIPPED_EXTENSIONS.find((e) => path.endsWith(e))
+  return ext ? path.slice(0, path.length - ext.length) : path
+}
+
+export interface EntryLabel {
+  primary: string
+  /** Muted secondary text — the site title, shown only on non-root rows to disambiguate
+   *  same-named pages across different sites (e.g. `report` from two different sites). */
+  secondary: string | null
+}
+
+// Flat-list row label. The list itself needs no grouping helper: entries are already
+// most-recent-first (see `applyVisit`/`readEntries`), one row per visited page.
+export function entryLabel(entry: RecentEntry): EntryLabel {
+  if (entry.filePath === '') return { primary: entry.title ?? entry.siteSlug, secondary: null }
+  return { primary: stripKnownExtension(entry.filePath), secondary: entry.title ?? entry.siteSlug }
 }
 
 // --- Browser-facing store (localStorage + custom window event) --------------------------------

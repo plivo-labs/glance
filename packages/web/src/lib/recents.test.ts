@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { applyRemoveEntry, applyVisit, clear, groupBySite, type RecentEntry, recordVisit, removeEntry } from './recents'
+import { applyRemoveEntry, applyVisit, clear, entryLabel, normalizeFilePath, type RecentEntry, recordVisit, removeEntry } from './recents'
 
 // bun test has no DOM (no window/localStorage) — install a minimal in-memory fake so the
 // localStorage-backed wrapper (recordVisit/removeEntry/clear) is exercised directly too, not just
@@ -85,6 +85,35 @@ describe('applyVisit', () => {
     expect(result[0]).toEqual(fresh)
     expect(result.some((e) => e.filePath === 'file-99.html')).toBe(false) // oldest row dropped
   })
+
+  test('canonicalizes top-level index.html to "" before dedupe, so the site-open row and the iframe-ready row for the same root page collapse into one', () => {
+    const siteOpen = entry({ filePath: '', at: '2026-01-01T00:00:00.000Z' })
+    const iframeReady = entry({ filePath: 'index.html', at: '2026-01-02T00:00:00.000Z', title: 'Renamed' })
+    const result = applyVisit([siteOpen], iframeReady)
+    expect(result).toEqual([{ ...iframeReady, filePath: '' }])
+  })
+
+  test('a NESTED index.html (docs/index.html) is not normalized — stays a distinct row', () => {
+    const root = entry({ filePath: '', at: '2026-01-01T00:00:00.000Z' })
+    const nested = entry({ filePath: 'docs/index.html', at: '2026-01-02T00:00:00.000Z' })
+    const result = applyVisit([root], nested)
+    expect(result).toEqual([nested, root])
+  })
+})
+
+describe('normalizeFilePath', () => {
+  test('normalizes the exact top-level index.html to ""', () => {
+    expect(normalizeFilePath('index.html')).toBe('')
+  })
+
+  test('leaves a nested index.html untouched', () => {
+    expect(normalizeFilePath('docs/index.html')).toBe('docs/index.html')
+  })
+
+  test('leaves "" and other paths untouched', () => {
+    expect(normalizeFilePath('')).toBe('')
+    expect(normalizeFilePath('docs/setup.html')).toBe('docs/setup.html')
+  })
 })
 
 describe('applyRemoveEntry', () => {
@@ -110,41 +139,36 @@ describe('applyRemoveEntry', () => {
   })
 })
 
-describe('groupBySite', () => {
-  test('groups by site, files exclude the site-level ("") row', () => {
-    const root = entry({ filePath: '', at: '2026-01-01T00:00:00.000Z' })
-    const doc = entry({ filePath: 'docs/page.html', at: '2026-01-02T00:00:00.000Z' })
-    const groups = groupBySite([doc, root])
-    expect(groups).toHaveLength(1)
-    expect(groups[0].files).toEqual([doc])
-    expect(groups[0].files.some((f) => f.filePath === '')).toBe(false)
+describe('entryLabel', () => {
+  test('root row (filePath "") shows the site title as primary, no secondary', () => {
+    const label = entryLabel(entry({ filePath: '', title: 'Design Review' }))
+    expect(label).toEqual({ primary: 'Design Review', secondary: null })
   })
 
-  test('a site with only file-level visits (no root open) still groups', () => {
-    const doc = entry({ filePath: 'docs/page.html' })
-    const groups = groupBySite([doc])
-    expect(groups[0].files).toEqual([doc])
+  test('root row falls back to the site slug when title is null', () => {
+    const label = entryLabel(entry({ filePath: '', title: null, siteSlug: 'demo' }))
+    expect(label).toEqual({ primary: 'demo', secondary: null })
   })
 
-  test('site `at` is the max across its rows, even out of order input', () => {
-    const older = entry({ filePath: '', at: '2026-01-01T00:00:00.000Z' })
-    const newer = entry({ filePath: 'docs/page.html', at: '2026-01-05T00:00:00.000Z' })
-    const groups = groupBySite([older, newer]) // root first, file second — still resolves the max
-    expect(groups[0].at).toBe('2026-01-05T00:00:00.000Z')
+  test('deep page shows the extension-stripped path as primary, site title as secondary', () => {
+    const label = entryLabel(entry({ filePath: 'docs/setup.html', title: 'Docs Site' }))
+    expect(label).toEqual({ primary: 'docs/setup', secondary: 'Docs Site' })
   })
 
-  test('sites are ordered most-recent-first by their own `at`', () => {
-    const a = entry({ siteSlug: 'a', at: '2026-01-01T00:00:00.000Z' })
-    const b = entry({ siteSlug: 'b', at: '2026-01-03T00:00:00.000Z' })
-    const groups = groupBySite([a, b])
-    expect(groups.map((g) => g.siteSlug)).toEqual(['b', 'a'])
+  test('deep page falls back to the site slug as secondary when title is null', () => {
+    const label = entryLabel(entry({ filePath: 'docs/setup.html', title: null, siteSlug: 'docs-v2' }))
+    expect(label).toEqual({ primary: 'docs/setup', secondary: 'docs-v2' })
   })
 
-  test('files within a site are most-recent-first', () => {
-    const older = entry({ filePath: 'a.html', at: '2026-01-01T00:00:00.000Z' })
-    const newer = entry({ filePath: 'b.html', at: '2026-01-02T00:00:00.000Z' })
-    const groups = groupBySite([older, newer])
-    expect(groups[0].files.map((f) => f.filePath)).toEqual(['b.html', 'a.html'])
+  test('strips .html, .htm and .md but no other extension', () => {
+    expect(entryLabel(entry({ filePath: 'a.html' })).primary).toBe('a')
+    expect(entryLabel(entry({ filePath: 'a.htm' })).primary).toBe('a')
+    expect(entryLabel(entry({ filePath: 'a.md' })).primary).toBe('a')
+    expect(entryLabel(entry({ filePath: 'report.pdf' })).primary).toBe('report.pdf')
+  })
+
+  test('a path with no extension is shown as-is', () => {
+    expect(entryLabel(entry({ filePath: 'docs/readme' })).primary).toBe('docs/readme')
   })
 })
 
