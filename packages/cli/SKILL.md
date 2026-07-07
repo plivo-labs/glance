@@ -1,6 +1,6 @@
 ---
 name: glance-cli
-description: Use the `glance` CLI to deploy a local folder of static files (HTML/markdown/assets) to a Glance instance and get a URL, to PULL a deployed site's review comments back to the terminal so a coding agent can act on them, and to REPLY to a comment thread from the terminal. Use when the user wants to publish/upload/deploy a folder, list their Glance sites, delete a site, log in/out of Glance from the terminal, fetch/read/pull the review comments (feedback left in the browser) on a site to address them, reply to a comment thread after making a change, or read a deployed file's raw contents back to the terminal. Closes the review loop: deploy → comment in the browser → `glance comments` to pull → edit → `glance reply` to respond → redeploy. Covers pointing the CLI at a self-hosted instance via GLANCE_API_URL.
+description: Use the `glance` CLI to deploy a local folder of static files (HTML/markdown/assets) to a Glance instance and get a URL, to PULL a deployed site's review comments back to the terminal so a coding agent can act on them, and to REPLY to a comment thread from the terminal. Use when the user wants to publish/upload/deploy a folder, list their Glance sites, delete a site, log in/out of Glance from the terminal, fetch/read/pull the review comments (feedback left in the browser) on a site to address them, reply to a comment thread after making a change, or read a deployed file's raw contents back to the terminal. Also use when the user wants to explain a codebase, module, system, or technical query as a shareable HTML page — "explain with html", "make an html dashboard/explainer", "visualize this architecture", "create an html file explaining X", or a "simple/light HTML summary I can show my boss" — this skill covers building that self-contained HTML file AND publishing it. Closes the review loop: deploy → comment in the browser → `glance comments` to pull → edit → `glance reply` to respond → redeploy. Covers pointing the CLI at a self-hosted instance via GLANCE_API_URL.
 ---
 
 # Glance CLI
@@ -161,6 +161,36 @@ viewer sees all of it (polls, boards) · the site **owner** sees everything and 
 any document (moderation); other viewers can never change existing documents · access follows
 the site's sharing — lose access to the site, lose access to its data. If it errors with "not
 enabled", ask your Glance admin to turn the feature on.
+
+## Explaining code or a system as HTML
+
+When the user wants to understand — or share understanding of — a codebase, module, system, or technical query, don't answer in prose: build ONE self-contained, visually distinctive `.html` page and deploy it. This turns "explain X" into an artifact someone can open, click through, and share via URL.
+
+### Loop: Scope → Investigate → Verify → Render → Publish
+
+**Scope.** Pin down: the query (what must the reader understand?), the target files/dirs, the output filename (slug the topic, e.g. `<topic>-explainer.html`, or `-architecture.html` / `-flow.html`), and the mode:
+- **Deep dashboard** (default) — dense, diagram-heavy, for someone studying the system. Everything visible, sections scroll.
+- **Lightweight summary** — for a manager/exec/boss, or when asked for "simple"/"light"/"not too much upfront": only a one-screen pitch is visible up front; every detail lives behind a click.
+
+**Investigate.** Never explain from assumption — read the real code first. Map structure and volume (`find` the tree, LOC per file/dir — the single best signal for "where the complexity lives"). Read entry points, contracts, and the biggest files yourself. Trace how modules and systems actually connect: imports/exports across boundaries, shared state read/written by multiple features, API/event/websocket/webhook edges — capture these as directional edges (`A —imports→ B`, `FE —SSE /events→ runner`) to render as a connection diagram. Name the real stack by grepping the manifest (`package.json`/equivalent) for the libraries actually in use.
+
+**Verify.** Symptom ≠ truth. Before calling anything dead/unused, grep its imports and confirm zero reachable callers. Before claiming "duplicated," open both sites and confirm. Before stating a count or LOC number, re-run the command — don't estimate. If a claim is uncertain, label it "investigate" rather than assert it; one wrong confident claim discredits the whole page.
+
+**Render.** A single self-contained `.html` file: inline `<style>`, no build step (Google Fonts, and a diagram CDN like mermaid for dense graphs, are fine as external deps). Commit to ONE deliberate visual point of view — a distinctive type pairing (display + body + a tabular mono for all numbers/code/paths), a cohesive palette via CSS variables with a dominant color and a sharp accent, real texture (grain, grid, shadow) over flat cards, one orchestrated page-load reveal rather than scattered micro-interactions. Avoid the generic AI-dashboard look — no purple-on-white, no default Inter/Roboto, no zebra tables with no point of view. Pick diagrams that fit the query: an architecture schematic (layered boxes + connectors), a connection/dependency map (labeled, directional edges — imports, API calls, events; group by repo/service for cross-system seams), a flow/sequence chart, a LOC heatmap, a hotspot/biggest-files table, findings cards, a ranked action table. Annotate with real names (`file:line`, actual component/store names) — never abstract placeholders like "Service A".
+
+*Lightweight summary mode*: above the fold, only a kicker line, a headline that's a plain-English claim, one short sub-paragraph, and 3–5 stat chips. Everything else lives in native `<details>/<summary>` accordions (zero JS) — plain language, an inline flow strip instead of a diagram, small tables with status tags, a "known issues"/"not tested yet" section. An honest report that admits gaps is trusted more than a flawless one. For work that continues, treat the file as a living doc — update it in place (flip status tags, adjust chips) and add a "Journal" accordion of what happened, in order, rather than emitting new files.
+
+**Publish.** Verify tag balance and `open <file>` locally first, then:
+```bash
+glance deploy <file>.html      # --name defaults to the filename slug; renders at the site root
+```
+Report the returned `✓ Deployed → <url>` as the deliverable — not the prose. Visibility defaults to `team`; use `--visibility public` only when the link must open for someone outside the team (e.g. a boss without a Glance account), and confirm before a public deploy. Re-deploying the same name prompts `Replace? (y/N)` and updates the live URL in place — matches the "living doc" behavior above.
+
+### Anti-patterns
+- Explaining from memory/assumption instead of reading the code.
+- Asserting "dead code" / "duplicate" / an exact count without verifying it.
+- Generic AI aesthetic (purple gradients, Inter, flat cards, zebra tables, no point of view).
+- Multi-file output, a build step, or broken external deps — one openable file only.
 
 ## Gotchas
 - Commands other than `login`/`logout` require a saved token; run `glance login` first.
