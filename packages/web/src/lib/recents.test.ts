@@ -1,5 +1,15 @@
 import { describe, expect, test } from 'bun:test'
-import { applyRemoveEntry, applyVisit, clear, entryLabel, normalizeFilePath, type RecentEntry, recordVisit, removeEntry } from './recents'
+import {
+  applyRemoveEntry,
+  applyVisit,
+  clear,
+  entryLabel,
+  normalizeFilePath,
+  type RecentEntry,
+  recordVisit,
+  removeEntry,
+  visibleEntries,
+} from './recents'
 
 // bun test has no DOM (no window/localStorage) — install a minimal in-memory fake so the
 // localStorage-backed wrapper (recordVisit/removeEntry/clear) is exercised directly too, not just
@@ -139,6 +149,33 @@ describe('applyRemoveEntry', () => {
   })
 })
 
+describe('visibleEntries', () => {
+  test("suppresses a site's '' row when the site also has a file row (single-file deploy)", () => {
+    const file = entry({ siteSlug: 'perf-explainer', filePath: 'perf-explainer.html', at: '2026-01-02T00:00:00.000Z' })
+    const root = entry({ siteSlug: 'perf-explainer', filePath: '', at: '2026-01-01T00:00:00.000Z' })
+    expect(visibleEntries([file, root])).toEqual([file])
+  })
+
+  test("keeps the '' row when it is the site's only entry", () => {
+    const root = entry({ filePath: '' })
+    expect(visibleEntries([root])).toEqual([root])
+  })
+
+  test("suppression is per-site: another site's lone '' row survives", () => {
+    const file = entry({ siteSlug: 'a', filePath: 'a.html' })
+    const rootA = entry({ siteSlug: 'a', filePath: '' })
+    const rootB = entry({ siteSlug: 'b', filePath: '' })
+    expect(visibleEntries([file, rootA, rootB])).toEqual([file, rootB])
+  })
+
+  test('preserves order and keeps every file row of a multi-file site', () => {
+    const f1 = entry({ filePath: 'docs/setup.html', at: '2026-01-03T00:00:00.000Z' })
+    const f2 = entry({ filePath: 'docs/api.html', at: '2026-01-02T00:00:00.000Z' })
+    const root = entry({ filePath: '', at: '2026-01-01T00:00:00.000Z' })
+    expect(visibleEntries([f1, f2, root])).toEqual([f1, f2])
+  })
+})
+
 describe('entryLabel', () => {
   test('root row (filePath "") shows the site title as primary, no secondary', () => {
     const label = entryLabel(entry({ filePath: '', title: 'Design Review' }))
@@ -158,6 +195,17 @@ describe('entryLabel', () => {
   test('deep page falls back to the site slug as secondary when title is null', () => {
     const label = entryLabel(entry({ filePath: 'docs/setup.html', title: null, siteSlug: 'docs-v2' }))
     expect(label).toEqual({ primary: 'docs/setup', secondary: 'docs-v2' })
+  })
+
+  test('single-file deploy: no secondary when the site name matches the primary label', () => {
+    // `glance deploy perf-explainer.html` → slug defaults to the filename sans extension.
+    const label = entryLabel(entry({ filePath: 'perf-explainer.html', title: null, siteSlug: 'perf-explainer' }))
+    expect(label).toEqual({ primary: 'perf-explainer', secondary: null })
+  })
+
+  test('site-name-vs-primary comparison is case-insensitive', () => {
+    const label = entryLabel(entry({ filePath: 'perf-explainer.html', title: 'Perf-Explainer', siteSlug: 'x' }))
+    expect(label).toEqual({ primary: 'perf-explainer', secondary: null })
   })
 
   test('strips .html, .htm and .md but no other extension', () => {

@@ -1,6 +1,6 @@
 import { X } from 'lucide-react'
 import { Link } from 'react-router'
-import { clear, entryLabel, type RecentEntry, removeEntry, useRecents } from '@/lib/recents'
+import { clear, entryLabel, type RecentEntry, removeEntry, useRecents, visibleEntries } from '@/lib/recents'
 import { timeAgo } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -10,7 +10,8 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 // width, in the viewer's already-tight full-bleed layout (ViewerTopBar + canvas [+ rail]).
 //
 // Flat, most-recent-first list — one row per visited page (most Glance sites are single-page, so
-// a site→files tree was mostly noise; see `entryLabel` for the row-label rules).
+// a site→files tree was mostly noise; see `visibleEntries` for the root-row collapse and
+// `entryLabel` for the row-label rules).
 export function ViewerSidebar({
   open,
   onOpenChange,
@@ -24,7 +25,7 @@ export function ViewerSidebar({
   currentSpaceSlug: string
   currentSiteSlug: string
 }) {
-  const entries = useRecents(userId)
+  const entries = visibleEntries(useRecents(userId))
 
   const close = () => onOpenChange(false)
 

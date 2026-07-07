@@ -74,6 +74,17 @@ function capEntries(entries: RecentEntry[]): RecentEntry[] {
   return entries.filter((e) => keptSites.has(siteKey(e))).slice(0, MAX_ENTRIES)
 }
 
+// Most sites come from `glance deploy <file.html>` — a single file kept under its OWN name (not
+// index.html) and served at the site root. Opening one records TWO entries for one document: ''
+// (site-level, from the loader) and the real filename (from the iframe 'ready'). Collapse that at
+// the VIEW level: suppress a site's '' row whenever the site also has a file row. The '' row only
+// shows when it's the site's only entry (directory listing, or an index site whose 'ready' was
+// canonicalized to '' at record time). Recording stays unchanged.
+export function visibleEntries(entries: RecentEntry[]): RecentEntry[] {
+  const sitesWithFiles = new Set(entries.filter((e) => e.filePath !== '').map(siteKey))
+  return entries.filter((e) => e.filePath !== '' || !sitesWithFiles.has(siteKey(e)))
+}
+
 const STRIPPED_EXTENSIONS = ['.html', '.htm', '.md']
 
 function stripKnownExtension(path: string): string {
@@ -83,16 +94,20 @@ function stripKnownExtension(path: string): string {
 
 export interface EntryLabel {
   primary: string
-  /** Muted secondary text — the site title, shown only on non-root rows to disambiguate
-   *  same-named pages across different sites (e.g. `report` from two different sites). */
+  /** Muted secondary text — the site title (fallback slug), shown on a file row only when it
+   *  ADDS information, i.e. differs from the primary label (case-insensitive). A single-file
+   *  deploy's slug is the filename sans extension, so its one row stays clean; `docs/setup`
+   *  inside site `handbook` does get the secondary label. */
   secondary: string | null
 }
 
 // Flat-list row label. The list itself needs no grouping helper: entries are already
 // most-recent-first (see `applyVisit`/`readEntries`), one row per visited page.
 export function entryLabel(entry: RecentEntry): EntryLabel {
-  if (entry.filePath === '') return { primary: entry.title ?? entry.siteSlug, secondary: null }
-  return { primary: stripKnownExtension(entry.filePath), secondary: entry.title ?? entry.siteSlug }
+  const siteName = entry.title ?? entry.siteSlug
+  if (entry.filePath === '') return { primary: siteName, secondary: null }
+  const primary = stripKnownExtension(entry.filePath)
+  return { primary, secondary: siteName.toLowerCase() === primary.toLowerCase() ? null : siteName }
 }
 
 // --- Browser-facing store (localStorage + custom window event) --------------------------------

@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/command'
 import { toggleTheme } from '@/components/theme'
 import { api } from '@/lib/api'
-import { entryLabel, useRecents } from '@/lib/recents'
+import { entryLabel, useRecents, visibleEntries } from '@/lib/recents'
 import type { Me, SiteSummary, SpaceSummary } from '@/lib/types'
 
 const SEARCH_DEBOUNCE_MS = 200
@@ -40,9 +40,9 @@ export function CommandPalette({
 
   // Same store the viewer's recents sidebar reads — shown only in the empty (no-search) state,
   // like the sites/spaces search results it'd otherwise compete with. Entries are already
-  // most-recent-first, one row per visited page (see recents.ts), so top-5 is just a slice.
+  // most-recent-first, one row per visited page after the root-row collapse (see recents.ts).
   const recentEntries = useRecents(user?.id ?? null)
-  const recentRows = useMemo(() => recentEntries.slice(0, 5), [recentEntries])
+  const recentRows = useMemo(() => visibleEntries(recentEntries).slice(0, 5), [recentEntries])
 
   // Radix mounts the dialog content on open and unmounts it on close — for EVERY trigger
   // (header button, ⌘K, Escape), unlike onOpenChange which the externally-controlled `open`
