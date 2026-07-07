@@ -8,10 +8,12 @@ import { toLogin } from '@/lib/nav'
 import { cn } from '@/lib/utils'
 import { comments, type PendingAnchor, pendingToInput, type Thread } from '@/lib/comments'
 import { type DOMRectLike, type Intent, parseIntent } from '@/lib/parseIntent'
+import { recordVisit } from '@/lib/recents'
 import type { Me, ViewerSite } from '@/lib/types'
 import { Spinner } from '@/components/states'
 import { type CanvasWidth, ViewerTopBar } from '@/components/ViewerTopBar'
 import { ReviewRail, type ReviewMode } from '@/components/review/ReviewRail'
+import { ViewerSidebar } from '@/components/ViewerSidebar'
 import { Button } from '@/components/ui/button'
 
 export async function loader({ params, request }: LoaderFunctionArgs) {
@@ -31,11 +33,19 @@ type Pending = PendingAnchor & { rect?: DOMRectLike }
 // (re-resolve selector). Mirrors the annotate client's PaintAnchor.
 type PaintMsgAnchor = { id: string; anchorType: 'text'; quote: string } | { id: string; anchorType: 'element'; selector: string }
 
-// One persistent iframe hosts the deployed HTML for the whole tab; opening comments slides a rail
-// in beside it WITHOUT reloading the frame. Every site is review-capable (there is no public tier),
-// so the iframe always runs the annotate client (?glance_annotate=1) and toggling comments is a pure
-// layout change — only the rail and the in-page affordances are gated on `review`.
+// The recents sidebar lets a user jump straight from one open site to another via a plain
+// react-router <Link> (no full reload) — the FIRST in-app case of navigating between two mounts of
+// this same route. React Router keeps one component instance across param changes on a matched
+// route, so without a remount all the per-site useState (threads, filePath, loaded, review, …)
+// would leak from the old site into the new one. `key`-ing on space/site forces a clean remount on
+// cross-site navigation while leaving same-site file navigation (the splat changing) alone — that
+// case already reacts via the `src` memo below.
 export function Component() {
+  const params = useParams()
+  return <Viewer key={`${params.space}/${params.site}`} />
+}
+
+function Viewer() {
   const site = useLoaderData() as ViewerSite
 
   // Optional in-site file path from the route splat (`/space/site/docs/page.html`). Appended to the
@@ -57,6 +67,7 @@ export function Component() {
   const [threads, setThreads] = useState<Thread[]>([])
   const [selection, setSelection] = useState<Pending | null>(null)
   const [composing, setComposing] = useState<Pending | null>(null)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
 
   // Paint anchors back into the iframe via the trusted parent→child channel — only while reviewing;
   // leaving review repaints with [] so highlights/overlays clear. Text anchors re-find their quote
@@ -131,8 +142,13 @@ export function Component() {
     function onMsg(e: MessageEvent) {
       const intent: Intent | null = parseIntent(e, { origin: contentOrigin, source: iframeRef.current?.contentWindow ?? null })
       if (!intent) return
-      if (intent.type === 'ready') setFilePath(intent.filePath)
-      else if (intent.type === 'select') setSelection({ kind: 'text', quote: intent.quote, rect: intent.rect })
+      if (intent.type === 'ready') {
+        setFilePath(intent.filePath)
+        // Every in-iframe navigation fires 'ready' with the real current file — the only place the
+        // SPA learns it, since the URL doesn't change on in-page navigation. Skip until Me resolves
+        // (never record to an unknown/shared-machine user).
+        if (me) recordVisit(me.id, { spaceSlug: site.spaceSlug, siteSlug: site.siteSlug, title: site.title, filePath: intent.filePath })
+      } else if (intent.type === 'select') setSelection({ kind: 'text', quote: intent.quote, rect: intent.rect })
       else if (intent.type === 'pinpoint') setSelection({ kind: 'element', anchor: intent.anchor, rect: intent.rect })
       // select-clear fires when a text selection collapses (including right after an element click) —
       // it must only drop a TEXT pending, never the element one we just captured.
@@ -140,11 +156,19 @@ export function Component() {
     }
     window.addEventListener('message', onMsg)
     return () => window.removeEventListener('message', onMsg)
-  }, [contentOrigin])
+  }, [contentOrigin, me, site.spaceSlug, site.siteSlug, site.title])
 
   useEffect(() => {
-    api.get<Me>('/api/auth/me').then(setMe).catch(() => setMe(null))
-  }, [])
+    api
+      .get<Me>('/api/auth/me')
+      .then((m) => {
+        setMe(m)
+        // Site-level visit (filePath '') — recorded once Me is known, independent of any in-iframe
+        // navigation (which may never report a file, e.g. a single-page site with no postMessage).
+        recordVisit(m.id, { spaceSlug: site.spaceSlug, siteSlug: site.siteSlug, title: site.title, filePath: '' })
+      })
+      .catch(() => setMe(null))
+  }, [site.spaceSlug, site.siteSlug, site.title])
 
   // Load threads once the frame reports ready — powers the toolbar count badge before review opens,
   // and seeds the rail. The frame is already mounted, so this is just a fetch, never a reload; the
@@ -204,6 +228,15 @@ export function Component() {
         commentCount={openCount}
         onReview={() => setReview(true)}
         onExit={exitReview}
+        onToggleSidebar={() => setSidebarOpen((o) => !o)}
+      />
+
+      <ViewerSidebar
+        open={sidebarOpen}
+        onOpenChange={setSidebarOpen}
+        userId={me?.id ?? null}
+        currentSpaceSlug={site.spaceSlug}
+        currentSiteSlug={site.siteSlug}
       />
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
