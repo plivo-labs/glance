@@ -8,6 +8,11 @@ export interface Bindings {
   GLANCE_SESSIONS: KVNamespace
   ASSETS: Fetcher
   UPLOAD_LIMITER?: RateLimit
+  // Workers AI, used to transcribe voice comments server-side. Declared unconditionally in
+  // wrangler.jsonc so production always has it bound; typed optional purely so tests and any
+  // binding-less deploy degrade gracefully — voice comments still post with a transcript
+  // placeholder rather than erroring (see lib/transcribe).
+  AI?: Ai
   // Optional: when unset, Google OAuth routes are inert (404) and login is bootstrap-only.
   GOOGLE_CLIENT_ID?: string
   GOOGLE_CLIENT_SECRET?: string

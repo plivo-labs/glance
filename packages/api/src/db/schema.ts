@@ -141,6 +141,9 @@ export const comments = sqliteTable(
     editedAt: text('editedAt'),
     // Soft delete: keeps the row (and thread shape) so history survives; body is redacted on read.
     deletedAt: text('deletedAt'),
+    // Voice comments: R2 object key for the recorded audio; null for text comments. The `body`
+    // holds the server-side transcript so the CLI/agent review loop still reads everything as text.
+    audioKey: text('audioKey'),
   },
   (t) => [index('comments_thread_created').on(t.threadId, t.createdAt), index('comments_author').on(t.authorId)],
 )

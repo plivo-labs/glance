@@ -2,10 +2,26 @@ import { describe, expect, test } from 'bun:test'
 import { eq } from 'drizzle-orm'
 import { makeDb, makeR2, seedComment, seedFile, seedSite, seedSpace, seedThread, seedUser } from '../test/harness'
 import { commentThreads } from './schema'
-import { addComment, createThread, deleteComment, listSiteThreads, listThreads, resolveThread } from './comments'
+import { addComment, createThread, deleteComment, getComment, listSiteThreads, listThreads, resolveThread } from './comments'
 
 // Comments repo: create/list/reply/resolve/delete over the S-D harness. Anchors are STORED, not
 // resolved — the browser paints them — so there is no server-side reconciliation to test here.
+
+describe('audioKey column (W1-1)', () => {
+  test('defaults to null for a plain text comment, and persists when a voice comment sets it', async () => {
+    const db = makeDb()
+    const user = await seedUser(db)
+    const sp = await seedSpace(db, { createdBy: user })
+    const siteId = await seedSite(db, { spaceId: sp, ownerId: user })
+    const threadId = await seedThread(db, { siteId, filePath: 'index.html', anchorType: 'page' })
+
+    const textId = await seedComment(db, { threadId, body: 'just text' })
+    expect((await getComment(db, textId))?.audioKey).toBeNull()
+
+    const voiceId = await seedComment(db, { threadId, body: 'transcript', audioKey: 'comments/audio/abc.webm' })
+    expect((await getComment(db, voiceId))?.audioKey).toBe('comments/audio/abc.webm')
+  })
+})
 
 async function siteWithFile(text: string, path = 'index.html') {
   const db = makeDb()

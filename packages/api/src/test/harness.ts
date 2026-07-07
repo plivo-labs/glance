@@ -36,6 +36,7 @@ const MIGRATIONS = [
   'drizzle/0005_peaceful_onslaught.sql',
   'drizzle/0006_glance_documents.sql',
   'drizzle/0007_add_indexes.sql',
+  'drizzle/0008_comment_audio_key.sql',
 ]
 
 /** Fresh in-memory DB with the real schema applied. */
@@ -180,6 +181,7 @@ export async function seedComment(
     createdAt: o.createdAt ?? new Date().toISOString(),
     editedAt: o.editedAt ?? null,
     deletedAt: o.deletedAt ?? null,
+    audioKey: o.audioKey ?? null,
   })
   return id
 }
