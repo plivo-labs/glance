@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { MessageSquarePlus } from 'lucide-react'
 import { type LoaderFunctionArgs, useLoaderData, useParams } from 'react-router'
 import { toast } from 'sonner'
 import { api, ApiError } from '@/lib/api'
@@ -7,14 +6,13 @@ import { attachDbBroker } from '@/lib/dbBroker'
 import { toLogin } from '@/lib/nav'
 import { cn } from '@/lib/utils'
 import { comments, type PendingAnchor, pendingToInput, type Thread } from '@/lib/comments'
-import { type DOMRectLike, type Intent, parseIntent } from '@/lib/parseIntent'
+import { type Intent, parseIntent } from '@/lib/parseIntent'
 import { recordVisit } from '@/lib/recents'
 import type { Me, ViewerSite } from '@/lib/types'
 import { Spinner } from '@/components/states'
 import { type CanvasWidth, ViewerTopBar } from '@/components/ViewerTopBar'
 import { ReviewRail, type ReviewMode } from '@/components/review/ReviewRail'
 import { ViewerSidebar } from '@/components/ViewerSidebar'
-import { Button } from '@/components/ui/button'
 
 export async function loader({ params, request }: LoaderFunctionArgs) {
   try {
@@ -26,9 +24,6 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
   }
 }
 
-// A pending anchor (text selection or element pinpoint) plus its on-screen rect for positioning
-// the floating "Comment" button.
-type Pending = PendingAnchor & { rect?: DOMRectLike }
 // The paint payload the iframe understands: a text anchor (re-find quote) or an element anchor
 // (re-resolve selector). Mirrors the annotate client's PaintAnchor.
 type PaintMsgAnchor = { id: string; anchorType: 'text'; quote: string } | { id: string; anchorType: 'element'; selector: string }
@@ -69,8 +64,7 @@ function Viewer() {
   const [me, setMe] = useState<Me | null>(null)
   const [filePath, setFilePath] = useState<string | null>(null)
   const [threads, setThreads] = useState<Thread[]>([])
-  const [selection, setSelection] = useState<Pending | null>(null)
-  const [composing, setComposing] = useState<Pending | null>(null)
+  const [composing, setComposing] = useState<PendingAnchor | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   // Paint anchors back into the iframe via the trusted parent→child channel — only while reviewing;
@@ -99,14 +93,11 @@ function Viewer() {
     win.postMessage({ type: 'glance:mode', mode: review ? reviewMode : 'read' }, contentOrigin)
   }, [review, reviewMode, loaded, contentOrigin])
 
-  // The element the user is currently pinpointing — while the floating Comment button is up
-  // (selection) OR the composer is open (composing). Its selector is pushed to the iframe so the
-  // annotate client paints a PERSISTENT selection outline on it; the transient hover box alone would
-  // vanish the moment the pointer moves off to the composer. null (text pending / nothing) clears it.
-  const pendingSelector = useMemo(() => {
-    const p = composing ?? selection
-    return p?.kind === 'element' ? p.anchor.selector : null
-  }, [composing, selection])
+  // The element the user is currently commenting on, while the composer is open. Its selector is
+  // pushed to the iframe so the annotate client paints a PERSISTENT selection outline on it; the
+  // transient hover box alone would vanish the moment the pointer moves off to the composer. null
+  // (text pending / composer closed) clears it.
+  const pendingSelector = useMemo(() => (composing?.kind === 'element' ? composing.anchor.selector : null), [composing])
 
   const postPending = useCallback(() => {
     const win = iframeRef.current?.contentWindow
@@ -154,15 +145,17 @@ function Viewer() {
         // (never record to an unknown/shared-machine user); the me-effect below flushes the ref once
         // Me resolves, so a 'ready' that beats the /api/auth/me fetch on a fresh load isn't dropped.
         if (me) recordVisit(me.id, { spaceSlug: site.spaceSlug, siteSlug: site.siteSlug, title: site.title, filePath: intent.filePath })
-      } else if (intent.type === 'select') setSelection({ kind: 'text', quote: intent.quote, rect: intent.rect })
-      else if (intent.type === 'pinpoint') setSelection({ kind: 'element', anchor: intent.anchor, rect: intent.rect })
-      // select-clear fires when a text selection collapses (including right after an element click) —
-      // it must only drop a TEXT pending, never the element one we just captured.
-      else if (intent.type === 'clear') setSelection((s) => (s?.kind === 'text' ? null : s))
+      }
+      // One click, one select: outside review these are no-ops (nothing to stash without a rail to
+      // open into); in review each intent opens the composer directly on its anchor, replacing
+      // whatever was already being composed but leaving its typed draft alone (ReviewRail renders
+      // Composer unkeyed, so swapping `composing` reparents the anchor without remounting the text).
+      else if (review && intent.type === 'select') setComposing({ kind: 'text', quote: intent.quote })
+      else if (review && intent.type === 'pinpoint') setComposing({ kind: 'element', anchor: intent.anchor })
     }
     window.addEventListener('message', onMsg)
     return () => window.removeEventListener('message', onMsg)
-  }, [contentOrigin, me, site.spaceSlug, site.siteSlug, site.title])
+  }, [contentOrigin, me, review, site.spaceSlug, site.siteSlug, site.title])
 
   useEffect(() => {
     api
@@ -192,11 +185,6 @@ function Viewer() {
   useEffect(postMode, [postMode])
   useEffect(postPending, [postPending])
 
-  const startComposer = () => {
-    setComposing(selection)
-    setSelection(null)
-  }
-
   // Focus an anchor in the iframe: element → scroll its selector into view; text → its quote.
   const focusAnchor = useCallback(
     (thread: Thread) => {
@@ -222,7 +210,6 @@ function Viewer() {
 
   function exitReview() {
     setReview(false)
-    setSelection(null)
     setComposing(null)
   }
 
@@ -253,8 +240,8 @@ function Viewer() {
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         {/* Letterbox canvas: the iframe is constrained to the chosen width and centered; the
-            surrounding muted area is the letterbox. The Comment button + loading overlay live inside
-            the constrained wrapper so their coords still match the iframe viewport. */}
+            surrounding muted area is the letterbox. The loading overlay lives inside the constrained
+            wrapper so its coords still match the iframe viewport. */}
         <div className="relative flex min-h-0 min-w-0 flex-1 justify-center bg-muted/20">
           <div className={cn('relative h-full w-full', WIDTH_CLASS[width])}>
             <iframe
@@ -268,17 +255,6 @@ function Viewer() {
               // so iframed content can't silently redirect the tab.
               sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-top-navigation-by-user-activation"
             />
-            {review && selection?.rect && (
-              <Button
-                size="sm"
-                className="absolute z-10 shadow-lg"
-                style={{ top: selection.rect.top + selection.rect.height + 6, left: selection.rect.left }}
-                onClick={startComposer}
-              >
-                <MessageSquarePlus className="size-3.5" />
-                Comment
-              </Button>
-            )}
             {!loaded && (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background text-muted-foreground">
                 <Spinner className="size-6" />
