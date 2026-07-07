@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/command'
 import { toggleTheme } from '@/components/theme'
 import { api } from '@/lib/api'
-import { entryLabel, useRecents, visibleEntries } from '@/lib/recents'
+import { siteName, useRecents, visibleEntries } from '@/lib/recents'
 import type { Me, SiteSummary, SpaceSummary } from '@/lib/types'
 
 const SEARCH_DEBOUNCE_MS = 200
@@ -40,7 +40,7 @@ export function CommandPalette({
 
   // Same store the viewer's recents sidebar reads — shown only in the empty (no-search) state,
   // like the sites/spaces search results it'd otherwise compete with. Entries are already
-  // most-recent-first, one row per visited page after the root-row collapse (see recents.ts).
+  // most-recent-first, one row per site (see recents.ts).
   const recentEntries = useRecents(user?.id ?? null)
   const recentRows = useMemo(() => visibleEntries(recentEntries).slice(0, 5), [recentEntries])
 
@@ -115,21 +115,18 @@ export function CommandPalette({
         {!term && recentRows.length > 0 && (
           <CommandGroup heading="Recent">
             {recentRows.map((e) => {
-              const { primary, secondary } = entryLabel(e)
+              const name = siteName(e)
               const href = e.filePath
                 ? `/${e.spaceSlug}/${e.siteSlug}/${e.filePath.split('/').map(encodeURIComponent).join('/')}`
                 : `/${e.spaceSlug}/${e.siteSlug}`
               return (
                 <CommandItem
-                  key={`${e.spaceSlug}/${e.siteSlug}/${e.filePath}`}
-                  value={`recent ${e.spaceSlug}/${e.siteSlug}/${e.filePath} ${primary} ${secondary ?? ''}`}
+                  key={`${e.spaceSlug}/${e.siteSlug}`}
+                  value={`recent ${e.spaceSlug}/${e.siteSlug} ${name}`}
                   onSelect={() => run(() => navigate(href))}
                 >
                   <History />
-                  <span className="truncate">
-                    {primary}
-                    {secondary ? ` · ${secondary}` : ''}
-                  </span>
+                  <span className="truncate">{name}</span>
                 </CommandItem>
               )
             })}

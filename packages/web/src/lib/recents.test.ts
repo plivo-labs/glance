@@ -3,11 +3,11 @@ import {
   applyRemoveEntry,
   applyVisit,
   clear,
-  entryLabel,
   normalizeFilePath,
   type RecentEntry,
   recordVisit,
   removeEntry,
+  siteName,
   visibleEntries,
 } from './recents'
 
@@ -52,18 +52,11 @@ describe('applyVisit', () => {
     expect(result).toEqual([entry()])
   })
 
-  test('dedupes by (spaceSlug, siteSlug, filePath), refreshing the timestamp in place', () => {
-    const older = entry({ at: '2026-01-01T00:00:00.000Z' })
-    const newer = entry({ at: '2026-01-02T00:00:00.000Z', title: 'Renamed' })
+  test('dedupes by SITE — a fresh visit replaces the old row, its filePath/title/timestamp winning', () => {
+    const older = entry({ filePath: 'docs/intro.html', at: '2026-01-01T00:00:00.000Z' })
+    const newer = entry({ filePath: 'docs/setup.html', at: '2026-01-02T00:00:00.000Z', title: 'Renamed' })
     const result = applyVisit([older], newer)
     expect(result).toEqual([newer])
-  })
-
-  test('a different filePath on the same site is a distinct entry', () => {
-    const root = entry({ filePath: '' })
-    const doc = entry({ filePath: 'docs/page.html', at: '2026-01-02T00:00:00.000Z' })
-    const result = applyVisit([root], doc)
-    expect(result).toEqual([doc, root])
   })
 
   test('most-recent-first: a repeat visit jumps back to the top', () => {
@@ -74,40 +67,31 @@ describe('applyVisit', () => {
     expect(result.map((e) => e.siteSlug)).toEqual(['a', 'b'])
   })
 
-  test('caps at 15 distinct sites, dropping the whole oldest site together', () => {
-    // 15 existing sites, most-recent-first (site-0 newest .. site-14 oldest).
+  test('same slug in a DIFFERENT space is a distinct site', () => {
+    const mine = entry({ spaceSlug: 'sam' })
+    const theirs = entry({ spaceSlug: 'ana', at: '2026-01-02T00:00:00.000Z' })
+    const result = applyVisit([mine], theirs)
+    expect(result).toEqual([theirs, mine])
+  })
+
+  test('caps at 15 sites, dropping the oldest', () => {
     const existing = Array.from({ length: 15 }, (_, i) => entry({ siteSlug: `site-${i}`, at: `2026-01-${String(30 - i).padStart(2, '0')}T00:00:00.000Z` }))
     const fresh = entry({ siteSlug: 'newcomer', at: '2026-02-01T00:00:00.000Z' })
     const result = applyVisit(existing, fresh)
     const slugs = result.map((e) => e.siteSlug)
     expect(slugs).toContain('newcomer')
-    expect(slugs).not.toContain('site-14') // the oldest site was bumped out entirely
-    expect(new Set(slugs).size).toBe(15)
+    expect(slugs).not.toContain('site-14') // the oldest site was bumped out
+    expect(slugs.length).toBe(15)
   })
 
-  test('caps at 100 total entries even within the site limit', () => {
-    const existing = Array.from({ length: 100 }, (_, i) =>
-      entry({ filePath: `file-${i}.html`, at: `2026-01-01T00:00:${String(99 - i).padStart(2, '0')}.000Z` }),
-    )
-    const fresh = entry({ filePath: 'file-100.html', at: '2026-01-01T00:01:00.000Z' })
-    const result = applyVisit(existing, fresh)
-    expect(result.length).toBe(100)
-    expect(result[0]).toEqual(fresh)
-    expect(result.some((e) => e.filePath === 'file-99.html')).toBe(false) // oldest row dropped
+  test('canonicalizes top-level index.html to "" so the root href stays /{space}/{site}', () => {
+    const result = applyVisit([], entry({ filePath: 'index.html' }))
+    expect(result).toEqual([entry({ filePath: '' })])
   })
 
-  test('canonicalizes top-level index.html to "" before dedupe, so the site-open row and the iframe-ready row for the same root page collapse into one', () => {
-    const siteOpen = entry({ filePath: '', at: '2026-01-01T00:00:00.000Z' })
-    const iframeReady = entry({ filePath: 'index.html', at: '2026-01-02T00:00:00.000Z', title: 'Renamed' })
-    const result = applyVisit([siteOpen], iframeReady)
-    expect(result).toEqual([{ ...iframeReady, filePath: '' }])
-  })
-
-  test('a NESTED index.html (docs/index.html) is not normalized — stays a distinct row', () => {
-    const root = entry({ filePath: '', at: '2026-01-01T00:00:00.000Z' })
-    const nested = entry({ filePath: 'docs/index.html', at: '2026-01-02T00:00:00.000Z' })
-    const result = applyVisit([root], nested)
-    expect(result).toEqual([nested, root])
+  test('a NESTED index.html (docs/index.html) is not normalized', () => {
+    const result = applyVisit([], entry({ filePath: 'docs/index.html' }))
+    expect(result[0].filePath).toBe('docs/index.html')
   })
 })
 
@@ -127,18 +111,10 @@ describe('normalizeFilePath', () => {
 })
 
 describe('applyRemoveEntry', () => {
-  test('filePath given (including "") removes just that one row', () => {
-    const root = entry({ filePath: '' })
-    const doc = entry({ filePath: 'docs/page.html' })
-    const result = applyRemoveEntry([root, doc], { spaceSlug: 'sam', siteSlug: 'demo', filePath: '' })
-    expect(result).toEqual([doc])
-  })
-
-  test('filePath omitted removes every row for that site', () => {
-    const root = entry({ filePath: '' })
-    const doc = entry({ filePath: 'docs/page.html' })
+  test('removes the matching site', () => {
+    const demo = entry()
     const other = entry({ siteSlug: 'other' })
-    const result = applyRemoveEntry([root, doc, other], { spaceSlug: 'sam', siteSlug: 'demo' })
+    const result = applyRemoveEntry([demo, other], { spaceSlug: 'sam', siteSlug: 'demo' })
     expect(result).toEqual([other])
   })
 
@@ -147,76 +123,44 @@ describe('applyRemoveEntry', () => {
     const result = applyRemoveEntry([a], { spaceSlug: 'sam', siteSlug: 'nope' })
     expect(result).toEqual([a])
   })
+
+  test('removes EVERY row of the site (legacy per-page lists)', () => {
+    const root = entry({ filePath: '' })
+    const doc = entry({ filePath: 'docs/page.html' })
+    const other = entry({ siteSlug: 'other' })
+    const result = applyRemoveEntry([root, doc, other], { spaceSlug: 'sam', siteSlug: 'demo' })
+    expect(result).toEqual([other])
+  })
 })
 
 describe('visibleEntries', () => {
-  test("suppresses a site's '' row when the site also has a file row (single-file deploy)", () => {
-    const file = entry({ siteSlug: 'perf-explainer', filePath: 'perf-explainer.html', at: '2026-01-02T00:00:00.000Z' })
-    const root = entry({ siteSlug: 'perf-explainer', filePath: '', at: '2026-01-01T00:00:00.000Z' })
-    expect(visibleEntries([file, root])).toEqual([file])
+  test('collapses a legacy per-page list to one row per site, most recent winning', () => {
+    const newer = entry({ filePath: 'docs/setup.html', at: '2026-01-02T00:00:00.000Z' })
+    const older = entry({ filePath: '', at: '2026-01-01T00:00:00.000Z' })
+    expect(visibleEntries([newer, older])).toEqual([newer])
   })
 
-  test("keeps the '' row when it is the site's only entry", () => {
-    const root = entry({ filePath: '' })
-    expect(visibleEntries([root])).toEqual([root])
+  test('keeps one row per distinct site, order preserved', () => {
+    const a = entry({ siteSlug: 'a', filePath: 'a.html' })
+    const aRoot = entry({ siteSlug: 'a', filePath: '' })
+    const b = entry({ siteSlug: 'b', filePath: '' })
+    expect(visibleEntries([a, aRoot, b])).toEqual([a, b])
   })
 
-  test("suppression is per-site: another site's lone '' row survives", () => {
-    const file = entry({ siteSlug: 'a', filePath: 'a.html' })
-    const rootA = entry({ siteSlug: 'a', filePath: '' })
-    const rootB = entry({ siteSlug: 'b', filePath: '' })
-    expect(visibleEntries([file, rootA, rootB])).toEqual([file, rootB])
-  })
-
-  test('preserves order and keeps every file row of a multi-file site', () => {
-    const f1 = entry({ filePath: 'docs/setup.html', at: '2026-01-03T00:00:00.000Z' })
-    const f2 = entry({ filePath: 'docs/api.html', at: '2026-01-02T00:00:00.000Z' })
-    const root = entry({ filePath: '', at: '2026-01-01T00:00:00.000Z' })
-    expect(visibleEntries([f1, f2, root])).toEqual([f1, f2])
+  test('passes an already-per-site list through unchanged', () => {
+    const a = entry({ siteSlug: 'a' })
+    const b = entry({ siteSlug: 'b' })
+    expect(visibleEntries([a, b])).toEqual([a, b])
   })
 })
 
-describe('entryLabel', () => {
-  test('root row (filePath "") shows the site title as primary, no secondary', () => {
-    const label = entryLabel(entry({ filePath: '', title: 'Design Review' }))
-    expect(label).toEqual({ primary: 'Design Review', secondary: null })
+describe('siteName', () => {
+  test('uses the site title', () => {
+    expect(siteName(entry({ title: 'Design Review' }))).toBe('Design Review')
   })
 
-  test('root row falls back to the site slug when title is null', () => {
-    const label = entryLabel(entry({ filePath: '', title: null, siteSlug: 'demo' }))
-    expect(label).toEqual({ primary: 'demo', secondary: null })
-  })
-
-  test('deep page shows the extension-stripped path as primary, site title as secondary', () => {
-    const label = entryLabel(entry({ filePath: 'docs/setup.html', title: 'Docs Site' }))
-    expect(label).toEqual({ primary: 'docs/setup', secondary: 'Docs Site' })
-  })
-
-  test('deep page falls back to the site slug as secondary when title is null', () => {
-    const label = entryLabel(entry({ filePath: 'docs/setup.html', title: null, siteSlug: 'docs-v2' }))
-    expect(label).toEqual({ primary: 'docs/setup', secondary: 'docs-v2' })
-  })
-
-  test('single-file deploy: no secondary when the site name matches the primary label', () => {
-    // `glance deploy perf-explainer.html` → slug defaults to the filename sans extension.
-    const label = entryLabel(entry({ filePath: 'perf-explainer.html', title: null, siteSlug: 'perf-explainer' }))
-    expect(label).toEqual({ primary: 'perf-explainer', secondary: null })
-  })
-
-  test('site-name-vs-primary comparison is case-insensitive', () => {
-    const label = entryLabel(entry({ filePath: 'perf-explainer.html', title: 'Perf-Explainer', siteSlug: 'x' }))
-    expect(label).toEqual({ primary: 'perf-explainer', secondary: null })
-  })
-
-  test('strips .html, .htm and .md but no other extension', () => {
-    expect(entryLabel(entry({ filePath: 'a.html' })).primary).toBe('a')
-    expect(entryLabel(entry({ filePath: 'a.htm' })).primary).toBe('a')
-    expect(entryLabel(entry({ filePath: 'a.md' })).primary).toBe('a')
-    expect(entryLabel(entry({ filePath: 'report.pdf' })).primary).toBe('report.pdf')
-  })
-
-  test('a path with no extension is shown as-is', () => {
-    expect(entryLabel(entry({ filePath: 'docs/readme' })).primary).toBe('docs/readme')
+  test('falls back to the site slug when title is null', () => {
+    expect(siteName(entry({ title: null, siteSlug: 'demo' }))).toBe('demo')
   })
 })
 
@@ -243,11 +187,10 @@ describe('recordVisit / removeEntry / clear (localStorage-backed, per-user)', ()
     expect(readStored('u3').map((e) => e.siteSlug)).toEqual(['a', 'b'])
   })
 
-  test('removeEntry(filePath) drops one row; removeEntry(no filePath) drops the whole site', () => {
+  test('a later visit to a page within the site keeps one row, deep-linking to that page', () => {
     recordVisit('u4', { spaceSlug: 'sam', siteSlug: 'demo', title: null, filePath: '' })
     recordVisit('u4', { spaceSlug: 'sam', siteSlug: 'demo', title: null, filePath: 'a.html' })
-    removeEntry('u4', { spaceSlug: 'sam', siteSlug: 'demo', filePath: 'a.html' })
-    expect(readStored('u4').map((e) => e.filePath)).toEqual([''])
+    expect(readStored('u4').map((e) => e.filePath)).toEqual(['a.html'])
     removeEntry('u4', { spaceSlug: 'sam', siteSlug: 'demo' })
     expect(readStored('u4')).toEqual([])
   })

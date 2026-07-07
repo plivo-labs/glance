@@ -248,7 +248,6 @@ function Viewer() {
         userId={me?.id ?? null}
         currentSpaceSlug={site.spaceSlug}
         currentSiteSlug={site.siteSlug}
-        currentFilePath={filePath}
       />
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">

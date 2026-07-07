@@ -1,27 +1,27 @@
 import { useSyncExternalStore } from 'react'
 
-// Recently-opened sites/files, for the viewer's left sidebar (and the command palette) so a user
-// can jump back. Namespaced by user id (`glance:recents:<userId>`) — a shared machine must not
-// leak another user's history, so every call site skips recording until Me has resolved.
+// Recently-opened sites, for the viewer's left sidebar (and the command palette) so a user can
+// jump back. Namespaced by user id (`glance:recents:<userId>`) — a shared machine must not leak
+// another user's history, so every call site skips recording until Me has resolved.
 //
-// The module is split in two: PURE list logic (canonicalize/dedupe/cap/ordering/labeling —
-// unit-tested below, no DOM needed) and a thin localStorage + custom-window-event wrapper
-// mirroring `theme.ts` (untested here, browser-only; `useRecents` subscribes via
-// useSyncExternalStore, not useEffect). The sidebar/palette render a FLAT most-recent-first list —
-// one row per visited page — so there's no grouping step, just `entryLabel` per row.
+// The module is split in two: PURE list logic (canonicalize/dedupe/cap/ordering — unit-tested
+// below, no DOM needed) and a thin localStorage + custom-window-event wrapper mirroring `theme.ts`
+// (untested here, browser-only; `useRecents` subscribes via useSyncExternalStore, not useEffect).
+//
+// ONE row per SITE, labeled by site name (`siteName`), most-recent-first. `filePath` is never
+// shown — it's kept only so the row deep-links back to the page visited last within that site.
 
 export interface RecentEntry {
   spaceSlug: string
   siteSlug: string
   title: string | null
-  /** '' = the site itself (no specific file yet); non-empty = an in-site file path. */
+  /** '' = the site root; non-empty = the in-site page visited last. Never shown, href only. */
   filePath: string
   /** ISO timestamp of the visit. */
   at: string
 }
 
 const EVENT = 'glance:recents'
-const MAX_ENTRIES = 100
 const MAX_SITES = 15
 
 function storageKey(userId: string): string {
@@ -34,80 +34,38 @@ function siteKey(e: { spaceSlug: string; siteSlug: string }): string {
 
 // --- Pure logic (unit-tested; no localStorage/window) ------------------------------------------
 
-// The site-open entry (filePath '') and the iframe-ready entry for the same root page are really
-// one visit — canonicalize the exact top-level `index.html` down to '' so they dedupe into a
-// single row. A NESTED index.html (e.g. `docs/index.html`) is a distinct page and stays as-is.
+// The exact top-level `index.html` IS the site root — canonicalize it to '' so the href stays the
+// clean `/{space}/{site}` form. A NESTED index.html (e.g. `docs/index.html`) stays as-is.
 export function normalizeFilePath(filePath: string): string {
   return filePath === 'index.html' ? '' : filePath
 }
 
-// Insert/refresh `entry` most-recent-first, dedup'd by (spaceSlug, siteSlug, filePath), then cap.
+// Insert/refresh the site most-recent-first — dedup'd by (spaceSlug, siteSlug), the fresh visit's
+// filePath/title replacing the old row's — then cap to MAX_SITES.
 export function applyVisit(entries: RecentEntry[], entry: RecentEntry): RecentEntry[] {
   const normalized = { ...entry, filePath: normalizeFilePath(entry.filePath) }
-  const withoutDup = entries.filter(
-    (e) => !(e.spaceSlug === normalized.spaceSlug && e.siteSlug === normalized.siteSlug && e.filePath === normalized.filePath),
-  )
-  return capEntries([normalized, ...withoutDup])
+  const withoutDup = entries.filter((e) => siteKey(e) !== siteKey(normalized))
+  return [normalized, ...withoutDup].slice(0, MAX_SITES)
 }
 
-// `filePath` omitted → drop the whole site (every entry, site-level + files). `filePath` given
-// (including '') → drop just that one row.
-export function applyRemoveEntry(
-  entries: RecentEntry[],
-  match: { spaceSlug: string; siteSlug: string; filePath?: string },
-): RecentEntry[] {
+export function applyRemoveEntry(entries: RecentEntry[], match: { spaceSlug: string; siteSlug: string }): RecentEntry[] {
+  return entries.filter((e) => siteKey(e) !== siteKey(match))
+}
+
+// One row per site, first (= most recent) occurrence wins. `applyVisit` already keeps storage to
+// one row per site; this exists for lists persisted before that, which held one row per PAGE.
+export function visibleEntries(entries: RecentEntry[]): RecentEntry[] {
+  const seen = new Set<string>()
   return entries.filter((e) => {
-    if (e.spaceSlug !== match.spaceSlug || e.siteSlug !== match.siteSlug) return true
-    return match.filePath !== undefined && e.filePath !== match.filePath
+    const k = siteKey(e)
+    if (seen.has(k)) return false
+    seen.add(k)
+    return true
   })
 }
 
-// Caps to MAX_SITES distinct sites (a whole site's rows drop together once bumped out by newer
-// sites) then MAX_ENTRIES total rows. Robust to unsorted input: the FIRST occurrence of a site in
-// iteration order decides whether it's kept, so callers should pass most-recent-first lists.
-function capEntries(entries: RecentEntry[]): RecentEntry[] {
-  const keptSites = new Set<string>()
-  for (const e of entries) {
-    const k = siteKey(e)
-    if (keptSites.has(k) || keptSites.size < MAX_SITES) keptSites.add(k)
-  }
-  return entries.filter((e) => keptSites.has(siteKey(e))).slice(0, MAX_ENTRIES)
-}
-
-// Most sites come from `glance deploy <file.html>` — a single file kept under its OWN name (not
-// index.html) and served at the site root. Opening one records TWO entries for one document: ''
-// (site-level, from the loader) and the real filename (from the iframe 'ready'). Collapse that at
-// the VIEW level: suppress a site's '' row whenever the site also has a file row. The '' row only
-// shows when it's the site's only entry (directory listing, or an index site whose 'ready' was
-// canonicalized to '' at record time). Recording stays unchanged.
-export function visibleEntries(entries: RecentEntry[]): RecentEntry[] {
-  const sitesWithFiles = new Set(entries.filter((e) => e.filePath !== '').map(siteKey))
-  return entries.filter((e) => e.filePath !== '' || !sitesWithFiles.has(siteKey(e)))
-}
-
-const STRIPPED_EXTENSIONS = ['.html', '.htm', '.md']
-
-function stripKnownExtension(path: string): string {
-  const ext = STRIPPED_EXTENSIONS.find((e) => path.endsWith(e))
-  return ext ? path.slice(0, path.length - ext.length) : path
-}
-
-export interface EntryLabel {
-  primary: string
-  /** Muted secondary text — the site title (fallback slug), shown on a file row only when it
-   *  ADDS information, i.e. differs from the primary label (case-insensitive). A single-file
-   *  deploy's slug is the filename sans extension, so its one row stays clean; `docs/setup`
-   *  inside site `handbook` does get the secondary label. */
-  secondary: string | null
-}
-
-// Flat-list row label. The list itself needs no grouping helper: entries are already
-// most-recent-first (see `applyVisit`/`readEntries`), one row per visited page.
-export function entryLabel(entry: RecentEntry): EntryLabel {
-  const siteName = entry.title ?? entry.siteSlug
-  if (entry.filePath === '') return { primary: siteName, secondary: null }
-  const primary = stripKnownExtension(entry.filePath)
-  return { primary, secondary: siteName.toLowerCase() === primary.toLowerCase() ? null : siteName }
+export function siteName(entry: RecentEntry): string {
+  return entry.title ?? entry.siteSlug
 }
 
 // --- Browser-facing store (localStorage + custom window event) --------------------------------
@@ -155,7 +113,7 @@ export function recordVisit(userId: string, entry: Omit<RecentEntry, 'at'>): voi
   writeEntries(userId, applyVisit(readEntries(userId), { ...entry, at: new Date().toISOString() }))
 }
 
-export function removeEntry(userId: string, match: { spaceSlug: string; siteSlug: string; filePath?: string }): void {
+export function removeEntry(userId: string, match: { spaceSlug: string; siteSlug: string }): void {
   writeEntries(userId, applyRemoveEntry(readEntries(userId), match))
 }
 
