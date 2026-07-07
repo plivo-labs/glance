@@ -11,6 +11,9 @@ describe('isAudioFile', () => {
     expect(isAudioFile('song.flac')).toBe(true)
     expect(isAudioFile('song.aac')).toBe(true)
   })
+  test('recognizes webm — the MediaRecorder default container (W0-2)', () => {
+    expect(isAudioFile('take.webm')).toBe(true)
+  })
   test('is case-insensitive on the extension', () => {
     expect(isAudioFile('SONG.MP3')).toBe(true)
   })

@@ -6,6 +6,7 @@ import { ANNOTATE_CSS, ANNOTATE_JS, ANNOTATE_VERSION } from './annotate/bundle'
 import { GLANCE_DB_JS, GLANCE_DB_VERSION } from './glancedb/bundle'
 import { type NewEvent, files, sites, spaces } from './db/schema'
 import { fireAndForget, recordEvent } from './lib/events'
+import { contentType } from './lib/mime'
 import { authorizeViewerById } from './lib/site-access'
 import { verifyToken } from './lib/token'
 import type { Bindings } from './types'
@@ -341,50 +342,6 @@ export function parseByteRange(header: string | undefined, total: number): Range
   if (start >= total) return { kind: 'unsatisfiable' }
   if (end < start) return { kind: 'none' } // last-byte-pos < first-byte-pos: invalid, not unsatisfiable
   return { kind: 'single', start, end: Math.min(end, total - 1) }
-}
-
-const EXT_MIME: Record<string, string> = {
-  html: 'text/html',
-  htm: 'text/html',
-  css: 'text/css',
-  js: 'text/javascript',
-  mjs: 'text/javascript',
-  json: 'application/json',
-  svg: 'image/svg+xml',
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  gif: 'image/gif',
-  webp: 'image/webp',
-  ico: 'image/x-icon',
-  txt: 'text/plain',
-  xml: 'application/xml',
-  pdf: 'application/pdf',
-  woff: 'font/woff',
-  woff2: 'font/woff2',
-  wasm: 'application/wasm',
-  mp3: 'audio/mpeg',
-  wav: 'audio/wav',
-  m4a: 'audio/mp4',
-  ogg: 'audio/ogg',
-  oga: 'audio/ogg',
-  flac: 'audio/flac',
-  aac: 'audio/aac',
-}
-
-// Textual types are stored as UTF-8; pin the charset in the header so the browser never
-// falls back to a locale default (latin-1) and double-decodes UTF-8 bytes into mojibake.
-function withCharset(mime: string): string {
-  return /^text\/|\/(json|xml|javascript|svg\+xml)$/.test(mime) ? `${mime}; charset=utf-8` : mime
-}
-
-// Static-hosting content-type: prefer the extension (authoritative), fall back to the
-// stored upload type, then octet-stream.
-export function contentType(path: string, stored: string | null): string {
-  const ext = path.includes('.') ? (path.split('.').pop() ?? '').toLowerCase() : ''
-  if (EXT_MIME[ext]) return withCharset(EXT_MIME[ext])
-  if (stored && stored !== 'application/octet-stream') return withCharset(stored)
-  return 'application/octet-stream'
 }
 
 export function escapeHtml(s: string): string {

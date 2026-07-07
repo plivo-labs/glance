@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { Hono } from 'hono'
-import contentApp, { contentType, injectAnnotate, markdown, normalizePath, parseByteRange, restOf } from './content'
+import contentApp, { injectAnnotate, markdown, normalizePath, parseByteRange, restOf } from './content'
 import { events, sites, spaces, users } from './db/schema'
 import { sanitizePath } from './lib/storage'
 import { signToken, verifyToken } from './lib/token'
@@ -255,34 +255,6 @@ describe('view analytics (page-view events)', () => {
     const res = await app.request('/sam/site/', {}, env)
     expect(res.status).toBe(403)
     expect(await db.select().from(events)).toHaveLength(0)
-  })
-})
-
-describe('contentType', () => {
-  test('textual types pin charset=utf-8 (no latin-1 mojibake)', () => {
-    expect(contentType('index.html', null)).toBe('text/html; charset=utf-8')
-    expect(contentType('app.js', null)).toBe('text/javascript; charset=utf-8')
-    expect(contentType('data.json', null)).toBe('application/json; charset=utf-8')
-    expect(contentType('logo.svg', null)).toBe('image/svg+xml; charset=utf-8')
-    expect(contentType('notes.txt', null)).toBe('text/plain; charset=utf-8')
-  })
-  test('binary types are left untouched', () => {
-    expect(contentType('photo.png', null)).toBe('image/png')
-    expect(contentType('font.woff2', null)).toBe('font/woff2')
-    expect(contentType('blob', null)).toBe('application/octet-stream')
-  })
-  test('falls back to the stored type (charset-pinned when textual)', () => {
-    expect(contentType('weird.ext', 'text/csv')).toBe('text/csv; charset=utf-8')
-    expect(contentType('weird.ext', 'application/zip')).toBe('application/zip')
-  })
-  test('audio extensions resolve to their audio MIME regardless of stored type (extension authoritative — every CLI upload part is stamped application/octet-stream)', () => {
-    expect(contentType('song.mp3', 'application/octet-stream')).toBe('audio/mpeg')
-    expect(contentType('track.wav', 'application/octet-stream')).toBe('audio/wav')
-    expect(contentType('voice.m4a', null)).toBe('audio/mp4')
-    expect(contentType('clip.ogg', null)).toBe('audio/ogg')
-    expect(contentType('clip.oga', null)).toBe('audio/ogg')
-    expect(contentType('song.flac', null)).toBe('audio/flac')
-    expect(contentType('song.aac', null)).toBe('audio/aac')
   })
 })
 
