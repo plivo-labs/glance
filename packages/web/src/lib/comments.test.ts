@@ -22,4 +22,12 @@ describe('pendingToInput — pending anchor → NewThreadInput', () => {
       element: anchor,
     })
   })
+
+  test('a page pending (audio view — no DOM to anchor to) → a bare page payload, no quote/element', () => {
+    expect(pendingToInput('song.mp3', 'love this bridge', { kind: 'page' })).toEqual({
+      filePath: 'song.mp3',
+      body: 'love this bridge',
+      anchorType: 'page',
+    })
+  })
 })

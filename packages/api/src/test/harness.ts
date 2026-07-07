@@ -221,24 +221,41 @@ export function makeKv() {
   }
 }
 
+/** R2's 3 range shapes (`{offset, length?}` / `{offset?, length}` / `{suffix}`), applied to
+ *  an in-memory string body. `size` on the returned object is always the FULL object size —
+ *  matching real R2 (`R2Object.size` is unaffected by the requested range) — so callers must
+ *  slice the body, not the reported size. */
+function sliceRange(body: string, range: { offset?: number; length?: number; suffix?: number } | undefined): string {
+  if (!range) return body
+  const total = body.length
+  if ('suffix' in range && range.suffix != null) return body.slice(Math.max(0, total - range.suffix))
+  const start = range.offset ?? 0
+  const end = range.length != null ? start + range.length : total
+  return body.slice(start, end)
+}
+
 /** In-memory stand-in for the GLANCE_FILES R2 bucket: get/put/delete over string bodies,
  *  with a `gets()` counter so the reconcile zero-work gate ("R2.get not invoked") is testable.
- *  `get` returns an object exposing `text()`, `body` (the string is a valid BodyInit), and a
- *  stable `httpEtag`, matching the surface content.ts/upload.ts use. */
+ *  `get` returns an object exposing `text()`, `body` (the string is a valid BodyInit), a
+ *  stable `httpEtag`, and `size`, matching the surface content.ts/upload.ts use. Accepts the
+ *  `range` get option (single-range only, mirroring content.ts's own scope) so range-serving
+ *  tests can exercise a real slice instead of always getting the full body back. */
 export function makeR2() {
   const store = new Map<string, { body: string; httpMetadata?: { contentType?: string } }>()
   let gets = 0
   return {
-    get: (key: string) => {
+    get: (key: string, options?: { range?: { offset?: number; length?: number; suffix?: number } }) => {
       gets++
       const v = store.get(key)
       if (!v) return Promise.resolve(null)
+      const body = sliceRange(v.body, options?.range)
       return Promise.resolve({
-        body: v.body,
+        body,
+        size: v.body.length,
         httpEtag: `"${key}"`,
         httpMetadata: v.httpMetadata,
-        text: () => Promise.resolve(v.body),
-        arrayBuffer: () => Promise.resolve(new TextEncoder().encode(v.body).buffer),
+        text: () => Promise.resolve(body),
+        arrayBuffer: () => Promise.resolve(new TextEncoder().encode(body).buffer),
       })
     },
     put: async (key: string, value: string | ReadableStream, options?: { httpMetadata?: { contentType?: string } }) => {

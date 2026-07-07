@@ -3,12 +3,14 @@ import { MessageSquarePlus } from 'lucide-react'
 import { type LoaderFunctionArgs, useLoaderData, useParams } from 'react-router'
 import { toast } from 'sonner'
 import { api, ApiError } from '@/lib/api'
+import { isAudioFile } from '@/lib/audio'
 import { attachDbBroker } from '@/lib/dbBroker'
 import { toLogin } from '@/lib/nav'
 import { cn } from '@/lib/utils'
 import { comments, type PendingAnchor, pendingToInput, type Thread } from '@/lib/comments'
 import { type DOMRectLike, type Intent, parseIntent } from '@/lib/parseIntent'
 import type { Me, ViewerSite } from '@/lib/types'
+import { AudioView } from '@/components/AudioView'
 import { Spinner } from '@/components/states'
 import { type CanvasWidth, ViewerTopBar } from '@/components/ViewerTopBar'
 import { ReviewRail, type ReviewMode } from '@/components/review/ReviewRail'
@@ -43,8 +45,14 @@ export function Component() {
   const sitePath = useParams()['*'] ?? ''
 
   const iframeRef = useRef<HTMLIFrameElement>(null)
+  const audioRef = useRef<HTMLAudioElement>(null)
   const contentOrigin = useMemo(() => new URL(site.contentUrl).origin, [site.contentUrl])
   const src = useMemo(() => withAnnotate(appendPath(site.contentUrl, sitePath)), [site.contentUrl, sitePath])
+  // Audio has no HTML document to frame — it gets a native player instead of the sandboxed
+  // iframe, and (unlike the iframe src) no ?glance_annotate param: that flag only triggers the
+  // HTML-injection transform in content.ts, which never applies to audio.
+  const isAudio = useMemo(() => isAudioFile(sitePath), [sitePath])
+  const audioSrc = useMemo(() => appendPath(site.contentUrl, sitePath), [site.contentUrl, sitePath])
 
   const [review, setReview] = useState(false)
   // Within review, Read = normal browsing + text-select-to-comment; Annotate = also hover/click an
@@ -53,7 +61,11 @@ export function Component() {
   const [width, setWidth] = useState<CanvasWidth>('full')
   const [loaded, setLoaded] = useState(false)
   const [me, setMe] = useState<Me | null>(null)
-  const [filePath, setFilePath] = useState<string | null>(null)
+  // The HTML iframe only learns its file path from the annotate client's 'ready' postMessage
+  // (never fires for non-HTML) — `filePath` below is what the rest of the viewer (comments,
+  // rail) actually reads; for audio there's no message to wait for, so it's the splat itself.
+  const [resolvedFilePath, setResolvedFilePath] = useState<string | null>(null)
+  const filePath = isAudio ? sitePath : resolvedFilePath
   const [threads, setThreads] = useState<Thread[]>([])
   const [selection, setSelection] = useState<Pending | null>(null)
   const [composing, setComposing] = useState<Pending | null>(null)
@@ -131,7 +143,7 @@ export function Component() {
     function onMsg(e: MessageEvent) {
       const intent: Intent | null = parseIntent(e, { origin: contentOrigin, source: iframeRef.current?.contentWindow ?? null })
       if (!intent) return
-      if (intent.type === 'ready') setFilePath(intent.filePath)
+      if (intent.type === 'ready') setResolvedFilePath(intent.filePath)
       else if (intent.type === 'select') setSelection({ kind: 'text', quote: intent.quote, rect: intent.rect })
       else if (intent.type === 'pinpoint') setSelection({ kind: 'element', anchor: intent.anchor, rect: intent.rect })
       // select-clear fires when a text selection collapses (including right after an element click) —
@@ -161,6 +173,15 @@ export function Component() {
     setComposing(selection)
     setSelection(null)
   }
+
+  // Audio view: no DOM to select text/elements in, so the rail's "Add comment" button starts a
+  // bare page-anchored composer directly (no selection step).
+  const startPageComment = useCallback(() => setComposing({ kind: 'page' }), [])
+
+  // Read on demand (an event handler, not a subscription) — never causes a re-render, so the
+  // timestamp button always inserts whatever the player's position is AT CLICK TIME with no
+  // state/effect plumbing.
+  const getCurrentTime = useCallback(() => audioRef.current?.currentTime ?? 0, [])
 
   // Focus an anchor in the iframe: element → scroll its selector into view; text → its quote.
   const focusAnchor = useCallback(
@@ -212,18 +233,22 @@ export function Component() {
             the constrained wrapper so their coords still match the iframe viewport. */}
         <div className="relative flex min-h-0 min-w-0 flex-1 justify-center bg-muted/20">
           <div className={cn('relative h-full w-full', WIDTH_CLASS[width])}>
-            <iframe
-              ref={iframeRef}
-              className="size-full border-0 bg-background"
-              src={src}
-              title={site.title ?? site.siteSlug}
-              onLoad={() => setLoaded(true)}
-              // allow-top-navigation-by-user-activation: lets the directory-listing links (target=_top)
-              // break out to the app route on a user click, so the address bar updates. Gesture-gated,
-              // so iframed content can't silently redirect the tab.
-              sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-top-navigation-by-user-activation"
-            />
-            {review && selection?.rect && (
+            {isAudio ? (
+              <AudioView src={audioSrc} fileName={sitePath.split('/').pop() ?? sitePath} audioRef={audioRef} />
+            ) : (
+              <iframe
+                ref={iframeRef}
+                className="size-full border-0 bg-background"
+                src={src}
+                title={site.title ?? site.siteSlug}
+                onLoad={() => setLoaded(true)}
+                // allow-top-navigation-by-user-activation: lets the directory-listing links (target=_top)
+                // break out to the app route on a user click, so the address bar updates. Gesture-gated,
+                // so iframed content can't silently redirect the tab.
+                sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-top-navigation-by-user-activation"
+              />
+            )}
+            {!isAudio && review && selection?.rect && (
               <Button
                 size="sm"
                 className="absolute z-10 shadow-lg"
@@ -234,7 +259,7 @@ export function Component() {
                 Comment
               </Button>
             )}
-            {!loaded && (
+            {!isAudio && !loaded && (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background text-muted-foreground">
                 <Spinner className="size-6" />
                 <span className="text-sm">Loading preview…</span>
@@ -253,6 +278,8 @@ export function Component() {
             onCreate={createThread}
             onChanged={() => filePath && refresh(filePath)}
             onFocusAnchor={focusAnchor}
+            onStartComment={isAudio ? startPageComment : undefined}
+            getCurrentTime={isAudio ? getCurrentTime : undefined}
           />
         )}
       </div>

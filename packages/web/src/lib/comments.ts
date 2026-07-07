@@ -53,16 +53,16 @@ export interface NewThreadInput {
 }
 
 // A pending anchor the viewer holds between "user picked an anchor" and "user submitted the
-// comment" — a text selection or an element pinpoint. Kept generic so the composer + create path
-// don't branch on anchor kind everywhere.
-export type PendingAnchor = { kind: 'text'; quote: string } | { kind: 'element'; anchor: ElementAnchor }
+// comment" — a text selection, an element pinpoint, or (audio view — no DOM to select in) a bare
+// page anchor. Kept generic so the composer + create path don't branch on anchor kind everywhere.
+export type PendingAnchor = { kind: 'text'; quote: string } | { kind: 'element'; anchor: ElementAnchor } | { kind: 'page' }
 
 /** Pure map: a pending anchor + body → the create payload. Unit-tested (seam S2) so the viewer's
  *  create path needs no browser to verify. */
 export function pendingToInput(filePath: string, body: string, pending: PendingAnchor): NewThreadInput {
-  return pending.kind === 'element'
-    ? { filePath, body, anchorType: 'element', element: pending.anchor }
-    : { filePath, body, quote: pending.quote }
+  if (pending.kind === 'element') return { filePath, body, anchorType: 'element', element: pending.anchor }
+  if (pending.kind === 'page') return { filePath, body, anchorType: 'page' }
+  return { filePath, body, quote: pending.quote }
 }
 
 type SiteRef = Pick<ViewerSite, 'spaceSlug' | 'siteSlug'>
