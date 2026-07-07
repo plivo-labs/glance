@@ -1,6 +1,6 @@
 import { X } from 'lucide-react'
 import { Link } from 'react-router'
-import { clear, entryLabel, type RecentEntry, removeEntry, useRecents, visibleEntries } from '@/lib/recents'
+import { clear, entryLabel, normalizeFilePath, type RecentEntry, removeEntry, useRecents, visibleEntries } from '@/lib/recents'
 import { timeAgo } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -18,14 +18,18 @@ export function ViewerSidebar({
   userId,
   currentSpaceSlug,
   currentSiteSlug,
+  currentFilePath,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   userId: string | null
   currentSpaceSlug: string
   currentSiteSlug: string
+  /** The current in-iframe file (viewer.tsx's `filePath` state); null until the frame reports ready. */
+  currentFilePath: string | null
 }) {
   const entries = visibleEntries(useRecents(userId))
+  const currentPath = normalizeFilePath(currentFilePath ?? '')
 
   const close = () => onOpenChange(false)
 
@@ -57,9 +61,14 @@ export function ViewerSidebar({
               <Row
                 key={`${e.spaceSlug}/${e.siteSlug}/${e.filePath}`}
                 entry={e}
-                // Root-row highlight only: an exact per-row match would need the current in-iframe
-                // filePath threaded down here too, which the flatten kept out of scope.
-                current={e.spaceSlug === currentSpaceSlug && e.siteSlug === currentSiteSlug && e.filePath === ''}
+                // Highlight the current PAGE's row: both sides canonicalized so a single-file
+                // site's collapsed row and an index site's root row both match. Before the frame
+                // reports ready (currentFilePath null) this degrades to the root row.
+                current={
+                  e.spaceSlug === currentSpaceSlug &&
+                  e.siteSlug === currentSiteSlug &&
+                  normalizeFilePath(e.filePath) === currentPath
+                }
                 userId={userId}
                 onNavigate={close}
               />
