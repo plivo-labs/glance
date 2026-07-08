@@ -124,6 +124,38 @@ describe('GET /api/sites/:space/:site/exists (slug-availability probe)', () => {
   })
 })
 
+describe('GET /api/sites/:space/:site — indexPath (root-file resolution)', () => {
+  test('single audio file → indexPath is that file, so the viewer plays it at the site root', async () => {
+    const { db, kv, app, env } = await setup()
+    await mintUser(db, kv, 'u1')
+    const space = await seedSpace(db, { createdBy: 'u1', slug: 'me' })
+    await seedMember(db, space, 'u1')
+    const site = await seedSite(db, { spaceId: space, ownerId: 'u1', slug: 'take' })
+    await seedFile(db, null, site, { path: 'recording.webm', text: 'b' })
+
+    const body = (await (await view(app, env, 'me', 'take', { Authorization: 'Bearer tok-u1' })).json()) as { indexPath: string }
+    expect(body.indexPath).toBe('recording.webm')
+  })
+
+  test('index.html wins over other files; a multi-file site with no index → empty', async () => {
+    const { db, kv, app, env } = await setup()
+    await mintUser(db, kv, 'u1')
+    const space = await seedSpace(db, { createdBy: 'u1', slug: 'me' })
+    await seedMember(db, space, 'u1')
+    const withIndex = await seedSite(db, { spaceId: space, ownerId: 'u1', slug: 'html' })
+    await seedFile(db, null, withIndex, { path: 'index.html', text: 'b' })
+    await seedFile(db, null, withIndex, { path: 'about.html', text: 'b' })
+    const noIndex = await seedSite(db, { spaceId: space, ownerId: 'u1', slug: 'dir' })
+    await seedFile(db, null, noIndex, { path: 'a.html', text: 'b' })
+    await seedFile(db, null, noIndex, { path: 'b.html', text: 'b' })
+
+    const idx = (await (await view(app, env, 'me', 'html', { Authorization: 'Bearer tok-u1' })).json()) as { indexPath: string }
+    const dir = (await (await view(app, env, 'me', 'dir', { Authorization: 'Bearer tok-u1' })).json()) as { indexPath: string }
+    expect(idx.indexPath).toBe('index.html')
+    expect(dir.indexPath).toBe('')
+  })
+})
+
 describe('GET /api/sites/mine — audio flag (W4-2)', () => {
   test('a pure-audio site is audio:true; a mixed site audio:false', async () => {
     const { db, kv, app, env } = await setup()

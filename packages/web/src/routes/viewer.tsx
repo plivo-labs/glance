@@ -58,11 +58,15 @@ function Viewer() {
   const lastReadyPathRef = useRef<string | null>(null)
   const contentOrigin = useMemo(() => new URL(site.contentUrl).origin, [site.contentUrl])
   const src = useMemo(() => withAnnotate(appendPath(site.contentUrl, sitePath)), [site.contentUrl, sitePath])
+  // At the site root the splat is '' but the content worker still resolves it to a concrete file
+  // (a lone upload, e.g. recording.webm) — `indexPath` is that resolved file, so audio detection,
+  // the player src, and comment anchoring all work at the root URL, not just at `/…/recording.webm`.
+  const entryPath = sitePath || site.indexPath
   // Audio has no HTML document to frame — it gets a native player instead of the sandboxed
   // iframe, and (unlike the iframe src) no ?glance_annotate param: that flag only triggers the
   // HTML-injection transform in content.ts, which never applies to audio.
-  const isAudio = useMemo(() => isAudioFile(sitePath), [sitePath])
-  const audioSrc = useMemo(() => appendPath(site.contentUrl, sitePath), [site.contentUrl, sitePath])
+  const isAudio = useMemo(() => isAudioFile(entryPath), [entryPath])
+  const audioSrc = useMemo(() => appendPath(site.contentUrl, entryPath), [site.contentUrl, entryPath])
 
   const [review, setReview] = useState(false)
   // Within review, Read = normal browsing + text-select-to-comment; Annotate = also hover/click an
@@ -75,7 +79,7 @@ function Viewer() {
   // (never fires for non-HTML) — `filePath` below is what the rest of the viewer (comments,
   // rail) actually reads; for audio there's no message to wait for, so it's the splat itself.
   const [resolvedFilePath, setResolvedFilePath] = useState<string | null>(null)
-  const filePath = isAudio ? sitePath : resolvedFilePath
+  const filePath = isAudio ? entryPath : resolvedFilePath
   const [threads, setThreads] = useState<Thread[]>([])
   const [composing, setComposing] = useState<PendingAnchor | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -299,7 +303,7 @@ function Viewer() {
         <div className="relative flex min-h-0 min-w-0 flex-1 justify-center bg-muted/20">
           <div className={cn('relative h-full w-full', WIDTH_CLASS[width])}>
             {isAudio ? (
-              <AudioView src={audioSrc} fileName={sitePath.split('/').pop() ?? sitePath} audioRef={audioRef} />
+              <AudioView src={audioSrc} fileName={entryPath.split('/').pop() ?? entryPath} audioRef={audioRef} />
             ) : (
               <iframe
                 ref={iframeRef}

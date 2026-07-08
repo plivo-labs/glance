@@ -54,6 +54,9 @@ export interface ViewerSite {
   status: SiteStatus
   isOwner: boolean
   contentUrl: string
+  // The file the root URL serves (single-file site → that file; else 'index.html'; else '').
+  // Lets the viewer pick the audio player at a site's root, not only at its explicit file path.
+  indexPath: string
 }
 
 export interface UserLite {

@@ -376,7 +376,7 @@ function InstallDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o
   const installCmd = `curl -fsSL ${origin}/api/install | sh`
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Install the glance CLI</DialogTitle>
           <DialogDescription>Deploy from your terminal — and use it as an agent skill.</DialogDescription>
