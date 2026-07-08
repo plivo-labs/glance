@@ -84,8 +84,8 @@ export function ThreadCard({
             {/* Voice comment: the transcript above stays always-visible; the recording plays from
                 the auth-gated audio route (deleted comments lose hasAudio, so they never reach here). */}
             {c.hasAudio && !c.deleted && (
-              <div className="mt-1.5">
-                <AudioPlayer src={`/api/sites/${site.spaceSlug}/${site.siteSlug}/comments/audio/${c.id}`} />
+              <div className="mt-1.5 rounded-md border bg-muted/40 px-2.5 py-1.5">
+                <AudioPlayer compact src={`/api/sites/${site.spaceSlug}/${site.siteSlug}/comments/audio/${c.id}`} />
               </div>
             )}
           </li>
@@ -111,7 +111,8 @@ export function ThreadCard({
         </div>
       ) : (
         // Low-emphasis text actions — kept quiet so the thread, not its controls, reads first.
-        <div className="mt-2 flex items-center gap-4">
+        // Right-aligned so the transcript/reply reads first and the controls sit out of the way.
+        <div className="mt-2 flex items-center justify-end gap-4">
           <button
             type="button"
             onClick={() => setReplying(true)}

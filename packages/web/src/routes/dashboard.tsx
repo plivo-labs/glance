@@ -10,7 +10,7 @@ import {
   useRevalidator,
   useSearchParams,
 } from 'react-router'
-import { ExternalLink, Mic, Plus, Rocket } from 'lucide-react'
+import { ChevronDown, Download, ExternalLink, Mic, Plus, Rocket, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 import { CopyButton } from '@/components/CopyButton'
 import { DeployCard } from '@/components/DeployCard'
@@ -25,7 +25,7 @@ import {
 } from '@/components/siteColumns'
 import { SitesTable } from '@/components/SitesTable'
 import { SortableTable, type Column } from '@/components/SortableTable'
-import { EmptyState, PageHeader, Spinner } from '@/components/states'
+import { EmptyState, Spinner } from '@/components/states'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import {
@@ -38,6 +38,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -100,13 +107,9 @@ export function Component() {
 
   return (
     <div className="space-y-10">
-      <PageHeader
-        title="Drop a folder, get a URL"
-        description="HTML and markdown render in the browser; everything else downloads."
-      />
-      <Suspense fallback={<RecordHeroSkeleton />}>
+      <Suspense fallback={<ToolbarSkeleton />}>
         <Await resolve={spaces} errorElement={<FeedError what="the deploy form" />}>
-          {(spaces) => <RecordHero spaces={spaces} />}
+          {(spaces) => <DashboardToolbar spaces={spaces} />}
         </Await>
       </Suspense>
       <Suspense fallback={<TabsSkeleton />}>
@@ -217,18 +220,17 @@ function DashboardTabs({
 }
 
 // First paint, before the feeds resolve — one placeholder per streamed section.
-function RecordHeroSkeleton() {
-  // Mirror RecordHero's shape (centered mic circle + title/subtitle + button) so the fallback
-  // doesn't flash a card silhouette that then swaps for a completely different mic hero.
+function ToolbarSkeleton() {
+  // Mirror DashboardToolbar's slim row (heading + subtitle on the left, New button on the right)
+  // so the fallback doesn't reflow when the real toolbar streams in.
   return (
-    <Card className="items-center gap-4 py-10" aria-hidden>
-      <Skeleton className="size-24 rounded-full" />
-      <div className="flex flex-col items-center gap-2">
-        <Skeleton className="h-5 w-48" />
-        <Skeleton className="h-4 w-64" />
+    <div className="flex items-end justify-between gap-4" aria-hidden>
+      <div className="space-y-2">
+        <Skeleton className="h-6 w-40" />
+        <Skeleton className="h-4 w-72" />
       </div>
-      <Skeleton className="h-8 w-28 rounded-md" />
-    </Card>
+      <Skeleton className="h-9 w-24 rounded-md" />
+    </div>
   )
 }
 
@@ -303,37 +305,89 @@ function TeamActivityTable({ team }: { team: TeamUpload[] }) {
   )
 }
 
-// ─── Record-first hero ───────────────────────────────────────────────────────
+// ─── Top toolbar: the “New” menu ─────────────────────────────────────────────
 
-// Record-first entry point: a dominant mic opens the RecordDialog (the primary action); a
-// secondary affordance opens the UploadDialog wrapping the bare DeployCard for the drop-a-folder
-// flow. The sites tabs below are untouched.
-function RecordHero({ spaces }: { spaces: SpaceSummary[] }) {
+// A slim header row instead of the old record-first mic hero: a plain-language heading and a
+// single "New" menu. Creating is one click (record / upload); the sites list leads the page.
+function DashboardToolbar({ spaces }: { spaces: SpaceSummary[] }) {
+  return (
+    <div className="flex flex-wrap items-end justify-between gap-4">
+      <div className="space-y-1">
+        <h1 className="font-semibold text-xl tracking-tight">Your work</h1>
+        <p className="text-muted-foreground text-sm">Record a note or drop a folder — everyone gets a URL.</p>
+      </div>
+      <NewMenu spaces={spaces} />
+    </div>
+  )
+}
+
+// One primary button opens a menu: Record audio (RecordDialog) · Upload files (UploadDialog wrapping
+// the bare DeployCard) · Install the CLI (the one-liner). onSelect closes the menu, then opens the
+// controlled dialog rendered as a sibling — no nesting, so focus returns cleanly on close.
+function NewMenu({ spaces }: { spaces: SpaceSummary[] }) {
   const [recordOpen, setRecordOpen] = useState(false)
   const [uploadOpen, setUploadOpen] = useState(false)
+  const [installOpen, setInstallOpen] = useState(false)
 
   return (
-    <Card className="items-center gap-4 py-10 text-center">
-      <button
-        type="button"
-        onClick={() => setRecordOpen(true)}
-        aria-label="Record a voice comment"
-        className="flex size-24 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg outline-none transition-colors hover:bg-primary/90 focus-visible:ring-[3px] focus-visible:ring-ring/50"
-      >
-        <Mic className="size-10" />
-      </button>
-      <div className="space-y-1">
-        <p className="text-lg font-semibold tracking-tight">Record a voice comment</p>
-        <p className="text-sm text-muted-foreground">Tap the mic to record — or upload files instead.</p>
-      </div>
-      <Button variant="outline" size="sm" onClick={() => setUploadOpen(true)}>
-        <Plus />
-        Upload files
-      </Button>
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button>
+            <Plus />
+            New
+            <ChevronDown className="text-primary-foreground/80" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-60">
+          <DropdownMenuItem onSelect={() => setRecordOpen(true)}>
+            <Mic />
+            <div className="flex flex-col">
+              <span>Record audio</span>
+              <span className="text-muted-foreground text-xs">Voice note or comment</span>
+            </div>
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setUploadOpen(true)}>
+            <Upload />
+            <div className="flex flex-col">
+              <span>Upload files</span>
+              <span className="text-muted-foreground text-xs">Drop a folder, get a URL</span>
+            </div>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={() => setInstallOpen(true)}>
+            <Download />
+            Install the CLI
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
 
       <RecordDialog spaces={spaces} open={recordOpen} onOpenChange={setRecordOpen} />
       <UploadDialog spaces={spaces} open={uploadOpen} onOpenChange={setUploadOpen} />
-    </Card>
+      <InstallDialog open={installOpen} onOpenChange={setInstallOpen} />
+    </>
+  )
+}
+
+// The CLI is also the agent skill; the one-liner is pre-pointed at THIS deployment's origin
+// (mirrors GET /api/install), so what a user copies installs from the instance they're on.
+function InstallDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+  const installCmd = `curl -fsSL ${origin}/api/install | sh`
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Install the glance CLI</DialogTitle>
+          <DialogDescription>Deploy from your terminal — and use it as an agent skill.</DialogDescription>
+        </DialogHeader>
+        <div className="flex items-center gap-2 rounded-md border bg-muted/40 p-2">
+          <code className="min-w-0 flex-1 truncate font-mono text-sm">{installCmd}</code>
+          <CopyButton text={installCmd} label="Copy" copiedMessage="Install command copied" />
+        </div>
+        <p className="text-muted-foreground text-xs">Installs to ~/.local/bin/glance.</p>
+      </DialogContent>
+    </Dialog>
   )
 }
 

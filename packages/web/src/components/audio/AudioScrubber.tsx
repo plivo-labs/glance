@@ -11,9 +11,12 @@ import { cn } from '@/lib/utils'
 export function AudioScrubber({
   audioRef,
   className,
+  compact,
 }: {
   audioRef: RefObject<HTMLAudioElement | null>
   className?: string
+  // Tighter play button + readout for inline contexts (the voice comment card).
+  compact?: boolean
 }) {
   const [playing, setPlaying] = useState(false)
   const [current, setCurrent] = useState(0)
@@ -67,9 +70,16 @@ export function AudioScrubber({
         type="button"
         onClick={toggle}
         aria-label={playing ? 'Pause' : 'Play'}
-        className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm outline-none transition-colors hover:bg-primary/90 focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        className={cn(
+          'flex shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm outline-none transition-colors hover:bg-primary/90 focus-visible:ring-[3px] focus-visible:ring-ring/50',
+          compact ? 'size-7' : 'size-9',
+        )}
       >
-        {playing ? <Pause className="size-4 fill-current" /> : <Play className="size-4 fill-current" />}
+        {playing ? (
+          <Pause className={cn('fill-current', compact ? 'size-3.5' : 'size-4')} />
+        ) : (
+          <Play className={cn('fill-current', compact ? 'size-3.5' : 'size-4')} />
+        )}
       </button>
       <input
         type="range"

@@ -13,10 +13,13 @@ export function AudioPlayer({
   src,
   audioRef,
   className,
+  compact,
 }: {
   src: string
   audioRef?: RefObject<HTMLAudioElement | null>
   className?: string
+  // Tighter play button + readout for inline contexts (the voice comment card).
+  compact?: boolean
 }) {
   const internalRef = useRef<HTMLAudioElement>(null)
   const ref = audioRef ?? internalRef
@@ -24,7 +27,7 @@ export function AudioPlayer({
     <div key={src} className={cn('flex w-full flex-col gap-2', className)}>
       {/* biome-ignore lint/a11y/useMediaCaption: audio-only source, no track to caption */}
       <audio ref={ref} src={src} preload="metadata" />
-      <AudioScrubber audioRef={ref} />
+      <AudioScrubber audioRef={ref} compact={compact} />
     </div>
   )
 }

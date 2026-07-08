@@ -1,6 +1,6 @@
 import { Music } from 'lucide-react'
 import type { RefObject } from 'react'
-import { AudioPlayer } from '@/components/audio/AudioPlayer'
+import { RichAudioPlayer } from '@/components/audio/RichAudioPlayer'
 
 // First-class audio player for the letterbox canvas — replaces the sandboxed iframe for audio
 // files (there's no HTML document to frame). Renders the shared AudioPlayer; `audioRef` is
@@ -24,9 +24,9 @@ export function AudioView({
         <p className="w-full truncate text-center font-medium text-sm" title={fileName}>
           {fileName}
         </p>
-        {/* `key={src}` forces a remount (not just an attribute update) when the file path changes —
-            a bare src swap on a live <audio> doesn't reliably reload in every browser. */}
-        <AudioPlayer src={src} audioRef={audioRef} />
+        {/* RichAudioPlayer keys its own Provider on `src` (reliable reload); `audioRef` is bridged
+            to its <audio> so the review composer's timestamp button can read the position. */}
+        <RichAudioPlayer src={src} audioRef={audioRef} />
       </div>
     </div>
   )
