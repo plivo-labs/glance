@@ -402,7 +402,7 @@ function UploadDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>Upload files</DialogTitle>
           <DialogDescription>Pick a destination, then drop your files.</DialogDescription>
