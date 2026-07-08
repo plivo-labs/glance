@@ -1,5 +1,5 @@
 import { Clock, Mic, Square, Trash2 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { useMediaRecorder } from '@/hooks/useMediaRecorder'
 import { formatTimestamp } from '@/lib/audio'
@@ -15,6 +15,7 @@ export function Composer({
   onSubmitVoice,
   onCancel,
   autoFocus,
+  focusOn,
   className,
   timestampButton,
 }: {
@@ -25,6 +26,10 @@ export function Composer({
   onSubmitVoice?: (blob: Blob) => void | Promise<void>
   onCancel?: () => void
   autoFocus?: boolean
+  // Refocus the textarea whenever this value changes identity. `autoFocus` only fires on mount, so
+  // a click that re-anchors an already-open composer would leave focus in the iframe — pass the
+  // pending anchor here so every select/pinpoint puts the caret back in the box.
+  focusOn?: unknown
   className?: string
   // Audio view only: inserts a `[m:ss] ` prefix for the player's current position. `getPrefix`
   // is called at click time (not render time) so it always reflects the latest playback position.
@@ -38,6 +43,11 @@ export function Composer({
   // text and voice are one-or-the-other for a single submit.
   const recording = rec.state === 'recording' || rec.state === 'paused'
   const recorded = rec.state === 'stopped'
+
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    if (focusOn !== undefined) textareaRef.current?.focus()
+  }, [focusOn])
 
   async function submit() {
     if (!trimmed || busy) return
@@ -103,6 +113,7 @@ export function Composer({
   return (
     <div className={cn('flex flex-col gap-2', className)}>
       <textarea
+        ref={textareaRef}
         // biome-ignore lint/a11y/noAutofocus: composer is opened by an explicit user action.
         autoFocus={autoFocus}
         value={body}

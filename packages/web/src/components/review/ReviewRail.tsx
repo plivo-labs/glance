@@ -70,6 +70,7 @@ export function ReviewRail({
           )}
           <Composer
             autoFocus
+            focusOn={composing}
             placeholder="Add a comment…"
             submitLabel="Comment"
             onSubmit={onCreate}

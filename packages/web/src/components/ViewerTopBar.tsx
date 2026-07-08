@@ -1,4 +1,4 @@
-import { Check, ChevronRight, MessageSquare } from 'lucide-react'
+import { Check, ChevronRight, History, MessageSquare } from 'lucide-react'
 import { Link } from 'react-router'
 import type { ViewerSite } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -36,6 +36,7 @@ export function ViewerTopBar({
   commentCount,
   onReview,
   onExit,
+  onToggleSidebar,
 }: {
   site: ViewerSite
   sitePath: string
@@ -47,6 +48,7 @@ export function ViewerTopBar({
   commentCount: number
   onReview: () => void
   onExit: () => void
+  onToggleSidebar: () => void
 }) {
   return (
     <header className="flex h-12 shrink-0 items-center gap-3 border-b bg-background px-3">
@@ -54,6 +56,10 @@ export function ViewerTopBar({
         <span className="size-2.5 rounded-[3px] bg-primary shadow-[0_0_12px_1px_var(--primary)]" />
         glance
       </Link>
+
+      <Button size="sm" variant="ghost" className="shrink-0 px-2" title="Recently opened" aria-label="Recently opened" onClick={onToggleSidebar}>
+        <History className="size-3.5" />
+      </Button>
 
       <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-muted-foreground text-sm">
         <ChevronRight className="size-3.5 shrink-0 opacity-40" />

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { MessageSquarePlus } from 'lucide-react'
 import { type LoaderFunctionArgs, useLoaderData, useParams } from 'react-router'
 import { toast } from 'sonner'
 import { api, ApiError } from '@/lib/api'
@@ -8,13 +7,14 @@ import { attachDbBroker } from '@/lib/dbBroker'
 import { toLogin } from '@/lib/nav'
 import { cn } from '@/lib/utils'
 import { comments, type PendingAnchor, pendingToInput, type Thread } from '@/lib/comments'
-import { type DOMRectLike, type Intent, parseIntent } from '@/lib/parseIntent'
+import { type Intent, parseIntent } from '@/lib/parseIntent'
+import { recordVisit } from '@/lib/recents'
 import type { Me, ViewerSite } from '@/lib/types'
 import { AudioView } from '@/components/AudioView'
 import { Spinner } from '@/components/states'
 import { type CanvasWidth, ViewerTopBar } from '@/components/ViewerTopBar'
 import { ReviewRail, type ReviewMode } from '@/components/review/ReviewRail'
-import { Button } from '@/components/ui/button'
+import { ViewerSidebar } from '@/components/ViewerSidebar'
 
 export async function loader({ params, request }: LoaderFunctionArgs) {
   try {
@@ -26,18 +26,23 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
   }
 }
 
-// A pending anchor (text selection or element pinpoint) plus its on-screen rect for positioning
-// the floating "Comment" button.
-type Pending = PendingAnchor & { rect?: DOMRectLike }
 // The paint payload the iframe understands: a text anchor (re-find quote) or an element anchor
 // (re-resolve selector). Mirrors the annotate client's PaintAnchor.
 type PaintMsgAnchor = { id: string; anchorType: 'text'; quote: string } | { id: string; anchorType: 'element'; selector: string }
 
-// One persistent iframe hosts the deployed HTML for the whole tab; opening comments slides a rail
-// in beside it WITHOUT reloading the frame. Every site is review-capable (there is no public tier),
-// so the iframe always runs the annotate client (?glance_annotate=1) and toggling comments is a pure
-// layout change — only the rail and the in-page affordances are gated on `review`.
+// The recents sidebar lets a user jump straight from one open site to another via a plain
+// react-router <Link> (no full reload) — the FIRST in-app case of navigating between two mounts of
+// this same route. React Router keeps one component instance across param changes on a matched
+// route, so without a remount all the per-site useState (threads, filePath, loaded, review, …)
+// would leak from the old site into the new one. `key`-ing on space/site forces a clean remount on
+// cross-site navigation while leaving same-site file navigation (the splat changing) alone — that
+// case already reacts via the `src` memo below.
 export function Component() {
+  const params = useParams()
+  return <Viewer key={`${params.space}/${params.site}`} />
+}
+
+function Viewer() {
   const site = useLoaderData() as ViewerSite
 
   // Optional in-site file path from the route splat (`/space/site/docs/page.html`). Appended to the
@@ -46,6 +51,10 @@ export function Component() {
 
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
+  // Latest file path reported by the iframe's 'ready' intent, stashed unconditionally so the
+  // me-resolution effect below can flush it even when 'ready' beats the /api/auth/me fetch on a
+  // fresh load (see the recordVisit gate in the intent handler).
+  const lastReadyPathRef = useRef<string | null>(null)
   const contentOrigin = useMemo(() => new URL(site.contentUrl).origin, [site.contentUrl])
   const src = useMemo(() => withAnnotate(appendPath(site.contentUrl, sitePath)), [site.contentUrl, sitePath])
   // Audio has no HTML document to frame — it gets a native player instead of the sandboxed
@@ -67,8 +76,8 @@ export function Component() {
   const [resolvedFilePath, setResolvedFilePath] = useState<string | null>(null)
   const filePath = isAudio ? sitePath : resolvedFilePath
   const [threads, setThreads] = useState<Thread[]>([])
-  const [selection, setSelection] = useState<Pending | null>(null)
-  const [composing, setComposing] = useState<Pending | null>(null)
+  const [composing, setComposing] = useState<PendingAnchor | null>(null)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
 
   // Paint anchors back into the iframe via the trusted parent→child channel — only while reviewing;
   // leaving review repaints with [] so highlights/overlays clear. Text anchors re-find their quote
@@ -96,14 +105,11 @@ export function Component() {
     win.postMessage({ type: 'glance:mode', mode: review ? reviewMode : 'read' }, contentOrigin)
   }, [review, reviewMode, loaded, contentOrigin])
 
-  // The element the user is currently pinpointing — while the floating Comment button is up
-  // (selection) OR the composer is open (composing). Its selector is pushed to the iframe so the
-  // annotate client paints a PERSISTENT selection outline on it; the transient hover box alone would
-  // vanish the moment the pointer moves off to the composer. null (text pending / nothing) clears it.
-  const pendingSelector = useMemo(() => {
-    const p = composing ?? selection
-    return p?.kind === 'element' ? p.anchor.selector : null
-  }, [composing, selection])
+  // The element the user is currently commenting on, while the composer is open. Its selector is
+  // pushed to the iframe so the annotate client paints a PERSISTENT selection outline on it; the
+  // transient hover box alone would vanish the moment the pointer moves off to the composer. null
+  // (text pending / composer closed) clears it.
+  const pendingSelector = useMemo(() => (composing?.kind === 'element' ? composing.anchor.selector : null), [composing])
 
   const postPending = useCallback(() => {
     const win = iframeRef.current?.contentWindow
@@ -143,20 +149,43 @@ export function Component() {
     function onMsg(e: MessageEvent) {
       const intent: Intent | null = parseIntent(e, { origin: contentOrigin, source: iframeRef.current?.contentWindow ?? null })
       if (!intent) return
-      if (intent.type === 'ready') setResolvedFilePath(intent.filePath)
-      else if (intent.type === 'select') setSelection({ kind: 'text', quote: intent.quote, rect: intent.rect })
-      else if (intent.type === 'pinpoint') setSelection({ kind: 'element', anchor: intent.anchor, rect: intent.rect })
-      // select-clear fires when a text selection collapses (including right after an element click) —
-      // it must only drop a TEXT pending, never the element one we just captured.
-      else if (intent.type === 'clear') setSelection((s) => (s?.kind === 'text' ? null : s))
+      if (intent.type === 'ready') {
+        // Audio has no iframe/'ready'; for HTML this is where the SPA learns the current file.
+        setResolvedFilePath(intent.filePath)
+        lastReadyPathRef.current = intent.filePath
+        // Every in-iframe navigation fires 'ready' with the real current file — the only place the
+        // SPA learns it, since the URL doesn't change on in-page navigation. Skip until Me resolves
+        // (never record to an unknown/shared-machine user); the me-effect below flushes the ref once
+        // Me resolves, so a 'ready' that beats the /api/auth/me fetch on a fresh load isn't dropped.
+        if (me) recordVisit(me.id, { spaceSlug: site.spaceSlug, siteSlug: site.siteSlug, title: site.title, filePath: intent.filePath })
+      }
+      // One click, one select: outside review these are no-ops (nothing to stash without a rail to
+      // open into); in review each intent opens the composer directly on its anchor, replacing
+      // whatever was already being composed but leaving its typed draft alone (ReviewRail renders
+      // Composer unkeyed, so swapping `composing` reparents the anchor without remounting the text).
+      else if (review && intent.type === 'select') setComposing({ kind: 'text', quote: intent.quote })
+      else if (review && intent.type === 'pinpoint') setComposing({ kind: 'element', anchor: intent.anchor })
     }
     window.addEventListener('message', onMsg)
     return () => window.removeEventListener('message', onMsg)
-  }, [contentOrigin])
+  }, [contentOrigin, me, review, site.spaceSlug, site.siteSlug, site.title])
 
   useEffect(() => {
-    api.get<Me>('/api/auth/me').then(setMe).catch(() => setMe(null))
-  }, [])
+    api
+      .get<Me>('/api/auth/me')
+      .then((m) => {
+        setMe(m)
+        // Site-level visit (filePath '') — recorded once Me is known, independent of any in-iframe
+        // navigation (which may never report a file, e.g. a single-page site with no postMessage).
+        recordVisit(m.id, { spaceSlug: site.spaceSlug, siteSlug: site.siteSlug, title: site.title, filePath: '' })
+        // Flush whatever file the iframe already reported ready for — on a fresh load 'ready' usually
+        // beats this fetch, and the intent handler's `if (me)` gate above would otherwise drop it.
+        if (lastReadyPathRef.current) {
+          recordVisit(m.id, { spaceSlug: site.spaceSlug, siteSlug: site.siteSlug, title: site.title, filePath: lastReadyPathRef.current })
+        }
+      })
+      .catch(() => setMe(null))
+  }, [site.spaceSlug, site.siteSlug, site.title])
 
   // Load threads once the frame reports ready — powers the toolbar count badge before review opens,
   // and seeds the rail. The frame is already mounted, so this is just a fetch, never a reload; the
@@ -168,11 +197,6 @@ export function Component() {
   useEffect(paint, [paint])
   useEffect(postMode, [postMode])
   useEffect(postPending, [postPending])
-
-  const startComposer = () => {
-    setComposing(selection)
-    setSelection(null)
-  }
 
   // Audio view: no DOM to select text/elements in, so the rail's "Add comment" button starts a
   // bare page-anchored composer directly (no selection step).
@@ -222,7 +246,6 @@ export function Component() {
 
   function exitReview() {
     setReview(false)
-    setSelection(null)
     setComposing(null)
   }
 
@@ -239,12 +262,21 @@ export function Component() {
         commentCount={openCount}
         onReview={() => setReview(true)}
         onExit={exitReview}
+        onToggleSidebar={() => setSidebarOpen((o) => !o)}
+      />
+
+      <ViewerSidebar
+        open={sidebarOpen}
+        onOpenChange={setSidebarOpen}
+        userId={me?.id ?? null}
+        currentSpaceSlug={site.spaceSlug}
+        currentSiteSlug={site.siteSlug}
       />
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         {/* Letterbox canvas: the iframe is constrained to the chosen width and centered; the
-            surrounding muted area is the letterbox. The Comment button + loading overlay live inside
-            the constrained wrapper so their coords still match the iframe viewport. */}
+            surrounding muted area is the letterbox. The loading overlay lives inside the constrained
+            wrapper so its coords still match the iframe viewport. */}
         <div className="relative flex min-h-0 min-w-0 flex-1 justify-center bg-muted/20">
           <div className={cn('relative h-full w-full', WIDTH_CLASS[width])}>
             {isAudio ? (
@@ -261,17 +293,6 @@ export function Component() {
                 // so iframed content can't silently redirect the tab.
                 sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-top-navigation-by-user-activation"
               />
-            )}
-            {!isAudio && review && selection?.rect && (
-              <Button
-                size="sm"
-                className="absolute z-10 shadow-lg"
-                style={{ top: selection.rect.top + selection.rect.height + 6, left: selection.rect.left }}
-                onClick={startComposer}
-              >
-                <MessageSquarePlus className="size-3.5" />
-                Comment
-              </Button>
             )}
             {!isAudio && !loaded && (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background text-muted-foreground">

@@ -1,6 +1,6 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
-import { Copy, ExternalLink, Folder, LayoutDashboard, LogOut, Plus, Shield, SunMoon, Terminal } from 'lucide-react'
+import { Copy, ExternalLink, Folder, History, LayoutDashboard, LogOut, Plus, Shield, SunMoon, Terminal } from 'lucide-react'
 import {
   CommandDialog,
   CommandEmpty,
@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/command'
 import { toggleTheme } from '@/components/theme'
 import { api } from '@/lib/api'
+import { siteName, useRecents, visibleEntries } from '@/lib/recents'
 import type { Me, SiteSummary, SpaceSummary } from '@/lib/types'
 
 const SEARCH_DEBOUNCE_MS = 200
@@ -36,6 +37,12 @@ export function CommandPalette({
   const reqSeq = useRef(0)
 
   const term = query.trim()
+
+  // Same store the viewer's recents sidebar reads — shown only in the empty (no-search) state,
+  // like the sites/spaces search results it'd otherwise compete with. Entries are already
+  // most-recent-first, one row per site (see recents.ts).
+  const recentEntries = useRecents(user?.id ?? null)
+  const recentRows = useMemo(() => visibleEntries(recentEntries).slice(0, 5), [recentEntries])
 
   // Radix mounts the dialog content on open and unmounts it on close — for EVERY trigger
   // (header button, ⌘K, Escape), unlike onOpenChange which the externally-controlled `open`
@@ -105,6 +112,26 @@ export function CommandPalette({
       <CommandList>
         <div ref={onPaletteMount} className="hidden" aria-hidden="true" />
         <CommandEmpty>{term ? 'No matching sites.' : 'No results.'}</CommandEmpty>
+        {!term && recentRows.length > 0 && (
+          <CommandGroup heading="Recent">
+            {recentRows.map((e) => {
+              const name = siteName(e)
+              const href = e.filePath
+                ? `/${e.spaceSlug}/${e.siteSlug}/${e.filePath.split('/').map(encodeURIComponent).join('/')}`
+                : `/${e.spaceSlug}/${e.siteSlug}`
+              return (
+                <CommandItem
+                  key={`${e.spaceSlug}/${e.siteSlug}`}
+                  value={`recent ${e.spaceSlug}/${e.siteSlug} ${name}`}
+                  onSelect={() => run(() => navigate(href))}
+                >
+                  <History />
+                  <span className="truncate">{name}</span>
+                </CommandItem>
+              )
+            })}
+          </CommandGroup>
+        )}
         {sites.length > 0 && (
           <CommandGroup heading="Sites">
             {sites.map((s) => (
