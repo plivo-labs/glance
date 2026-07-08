@@ -96,7 +96,9 @@ export function RecordDialog({
     try {
       const file = new File([rec.blob], fileName, { type: mime })
       const res = await uploadFiles(`/api/upload/${space}/${slug}`, [{ file, path: fileName }], {
-        visibility: 'team',
+        // Recordings start private — a voice note is personal by default; the owner opts into
+        // sharing it with a group or the whole team from the site's visibility control.
+        visibility: 'private',
         title: effectiveTitle,
       })
       toast.success('Recording saved', { description: res.url })
@@ -104,9 +106,9 @@ export function RecordDialog({
       rec.reset()
       setTitle('')
       suffixRef.current = 0
-      // Jump straight to the audio file's own URL — the site root would land in the iframe wrapper,
-      // but the deep file path resolves to the AudioView (isAudioFile). res.url has no trailing slash.
-      navigate(new URL(`${res.url}/${fileName}`).pathname)
+      // Open the recording at its canonical site URL — the viewer resolves the site's lone file
+      // (indexPath) to the AudioView at the root too, so this matches the shared/dashboard link.
+      navigate(new URL(res.url).pathname)
     } catch (err) {
       if (err instanceof UploadError && err.status === 409) {
         suffixRef.current += 1 // next Save targets `${base}-N`

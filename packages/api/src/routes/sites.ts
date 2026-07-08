@@ -9,7 +9,7 @@ import {
   sharedSiteIds,
 } from '../db/repo'
 import type { Visibility } from '../db/schema'
-import { sites as sitesTable, spaces, users } from '../db/schema'
+import { files as filesTable, sites as sitesTable, spaces, users } from '../db/schema'
 import { checkAccess } from '../lib/access'
 import { allAudioSiteIds } from '../lib/site-audio'
 import { readSessionOrBearer } from '../lib/session'
@@ -376,9 +376,13 @@ sites.get('/:spaceSlug/:siteSlug', async (c) => {
   // leaks — running the session read early doesn't change the not-found-before-auth ordering.
   if (!site) return c.json({ error: 'not found' }, 404)
 
-  const [isMember, isShared] = user
-    ? await Promise.all([isSpaceMember(db, site.spaceId, user.id), resolveIsShared(db, site.id, user.id)])
-    : [false, false]
+  const [isMember, isShared, siteFiles] = user
+    ? await Promise.all([
+        isSpaceMember(db, site.spaceId, user.id),
+        resolveIsShared(db, site.id, user.id),
+        db.select({ path: filesTable.path }).from(filesTable).where(eq(filesTable.siteId, site.id)),
+      ])
+    : [false, false, [] as { path: string }[]]
   const access = checkAccess(site, user, isMember, isShared)
   if (!access.ok) return c.json({ error: 'forbidden' }, access.status)
 
@@ -402,8 +406,19 @@ sites.get('/:spaceSlug/:siteSlug', async (c) => {
     status: site.status,
     isOwner: user?.id === site.ownerId,
     contentUrl,
+    indexPath: resolveIndexPath(siteFiles.map((f) => f.path)),
   })
 })
+
+// The file the root URL ('' splat) actually serves, mirroring the content worker's root
+// resolution (content.ts): an explicit index.html wins, else a lone uploaded file is served at
+// the root, else '' (a multi-file site with no index shows the directory listing). The viewer
+// reads this so a single-file audio site picks the native player at its root URL — not just at
+// the explicit `/…/recording.webm` path — and anchors comments to the same resolved path either way.
+function resolveIndexPath(paths: string[]): string {
+  if (paths.includes('index.html')) return 'index.html'
+  return paths.length === 1 ? paths[0] : ''
+}
 
 // GET /api/sites/:spaceSlug/:siteSlug/shares — owner-only: current explicit share lists.
 sites.get('/:spaceSlug/:siteSlug/shares', requireAuth, async (c) => {
