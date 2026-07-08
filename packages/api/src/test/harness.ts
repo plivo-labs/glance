@@ -223,6 +223,16 @@ export function makeKv() {
   }
 }
 
+/** Byte-faithful latin1 string (one char per byte) so a binary `put` (ArrayBuffer / Uint8Array)
+ *  stores exactly as many chars as bytes — `sliceRange`/range serving indexes by char = byte.
+ *  Chunked to stay under the argument-count stack limit on large inputs. */
+function bytesToLatin1(bytes: Uint8Array): string {
+  const CHUNK = 0x8000
+  let out = ''
+  for (let i = 0; i < bytes.length; i += CHUNK) out += String.fromCharCode(...bytes.subarray(i, i + CHUNK))
+  return out
+}
+
 /** R2's 3 range shapes (`{offset, length?}` / `{offset?, length}` / `{suffix}`), applied to
  *  an in-memory string body. `size` on the returned object is always the FULL object size —
  *  matching real R2 (`R2Object.size` is unaffected by the requested range) — so callers must
@@ -260,13 +270,21 @@ export function makeR2() {
         arrayBuffer: () => Promise.resolve(new TextEncoder().encode(body).buffer),
       })
     },
-    put: async (key: string, value: string | ReadableStream, options?: { httpMetadata?: { contentType?: string } }) => {
+    put: async (
+      key: string,
+      value: string | ReadableStream | ArrayBuffer | ArrayBufferView,
+      options?: { httpMetadata?: { contentType?: string } },
+    ) => {
       const body =
         typeof value === 'string'
           ? value
-          : value && typeof (value as ReadableStream).getReader === 'function'
-            ? await new Response(value as ReadableStream).text()
-            : ''
+          : value instanceof ArrayBuffer
+            ? bytesToLatin1(new Uint8Array(value))
+            : ArrayBuffer.isView(value)
+              ? bytesToLatin1(new Uint8Array(value.buffer, value.byteOffset, value.byteLength))
+              : value && typeof (value as ReadableStream).getReader === 'function'
+                ? await new Response(value as ReadableStream).text()
+                : ''
       store.set(key, { body, httpMetadata: options?.httpMetadata })
     },
     delete: (keys: string | string[]) => {

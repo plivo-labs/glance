@@ -23,6 +23,7 @@ export type CommentView = {
   author: string | null // display name (name ?? email); kept even when soft-deleted
   body: string | null // null when soft-deleted (redacted)
   deleted: boolean
+  hasAudio: boolean // voice comment: has a recording served via the audio route. audioKey never leaks.
   createdAt: string
   editedAt: string | null
 }
@@ -138,6 +139,8 @@ function toCommentView(c: Comment, displayName: (id: string | null) => string | 
     author: displayName(c.authorId), // identity kept even when the body is redacted
     body: deleted ? null : c.body,
     deleted,
+    // Expose only the existence of audio; the R2 key is internal and served via the audio route.
+    hasAudio: !deleted && c.audioKey !== null,
     createdAt: c.createdAt,
     editedAt: c.editedAt,
   }
@@ -151,6 +154,10 @@ export type CreateThreadInput = {
   anchorType?: 'text' | 'page' | 'element'
   quote?: string
   anchor?: ElementAnchor // a built element anchor (see lib/anchor); required when anchorType='element'
+  // Voice comments (S-B): the route pre-generates the comment id so it can name the R2 audio object
+  // BEFORE the D1 insert, then stores that key here — one id ties the row to its recording.
+  commentId?: string
+  audioKey?: string
 }
 
 /** Create a thread + its opening comment atomically. An element anchor stores its built selector
@@ -160,7 +167,7 @@ export type CreateThreadInput = {
 export async function createThread(
   db: DrizzleD1Database,
   input: CreateThreadInput,
-): Promise<{ threadId: string }> {
+): Promise<{ threadId: string; openingCommentId: string }> {
   const isElement = input.anchorType === 'element' && input.anchor != null
   const wantsText = !isElement && (input.anchorType ?? 'text') === 'text' && Boolean(input.quote)
   const anchorType: 'text' | 'page' | 'element' = isElement ? 'element' : wantsText ? 'text' : 'page'
@@ -168,6 +175,7 @@ export async function createThread(
   const anchor = isElement ? (input.anchor as ElementAnchor) : null
 
   const threadId = crypto.randomUUID()
+  const openingCommentId = input.commentId ?? crypto.randomUUID()
   await db.batch([
     db.insert(commentThreads).values({
       id: threadId,
@@ -179,19 +187,31 @@ export async function createThread(
       status: 'open',
       createdBy: input.createdBy,
     }),
-    db.insert(comments).values({ id: crypto.randomUUID(), threadId, authorId: input.createdBy, body: input.body }),
+    db.insert(comments).values({
+      id: openingCommentId,
+      threadId,
+      authorId: input.createdBy,
+      body: input.body,
+      audioKey: input.audioKey ?? null,
+    }),
   ])
-  return { threadId }
+  return { threadId, openingCommentId }
 }
 
 /** Append a flat reply to a thread (no nesting) and bump the thread's updatedAt. */
 export async function addComment(
   db: DrizzleD1Database,
-  input: { threadId: string; authorId: string; body: string },
+  input: { threadId: string; authorId: string; body: string; commentId?: string; audioKey?: string },
 ): Promise<string> {
-  const id = crypto.randomUUID()
+  const id = input.commentId ?? crypto.randomUUID()
   await db.batch([
-    db.insert(comments).values({ id, threadId: input.threadId, authorId: input.authorId, body: input.body }),
+    db.insert(comments).values({
+      id,
+      threadId: input.threadId,
+      authorId: input.authorId,
+      body: input.body,
+      audioKey: input.audioKey ?? null,
+    }),
     touchThread(db, input.threadId, now()),
   ])
   return id
@@ -226,11 +246,13 @@ export async function editComment(
 }
 
 /** Soft delete: keep the row (and thread shape); body is redacted on read. Bumps the thread so
- *  the change resurfaces in the updatedAt-sorted rail. */
+ *  the change resurfaces in the updatedAt-sorted rail. Voice asymmetry: the audio is hard-deleted
+ *  (the caller fires the R2 delete), so we null `audioKey` here — the row survives redacted, but
+ *  hasAudio flips false and the audio route 404s. */
 export async function deleteComment(db: DrizzleD1Database, threadId: string, commentId: string): Promise<void> {
   const ts = now()
   await db.batch([
-    db.update(comments).set({ deletedAt: ts }).where(eq(comments.id, commentId)),
+    db.update(comments).set({ deletedAt: ts, audioKey: null }).where(eq(comments.id, commentId)),
     touchThread(db, threadId, ts),
   ])
 }

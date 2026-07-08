@@ -46,6 +46,26 @@ export function extOf(path: string): string {
   return path.includes('.') ? (path.split('.').pop() ?? '').toLowerCase() : ''
 }
 
+/** Reverse map audio MIME → the FIRST extension that yields it (EXT_MIME insertion order), so a
+ *  content-type-only resolution is deterministic (e.g. audio/ogg → `ogg`, not `oga`). First-wins:
+ *  only the earliest ext for each MIME is kept. */
+const AUDIO_MIME_TO_EXT: ReadonlyMap<string, string> = Object.entries(EXT_MIME)
+  .filter(([, mime]) => mime.startsWith('audio/'))
+  .reduce((m, [ext, mime]) => (m.has(mime) ? m : m.set(mime, ext)), new Map<string, string>())
+
+/** Resolve a voice-upload part to an audio extension: the filename extension wins when it names a
+ *  known audio type; otherwise fall back to the (param-stripped, lowercased) content-type mapped
+ *  back to its canonical extension. Null when neither identifies audio. */
+export function audioExtFromPart(
+  filename: string | null | undefined,
+  contentType: string | null | undefined,
+): string | null {
+  const ext = extOf(filename ?? '')
+  if (AUDIO_EXTENSIONS.has(ext)) return ext
+  const mime = (contentType ?? '').split(';')[0].trim().toLowerCase()
+  return AUDIO_MIME_TO_EXT.get(mime) ?? null
+}
+
 // Textual types are stored as UTF-8; pin the charset in the header so the browser never
 // falls back to a locale default (latin-1) and double-decodes UTF-8 bytes into mojibake.
 function withCharset(mime: string): string {

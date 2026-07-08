@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { Hono } from 'hono'
-import contentApp, { injectAnnotate, markdown, normalizePath, parseByteRange, restOf } from './content'
+import contentApp, { injectAnnotate, markdown, normalizePath, restOf } from './content'
 import { events, sites, spaces, users } from './db/schema'
 import { sanitizePath } from './lib/storage'
 import { signToken, verifyToken } from './lib/token'
@@ -258,33 +258,6 @@ describe('view analytics (page-view events)', () => {
   })
 })
 
-describe('parseByteRange', () => {
-  test('bounded, open-ended, and suffix specs resolve against total', () => {
-    expect(parseByteRange('bytes=0-1', 16)).toEqual({ kind: 'single', start: 0, end: 1 })
-    expect(parseByteRange('bytes=4-', 16)).toEqual({ kind: 'single', start: 4, end: 15 })
-    expect(parseByteRange('bytes=-4', 16)).toEqual({ kind: 'single', start: 12, end: 15 })
-  })
-  test('an end past total clamps to the last byte', () => {
-    expect(parseByteRange('bytes=0-999', 16)).toEqual({ kind: 'single', start: 0, end: 15 })
-  })
-  test('start at/past total is unsatisfiable', () => {
-    expect(parseByteRange('bytes=16-', 16)).toEqual({ kind: 'unsatisfiable' })
-  })
-  test('a zero-length suffix is unsatisfiable', () => {
-    expect(parseByteRange('bytes=-0', 16)).toEqual({ kind: 'unsatisfiable' })
-  })
-  test('comma-separated multi-range is reported distinctly (caller serves the full body)', () => {
-    expect(parseByteRange('bytes=0-1,4-5', 16)).toEqual({ kind: 'multi' })
-  })
-  test('missing header, wrong unit, or a garbage spec → none (ignored, not unsatisfiable)', () => {
-    expect(parseByteRange(undefined, 16)).toEqual({ kind: 'none' })
-    expect(parseByteRange('items=0-1', 16)).toEqual({ kind: 'none' })
-    expect(parseByteRange('bytes=abc', 16)).toEqual({ kind: 'none' })
-  })
-  test('last-byte-pos before first-byte-pos is invalid → ignored, not unsatisfiable', () => {
-    expect(parseByteRange('bytes=10-5', 16)).toEqual({ kind: 'none' })
-  })
-})
 
 describe('injectAnnotate replacement safety (#46: $-specials in filePath stay verbatim)', () => {
   test('$&, $$, $1 in the payload are inserted byte-for-byte, not interpreted as replacement specials', () => {

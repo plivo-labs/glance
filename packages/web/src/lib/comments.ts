@@ -23,6 +23,7 @@ export interface CommentItem {
   author: string | null // display name (name ?? email); kept even when soft-deleted
   body: string | null // null when soft-deleted
   deleted: boolean
+  hasAudio?: boolean // voice comment: has a recording; played via the audio route (UI: Step 18)
   createdAt: string
   editedAt: string | null
 }

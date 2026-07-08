@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { AUDIO_EXTENSIONS, EXT_MIME, contentType, extOf } from './mime'
+import { AUDIO_EXTENSIONS, EXT_MIME, audioExtFromPart, contentType, extOf } from './mime'
 
 describe('AUDIO_EXTENSIONS', () => {
   test('is derived from EXT_MIME — every audio/* extension, nothing else (W0-4)', () => {
@@ -51,6 +51,27 @@ describe('contentType — full MIME table (W0-4 characterization)', () => {
     expect(contentType('clip.oga', null)).toBe('audio/ogg')
     expect(contentType('song.flac', null)).toBe('audio/flac')
     expect(contentType('song.aac', null)).toBe('audio/aac')
+  })
+})
+
+describe('audioExtFromPart — voice-upload part → audio extension', () => {
+  test('filename extension wins when it names a known audio type', () => {
+    expect(audioExtFromPart('take.webm', 'audio/webm')).toBe('webm')
+    // filename beats a mismatched content-type (MediaRecorder often mislabels the blob)
+    expect(audioExtFromPart('take.webm', 'audio/mpeg')).toBe('webm')
+  })
+  test('falls back to content-type when the filename is unknown/blank', () => {
+    expect(audioExtFromPart(null, 'audio/mpeg')).toBe('mp3')
+    expect(audioExtFromPart('', 'audio/mpeg')).toBe('mp3')
+    expect(audioExtFromPart('blob', 'audio/mpeg')).toBe('mp3')
+  })
+  test('content-type params are stripped before the lookup', () => {
+    expect(audioExtFromPart(null, 'audio/webm; codecs=opus')).toBe('webm')
+    expect(audioExtFromPart(undefined, 'AUDIO/OGG ')).toBe('ogg')
+  })
+  test('non-audio → null', () => {
+    expect(audioExtFromPart('note.txt', 'text/plain')).toBeNull()
+    expect(audioExtFromPart('', '')).toBeNull()
   })
 })
 

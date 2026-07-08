@@ -1,6 +1,6 @@
-import { eq } from 'drizzle-orm'
+import { and, eq, isNotNull } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
-import { files, sites } from '../db/schema'
+import { comments, commentThreads, files, sites } from '../db/schema'
 
 export const MAX_FILE_BYTES = 20 * 1024 * 1024 // 20MB/file (spec resolved decision #3)
 
@@ -37,19 +37,34 @@ export async function deleteKeys(bucket: R2Bucket, keys: string[]): Promise<void
   }
 }
 
-/** Delete all R2 objects recorded for a site (exact keys from the files table, batched ≤1000). */
+/** Delete all R2 objects recorded for a site: the site's uploaded files AND its voice-comment
+ *  audio (comments ⨝ threads on this site with a non-null audioKey), batched ≤1000. */
 export async function deleteSiteObjects(db: DrizzleD1Database, bucket: R2Bucket, siteId: string): Promise<void> {
-  const rows = await db.select({ storageKey: files.storageKey }).from(files).where(eq(files.siteId, siteId))
-  await deleteKeys(bucket, rows.map((r) => r.storageKey))
+  const fileRows = await db.select({ storageKey: files.storageKey }).from(files).where(eq(files.siteId, siteId))
+  const audioRows = await db
+    .select({ audioKey: comments.audioKey })
+    .from(comments)
+    .innerJoin(commentThreads, eq(comments.threadId, commentThreads.id))
+    .where(and(eq(commentThreads.siteId, siteId), isNotNull(comments.audioKey)))
+  const audioKeys = audioRows.map((r) => r.audioKey).filter((k): k is string => k !== null)
+  await deleteKeys(bucket, [...fileRows.map((r) => r.storageKey), ...audioKeys])
 }
 
-/** Delete all R2 objects for EVERY site in a space in ONE query (files ⨝ sites on siteId, filtered
- *  by spaceId), batched ≤1000. Replaces the N+1 per-site `deleteSiteObjects` loop on space delete. */
+/** Delete all R2 objects for EVERY site in a space: uploaded files (files ⨝ sites) AND voice-comment
+ *  audio (comments ⨝ threads ⨝ sites), both filtered by spaceId, batched ≤1000. Replaces the N+1
+ *  per-site `deleteSiteObjects` loop on space delete. */
 export async function deleteSpaceObjects(db: DrizzleD1Database, bucket: R2Bucket, spaceId: string): Promise<void> {
-  const rows = await db
+  const fileRows = await db
     .select({ storageKey: files.storageKey })
     .from(files)
     .innerJoin(sites, eq(files.siteId, sites.id))
     .where(eq(sites.spaceId, spaceId))
-  await deleteKeys(bucket, rows.map((r) => r.storageKey))
+  const audioRows = await db
+    .select({ audioKey: comments.audioKey })
+    .from(comments)
+    .innerJoin(commentThreads, eq(comments.threadId, commentThreads.id))
+    .innerJoin(sites, eq(commentThreads.siteId, sites.id))
+    .where(and(eq(sites.spaceId, spaceId), isNotNull(comments.audioKey)))
+  const audioKeys = audioRows.map((r) => r.audioKey).filter((k): k is string => k !== null)
+  await deleteKeys(bucket, [...fileRows.map((r) => r.storageKey), ...audioKeys])
 }

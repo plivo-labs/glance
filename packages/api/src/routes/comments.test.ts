@@ -51,6 +51,20 @@ async function seedSiteWithFile(
 
 const url = (extra = '') => `/api/sites/acme/doc/comments${extra}`
 
+// --- Voice (multipart) helpers, shared by the create/reply specs and the audio-GET specs. ---
+// env with a Whisper stub returning `text`. Cast because the harness env is partial.
+const aiEnv = (base: AppEnv['Bindings'], run: () => Promise<{ text: string }>) =>
+  ({ ...base, AI: { run } }) as unknown as AppEnv['Bindings']
+
+const audioForm = (bytes: Uint8Array, extra: Record<string, string> = {}, type = 'audio/webm', name = 'take.webm') => {
+  const fd = new FormData()
+  fd.set('audio', new Blob([bytes], { type }), name)
+  for (const [k, v] of Object.entries(extra)) fd.set(k, v)
+  return fd
+}
+// Multipart POST: DON'T set Content-Type (the FormData boundary is auto-added); keep auth+Origin.
+const voice = (id: string, body: FormData) => ({ method: 'POST', headers: { Authorization: `Bearer tok-${id}`, Origin: APP_URL }, body })
+
 describe('comments routes — auth / access / authz', () => {
   test('comments-require-auth: no session and no token → 401', async () => {
     const { app, env, db, r2 } = await setup()
@@ -398,5 +412,241 @@ describe('comments routes — input sanitization + lifecycle guards', () => {
 
     const res = await app.request(url('?filePath=index.html'), { headers: auth(owner) }, env)
     expect(res.status).toBe(410)
+  })
+})
+
+// Step 6 — voice comments. The JSON create/reply paths are unchanged; a multipart/form-data
+// request takes a new voice branch that stores the audio in R2 and stores the transcript as the
+// comment body. W2-8 pins the pre-existing JSON behavior before the parseThreadFields extraction.
+describe('comments routes — JSON create characterization (W2-8, pre-refactor pin)', () => {
+  const post = (headers: Record<string, string>, body: unknown) =>
+    ({ method: 'POST', headers, body: JSON.stringify(body) }) as const
+
+  test('W2-8: JSON create is unchanged for text / element / page threads', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    await seedSiteWithFile(db, r2, owner)
+
+    const textRes = await app.request(url(), post(auth(owner), { filePath: 'index.html', body: 'on text', quote: 'fox' }), env)
+    expect(textRes.status).toBe(201)
+    const elRes = await app.request(
+      url(),
+      post(auth(owner), { filePath: 'index.html', body: 'on element', anchorType: 'element', element: { selector: '#c', tag: 'div', preview: 'Chart', textFallback: 'Rev' } }),
+      env,
+    )
+    expect(elRes.status).toBe(201)
+    const pageRes = await app.request(url(), post(auth(owner), { filePath: 'index.html', body: 'on page', anchorType: 'page' }), env)
+    expect(pageRes.status).toBe(201)
+
+    const list = await (await app.request(url('?filePath=index.html'), { headers: auth(owner) }, env)).json()
+    const byBody = (b: string) => list.find((t: { comments: { body: string }[] }) => t.comments[0].body === b)
+    const text = byBody('on text')
+    expect(text.anchorType).toBe('text')
+    expect(text.quote).toBe('fox')
+    expect(text.anchor).toBeNull()
+    const el = byBody('on element')
+    expect(el.anchorType).toBe('element')
+    expect(el.anchor).toEqual({ selector: '#c', tag: 'div', preview: 'Chart', textFallback: 'Rev' })
+    expect(el.quote).toBeNull()
+    const page = byBody('on page')
+    expect(page.anchorType).toBe('page')
+    expect(page.quote).toBeNull()
+    expect(page.anchor).toBeNull()
+  })
+})
+
+describe('comments routes — voice (multipart) create + reply (Step 6)', () => {
+  test('W2-1 multipart create: transcript becomes the body, audio lands in R2, hasAudio true', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    await seedSiteWithFile(db, r2, owner)
+    const bytes = new Uint8Array([1, 2, 3, 250, 0, 128])
+    const fd = audioForm(bytes, { filePath: 'index.html', quote: 'fox' })
+    const res = await app.request(url(), voice(owner, fd), aiEnv(env, async () => ({ text: 'hello there' })))
+    expect(res.status).toBe(201)
+    const { openingCommentId } = await res.json()
+
+    const list = await (await app.request(url('?filePath=index.html'), { headers: auth(owner) }, env)).json()
+    expect(list[0].comments[0].body).toBe('hello there')
+    expect(list[0].comments[0].hasAudio).toBe(true)
+    expect(r2.store.has(`comment-audio/${openingCommentId}.webm`)).toBe(true)
+    expect(r2.store.get(`comment-audio/${openingCommentId}.webm`)?.body.length).toBe(bytes.byteLength)
+  })
+
+  test('W2-2 multipart reply: transcript body + audio by returned id', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    const { siteId } = await seedSiteWithFile(db, r2, owner)
+    const threadId = await seedThread(db, { siteId, filePath: 'index.html', createdBy: owner })
+    await seedComment(db, { threadId, authorId: owner, body: 'opening' })
+
+    const fd = audioForm(new Uint8Array([9, 9, 9]))
+    const res = await app.request(url(`/${threadId}/replies`), voice(owner, fd), aiEnv(env, async () => ({ text: 'reply spoken' })))
+    expect(res.status).toBe(201)
+    const { id } = await res.json()
+    expect(id).toBeTruthy()
+
+    const list = await (await app.request(url('?filePath=index.html'), { headers: auth(owner) }, env)).json()
+    const reply = list[0].comments.find((cm: { id: string }) => cm.id === id)
+    expect(reply.body).toBe('reply spoken')
+    expect(reply.hasAudio).toBe(true)
+    expect(r2.store.has(`comment-audio/${id}.webm`)).toBe(true)
+  })
+
+  test('W2-3 AI throws → fallback body, audio still stored, 201', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    await seedSiteWithFile(db, r2, owner)
+    const fd = audioForm(new Uint8Array([1, 2, 3]), { filePath: 'index.html' })
+    const throwingEnv = aiEnv(env, async () => {
+      throw new Error('model down')
+    })
+    const res = await app.request(url(), voice(owner, fd), throwingEnv)
+    expect(res.status).toBe(201)
+    const { openingCommentId } = await res.json()
+    const list = await (await app.request(url('?filePath=index.html'), { headers: auth(owner) }, env)).json()
+    expect(list[0].comments[0].body).toBe('[voice message]')
+    expect(r2.store.has(`comment-audio/${openingCommentId}.webm`)).toBe(true)
+  })
+
+  test('W2-4 AI binding absent → fallback body, audio stored, 201', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    await seedSiteWithFile(db, r2, owner)
+    const fd = audioForm(new Uint8Array([4, 5, 6]), { filePath: 'index.html' })
+    const res = await app.request(url(), voice(owner, fd), env) // env has no AI
+    expect(res.status).toBe(201)
+    const { openingCommentId } = await res.json()
+    const list = await (await app.request(url('?filePath=index.html'), { headers: auth(owner) }, env)).json()
+    expect(list[0].comments[0].body).toBe('[voice message]')
+    expect(r2.store.has(`comment-audio/${openingCommentId}.webm`)).toBe(true)
+  })
+
+  test('W2-5 oversize audio → 413, no R2 put, no thread created', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    await seedSiteWithFile(db, r2, owner)
+    const before = r2.store.size
+    const huge = new Uint8Array(10 * 1024 * 1024 + 1)
+    const fd = audioForm(huge, { filePath: 'index.html' })
+    const res = await app.request(url(), voice(owner, fd), aiEnv(env, async () => ({ text: 'x' })))
+    expect(res.status).toBe(413)
+    expect(r2.store.size).toBe(before) // no put
+    const list = await (await app.request(url('?filePath=index.html'), { headers: auth(owner) }, env)).json()
+    expect(list).toHaveLength(0) // no thread created
+  })
+
+  test('W2-6 non-audio part → 400; missing audio part → 400', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    await seedSiteWithFile(db, r2, owner)
+
+    const nonAudio = audioForm(new Uint8Array([1]), { filePath: 'index.html' }, 'text/plain', 'note.txt')
+    const badType = await app.request(url(), voice(owner, nonAudio), env)
+    expect(badType.status).toBe(400)
+
+    const noAudio = new FormData()
+    noAudio.set('filePath', 'index.html')
+    const missing = await app.request(url(), voice(owner, noAudio), env)
+    expect(missing.status).toBe(400)
+  })
+
+  test('W2-7 malformed element JSON in multipart create → 400', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    await seedSiteWithFile(db, r2, owner)
+    const fd = audioForm(new Uint8Array([1, 2]), { filePath: 'index.html', anchorType: 'element', element: '{not json' })
+    const res = await app.request(url(), voice(owner, fd), env)
+    expect(res.status).toBe(400)
+  })
+})
+
+describe('comments routes — voice audio serving + delete lifecycle (Steps 8, 9)', () => {
+  // Post a voice comment (owner, team site) and return the opening comment id + fixtures.
+  async function withVoiceComment(bytes: Uint8Array) {
+    const ctx = await setup()
+    const owner = await mintUser(ctx.db, ctx.kv, { id: 'owner' })
+    const { siteId } = await seedSiteWithFile(ctx.db, ctx.r2, owner)
+    const fd = audioForm(bytes, { filePath: 'index.html' })
+    const res = await ctx.app.request(url(), voice(owner, fd), aiEnv(ctx.env, async () => ({ text: 'spoken' })))
+    const { openingCommentId } = await res.json()
+    return { ...ctx, owner, siteId, commentId: openingCommentId as string }
+  }
+  const audioUrl = (id: string) => url(`/audio/${id}`)
+
+  test('W2-10 audio GET → 200 with audio content-type, etag, accept-ranges', async () => {
+    const { app, env, owner, commentId } = await withVoiceComment(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]))
+    const res = await app.request(audioUrl(commentId), { headers: auth(owner) }, env)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toBe('audio/webm')
+    expect(res.headers.get('etag')).toBeTruthy()
+    expect(res.headers.get('accept-ranges')).toBe('bytes')
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff')
+  })
+
+  test('W2-11 audio GET with Range → 206 slice', async () => {
+    const { app, env, owner, commentId } = await withVoiceComment(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]))
+    const res = await app.request(audioUrl(commentId), { headers: { ...auth(owner), Range: 'bytes=0-3' } }, env)
+    expect(res.status).toBe(206)
+    expect(res.headers.get('content-range')).toBe('bytes 0-3/8')
+    expect(res.headers.get('content-length')).toBe('4')
+    expect((await res.arrayBuffer()).byteLength).toBe(4)
+  })
+
+  test('W2-12 audio GET with matching If-None-Match → 304', async () => {
+    const { app, env, owner, commentId } = await withVoiceComment(new Uint8Array([1, 2, 3, 4]))
+    const first = await app.request(audioUrl(commentId), { headers: auth(owner) }, env)
+    const etag = first.headers.get('etag') as string
+    const res = await app.request(audioUrl(commentId), { headers: { ...auth(owner), 'If-None-Match': etag } }, env)
+    expect(res.status).toBe(304)
+    expect((await res.arrayBuffer()).byteLength).toBe(0)
+  })
+
+  test('W2-13a non-member on a private site → audio 4xx (no access)', async () => {
+    const ctx = await setup()
+    const owner = await mintUser(ctx.db, ctx.kv, { id: 'owner' })
+    const { siteId } = await seedSiteWithFile(ctx.db, ctx.r2, owner, 'private')
+    const fd = audioForm(new Uint8Array([1, 2, 3, 4]), { filePath: 'index.html' })
+    const created = await ctx.app.request(url(), voice(owner, fd), aiEnv(ctx.env, async () => ({ text: 'spoken' })))
+    const { openingCommentId } = await created.json()
+    const stranger = await mintUser(ctx.db, ctx.kv, { id: 'stranger' })
+    const res = await ctx.app.request(audioUrl(openingCommentId), { headers: auth(stranger) }, ctx.env)
+    expect([401, 403, 404]).toContain(res.status)
+    void siteId
+  })
+
+  test('W2-13b a text (no-audio) comment id → 404', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    const { siteId } = await seedSiteWithFile(db, r2, owner)
+    const threadId = await seedThread(db, { siteId, filePath: 'index.html', createdBy: owner })
+    const textId = await seedComment(db, { threadId, authorId: owner, body: 'text only' })
+    const res = await app.request(audioUrl(textId), { headers: auth(owner) }, env)
+    expect(res.status).toBe(404)
+  })
+
+  test('W2-13c a soft-deleted voice comment id → 404, and the R2 audio is gone (W2-14 route half)', async () => {
+    const { app, env, r2, owner, commentId } = await withVoiceComment(new Uint8Array([1, 2, 3, 4]))
+    expect(r2.store.has(`comment-audio/${commentId}.webm`)).toBe(true)
+    // Delete via the DELETE route (thread id needed for the path).
+    const list = await (await app.request(url('?filePath=index.html'), { headers: auth(owner) }, env)).json()
+    const threadId = list[0].id
+    const del = await app.request(url(`/${threadId}/messages/${commentId}`), { method: 'DELETE', headers: auth(owner) }, env)
+    expect(del.status).toBe(200)
+    expect(r2.store.has(`comment-audio/${commentId}.webm`)).toBe(false) // audio hard-deleted
+    const res = await app.request(audioUrl(commentId), { headers: auth(owner) }, env)
+    expect(res.status).toBe(404)
+  })
+
+  test('W2-14 text-comment delete makes no R2 delete (redaction path unchanged)', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    const { siteId } = await seedSiteWithFile(db, r2, owner)
+    const threadId = await seedThread(db, { siteId, filePath: 'index.html', createdBy: owner })
+    const textId = await seedComment(db, { threadId, authorId: owner, body: 'text only' })
+    const before = r2.store.size
+    const del = await app.request(url(`/${threadId}/messages/${textId}`), { method: 'DELETE', headers: auth(owner) }, env)
+    expect(del.status).toBe(200)
+    expect(r2.store.size).toBe(before) // no R2 delete for a text comment
   })
 })
