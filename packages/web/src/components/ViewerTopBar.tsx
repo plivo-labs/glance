@@ -1,4 +1,4 @@
-import { Check, ChevronRight, History, MessageSquare } from 'lucide-react'
+import { Check, ChevronRight, Command, History, MessageSquare } from 'lucide-react'
 import { Link } from 'react-router'
 import type { ViewerSite } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -37,6 +37,7 @@ export function ViewerTopBar({
   onReview,
   onExit,
   onToggleSidebar,
+  onSearch,
 }: {
   site: ViewerSite
   sitePath: string
@@ -49,6 +50,7 @@ export function ViewerTopBar({
   onReview: () => void
   onExit: () => void
   onToggleSidebar: () => void
+  onSearch: () => void
 }) {
   return (
     <header className="flex h-12 shrink-0 items-center gap-3 border-b bg-background px-3">
@@ -75,6 +77,19 @@ export function ViewerTopBar({
       </nav>
 
       <div className="ml-auto flex shrink-0 items-center gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-2 text-muted-foreground"
+          onClick={onSearch}
+          title="Search sites or run a command"
+        >
+          <Command className="size-3.5" />
+          <span className="hidden lg:inline">Search</span>
+          <kbd className="hidden rounded border bg-muted px-1.5 py-px font-mono text-[10px] text-muted-foreground lg:inline">
+            ⌘K
+          </kbd>
+        </Button>
         <Segmented value={width} options={WIDTHS} onChange={onWidth} />
         {review ? (
           <>
