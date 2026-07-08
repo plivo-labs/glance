@@ -16,11 +16,9 @@ No more screenshotting your agent's output and pasting it back into the chat.
 
 Self-hosted on **Cloudflare's free tier** — $0/month, you own the whole loop. Ships with a CLI and an AI-agent skill, so agents drive deploy → pull comments → reply → redeploy with no human in the copy-paste path.
 
-**Why not just Cloudflare Pages?** Pages is a git-and-build pipeline for one account. Glance is an agent-native review loop on the same free infra: agents drop a folder (no build, no git), you comment on the result, agents read the comments back and fix it. Untrusted uploads are sandboxed, and it's multi-tenant with per-link gating.
-
 Stack: Cloudflare Workers + Hono · React Router v7 · D1 · R2 · KV.
 
-## Deploy in one command
+## Deploy
 
 First enable **R2** on your account ([dashboard](https://dash.cloudflare.com) → R2 → accept terms — still free), then:
 
@@ -30,23 +28,9 @@ bunx wrangler login
 scripts/setup.sh      # provisions D1/KV/R2, deploys both workers, sets secrets, migrates, prints URL + token
 ```
 
-`setup.sh` is idempotent (reuses resources, never rotates `SESSION_SECRET`). At the end it prints a **bootstrap token** — open the printed `/login`, paste it into **Complete setup**, and you become the first superadmin. No Google account needed.
+`setup.sh` is idempotent. At the end it prints a **bootstrap token** — open the printed `/login`, paste it into **Complete setup**, and you become the first superadmin. No Google account needed.
 
-> Multiple Cloudflare accounts? `export CLOUDFLARE_ACCOUNT_ID=<id>` first.
->
-> Why two Workers (and no one-click button)? The app runs separately from a content origin that sandboxes untrusted uploads, so no app cookie ever reaches user HTML. A deploy button only provisions one Worker; `setup.sh` stands up both.
-
-## Local dev
-
-```bash
-bun install
-cp packages/api/.dev.vars.example packages/api/.dev.vars   # set SESSION_SECRET + BOOTSTRAP_TOKEN
-bun run db:migrate:local
-bun run build:web
-bun run dev           # main :8787 + content :8788 + vite :5173
-```
-
-Open http://localhost:5173.
+> Multiple Cloudflare accounts? `export CLOUDFLARE_ACCOUNT_ID=<id>` first. Manual provisioning, secrets, and optional Google SSO: see [DEPLOY.md](DEPLOY.md).
 
 ## The app
 
@@ -56,19 +40,17 @@ Pick a space, drop a folder, and your sites are live behind private/members/team
   <img src="https://github.com/plivo-labs/glance/releases/download/assets-readme/dashboard.png" alt="Glance dashboard — deploy panel and your sites" width="900">
 </p>
 
-Superadmins get usage at a glance — users, sites, storage, page views, comments, and CLI activity:
+Superadmins get usage at a glance — users, sites, storage, page views, comments, and CLI activity.
 
-<p align="center">
-  <img src="https://github.com/plivo-labs/glance/releases/download/assets-readme/admin.png" alt="Glance admin — usage overview with stat tiles and 30-day activity" width="900">
-</p>
+## Audio & voice comments
 
-## Layout
+Glance is also a home for **audio** — and the review loop works by voice.
 
-```
-packages/api   Hono Worker — /api/* + file serving, ships the React app as static assets
-packages/web   Vite + React Router v7
-packages/cli   `glance` CLI (Bun)
-```
+- **Serve & play** — audio files (`mp3/wav/m4a/ogg/flac/aac/webm`) serve with the right MIME type and HTTP Range, and render in a dedicated player (not the sandboxed HTML iframe), with page-anchored comments and a `[m:ss]` timestamp-insert shortcut.
+- **Record → URL** — tap the mic on the dashboard, record (live waveform, pause/resume), name it, and it deploys and opens straight in the player. Uploading a file is still one tap away.
+- **Voice comments** — record a voice note right in the review composer (and in replies). It's stored, transcribed best-effort with Workers AI (Whisper), and shown as a voice card: inline player + transcript + badge. The transcript is the comment body, so the CLI/agent loop still reads everything as text.
+
+Audio sites carry a mic badge across the dashboard, and `glance comments` prefixes voice comments with `[voice]` in the digest.
 
 ## CLI
 
@@ -78,71 +60,48 @@ glance login          # device-code flow, opens browser
 glance deploy <path>  # file or folder → publishes to your personal space
 ```
 
-The installer bakes in your instance URL (so `glance login` targets it immediately, same shell) and installs the AI-agent skill so coding agents can drive the CLI.
+The installer bakes in your instance URL and installs the AI-agent skill so coding agents can drive the CLI.
 
 | command | what it does |
 |---|---|
 | `login` | device-code flow, saves token to `~/.glance/config.json` |
 | `deploy <path> [--space <slug>] [--name <slug>] [--visibility <v>]` | uploads a file or folder (folders recurse, skip `.git`/`node_modules`) |
 | `list` | your sites, with visibility + URL |
+| `comments <space/slug>` | pull a site's review comments (voice comments show as `[voice]`) |
+| `reply <thread>` | reply to a comment thread from the terminal |
 | `delete <space/slug>` | confirms, then deletes |
 | `move <space/slug> <new-space>` | moves a site (keeps files/comments/shares; URL changes) |
-| `upgrade` | updates the CLI to the latest release now |
-| `version` | prints the CLI version |
-| `logout` | revokes session, removes local token |
+| `upgrade` / `version` / `logout` | self-update · print version · revoke session |
 
-Defaults: `--space` = your personal space · `--name` = file/folder name slugified · `--visibility` = `team`.
-Visibility: `team` · `private` · `members` (own space only).
+Defaults: `--space` = your personal space · `--name` = file/folder name slugified · `--visibility` = `team` (`private` · `members` also available). Point at another instance with `GLANCE_API_URL=https://… glance <cmd>`.
 
-Point at another instance any time with `GLANCE_API_URL=https://… glance <cmd>`.
-
-The CLI keeps itself current: at most once a day it checks for a new release in the background,
-swaps the binary in place, and mentions it on the next run. Opt out with `GLANCE_NO_UPDATE=1`
-(checks are also skipped in CI).
+The CLI keeps itself current (once-a-day background check, atomic in-place swap). Opt out with `GLANCE_NO_UPDATE=1`.
 
 ## Security model
 
-- **Uploaded HTML/JS is untrusted** — served from a separate content origin (`CONTENT_URL`), so app session cookies never reach it.
-- **Gated links** carry short-lived, single-use HMAC tokens signed with `CONTENT_TOKEN_SECRET`.
+- **Uploaded HTML/JS is untrusted** — served from a separate content origin (`CONTENT_URL`), so app session cookies never reach it. This is why Glance stands up two Workers, not one.
+- **Gated links** carry short-lived, single-use HMAC tokens. Every tier requires an authenticated user — there is no public/anonymous access.
 - **Markdown** renders with raw HTML neutralized under a strict CSP, so injected `<script>` is inert.
 
 ## Shared backend — `glance.db` (experimental, opt-in)
 
-Hosted sites can get browser-callable persistence — no keys, no config. Off by default; an
-operator enables it per deploy (`DATA_TOKEN_SECRET`, see [DEPLOY.md](DEPLOY.md#2-secrets)).
+Hosted sites can get browser-callable persistence — no keys, no config. Off by default; an operator enables it per deploy (see [SHARED_BACKEND.md](SHARED_BACKEND.md)).
 
 ```js
-// In any HTML page you deploy — no setup, no keys, no script tag. When the site is opened
-// through the Glance app, the SDK is injected automatically and every request is brokered by
-// the parent frame (postMessage + MessagePort), so the page NEVER holds a credential.
+// Injected automatically when the site is opened through the Glance app; every request is
+// brokered by the parent frame, so the page never holds a credential.
 const notes = glance.db.collection('notes')
-await notes.create({ text: 'hello' })      // POST   /api/_data/notes        → {id, data, createdAt, updatedAt}
-await notes.list()                          // GET    /api/_data/notes        → {items: [...]} newest-first, ?limit≤200
-await notes.get(id)                         // GET    /api/_data/notes/:id
-await notes.put(id, { text: 'edited' })     // PUT    /api/_data/notes/:id    (upsert at your own id)
-await notes.delete(id)                      // DELETE /api/_data/notes/:id
+await notes.create({ text: 'hello' })   // create · list · get · put · delete
 ```
 
-Pages on the app origin can use the same client directly: set
-`window.__GLANCE_DB__ = { space, site }` and load `<script src="/api/glance.js"></script>` —
-same five methods, token minted via the session.
+Docs are JSON ≤100KB in named collections. Every viewer can create and read their own docs; `shared-*` collections are readable by all viewers; the site owner reads everything and can moderate. Access is re-checked live, so revoking a share cuts data access immediately.
 
-Programmatic use (cron jobs, scripts) works today with a CLI token:
+## Layout
 
-```bash
-TOKEN=$(curl -s -X POST -H "Authorization: Bearer $GLANCE_CLI_TOKEN" \
-  "$GLANCE_API_URL/api/data-token/<space>/<site>" | jq -r .token)
-curl -H "Authorization: Bearer $TOKEN" "$GLANCE_API_URL/api/_data/notes"
+```
+packages/api   Hono Worker — /api/* + file serving, ships the React app as static assets
+packages/web   Vite + React Router v7
+packages/cli   `glance` CLI (Go)
 ```
 
-Rules: docs are JSON objects ≤100KB in named collections · every viewer can **create**
-(submissions are attributed to them) and read **their own** docs · collections named `shared-*`
-are readable by every viewer of the site (polls, boards) · the site **owner** additionally reads
-everything and can update/delete (moderation) — viewers can never modify existing docs · every
-request re-checks live site access, so revoking a share cuts data access immediately. Design +
-threat model: [SHARED_BACKEND.md](SHARED_BACKEND.md).
-
-## Advanced
-
-- **Manual provisioning / deploy** (skip `setup.sh`), **secrets reference**, and **Google OAuth SSO** (optional) — see [DEPLOY.md](DEPLOY.md).
-- CI auto-deploys both workers on push to `main` (`.github/workflows/deploy.yml`).
+Local dev: `bun install && bun run db:migrate:local && bun run dev` (main :8787 + content :8788 + vite :5173), then open http://localhost:5173. CI auto-deploys both workers on push to `main`.
