@@ -114,3 +114,34 @@ func TestRenderDigest(t *testing.T) {
 		}
 	})
 }
+
+func TestVoiceCommentDigest(t *testing.T) {
+	threads := mustThreads(t, `[
+		{"id":"t1","filePath":"take.webm","status":"open","comments":[
+			{"author":"Sam","body":"sounds great","hasAudio":true,"deleted":false},
+			{"author":"Ada","body":"plain text","hasAudio":false,"deleted":false}
+		]}
+	]`)
+
+	t.Run("voice-comment-gets-[voice]-prefix", func(t *testing.T) {
+		out, _ := renderDigest(threads, false, false)
+		if !strings.Contains(out, "- @Sam: [voice] sounds great") {
+			t.Errorf("missing [voice] prefix on the voice comment:\n%s", out)
+		}
+		if strings.Contains(out, "[voice] plain text") {
+			t.Errorf("text comment must NOT get the [voice] prefix:\n%s", out)
+		}
+	})
+
+	t.Run("json passes hasAudio through untouched", func(t *testing.T) {
+		out, _ := renderDigest(threads, false, true)
+		var got []map[string]any
+		if err := json.Unmarshal([]byte(out), &got); err != nil {
+			t.Fatalf("json: %v", err)
+		}
+		comments := got[0]["comments"].([]any)
+		if comments[0].(map[string]any)["hasAudio"] != true {
+			t.Errorf("hasAudio not passed through in --json:\n%s", out)
+		}
+	})
+}

@@ -1,10 +1,11 @@
 import { Music } from 'lucide-react'
 import type { RefObject } from 'react'
+import { AudioPlayer } from '@/components/audio/AudioPlayer'
 
 // First-class audio player for the letterbox canvas — replaces the sandboxed iframe for audio
-// files (there's no HTML document to frame). `audioRef` is forwarded so the viewer can read
-// `currentTime` on demand (the comment composer's timestamp button) with a plain ref read
-// inside an event handler — no state, no effect.
+// files (there's no HTML document to frame). Renders the shared AudioPlayer; `audioRef` is
+// forwarded to its underlying <audio> so the viewer can read `currentTime` on demand (the comment
+// composer's timestamp button) with a plain ref read inside an event handler — no state, no effect.
 export function AudioView({
   src,
   fileName,
@@ -25,10 +26,7 @@ export function AudioView({
         </p>
         {/* `key={src}` forces a remount (not just an attribute update) when the file path changes —
             a bare src swap on a live <audio> doesn't reliably reload in every browser. */}
-        {/* biome-ignore lint/a11y/useMediaCaption: audio-only source, no track to caption */}
-        <audio key={src} ref={audioRef} controls preload="metadata" className="w-full">
-          <source src={src} />
-        </audio>
+        <AudioPlayer src={src} audioRef={audioRef} />
       </div>
     </div>
   )

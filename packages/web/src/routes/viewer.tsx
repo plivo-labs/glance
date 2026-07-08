@@ -206,6 +206,20 @@ export function Component() {
     }
   }
 
+  // Voice sibling of createThread: the anchor fields come from the same pending anchor (body is the
+  // server-side transcript, so it's dropped from the multipart payload).
+  async function createVoiceThread(blob: Blob) {
+    if (!filePath || !composing) return
+    try {
+      const { body: _body, ...fields } = pendingToInput(filePath, '', composing)
+      await comments.createVoice(site, blob, fields)
+      setComposing(null)
+      await refresh(filePath)
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to add voice comment')
+    }
+  }
+
   function exitReview() {
     setReview(false)
     setSelection(null)
@@ -276,6 +290,7 @@ export function Component() {
             composing={composing}
             onCancelComposer={() => setComposing(null)}
             onCreate={createThread}
+            onCreateVoice={createVoiceThread}
             onChanged={() => filePath && refresh(filePath)}
             onFocusAnchor={focusAnchor}
             onStartComment={isAudio ? startPageComment : undefined}

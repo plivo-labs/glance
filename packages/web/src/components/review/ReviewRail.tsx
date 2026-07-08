@@ -24,6 +24,7 @@ export function ReviewRail({
   composing,
   onCancelComposer,
   onCreate,
+  onCreateVoice,
   onChanged,
   onFocusAnchor,
   onStartComment,
@@ -35,6 +36,8 @@ export function ReviewRail({
   composing: PendingAnchor | null
   onCancelComposer: () => void
   onCreate: (body: string) => void | Promise<void>
+  // Voice sibling of onCreate: submits the composer's recording as a voice thread on the same anchor.
+  onCreateVoice: (blob: Blob) => void | Promise<void>
   onChanged: () => void
   onFocusAnchor: (thread: Thread) => void
   // Set only for content with no DOM to select in (the audio view) — offers a plain "Add
@@ -70,6 +73,7 @@ export function ReviewRail({
             placeholder="Add a comment…"
             submitLabel="Comment"
             onSubmit={onCreate}
+            onSubmitVoice={onCreateVoice}
             onCancel={onCancelComposer}
             timestampButton={getCurrentTime ? { label: 'Insert timestamp', getPrefix: () => timestampPrefix(getCurrentTime()) } : undefined}
           />

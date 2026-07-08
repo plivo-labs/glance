@@ -11,6 +11,7 @@ import {
 import type { Visibility } from '../db/schema'
 import { sites as sitesTable, spaces, users } from '../db/schema'
 import { checkAccess } from '../lib/access'
+import { allAudioSiteIds } from '../lib/site-audio'
 import { readSessionOrBearer } from '../lib/session'
 import { resolveSite } from '../lib/site-access'
 import { isValidSlug } from '../lib/slug'
@@ -221,6 +222,7 @@ sites.get('/mine', requireAuth, async (c) => {
     .where(eq(sitesTable.ownerId, user.id))
     .orderBy(desc(sitesTable.createdAt))
 
+  const audioSet = await allAudioSiteIds(db, rows.map((r) => r.id))
   return c.json(
     rows.map((r) => ({
       id: r.id,
@@ -229,6 +231,7 @@ sites.get('/mine', requireAuth, async (c) => {
       title: r.title,
       visibility: r.visibility,
       status: r.status,
+      audio: audioSet.has(r.id),
       url: `${c.env.APP_URL}/${r.spaceSlug}/${r.slug}`,
       createdAt: r.createdAt,
     })),
@@ -262,19 +265,20 @@ sites.get('/shared', requireAuth, async (c) => {
     ),
   )
   const rows = batches.flat().sort(byCreatedAtDesc)
+  const visible = rows.filter((r) => r.status === 'active' && r.ownerId !== user.id)
+  const audioSet = await allAudioSiteIds(db, visible.map((r) => r.id))
   return c.json(
-    rows
-      .filter((r) => r.status === 'active' && r.ownerId !== user.id)
-      .map((r) => ({
-        id: r.id,
-        spaceSlug: r.spaceSlug,
-        siteSlug: r.slug,
-        title: r.title,
-        visibility: r.visibility,
-        status: r.status,
-        url: `${c.env.APP_URL}/${r.spaceSlug}/${r.slug}`,
-        createdAt: r.createdAt,
-      })),
+    visible.map((r) => ({
+      id: r.id,
+      spaceSlug: r.spaceSlug,
+      siteSlug: r.slug,
+      title: r.title,
+      visibility: r.visibility,
+      status: r.status,
+      audio: audioSet.has(r.id),
+      url: `${c.env.APP_URL}/${r.spaceSlug}/${r.slug}`,
+      createdAt: r.createdAt,
+    })),
   )
 })
 
@@ -301,6 +305,7 @@ sites.get('/team', requireAuth, async (c) => {
     .where(and(eq(sitesTable.status, 'active'), eq(sitesTable.visibility, 'team')))
     .orderBy(desc(sitesTable.createdAt))
     .limit(50)
+  const audioSet = await allAudioSiteIds(db, rows.map((r) => r.id))
   return c.json(
     rows.map((r) => ({
       id: r.id,
@@ -309,6 +314,7 @@ sites.get('/team', requireAuth, async (c) => {
       title: r.title,
       visibility: r.visibility,
       status: r.status,
+      audio: audioSet.has(r.id),
       url: `${c.env.APP_URL}/${r.spaceSlug}/${r.slug}`,
       createdAt: r.createdAt,
       uploaderName: r.uploaderName,

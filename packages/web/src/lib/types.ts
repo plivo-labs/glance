@@ -35,6 +35,7 @@ export interface SiteSummary {
   title: string | null
   visibility: Visibility
   status: SiteStatus
+  audio?: boolean // every file is audio — a recording/voice site; shows a Mic badge
   url: string
   createdAt: string
 }

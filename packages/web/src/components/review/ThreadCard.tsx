@@ -1,11 +1,13 @@
 import { useState } from 'react'
-import { Check, RotateCcw, Trash2 } from 'lucide-react'
+import { Check, Mic, RotateCcw, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/lib/api'
 import { comments, type Thread } from '@/lib/comments'
 import type { Me, ViewerSite } from '@/lib/types'
+import { AudioPlayer } from '@/components/audio/AudioPlayer'
 import { AnchorChip } from '@/components/review/AnchorChip'
 import { Composer } from '@/components/review/Composer'
+import { Badge } from '@/components/ui/badge'
 
 export function ThreadCard({
   site,
@@ -58,6 +60,12 @@ export function ThreadCard({
             <div className="flex items-center gap-2 text-muted-foreground text-xs">
               <span className="font-medium text-foreground">{c.authorId === me?.id ? 'You' : 'Reviewer'}</span>
               <span>{fmt(c.createdAt)}</span>
+              {c.hasAudio && !c.deleted && (
+                <Badge variant="secondary" className="gap-1 px-1.5 py-0 font-medium">
+                  <Mic className="size-2.5" />
+                  Voice
+                </Badge>
+              )}
               {c.editedAt && !c.deleted && <span>(edited)</span>}
               {!c.deleted && (c.authorId === me?.id || canModerate) && (
                 <button
@@ -73,6 +81,13 @@ export function ThreadCard({
             <p className={c.deleted ? 'text-muted-foreground italic' : 'whitespace-pre-wrap'}>
               {c.deleted ? 'comment deleted' : c.body}
             </p>
+            {/* Voice comment: the transcript above stays always-visible; the recording plays from
+                the auth-gated audio route (deleted comments lose hasAudio, so they never reach here). */}
+            {c.hasAudio && !c.deleted && (
+              <div className="mt-1.5">
+                <AudioPlayer src={`/api/sites/${site.spaceSlug}/${site.siteSlug}/comments/audio/${c.id}`} />
+              </div>
+            )}
           </li>
         ))}
       </ul>
@@ -86,6 +101,10 @@ export function ThreadCard({
             onCancel={() => setReplying(false)}
             onSubmit={async (body) => {
               await run(() => comments.reply(site, thread.id, body))
+              setReplying(false)
+            }}
+            onSubmitVoice={async (blob) => {
+              await run(() => comments.replyVoice(site, thread.id, blob))
               setReplying(false)
             }}
           />

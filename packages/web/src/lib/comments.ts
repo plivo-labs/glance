@@ -1,4 +1,5 @@
 import { api } from '@/lib/api'
+import { extForMime } from '@/lib/recorder'
 import type { ViewerSite } from '@/lib/types'
 
 // Web client for the comments API (mirrors packages/api db/comments ThreadView). Thin wrappers
@@ -68,13 +69,38 @@ export function pendingToInput(filePath: string, body: string, pending: PendingA
 
 type SiteRef = Pick<ViewerSite, 'spaceSlug' | 'siteSlug'>
 
+// Anchor-shaping fields for a voice thread — everything a create payload carries EXCEPT the body,
+// which the server derives from the recording's transcript. Mirrors NewThreadInput sans `body`.
+export type VoiceCreateFields = Omit<NewThreadInput, 'body'>
+
 const base = (s: SiteRef) => `/api/sites/${s.spaceSlug}/${s.siteSlug}/comments`
+
+// The recording → a named File the multipart route accepts (its extension, not the MIME, is
+// authoritative server-side — extForMime keeps it in the audio allow-list).
+const voiceFile = (blob: Blob) => new File([blob], `voice.${extForMime(blob.type)}`, { type: blob.type })
 
 export const comments = {
   list: (s: SiteRef, filePath: string) => api.get<Thread[]>(`${base(s)}?filePath=${encodeURIComponent(filePath)}`),
   create: (s: SiteRef, input: NewThreadInput) => api.post<{ threadId: string }>(base(s), input),
   reply: (s: SiteRef, threadId: string, body: string) =>
     api.post<{ id: string }>(`${base(s)}/${threadId}/replies`, { body }),
+  // Voice thread: multipart create. The recording is `audio`; the anchor fields ride alongside
+  // (element serialized as JSON, matching the route). Returns the same shape as `create`.
+  createVoice: (s: SiteRef, blob: Blob, fields: VoiceCreateFields) => {
+    const form = new FormData()
+    form.append('audio', voiceFile(blob))
+    form.append('filePath', fields.filePath)
+    if (fields.anchorType) form.append('anchorType', fields.anchorType)
+    if (fields.quote) form.append('quote', fields.quote)
+    if (fields.element) form.append('element', JSON.stringify(fields.element))
+    return api.postForm<{ threadId: string }>(base(s), form)
+  },
+  // Voice reply: multipart, audio only (a reply carries no anchor). Same shape as `reply`.
+  replyVoice: (s: SiteRef, threadId: string, blob: Blob) => {
+    const form = new FormData()
+    form.append('audio', voiceFile(blob))
+    return api.postForm<{ id: string }>(`${base(s)}/${threadId}/replies`, form)
+  },
   setStatus: (s: SiteRef, threadId: string, status: ThreadStatus) =>
     api.patch<{ ok: true }>(`${base(s)}/${threadId}`, { status }),
   edit: (s: SiteRef, threadId: string, commentId: string, body: string) =>
