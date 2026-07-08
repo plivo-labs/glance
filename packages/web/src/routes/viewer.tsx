@@ -10,6 +10,7 @@ import { type Intent, parseIntent } from '@/lib/parseIntent'
 import { recordVisit } from '@/lib/recents'
 import type { Me, ViewerSite } from '@/lib/types'
 import { Spinner } from '@/components/states'
+import { CommandPalette } from '@/components/CommandPalette'
 import { type CanvasWidth, ViewerTopBar } from '@/components/ViewerTopBar'
 import { ReviewRail, type ReviewMode } from '@/components/review/ReviewRail'
 import { ViewerSidebar } from '@/components/ViewerSidebar'
@@ -66,6 +67,7 @@ function Viewer() {
   const [threads, setThreads] = useState<Thread[]>([])
   const [composing, setComposing] = useState<PendingAnchor | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [cmdOpen, setCmdOpen] = useState(false)
 
   // Paint anchors back into the iframe via the trusted parent→child channel — only while reviewing;
   // leaving review repaints with [] so highlights/overlays clear. Text anchors re-find their quote
@@ -185,6 +187,20 @@ function Viewer() {
   useEffect(postMode, [postMode])
   useEffect(postPending, [postPending])
 
+  // ⌘K / Ctrl-K opens the command palette here too, mirroring the AppShell dashboard chrome.
+  // (Keydown only reaches the parent when focus is outside the sandboxed iframe; the header
+  // Search button is the always-available fallback.)
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setCmdOpen((o) => !o)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   // Focus an anchor in the iframe: element → scroll its selector into view; text → its quote.
   const focusAnchor = useCallback(
     (thread: Thread) => {
@@ -227,7 +243,10 @@ function Viewer() {
         onReview={() => setReview(true)}
         onExit={exitReview}
         onToggleSidebar={() => setSidebarOpen((o) => !o)}
+        onSearch={() => setCmdOpen(true)}
       />
+
+      <CommandPalette open={cmdOpen} onOpenChange={setCmdOpen} user={me} />
 
       <ViewerSidebar
         open={sidebarOpen}
