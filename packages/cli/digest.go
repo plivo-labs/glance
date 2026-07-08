@@ -10,9 +10,10 @@ import (
 // zero-dep, so we don't import from other packages). The full original bytes are kept in `raw`
 // so --json passes EVERY server field through untouched, even ones the digest never reads.
 type digestComment struct {
-	Author  *string `json:"author"` // display name; kept even when deleted
-	Body    *string `json:"body"`   // null when soft-deleted
-	Deleted bool    `json:"deleted"`
+	Author   *string `json:"author"` // display name; kept even when deleted
+	Body     *string `json:"body"`   // null when soft-deleted
+	Deleted  bool    `json:"deleted"`
+	HasAudio bool    `json:"hasAudio"` // voice comment: body is the server transcript
 }
 
 // An element ("pinpoint") anchor: a comment pinned to a whole element (chart/table/image).
@@ -139,6 +140,11 @@ func renderDigest(threads []digestThread, open, jsonOut bool) (string, error) {
 					body := ""
 					if c.Body != nil {
 						body = *c.Body
+					}
+					// A voice comment's body IS its server transcript; tag it so the reader knows
+					// the text was spoken (and the recording is playable in the web viewer).
+					if c.HasAudio {
+						body = "[voice] " + body
 					}
 					lines = append(lines, fmt.Sprintf("- @%s: %s", author, body))
 				}

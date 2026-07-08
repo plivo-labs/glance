@@ -36,6 +36,7 @@ const MIGRATIONS = [
   'drizzle/0005_peaceful_onslaught.sql',
   'drizzle/0006_glance_documents.sql',
   'drizzle/0007_add_indexes.sql',
+  'drizzle/0008_comment_audio_key.sql',
 ]
 
 /** Fresh in-memory DB with the real schema applied. */
@@ -180,6 +181,7 @@ export async function seedComment(
     createdAt: o.createdAt ?? new Date().toISOString(),
     editedAt: o.editedAt ?? null,
     deletedAt: o.deletedAt ?? null,
+    audioKey: o.audioKey ?? null,
   })
   return id
 }
@@ -221,33 +223,68 @@ export function makeKv() {
   }
 }
 
+/** Byte-faithful latin1 string (one char per byte) so a binary `put` (ArrayBuffer / Uint8Array)
+ *  stores exactly as many chars as bytes — `sliceRange`/range serving indexes by char = byte.
+ *  Chunked to stay under the argument-count stack limit on large inputs. */
+function bytesToLatin1(bytes: Uint8Array): string {
+  const CHUNK = 0x8000
+  let out = ''
+  for (let i = 0; i < bytes.length; i += CHUNK) out += String.fromCharCode(...bytes.subarray(i, i + CHUNK))
+  return out
+}
+
+/** R2's 3 range shapes (`{offset, length?}` / `{offset?, length}` / `{suffix}`), applied to
+ *  an in-memory string body. `size` on the returned object is always the FULL object size —
+ *  matching real R2 (`R2Object.size` is unaffected by the requested range) — so callers must
+ *  slice the body, not the reported size. */
+function sliceRange(body: string, range: { offset?: number; length?: number; suffix?: number } | undefined): string {
+  if (!range) return body
+  const total = body.length
+  if ('suffix' in range && range.suffix != null) return body.slice(Math.max(0, total - range.suffix))
+  const start = range.offset ?? 0
+  const end = range.length != null ? start + range.length : total
+  return body.slice(start, end)
+}
+
 /** In-memory stand-in for the GLANCE_FILES R2 bucket: get/put/delete over string bodies,
  *  with a `gets()` counter so the reconcile zero-work gate ("R2.get not invoked") is testable.
- *  `get` returns an object exposing `text()`, `body` (the string is a valid BodyInit), and a
- *  stable `httpEtag`, matching the surface content.ts/upload.ts use. */
+ *  `get` returns an object exposing `text()`, `body` (the string is a valid BodyInit), a
+ *  stable `httpEtag`, and `size`, matching the surface content.ts/upload.ts use. Accepts the
+ *  `range` get option (single-range only, mirroring content.ts's own scope) so range-serving
+ *  tests can exercise a real slice instead of always getting the full body back. */
 export function makeR2() {
   const store = new Map<string, { body: string; httpMetadata?: { contentType?: string } }>()
   let gets = 0
   return {
-    get: (key: string) => {
+    get: (key: string, options?: { range?: { offset?: number; length?: number; suffix?: number } }) => {
       gets++
       const v = store.get(key)
       if (!v) return Promise.resolve(null)
+      const body = sliceRange(v.body, options?.range)
       return Promise.resolve({
-        body: v.body,
+        body,
+        size: v.body.length,
         httpEtag: `"${key}"`,
         httpMetadata: v.httpMetadata,
-        text: () => Promise.resolve(v.body),
-        arrayBuffer: () => Promise.resolve(new TextEncoder().encode(v.body).buffer),
+        text: () => Promise.resolve(body),
+        arrayBuffer: () => Promise.resolve(new TextEncoder().encode(body).buffer),
       })
     },
-    put: async (key: string, value: string | ReadableStream, options?: { httpMetadata?: { contentType?: string } }) => {
+    put: async (
+      key: string,
+      value: string | ReadableStream | ArrayBuffer | ArrayBufferView,
+      options?: { httpMetadata?: { contentType?: string } },
+    ) => {
       const body =
         typeof value === 'string'
           ? value
-          : value && typeof (value as ReadableStream).getReader === 'function'
-            ? await new Response(value as ReadableStream).text()
-            : ''
+          : value instanceof ArrayBuffer
+            ? bytesToLatin1(new Uint8Array(value))
+            : ArrayBuffer.isView(value)
+              ? bytesToLatin1(new Uint8Array(value.buffer, value.byteOffset, value.byteLength))
+              : value && typeof (value as ReadableStream).getReader === 'function'
+                ? await new Response(value as ReadableStream).text()
+                : ''
       store.set(key, { body, httpMetadata: options?.httpMetadata })
     },
     delete: (keys: string | string[]) => {

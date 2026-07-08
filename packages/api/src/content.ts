@@ -6,6 +6,8 @@ import { ANNOTATE_CSS, ANNOTATE_JS, ANNOTATE_VERSION } from './annotate/bundle'
 import { GLANCE_DB_JS, GLANCE_DB_VERSION } from './glancedb/bundle'
 import { type NewEvent, files, sites, spaces } from './db/schema'
 import { fireAndForget, recordEvent } from './lib/events'
+import { contentType } from './lib/mime'
+import { decideRange } from './lib/range'
 import { authorizeViewerById } from './lib/site-access'
 import { verifyToken } from './lib/token'
 import type { Bindings } from './types'
@@ -99,7 +101,7 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
   }
 
   const reqPath = normalizePath(rest)
-  const cols = { path: files.path, storageKey: files.storageKey, mimeType: files.mimeType }
+  const cols = { path: files.path, storageKey: files.storageKey, mimeType: files.mimeType, size: files.size }
   let file = (
     await db.select(cols).from(files).where(and(eq(files.siteId, siteRow.id), eq(files.path, reqPath))).limit(1)
   )[0]
@@ -183,9 +185,36 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
   // caches from retaining them, while `no-cache` lets the viewer's OWN browser store-and-revalidate
   // against the ETag (→ the 304 below), so a revalidation costs a header round-trip, not the body.
   headers.set('cache-control', 'private, no-cache')
+  // HTML isn't a seekable media type here (annotate-injected pages already took the branch
+  // above; a plain gated page has no player to seek in) — advertise + honor ranges only for
+  // everything else (audio today; any other binary falls out the same door for free).
+  const rangeable = !isHtmlFile(file.path)
+  if (rangeable) headers.set('accept-ranges', 'bytes')
   // Honor the conditional request: when the viewer already holds this exact ETag, answer 304 and
   // skip re-streaming the body (the caching headers still ride along so the cached entry stays fresh).
+  // This MUST win over Range (RFC 7233 §3.1): a matching If-None-Match short-circuits before we
+  // ever look at Range/If-Range below.
   if (c.req.header('if-none-match') === object.httpEtag) return new Response(null, { status: 304, headers })
+
+  const rangeHeader = c.req.header('range')
+  const ifRange = c.req.header('if-range')
+  // A stale If-Range precondition (client's cached range predates this ETag) means the Range no
+  // longer applies — fall through to a full 200 body instead of a mismatched slice.
+  if (rangeable && rangeHeader && (!ifRange || ifRange === object.httpEtag)) {
+    // `file.size` (D1, already selected above) is the cheapest total we have; `object.size`
+    // (free — same R2 object we already fetched) covers the rare pre-size-column row.
+    const total = file.size ?? object.size
+    const decision = decideRange(rangeHeader, total, headers)
+    if (decision.status === 416) return new Response(null, { status: 416, headers })
+    if (decision.status === 206) {
+      const { start, end } = decision
+      // A second, ranged R2 get streams only the requested window (never buffers the whole object).
+      const ranged = await c.env.GLANCE_FILES.get(file.storageKey, { range: { offset: start, length: end - start + 1 } })
+      if (!ranged) return notFound(c)
+      return new Response(ranged.body, { status: 206, headers })
+    }
+    // status 200 ('none'/'multi') falls through to the full body below.
+  }
   return new Response(object.body, { headers })
 }
 
@@ -266,43 +295,6 @@ export function normalizePath(rest: string): string {
     .join('/')
   if (isDir || cleaned === '') return cleaned ? `${cleaned}/index.html` : 'index.html'
   return cleaned
-}
-
-const EXT_MIME: Record<string, string> = {
-  html: 'text/html',
-  htm: 'text/html',
-  css: 'text/css',
-  js: 'text/javascript',
-  mjs: 'text/javascript',
-  json: 'application/json',
-  svg: 'image/svg+xml',
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  gif: 'image/gif',
-  webp: 'image/webp',
-  ico: 'image/x-icon',
-  txt: 'text/plain',
-  xml: 'application/xml',
-  pdf: 'application/pdf',
-  woff: 'font/woff',
-  woff2: 'font/woff2',
-  wasm: 'application/wasm',
-}
-
-// Textual types are stored as UTF-8; pin the charset in the header so the browser never
-// falls back to a locale default (latin-1) and double-decodes UTF-8 bytes into mojibake.
-function withCharset(mime: string): string {
-  return /^text\/|\/(json|xml|javascript|svg\+xml)$/.test(mime) ? `${mime}; charset=utf-8` : mime
-}
-
-// Static-hosting content-type: prefer the extension (authoritative), fall back to the
-// stored upload type, then octet-stream.
-export function contentType(path: string, stored: string | null): string {
-  const ext = path.includes('.') ? (path.split('.').pop() ?? '').toLowerCase() : ''
-  if (EXT_MIME[ext]) return withCharset(EXT_MIME[ext])
-  if (stored && stored !== 'application/octet-stream') return withCharset(stored)
-  return 'application/octet-stream'
 }
 
 export function escapeHtml(s: string): string {

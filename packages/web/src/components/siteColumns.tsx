@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { ExternalLink } from 'lucide-react'
+import { ExternalLink, Mic } from 'lucide-react'
 import type { Column } from '@/components/SortableTable'
 import { VisibilityBadge } from '@/components/visibility'
 import { Badge } from '@/components/ui/badge'
@@ -23,6 +23,7 @@ export function nameColumn<T extends SiteSummary>(): Column<T> {
     compare: (a, b) => (a.title ?? a.siteSlug).localeCompare(b.title ?? b.siteSlug),
     render: (s) => (
       <div className="flex items-center gap-2">
+        {s.audio && <Mic className="size-3.5 shrink-0 text-primary" aria-label="Audio" />}
         <span className="truncate font-medium">{s.title ?? s.siteSlug}</span>
         {s.status === 'archived' && <Badge variant="secondary">archived</Badge>}
       </div>

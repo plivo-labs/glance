@@ -2,10 +2,96 @@ import { describe, expect, test } from 'bun:test'
 import { eq } from 'drizzle-orm'
 import { makeDb, makeR2, seedComment, seedFile, seedSite, seedSpace, seedThread, seedUser } from '../test/harness'
 import { commentThreads } from './schema'
-import { addComment, createThread, deleteComment, listSiteThreads, listThreads, resolveThread } from './comments'
+import { addComment, createThread, deleteComment, getComment, listSiteThreads, listThreads, resolveThread } from './comments'
 
 // Comments repo: create/list/reply/resolve/delete over the S-D harness. Anchors are STORED, not
 // resolved — the browser paints them — so there is no server-side reconciliation to test here.
+
+describe('S-B seam: pre-generated commentId + audioKey', () => {
+  test('createThread returns openingCommentId and honors a caller-supplied id + audioKey', async () => {
+    const db = makeDb()
+    const user = await seedUser(db)
+    const sp = await seedSpace(db, { createdBy: user })
+    const siteId = await seedSite(db, { spaceId: sp, ownerId: user })
+    const { threadId, openingCommentId } = await createThread(db, {
+      siteId,
+      filePath: 'index.html',
+      createdBy: user,
+      body: 'transcript',
+      commentId: 'cm-fixed-1',
+      audioKey: 'comments/audio/cm-fixed-1.webm',
+    })
+    expect(openingCommentId).toBe('cm-fixed-1')
+    const c = await getComment(db, 'cm-fixed-1')
+    expect(c?.threadId).toBe(threadId)
+    expect(c?.audioKey).toBe('comments/audio/cm-fixed-1.webm')
+  })
+
+  test('addComment honors a caller-supplied id + audioKey', async () => {
+    const db = makeDb()
+    const user = await seedUser(db)
+    const sp = await seedSpace(db, { createdBy: user })
+    const siteId = await seedSite(db, { spaceId: sp, ownerId: user })
+    const threadId = await seedThread(db, { siteId, filePath: 'index.html', anchorType: 'page' })
+    const id = await addComment(db, {
+      threadId,
+      authorId: user,
+      body: 'reply transcript',
+      commentId: 'cm-fixed-2',
+      audioKey: 'comments/audio/cm-fixed-2.webm',
+    })
+    expect(id).toBe('cm-fixed-2')
+    expect((await getComment(db, 'cm-fixed-2'))?.audioKey).toBe('comments/audio/cm-fixed-2.webm')
+  })
+})
+
+describe('hasAudio on CommentView (W2-9)', () => {
+  test('true for a voice comment, false for text — and audioKey never leaks into the view', async () => {
+    const db = makeDb()
+    const user = await seedUser(db)
+    const sp = await seedSpace(db, { createdBy: user })
+    const siteId = await seedSite(db, { spaceId: sp, ownerId: user })
+    const threadId = await seedThread(db, { siteId, filePath: 'index.html', anchorType: 'page' })
+    await seedComment(db, { threadId, body: 'text only' })
+    await seedComment(db, { threadId, body: 'transcript', audioKey: 'comments/audio/x.webm' })
+    const [thread] = await listThreads(db, siteId, 'index.html')
+    expect(thread.comments.map((c) => c.hasAudio)).toEqual([false, true])
+    for (const c of thread.comments) expect('audioKey' in c).toBe(false)
+  })
+})
+
+describe('deleteComment nulls audioKey (W2-14)', () => {
+  test('a voice comment delete redacts the body AND nulls audioKey (audio is hard-deleted)', async () => {
+    const db = makeDb()
+    const user = await seedUser(db)
+    const sp = await seedSpace(db, { createdBy: user })
+    const siteId = await seedSite(db, { spaceId: sp, ownerId: user })
+    const threadId = await seedThread(db, { siteId, filePath: 'index.html', anchorType: 'page' })
+    const voiceId = await seedComment(db, { threadId, body: 'transcript', audioKey: 'comment-audio/v.webm' })
+
+    await deleteComment(db, threadId, voiceId)
+
+    const after = await getComment(db, voiceId)
+    expect(after?.deletedAt).not.toBeNull() // soft-deleted (row + thread shape kept)
+    expect(after?.audioKey).toBeNull() // audio hard-deleted ⇒ key nulled ⇒ hasAudio false
+  })
+})
+
+describe('audioKey column (W1-1)', () => {
+  test('defaults to null for a plain text comment, and persists when a voice comment sets it', async () => {
+    const db = makeDb()
+    const user = await seedUser(db)
+    const sp = await seedSpace(db, { createdBy: user })
+    const siteId = await seedSite(db, { spaceId: sp, ownerId: user })
+    const threadId = await seedThread(db, { siteId, filePath: 'index.html', anchorType: 'page' })
+
+    const textId = await seedComment(db, { threadId, body: 'just text' })
+    expect((await getComment(db, textId))?.audioKey).toBeNull()
+
+    const voiceId = await seedComment(db, { threadId, body: 'transcript', audioKey: 'comments/audio/abc.webm' })
+    expect((await getComment(db, voiceId))?.audioKey).toBe('comments/audio/abc.webm')
+  })
+})
 
 async function siteWithFile(text: string, path = 'index.html') {
   const db = makeDb()

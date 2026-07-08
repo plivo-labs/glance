@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { Hono } from 'hono'
-import contentApp, { contentType, injectAnnotate, markdown, normalizePath, restOf } from './content'
+import contentApp, { injectAnnotate, markdown, normalizePath, restOf } from './content'
 import { events, sites, spaces, users } from './db/schema'
 import { sanitizePath } from './lib/storage'
 import { signToken, verifyToken } from './lib/token'
@@ -258,24 +258,6 @@ describe('view analytics (page-view events)', () => {
   })
 })
 
-describe('contentType', () => {
-  test('textual types pin charset=utf-8 (no latin-1 mojibake)', () => {
-    expect(contentType('index.html', null)).toBe('text/html; charset=utf-8')
-    expect(contentType('app.js', null)).toBe('text/javascript; charset=utf-8')
-    expect(contentType('data.json', null)).toBe('application/json; charset=utf-8')
-    expect(contentType('logo.svg', null)).toBe('image/svg+xml; charset=utf-8')
-    expect(contentType('notes.txt', null)).toBe('text/plain; charset=utf-8')
-  })
-  test('binary types are left untouched', () => {
-    expect(contentType('photo.png', null)).toBe('image/png')
-    expect(contentType('font.woff2', null)).toBe('font/woff2')
-    expect(contentType('blob', null)).toBe('application/octet-stream')
-  })
-  test('falls back to the stored type (charset-pinned when textual)', () => {
-    expect(contentType('weird.ext', 'text/csv')).toBe('text/csv; charset=utf-8')
-    expect(contentType('weird.ext', 'application/zip')).toBe('application/zip')
-  })
-})
 
 describe('injectAnnotate replacement safety (#46: $-specials in filePath stay verbatim)', () => {
   test('$&, $$, $1 in the payload are inserted byte-for-byte, not interpreted as replacement specials', () => {
@@ -377,5 +359,142 @@ describe('gated file serving: cache-control, conditional 304, archive-through-ch
     const { token } = await seedServable(db, r2, { role: 'member', status: 'archived' })
     const res = await app.request(`/_t/${token}/sam/site/`, {}, env)
     expect(res.status).toBe(410)
+  })
+})
+
+describe('audio serving: MIME resolution + HTTP Range support', () => {
+  function setup() {
+    const db = makeDb()
+    const r2 = makeR2()
+    const app = new Hono()
+    app.use('*', async (c, next) => {
+      c.set('db', db)
+      await next()
+    })
+    app.route('/', contentApp)
+    return { app, db, r2, env: { APP_URL: 'https://glance.example.com', CONTENT_TOKEN_SECRET: secret, GLANCE_FILES: r2 } }
+  }
+
+  // Seeds a gated `team`-tier site with one file, stamped `application/octet-stream` — what
+  // every CLI-uploaded part carries — so MIME resolution must come from the extension.
+  async function seedGatedFile(
+    db: ReturnType<typeof makeDb>,
+    r2: ReturnType<typeof makeR2>,
+    path: string,
+    body: string,
+  ) {
+    const uid = await seedUser(db, { id: 'u1' })
+    const sp = await seedSpace(db, { createdBy: uid, slug: 'sam' })
+    const siteId = await seedSite(db, { spaceId: sp, ownerId: uid, slug: 'site', visibility: 'team' })
+    await seedFile(db, r2, siteId, { path, text: body, mimeType: 'application/octet-stream' })
+    const token = await signToken(secret, uid, 'sam/site', 300)
+    return { uid, siteId, token }
+  }
+
+  const BODY = '0123456789ABCDEF' // 16 bytes — easy to reason about offsets
+
+  test('a CLI-uploaded mp3 (stamped octet-stream) serves as audio/mpeg with Accept-Ranges advertised', async () => {
+    const { app, db, r2, env } = setup()
+    const { token } = await seedGatedFile(db, r2, 'song.mp3', BODY)
+    const res = await app.request(`/_t/${token}/sam/site/song.mp3`, {}, env)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toBe('audio/mpeg')
+    expect(res.headers.get('accept-ranges')).toBe('bytes')
+  })
+
+  test('bytes=0-1 → 206 with the first two bytes and a correct Content-Range', async () => {
+    const { app, db, r2, env } = setup()
+    const { token } = await seedGatedFile(db, r2, 'song.mp3', BODY)
+    const res = await app.request(`/_t/${token}/sam/site/song.mp3`, { headers: { range: 'bytes=0-1' } }, env)
+    expect(res.status).toBe(206)
+    expect(res.headers.get('content-range')).toBe(`bytes 0-1/${BODY.length}`)
+    expect(res.headers.get('content-length')).toBe('2')
+    expect(await res.text()).toBe('01')
+  })
+
+  test('open-ended bytes=4- → 206 through to the end', async () => {
+    const { app, db, r2, env } = setup()
+    const { token } = await seedGatedFile(db, r2, 'song.mp3', BODY)
+    const res = await app.request(`/_t/${token}/sam/site/song.mp3`, { headers: { range: 'bytes=4-' } }, env)
+    expect(res.status).toBe(206)
+    expect(res.headers.get('content-range')).toBe(`bytes 4-15/${BODY.length}`)
+    expect(await res.text()).toBe(BODY.slice(4))
+  })
+
+  test('suffix bytes=-4 → 206 with the last 4 bytes', async () => {
+    const { app, db, r2, env } = setup()
+    const { token } = await seedGatedFile(db, r2, 'song.mp3', BODY)
+    const res = await app.request(`/_t/${token}/sam/site/song.mp3`, { headers: { range: 'bytes=-4' } }, env)
+    expect(res.status).toBe(206)
+    expect(res.headers.get('content-range')).toBe(`bytes 12-15/${BODY.length}`)
+    expect(await res.text()).toBe(BODY.slice(-4))
+  })
+
+  test('an unsatisfiable range (start past the end) → 416 with Content-Range: bytes */total', async () => {
+    const { app, db, r2, env } = setup()
+    const { token } = await seedGatedFile(db, r2, 'song.mp3', BODY)
+    const res = await app.request(
+      `/_t/${token}/sam/site/song.mp3`,
+      { headers: { range: `bytes=${BODY.length}-` } },
+      env,
+    )
+    expect(res.status).toBe(416)
+    expect(res.headers.get('content-range')).toBe(`bytes */${BODY.length}`)
+  })
+
+  test('a multi-range request is ignored — served 200 in full, not 206/multipart', async () => {
+    const { app, db, r2, env } = setup()
+    const { token } = await seedGatedFile(db, r2, 'song.mp3', BODY)
+    const res = await app.request(`/_t/${token}/sam/site/song.mp3`, { headers: { range: 'bytes=0-1,4-5' } }, env)
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe(BODY)
+  })
+
+  test('If-None-Match beats Range: a matching ETag → 304 even with a Range header present', async () => {
+    const { app, db, r2, env } = setup()
+    const { token } = await seedGatedFile(db, r2, 'song.mp3', BODY)
+    const first = await app.request(`/_t/${token}/sam/site/song.mp3`, {}, env)
+    const etag = first.headers.get('etag') as string
+    const res = await app.request(
+      `/_t/${token}/sam/site/song.mp3`,
+      { headers: { range: 'bytes=0-1', 'if-none-match': etag } },
+      env,
+    )
+    expect(res.status).toBe(304)
+    expect(await res.text()).toBe('')
+  })
+
+  test('If-Range mismatch (stale ETag) → 200 full body, Range ignored', async () => {
+    const { app, db, r2, env } = setup()
+    const { token } = await seedGatedFile(db, r2, 'song.mp3', BODY)
+    const res = await app.request(
+      `/_t/${token}/sam/site/song.mp3`,
+      { headers: { range: 'bytes=0-1', 'if-range': '"stale-etag"' } },
+      env,
+    )
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe(BODY)
+  })
+
+  test('If-Range match → Range is honored (206)', async () => {
+    const { app, db, r2, env } = setup()
+    const { token } = await seedGatedFile(db, r2, 'song.mp3', BODY)
+    const first = await app.request(`/_t/${token}/sam/site/song.mp3`, {}, env)
+    const etag = first.headers.get('etag') as string
+    const res = await app.request(
+      `/_t/${token}/sam/site/song.mp3`,
+      { headers: { range: 'bytes=0-1', 'if-range': etag } },
+      env,
+    )
+    expect(res.status).toBe(206)
+  })
+
+  test('HTML never advertises or honors ranges (Accept-Ranges omitted; a Range header is ignored)', async () => {
+    const { app, db, r2, env } = setup()
+    const { token } = await seedGatedFile(db, r2, 'index.html', '<h1>hi</h1>')
+    const res = await app.request(`/_t/${token}/sam/site/index.html`, { headers: { range: 'bytes=0-1' } }, env)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('accept-ranges')).toBeNull()
+    expect(await res.text()).toBe('<h1>hi</h1>')
   })
 })

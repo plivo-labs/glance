@@ -3,6 +3,7 @@ import { Hono } from 'hono'
 import { createSpace, isSpaceMember, sharedSiteIds } from '../db/repo'
 import { sites, spaceMembers, spaces as spacesTable, users } from '../db/schema'
 import { checkAccess } from '../lib/access'
+import { allAudioSiteIds } from '../lib/site-audio'
 import { deleteSpaceObjects } from '../lib/storage'
 import { isValidSlug } from '../lib/slug'
 import { requireAuth } from '../middleware/auth'
@@ -90,6 +91,7 @@ spaces.get('/:slug/sites', requireAuth, async (c) => {
     .orderBy(desc(sites.createdAt))
 
   const visible = rows.filter((s) => checkAccess(s, user, isMember, shared.has(s.id)).ok)
+  const audioSet = await allAudioSiteIds(db, visible.map((s) => s.id))
   return c.json(
     visible.map((s) => ({
       id: s.id,
@@ -99,6 +101,7 @@ spaces.get('/:slug/sites', requireAuth, async (c) => {
       visibility: s.visibility,
       status: s.status,
       isOwner: s.ownerId === user.id,
+      audio: audioSet.has(s.id),
       url: `${c.env.APP_URL}/${slug}/${s.slug}`,
       createdAt: s.createdAt,
     })),

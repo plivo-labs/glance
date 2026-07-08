@@ -46,6 +46,10 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
   // tier), so the two cases must stay distinguishable — `|| 'team'` alone can't tell them apart.
   const hasVisibility = typeof rawVisibility === 'string' && rawVisibility !== ''
   const visibility = normalizeVisibility(rawVisibility || 'team')
+  // Optional display title, applied on CREATE only (REPLACE keeps whatever the site already has —
+  // a re-upload/record must never silently rename an existing site). Trimmed + capped; empty → null.
+  const rawTitle = form.get('title')
+  const title = typeof rawTitle === 'string' ? rawTitle.trim().slice(0, 200) || null : null
   const uploaded = form.getAll('files').filter((f): f is File => f instanceof File)
 
   // Build (path, file) pairs, dropping empty paths; validate per-file size before storing.
@@ -163,6 +167,7 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
           id: siteId,
           spaceId: space.id,
           slug: siteSlug,
+          title,
           visibility: isVisibility(visibility) ? visibility : 'team',
           ownerId: user.id,
         }),

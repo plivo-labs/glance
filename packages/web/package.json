@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@radix-ui/react-slider": "^1.4.3",
     "@radix-ui/react-slot": "^1.2.5",
     "@tailwindcss/vite": "^4.3.1",
     "class-variance-authority": "^0.7.1",

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { Hono } from 'hono'
 import { requireSameOrigin } from '../middleware/auth'
-import { makeDb, makeKv, seedMember, seedSite, seedSpace, seedUser } from '../test/harness'
+import { makeDb, makeKv, seedFile, seedMember, seedSite, seedSpace, seedUser } from '../test/harness'
 import type { AppEnv } from '../types'
 import { sites } from './sites'
 
@@ -121,5 +121,25 @@ describe('GET /api/sites/:space/:site/exists (slug-availability probe)', () => {
     const missing = await exists(app, env, 'docs', 'ghost', 'stranger') // this one does NOT
     expect(await real.json()).toEqual({ exists: false })
     expect(await missing.json()).toEqual({ exists: false })
+  })
+})
+
+describe('GET /api/sites/mine — audio flag (W4-2)', () => {
+  test('a pure-audio site is audio:true; a mixed site audio:false', async () => {
+    const { db, kv, app, env } = await setup()
+    await mintUser(db, kv, 'u1')
+    const space = await seedSpace(db, { createdBy: 'u1', slug: 'me' })
+    await seedMember(db, space, 'u1')
+    const voice = await seedSite(db, { spaceId: space, ownerId: 'u1', slug: 'take' })
+    await seedFile(db, null, voice, { path: 'recording.webm', text: 'b' }) // D1 row only
+    const mixed = await seedSite(db, { spaceId: space, ownerId: 'u1', slug: 'mixed' })
+    await seedFile(db, null, mixed, { path: 'song.mp3', text: 'b' })
+    await seedFile(db, null, mixed, { path: 'cover.png', text: 'b' })
+
+    const res = await app.request('/api/sites/mine', { headers: { Authorization: 'Bearer tok-u1' } }, env)
+    expect(res.status).toBe(200)
+    const bySlug = Object.fromEntries(((await res.json()) as { siteSlug: string; audio: boolean }[]).map((s) => [s.siteSlug, s.audio]))
+    expect(bySlug.take).toBe(true)
+    expect(bySlug.mixed).toBe(false)
   })
 })

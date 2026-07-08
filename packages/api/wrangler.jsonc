@@ -36,6 +36,12 @@
   ],
   "r2_buckets": [{ "binding": "GLANCE_FILES", "bucket_name": "glance-files" }],
   "kv_namespaces": [{ "binding": "GLANCE_SESSIONS", "id": "YOUR_KV_NAMESPACE_ID" }], // EDIT: replace with your own (see README)
+  // Workers AI: server-side voice-comment transcription (Whisper). Optional at runtime (AI?: Ai) —
+  // a deploy/dev without it degrades to a transcript placeholder, never an error. Workers AI has NO
+  // local simulator, so `remote: true` proxies inference to the real account; accountless local dev
+  // must use `wrangler dev --local` (the `dev` script does), which disables this binding so env.AI
+  // is undefined and transcription falls back — no Cloudflare login required just to run the app.
+  "ai": { "binding": "AI", "remote": true },
   // Free, no Cloudflare zone needed (unlike WAF rules, which don't apply to *.workers.dev).
   // 10 upload requests / 60s per client IP. period must be 10 or 60.
   "ratelimits": [{ "name": "UPLOAD_LIMITER", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } }]

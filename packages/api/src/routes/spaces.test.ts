@@ -141,3 +141,23 @@ describe('DELETE /api/spaces/:slug', () => {
     expect(r2.store.has(k)).toBe(false)
   })
 })
+
+describe('GET /api/spaces/:slug/sites — audio flag (W4-2)', () => {
+  test('a pure-audio site is flagged audio:true; an html site audio:false', async () => {
+    const { db, kv, r2, app, env } = await setup()
+    await mintUser(db, kv, 'u1')
+    await seedSpace(db, { id: 'sp', createdBy: 'u1', slug: 'acme' })
+    await seedMember(db, 'sp', 'u1')
+    const voice = await seedSite(db, { spaceId: 'sp', ownerId: 'u1', slug: 'a-take' })
+    await seedFile(db, r2, voice, { path: 'recording.webm', text: 'bytes' })
+    const web = await seedSite(db, { spaceId: 'sp', ownerId: 'u1', slug: 'a-page' })
+    await seedFile(db, r2, web, { path: 'index.html', text: '<h1>hi</h1>' })
+
+    const res = await app.request('/api/spaces/acme/sites', { headers: auth('u1') }, env)
+    expect(res.status).toBe(200)
+    const list = (await res.json()) as { siteSlug: string; audio: boolean }[]
+    const bySlug = Object.fromEntries(list.map((s) => [s.siteSlug, s.audio]))
+    expect(bySlug['a-take']).toBe(true)
+    expect(bySlug['a-page']).toBe(false)
+  })
+})

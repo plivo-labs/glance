@@ -5,7 +5,7 @@ import {
   useLoaderData,
   useNavigate,
 } from 'react-router'
-import { ExternalLink, Trash2, UserPlus } from 'lucide-react'
+import { ExternalLink, Mic, Trash2, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import { CopyButton } from '@/components/CopyButton'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
@@ -37,6 +37,7 @@ interface SpaceSite {
   visibility: Visibility
   status: 'active' | 'archived'
   isOwner: boolean
+  audio?: boolean
   url: string
   createdAt: string
 }
@@ -121,6 +122,7 @@ function SiteCard({ site }: { site: SpaceSite }) {
     <Card className={cn(archived && 'opacity-75')}>
       <CardHeader>
         <div className="flex flex-wrap items-center gap-2">
+          {site.audio && <Mic className="size-4 shrink-0 text-primary" aria-label="Audio" />}
           <CardTitle className="min-w-0 truncate text-base">{site.title ?? site.siteSlug}</CardTitle>
           <VisibilityBadge value={site.visibility} />
           {archived && <Badge variant="secondary">Archived</Badge>}

@@ -49,11 +49,12 @@ function postUpload(
   env: AppEnv['Bindings'],
   slug: string,
   parts: File[],
-  opts: { visibility?: string; replace?: boolean } = {},
+  opts: { visibility?: string; replace?: boolean; title?: string } = {},
 ) {
   const fd = new FormData()
   for (const f of parts) fd.append('files', f)
   if (opts.visibility !== undefined) fd.append('visibility', opts.visibility)
+  if (opts.title !== undefined) fd.append('title', opts.title)
   const query = opts.replace ? '?replace=true' : ''
   return app.request(`/api/upload/acme/${slug}${query}`, { method: 'POST', headers: { Authorization: 'Bearer tok' }, body: fd }, env)
 }
@@ -191,5 +192,25 @@ describe('upload — put-loop cleanup', () => {
     expect(res.status).toBe(500) // rethrow surfaces as a 500, not a false 200
     expect(await db.select().from(files)).toHaveLength(0) // batch never ran
     expect(r2.store.size).toBe(0) // every attempted key reclaimed — no orphans
+  })
+})
+
+describe('upload — optional title on CREATE (W3-4)', () => {
+  test('CREATE stores a provided title; absent → null; REPLACE leaves it untouched', async () => {
+    const { app, env, db } = await setup()
+    const titleOf = async (slug: string) =>
+      (await db.select({ title: sites.title }).from(sites).where(eq(sites.slug, slug)).limit(1))[0]?.title
+
+    // CREATE with a title.
+    await postUpload(app, env, 'titled', [html('<html>1</html>', 'index.html')], { title: '  My Recording  ' })
+    expect(await titleOf('titled')).toBe('My Recording') // trimmed
+
+    // CREATE without a title → null.
+    await postUpload(app, env, 'plain', [html('<html>1</html>', 'index.html')])
+    expect(await titleOf('plain')).toBeNull()
+
+    // REPLACE never touches the title, even when one is sent.
+    await postUpload(app, env, 'titled', [html('<html>2</html>', 'index.html')], { replace: true, title: 'Changed' })
+    expect(await titleOf('titled')).toBe('My Recording') // unchanged
   })
 })

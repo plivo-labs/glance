@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { type LoaderFunctionArgs, useLoaderData, useParams } from 'react-router'
 import { toast } from 'sonner'
 import { api, ApiError } from '@/lib/api'
+import { isAudioFile } from '@/lib/audio'
 import { attachDbBroker } from '@/lib/dbBroker'
 import { toLogin } from '@/lib/nav'
 import { cn } from '@/lib/utils'
@@ -9,6 +10,7 @@ import { comments, type PendingAnchor, pendingToInput, type Thread } from '@/lib
 import { type Intent, parseIntent } from '@/lib/parseIntent'
 import { recordVisit } from '@/lib/recents'
 import type { Me, ViewerSite } from '@/lib/types'
+import { AudioView } from '@/components/AudioView'
 import { Spinner } from '@/components/states'
 import { CommandPalette } from '@/components/CommandPalette'
 import { type CanvasWidth, ViewerTopBar } from '@/components/ViewerTopBar'
@@ -49,12 +51,18 @@ function Viewer() {
   const sitePath = useParams()['*'] ?? ''
 
   const iframeRef = useRef<HTMLIFrameElement>(null)
+  const audioRef = useRef<HTMLAudioElement>(null)
   // Latest file path reported by the iframe's 'ready' intent, stashed unconditionally so the
   // me-resolution effect below can flush it even when 'ready' beats the /api/auth/me fetch on a
   // fresh load (see the recordVisit gate in the intent handler).
   const lastReadyPathRef = useRef<string | null>(null)
   const contentOrigin = useMemo(() => new URL(site.contentUrl).origin, [site.contentUrl])
   const src = useMemo(() => withAnnotate(appendPath(site.contentUrl, sitePath)), [site.contentUrl, sitePath])
+  // Audio has no HTML document to frame — it gets a native player instead of the sandboxed
+  // iframe, and (unlike the iframe src) no ?glance_annotate param: that flag only triggers the
+  // HTML-injection transform in content.ts, which never applies to audio.
+  const isAudio = useMemo(() => isAudioFile(sitePath), [sitePath])
+  const audioSrc = useMemo(() => appendPath(site.contentUrl, sitePath), [site.contentUrl, sitePath])
 
   const [review, setReview] = useState(false)
   // Within review, Read = normal browsing + text-select-to-comment; Annotate = also hover/click an
@@ -63,7 +71,11 @@ function Viewer() {
   const [width, setWidth] = useState<CanvasWidth>('full')
   const [loaded, setLoaded] = useState(false)
   const [me, setMe] = useState<Me | null>(null)
-  const [filePath, setFilePath] = useState<string | null>(null)
+  // The HTML iframe only learns its file path from the annotate client's 'ready' postMessage
+  // (never fires for non-HTML) — `filePath` below is what the rest of the viewer (comments,
+  // rail) actually reads; for audio there's no message to wait for, so it's the splat itself.
+  const [resolvedFilePath, setResolvedFilePath] = useState<string | null>(null)
+  const filePath = isAudio ? sitePath : resolvedFilePath
   const [threads, setThreads] = useState<Thread[]>([])
   const [composing, setComposing] = useState<PendingAnchor | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -140,7 +152,8 @@ function Viewer() {
       const intent: Intent | null = parseIntent(e, { origin: contentOrigin, source: iframeRef.current?.contentWindow ?? null })
       if (!intent) return
       if (intent.type === 'ready') {
-        setFilePath(intent.filePath)
+        // Audio has no iframe/'ready'; for HTML this is where the SPA learns the current file.
+        setResolvedFilePath(intent.filePath)
         lastReadyPathRef.current = intent.filePath
         // Every in-iframe navigation fires 'ready' with the real current file — the only place the
         // SPA learns it, since the URL doesn't change on in-page navigation. Skip until Me resolves
@@ -187,6 +200,15 @@ function Viewer() {
   useEffect(postMode, [postMode])
   useEffect(postPending, [postPending])
 
+  // Audio view: no DOM to select text/elements in, so the rail's "Add comment" button starts a
+  // bare page-anchored composer directly (no selection step).
+  const startPageComment = useCallback(() => setComposing({ kind: 'page' }), [])
+
+  // Read on demand (an event handler, not a subscription) — never causes a re-render, so the
+  // timestamp button always inserts whatever the player's position is AT CLICK TIME with no
+  // state/effect plumbing.
+  const getCurrentTime = useCallback(() => audioRef.current?.currentTime ?? 0, [])
+
   // ⌘K / Ctrl-K opens the command palette here too, mirroring the AppShell dashboard chrome.
   // (Keydown only reaches the parent when focus is outside the sandboxed iframe; the header
   // Search button is the always-available fallback.)
@@ -221,6 +243,20 @@ function Viewer() {
       await refresh(filePath)
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed to add comment')
+    }
+  }
+
+  // Voice sibling of createThread: the anchor fields come from the same pending anchor (body is the
+  // server-side transcript, so it's dropped from the multipart payload).
+  async function createVoiceThread(blob: Blob) {
+    if (!filePath || !composing) return
+    try {
+      const { body: _body, ...fields } = pendingToInput(filePath, '', composing)
+      await comments.createVoice(site, blob, fields)
+      setComposing(null)
+      await refresh(filePath)
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to add voice comment')
     }
   }
 
@@ -262,18 +298,22 @@ function Viewer() {
             wrapper so its coords still match the iframe viewport. */}
         <div className="relative flex min-h-0 min-w-0 flex-1 justify-center bg-muted/20">
           <div className={cn('relative h-full w-full', WIDTH_CLASS[width])}>
-            <iframe
-              ref={iframeRef}
-              className="size-full border-0 bg-background"
-              src={src}
-              title={site.title ?? site.siteSlug}
-              onLoad={() => setLoaded(true)}
-              // allow-top-navigation-by-user-activation: lets the directory-listing links (target=_top)
-              // break out to the app route on a user click, so the address bar updates. Gesture-gated,
-              // so iframed content can't silently redirect the tab.
-              sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-top-navigation-by-user-activation"
-            />
-            {!loaded && (
+            {isAudio ? (
+              <AudioView src={audioSrc} fileName={sitePath.split('/').pop() ?? sitePath} audioRef={audioRef} />
+            ) : (
+              <iframe
+                ref={iframeRef}
+                className="size-full border-0 bg-background"
+                src={src}
+                title={site.title ?? site.siteSlug}
+                onLoad={() => setLoaded(true)}
+                // allow-top-navigation-by-user-activation: lets the directory-listing links (target=_top)
+                // break out to the app route on a user click, so the address bar updates. Gesture-gated,
+                // so iframed content can't silently redirect the tab.
+                sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-top-navigation-by-user-activation"
+              />
+            )}
+            {!isAudio && !loaded && (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background text-muted-foreground">
                 <Spinner className="size-6" />
                 <span className="text-sm">Loading preview…</span>
@@ -290,8 +330,11 @@ function Viewer() {
             composing={composing}
             onCancelComposer={() => setComposing(null)}
             onCreate={createThread}
+            onCreateVoice={createVoiceThread}
             onChanged={() => filePath && refresh(filePath)}
             onFocusAnchor={focusAnchor}
+            onStartComment={isAudio ? startPageComment : undefined}
+            getCurrentTime={isAudio ? getCurrentTime : undefined}
           />
         )}
       </div>

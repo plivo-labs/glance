@@ -20,7 +20,7 @@
   "workspaces": ["packages/api", "packages/web"],
   "scripts": {
     "dev": "trap 'kill 0' SIGINT; bun run dev:api & bun run dev:content & bun run dev:web & wait",
-    "dev:api": "cd packages/api && bunx wrangler dev --port 8787 --persist-to ../../.wrangler-shared",
+    "dev:api": "cd packages/api && bunx wrangler dev --local --port 8787 --persist-to ../../.wrangler-shared",
     "dev:content": "cd packages/api && bunx wrangler dev --config wrangler.content.jsonc --port 8788 --inspector-port 9230 --persist-to ../../.wrangler-shared",
     "dev:web": "cd packages/web && bunx vite",
     "build:web": "cd packages/web && bunx vite build",
