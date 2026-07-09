@@ -7,11 +7,12 @@ import {
   memberSpaceIds,
   replaceSiteShares,
   resolveIsShared,
+  resolveShareRole,
   sharedSiteIds,
 } from '../db/repo'
 import type { Visibility } from '../db/schema'
 import { files as filesTable, sites as sitesTable, spaces, users } from '../db/schema'
-import { checkAccess } from '../lib/access'
+import { canReplace, checkAccess } from '../lib/access'
 import { allAudioSiteIds } from '../lib/site-audio'
 import { readSessionOrBearer } from '../lib/session'
 import { resolveSite } from '../lib/site-access'
@@ -355,12 +356,16 @@ sites.get('/:spaceSlug/:siteSlug/exists', requireAuth, async (c) => {
   const site = await resolveSite(db, spaceSlug, siteSlug)
   if (!site) return c.json({ exists: false })
   // Existence is disclosed only to someone who could legitimately act on it — the site's space
-  // members (slug availability is per-space), its owner, or a superadmin. Anyone else gets the
-  // same not-found shape so an unauthorized caller can't probe cross-space for a site's existence.
-  const authorized =
-    user.role === 'superadmin' || site.ownerId === user.id || (await isSpaceMember(db, site.spaceId, user.id))
+  // members (slug availability is per-space), its owner, a superadmin, OR a direct editor grantee
+  // (typically NOT a space member — without this a non-member editor gets exists:false, the CLI
+  // then tries CREATE and 403s). Anyone else gets the same not-found shape so an unauthorized caller
+  // can't probe cross-space for a site's existence.
+  const isOwner = site.ownerId === user.id
+  const role = isOwner || user.role === 'superadmin' ? null : await resolveShareRole(db, site.id, user.id)
+  const replaceable = canReplace(user, site, role)
+  const authorized = replaceable || (await isSpaceMember(db, site.spaceId, user.id))
   if (!authorized) return c.json({ exists: false })
-  return c.json({ exists: true, owned: site.ownerId === user.id })
+  return c.json({ exists: true, owned: isOwner, canReplace: replaceable, contentVersion: site.contentVersion })
 })
 
 // GET /api/sites/:spaceSlug/:siteSlug — viewer metadata + a token-gated content URL.
@@ -377,13 +382,14 @@ sites.get('/:spaceSlug/:siteSlug', async (c) => {
   // leaks — running the session read early doesn't change the not-found-before-auth ordering.
   if (!site) return c.json({ error: 'not found' }, 404)
 
-  const [isMember, isShared, siteFiles] = user
+  const [isMember, isShared, role, siteFiles] = user
     ? await Promise.all([
         isSpaceMember(db, site.spaceId, user.id),
         resolveIsShared(db, site.id, user.id),
+        resolveShareRole(db, site.id, user.id),
         db.select({ path: filesTable.path }).from(filesTable).where(eq(filesTable.siteId, site.id)),
       ])
-    : [false, false, [] as { path: string }[]]
+    : [false, false, null, [] as { path: string }[]]
   const access = checkAccess(site, user, isMember, isShared)
   if (!access.ok) return c.json({ error: 'forbidden' }, access.status)
 
@@ -398,6 +404,10 @@ sites.get('/:spaceSlug/:siteSlug', async (c) => {
     CONTENT_TOKEN_TTL,
   )}/${spaceSlug}/${siteSlug}/`
 
+  // Manifest gate: only someone who can REPLACE the content (owner / superadmin / editor) gets the
+  // file list + contentVersion — the pull-and-redeploy payload. A plain viewer sees their canReplace:
+  // false and no manifest, so they can't enumerate the site's files.
+  const replaceable = canReplace(user, site, role)
   return c.json({
     id: site.id,
     spaceSlug,
@@ -405,9 +415,12 @@ sites.get('/:spaceSlug/:siteSlug', async (c) => {
     title: site.title,
     visibility: site.visibility,
     status: site.status,
-    isOwner: user?.id === site.ownerId,
+    isOwner: user.id === site.ownerId,
+    canReplace: replaceable,
+    ...(role ? { role } : {}),
     contentUrl,
     indexPath: resolveIndexPath(siteFiles.map((f) => f.path)),
+    ...(replaceable ? { files: siteFiles.map((f) => f.path), contentVersion: site.contentVersion } : {}),
   })
 })
 

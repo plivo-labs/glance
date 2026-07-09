@@ -98,14 +98,14 @@ describe('GET /api/sites/:space/:site/exists (slug-availability probe)', () => {
     const { app, env } = await seedProbe()
     const res = await exists(app, env, 'docs', 'report', 'owner')
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({ exists: true, owned: true })
+    expect(await res.json()).toEqual({ exists: true, owned: true, canReplace: true, contentVersion: 0 })
   })
 
   test('a space member (non-owner) sees it exists but not owned', async () => {
     const { db, kv, app, env, space } = await seedProbe()
     await mintUser(db, kv, 'mate')
     await seedMember(db, space, 'mate')
-    expect(await (await exists(app, env, 'docs', 'report', 'mate')).json()).toEqual({ exists: true, owned: false })
+    expect(await (await exists(app, env, 'docs', 'report', 'mate')).json()).toEqual({ exists: true, owned: false, canReplace: false, contentVersion: 0 })
   })
 
   test('superadmin (non-member) sees it exists', async () => {

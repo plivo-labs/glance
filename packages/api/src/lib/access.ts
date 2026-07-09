@@ -43,3 +43,18 @@ export function checkAccess(
       return { ok: false, status: 403 }
   }
 }
+
+/**
+ * Whether a user may CONTENT-REPLACE (redeploy) a site — a strictly narrower capability than
+ * `checkAccess` (which is read/view). Owner or superadmin always; a direct EDITOR share otherwise
+ * (a plain viewer / group share / tier-only reacher may NOT). `shareRole` is the caller's DIRECT
+ * share role (`resolveShareRole`), null when they have none. Single source of truth for the upload
+ * gate, `/exists` canReplace, and the meta-route manifest gate — do NOT re-inline the predicate.
+ */
+export function canReplace(
+  user: Pick<SessionUser, 'id' | 'role'>,
+  site: Pick<Site, 'ownerId'>,
+  shareRole: 'viewer' | 'editor' | null,
+): boolean {
+  return user.role === 'superadmin' || site.ownerId === user.id || shareRole === 'editor'
+}

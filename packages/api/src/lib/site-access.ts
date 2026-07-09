@@ -18,6 +18,7 @@ export type ResolvedSite = {
   visibility: Visibility
   status: 'active' | 'archived'
   ownerId: string
+  contentVersion: number
   createdAt: string
 }
 
@@ -36,6 +37,7 @@ export async function resolveSite(
       visibility: sitesTable.visibility,
       status: sitesTable.status,
       ownerId: sitesTable.ownerId,
+      contentVersion: sitesTable.contentVersion,
       createdAt: sitesTable.createdAt,
     })
     .from(sitesTable)

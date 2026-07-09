@@ -3,6 +3,7 @@ import { Hono } from 'hono'
 import { isSpaceMember, resolveShareRole } from '../db/repo'
 import type { NewFileRow } from '../db/schema'
 import { files, sites, spaces } from '../db/schema'
+import { canReplace } from '../lib/access'
 import { fireAndForget } from '../lib/events'
 import { isValidSlug } from '../lib/slug'
 import { deleteKeys, MAX_FILE_BYTES, sanitizePath } from '../lib/storage'
@@ -115,10 +116,13 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
     if (!isValidSlug(siteSlug)) return c.json({ error: 'invalid siteSlug' }, 400)
     siteId = crypto.randomUUID()
   } else {
-    // REPLACE: owner, superadmin, or a direct editor share.
+    // REPLACE: owner, superadmin, or a direct editor share (canReplace — the single capability
+    // predicate shared with /exists + the manifest gate). An editor grant is only consulted for a
+    // non-owner non-admin, so passing the gate while neither ⇒ acting as the editor.
     const isOwner = existing.ownerId === user.id
-    actingAsEditor = !isOwner && !isAdmin && (await resolveShareRole(db, existing.id, user.id)) === 'editor'
-    if (!isOwner && !isAdmin && !actingAsEditor) return c.json({ error: 'forbidden' }, 403)
+    const shareRole = isOwner || isAdmin ? null : await resolveShareRole(db, existing.id, user.id)
+    if (!canReplace(user, existing, shareRole)) return c.json({ error: 'forbidden' }, 403)
+    actingAsEditor = !isOwner && !isAdmin
 
     if (actingAsEditor) {
       if (existing.status === 'archived') return c.json({ error: 'site archived' }, 403)
