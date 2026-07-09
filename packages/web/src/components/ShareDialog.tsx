@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router'
 import { Check, Plus, Search, Share2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
-import type { ShareSet, SpaceSummary, UserLite } from '@/lib/types'
+import { buildSharePayload } from '@/lib/shares'
+import type { ShareRole, ShareSet, SpaceSummary, UserLite } from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -36,6 +37,14 @@ function toggle(set: Set<string>, id: string): Set<string> {
   return next
 }
 
+// Add a user (default viewer) or remove them; preserves the role of everyone else.
+function toggleUser(map: Map<string, ShareRole>, id: string): Map<string, ShareRole> {
+  const next = new Map(map)
+  if (next.has(id)) next.delete(id)
+  else next.set(id, 'viewer')
+  return next
+}
+
 // Owner-only sharing: pick specific people and/or groups to grant access, on top of the
 // site's visibility tier. Data loads on open via a ref-callback on the dialog content (Radix
 // mounts it on every open — and a controlled/external open does NOT fire Radix onOpenChange,
@@ -50,7 +59,9 @@ export function ShareDialog({ spaceSlug, siteSlug, title, compact, open: openPro
   const [saving, setSaving] = useState(false)
   const [users, setUsers] = useState<UserLite[]>([])
   const [groups, setGroups] = useState<SpaceSummary[]>([])
-  const [selUsers, setSelUsers] = useState<Set<string>>(new Set())
+  // Per-user grant: id → role. A user in the map is shared-with (default 'viewer'); absent = not
+  // shared. Groups stay a plain Set — they're always view-only.
+  const [selUsers, setSelUsers] = useState<Map<string, ShareRole>>(new Map())
   const [selGroups, setSelGroups] = useState<Set<string>>(new Set())
   const [q, setQ] = useState('')
 
@@ -70,7 +81,10 @@ export function ShareDialog({ spaceSlug, siteSlug, title, compact, open: openPro
         .then(([us, sp, shares]) => {
           setUsers(us)
           setGroups(sp.filter((s) => s.type === 'group'))
-          setSelUsers(new Set(shares.userIds))
+          // Prefer the role-aware `users` list; fall back to legacy userIds (all viewers) if absent.
+          setSelUsers(
+            new Map(shares.users?.map((u) => [u.id, u.role]) ?? shares.userIds.map((id) => [id, 'viewer' as ShareRole])),
+          )
           setSelGroups(new Set(shares.groupIds))
         })
         .catch((err) =>
@@ -84,10 +98,7 @@ export function ShareDialog({ spaceSlug, siteSlug, title, compact, open: openPro
   async function save() {
     setSaving(true)
     try {
-      await api.put(`/api/sites/${spaceSlug}/${siteSlug}/shares`, {
-        userIds: [...selUsers],
-        groupIds: [...selGroups],
-      })
+      await api.put(`/api/sites/${spaceSlug}/${siteSlug}/shares`, buildSharePayload(selUsers, selGroups))
       toast.success('Sharing updated')
       setOpen(false)
     } catch (err) {
@@ -190,15 +201,23 @@ export function ShareDialog({ spaceSlug, siteSlug, title, compact, open: openPro
                 {shownUsers.length === 0 ? (
                   <p className="px-2 py-6 text-center text-sm text-muted-foreground">No people found.</p>
                 ) : (
-                  shownUsers.map((u) => (
-                    <Row
-                      key={u.id}
-                      checked={selUsers.has(u.id)}
-                      onToggle={() => setSelUsers((s) => toggle(s, u.id))}
-                      label={u.name ?? u.email}
-                      sub={u.name ? u.email : undefined}
-                    />
-                  ))
+                  shownUsers.map((u) => {
+                    const role = selUsers.get(u.id)
+                    return (
+                      <div key={u.id} className="flex items-center gap-2">
+                        <Row
+                          className="flex-1"
+                          checked={role !== undefined}
+                          onToggle={() => setSelUsers((s) => toggleUser(s, u.id))}
+                          label={u.name ?? u.email}
+                          sub={u.name ? u.email : undefined}
+                        />
+                        {role !== undefined && (
+                          <RolePicker role={role} onChange={(r) => setSelUsers((s) => new Map(s).set(u.id, r))} />
+                        )}
+                      </div>
+                    )
+                  })
                 )}
               </div>
             </div>
@@ -224,17 +243,19 @@ function Row({
   onToggle,
   label,
   sub,
+  className,
 }: {
   checked: boolean
   onToggle: () => void
   label: string
   sub?: string
+  className?: string
 }) {
   return (
     <button
       type="button"
       onClick={onToggle}
-      className="flex w-full items-center gap-3 rounded-md px-2 py-1.5 text-left hover:bg-muted"
+      className={cn('flex w-full items-center gap-3 rounded-md px-2 py-1.5 text-left hover:bg-muted', className)}
     >
       <span
         className={cn(
@@ -249,5 +270,28 @@ function Row({
         {sub && <span className="block truncate text-xs text-muted-foreground">{sub}</span>}
       </span>
     </button>
+  )
+}
+
+// Segmented Viewer|Editor toggle shown beside a selected person. Editor = may redeploy the site's
+// content (never rename/move/delete). Groups get no such control — they stay view-only.
+function RolePicker({ role, onChange }: { role: ShareRole; onChange: (r: ShareRole) => void }) {
+  return (
+    <div className="flex shrink-0 overflow-hidden rounded-md border text-xs">
+      {(['viewer', 'editor'] as const).map((r) => (
+        <button
+          key={r}
+          type="button"
+          onClick={() => onChange(r)}
+          aria-pressed={role === r}
+          className={cn(
+            'px-2 py-1 capitalize transition-colors',
+            role === r ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted',
+          )}
+        >
+          {r}
+        </button>
+      ))}
+    </div>
   )
 }

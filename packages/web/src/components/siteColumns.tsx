@@ -26,6 +26,8 @@ export function nameColumn<T extends SiteSummary>(): Column<T> {
         {s.audio && <Mic className="size-3.5 shrink-0 text-primary" aria-label="Audio" />}
         <span className="truncate font-medium">{s.title ?? s.siteSlug}</span>
         {s.status === 'archived' && <Badge variant="secondary">archived</Badge>}
+        {/* "Shared with me" feed only: an editor grantee can redeploy this site's content. */}
+        {s.role === 'editor' && <Badge>You can edit</Badge>}
       </div>
     ),
   }

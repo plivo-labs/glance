@@ -11,7 +11,7 @@ import {
   sharedSiteIds,
 } from '../db/repo'
 import type { Visibility } from '../db/schema'
-import { files as filesTable, sites as sitesTable, spaces, users } from '../db/schema'
+import { files as filesTable, siteUserShares, sites as sitesTable, spaces, users } from '../db/schema'
 import { canReplace, checkAccess } from '../lib/access'
 import { allAudioSiteIds } from '../lib/site-audio'
 import { readSessionOrBearer } from '../lib/session'
@@ -268,7 +268,21 @@ sites.get('/shared', requireAuth, async (c) => {
   )
   const rows = batches.flat().sort(byCreatedAtDesc)
   const visible = rows.filter((r) => r.status === 'active' && r.ownerId !== user.id)
-  const audioSet = await allAudioSiteIds(db, visible.map((r) => r.id))
+  const visibleIds = visible.map((r) => r.id)
+  // Direct-share role per site so the dashboard can badge "You can edit". A site reached only via a
+  // group share has no direct row → treated as viewer (groups are never editor grants).
+  const roleRows = (
+    await Promise.all(
+      chunk(visibleIds, D1_MAX_IN).map((batch) =>
+        db
+          .select({ siteId: siteUserShares.siteId, role: siteUserShares.role })
+          .from(siteUserShares)
+          .where(and(eq(siteUserShares.userId, user.id), inArray(siteUserShares.siteId, batch))),
+      ),
+    )
+  ).flat()
+  const roleBySite = new Map(roleRows.map((r) => [r.siteId, r.role]))
+  const audioSet = await allAudioSiteIds(db, visibleIds)
   return c.json(
     visible.map((r) => ({
       id: r.id,
@@ -278,6 +292,7 @@ sites.get('/shared', requireAuth, async (c) => {
       visibility: r.visibility,
       status: r.status,
       audio: audioSet.has(r.id),
+      role: roleBySite.get(r.id) ?? 'viewer',
       url: `${c.env.APP_URL}/${r.spaceSlug}/${r.slug}`,
       createdAt: r.createdAt,
     })),
