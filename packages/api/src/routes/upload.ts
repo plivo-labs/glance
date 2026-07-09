@@ -1,6 +1,6 @@
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
-import { isSpaceMember } from '../db/repo'
+import { isSpaceMember, resolveShareRole } from '../db/repo'
 import type { NewFileRow } from '../db/schema'
 import { files, sites, spaces } from '../db/schema'
 import { fireAndForget } from '../lib/events'
@@ -50,6 +50,14 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
   // a re-upload/record must never silently rename an existing site). Trimmed + capped; empty → null.
   const rawTitle = form.get('title')
   const title = typeof rawTitle === 'string' ? rawTitle.trim().slice(0, 200) || null : null
+  // Optimistic-concurrency token for a REPLACE: the contentVersion the caller last pulled. REQUIRED
+  // for an editor replace (CAS below), advisory/ignored for an owner. Parsed to a non-negative int or
+  // null (absent/blank/non-numeric).
+  const rawExpected = form.get('expectedVersion')
+  const expectedVersion =
+    typeof rawExpected === 'string' && rawExpected.trim() !== '' && Number.isInteger(Number(rawExpected))
+      ? Number(rawExpected)
+      : null
   const uploaded = form.getAll('files').filter((f): f is File => f instanceof File)
 
   // Build (path, file) pairs, dropping empty paths; validate per-file size before storing.
@@ -74,35 +82,51 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
     seenPaths.add(path)
   }
 
-  // Resolve space + require membership.
+  // Resolve space.
   const space = (
     await db.select({ id: spaces.id }).from(spaces).where(eq(spaces.slug, spaceSlug)).limit(1)
   )[0]
   if (!space) return c.json({ error: 'space not found' }, 404)
-  // Superadmin moderates any space (create/replace) — consistent with the owner|superadmin gates on
-  // the sites routes (move/delete/visibility/shares). Everyone else must be a member of the space.
   const isAdmin = user.role === 'superadmin'
-  if (!isAdmin && !(await isSpaceMember(db, space.id, user.id))) return c.json({ error: 'forbidden' }, 403)
 
-  // Resolve existing site by (spaceId, siteSlug).
+  // Resolve the existing site (if any) BEFORE authorizing — CREATE and REPLACE have DIFFERENT gates:
+  // creating needs space membership; replacing is open to the owner, a superadmin, or a direct EDITOR
+  // grantee (who is typically NOT a space member, so the old membership-first gate 403'd them). Load
+  // contentVersion + status too: the editor CAS + archived guard need them.
   const existing = (
     await db
-      .select({ id: sites.id, ownerId: sites.ownerId })
+      .select({ id: sites.id, ownerId: sites.ownerId, contentVersion: sites.contentVersion, status: sites.status })
       .from(sites)
       .where(and(eq(sites.spaceId, space.id), eq(sites.slug, siteSlug)))
       .limit(1)
   )[0]
 
   const replace = c.req.query('replace') === 'true'
+  const isCreate = !existing
   let siteId: string
   let oldKeys: string[] = []
-  const isCreate = !existing
+  // True when the actor is exercising an EDITOR grant (not the owner, not a superadmin). Editors are
+  // content-only: no visibility change, no archived-site edit, and every replace is version-CAS'd.
+  let actingAsEditor = false
 
   if (!existing) {
+    // CREATE: space member or superadmin only. An editor grant confers no create right.
+    if (!isAdmin && !(await isSpaceMember(db, space.id, user.id))) return c.json({ error: 'forbidden' }, 403)
     if (!isValidSlug(siteSlug)) return c.json({ error: 'invalid siteSlug' }, 400)
     siteId = crypto.randomUUID()
   } else {
-    if (existing.ownerId !== user.id && !isAdmin) return c.json({ error: 'forbidden' }, 403)
+    // REPLACE: owner, superadmin, or a direct editor share.
+    const isOwner = existing.ownerId === user.id
+    actingAsEditor = !isOwner && !isAdmin && (await resolveShareRole(db, existing.id, user.id)) === 'editor'
+    if (!isOwner && !isAdmin && !actingAsEditor) return c.json({ error: 'forbidden' }, 403)
+
+    if (actingAsEditor) {
+      if (existing.status === 'archived') return c.json({ error: 'site archived' }, 403)
+      // The CAS below reads expectedVersion; require it up front so a versionless editor redeploy
+      // can't silently clobber a newer one.
+      if (expectedVersion === null) return c.json({ error: 'expectedVersion required' }, 400)
+    }
+
     siteId = existing.id
     const existingFiles = await db
       .select({ storageKey: files.storageKey })
@@ -158,6 +182,9 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
   const newRows = plan.map((p) => p.row)
   const insertRows = newRows.map((r) => db.insert(files).values(r))
   const newKeys = newRows.map((r) => r.storageKey)
+  // The revision this upload publishes: CREATE starts at 0; every REPLACE bumps by one (advisory for
+  // owner/superadmin, CAS-enforced for an editor).
+  const newVersion = existing ? existing.contentVersion + 1 : 0
 
   try {
     if (isCreate) {
@@ -173,17 +200,41 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
         }),
         ...insertRows,
       ])
+    } else if (actingAsEditor) {
+      // EDITOR REPLACE — CAS: atomically claim the revision via a conditional bump. A stale
+      // expectedVersion changes 0 rows (returning() is empty), so we 409 with the files left
+      // completely untouched (nothing swapped; the just-written R2 objects reclaimed). No TOCTOU
+      // read-compare-write, and no visibility change — an editor edits content only. On success the
+      // version is already bumped + lastReplacedBy recorded, so the swap batch only moves file rows.
+      // (The bump and swap are two statements: if the swap throws after a winning CAS, the version is
+      // ahead of the content until the next replace re-syncs it — a rare, self-healing window, and the
+      // price of leaving files untouched on a stale 409, which a single atomic batch cannot express.)
+      const claimed = await db
+        .update(sites)
+        .set({ contentVersion: sql`${sites.contentVersion} + 1`, lastReplacedBy: user.id })
+        .where(and(eq(sites.id, siteId), eq(sites.contentVersion, expectedVersion as number)))
+        .returning({ id: sites.id })
+      if (claimed.length === 0) {
+        await deleteKeys(c.env.GLANCE_FILES, newKeys)
+        return c.json({ error: 'version conflict', conflict: true }, 409)
+      }
+      await db.batch([db.delete(files).where(eq(files.siteId, siteId)), ...insertRows])
     } else {
-      // REPLACE: atomically swap file rows (delete old + insert new) in one D1 batch so the serving
-      // worker never sees a half-updated site. Update visibility in the SAME batch when the caller
-      // explicitly sent one — otherwise a re-upload that picks 'private' would 200 while the site
-      // stayed team-visible. Absent → keep the existing tier (replace's long-standing default).
+      // OWNER / SUPERADMIN REPLACE: atomically swap file rows, bump the version advisorily + record
+      // lastReplacedBy, and apply visibility only when the caller explicitly sent one (absent → keep
+      // the existing tier — replace's long-standing default). One D1 batch so the serving worker
+      // never sees a half-updated site.
       await db.batch([
         db.delete(files).where(eq(files.siteId, siteId)),
         ...insertRows,
-        ...(hasVisibility && isVisibility(visibility)
-          ? [db.update(sites).set({ visibility }).where(eq(sites.id, siteId))]
-          : []),
+        db
+          .update(sites)
+          .set({
+            contentVersion: sql`${sites.contentVersion} + 1`,
+            lastReplacedBy: user.id,
+            ...(hasVisibility && isVisibility(visibility) ? { visibility } : {}),
+          })
+          .where(eq(sites.id, siteId)),
       ])
     }
   } catch (err) {
@@ -202,5 +253,6 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
     url: `${c.env.APP_URL}/${spaceSlug}/${siteSlug}`,
     siteSlug,
     fileCount: newRows.length,
+    contentVersion: newVersion,
   })
 })

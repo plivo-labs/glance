@@ -321,6 +321,15 @@ function toDoc(row: DocumentRow) {
 // READ_ALL (see + moderate every row). "Can view" still never implies "can modify": a viewer
 // cannot touch any existing document, not even their own. Pure + exported so the invariant is
 // unit-tested directly, independent of the request/session plumbing.
+//
+// SECURITY — editor-share confused-deputy (ACCEPTED residual risk, S9): caps key ONLY on ownerId,
+// so a content EDITOR of this site is indistinguishable from any other non-owner and gets read+create
+// only — they never mint write/read_all. This is deliberate: an editor can plant JS in the site, and
+// when the OWNER opens it that script would run with the owner's caps. Do NOT thread the editor's
+// share-role in here to "grant" them write — that would hand every editor read_all/delete over the
+// owner's glance.db docs. Signed off as accepted (editor = semi-trusted, git-collaborator model);
+// if that changes, gate on sites.lastReplacedBy (downgrade to viewer until the owner re-deploys).
+// `dataCaps.editor.pin` in data.test.ts locks this.
 export function dataCapsFor(user: Pick<SessionUser, 'id' | 'role'>, site: Pick<Site, 'ownerId'>): DataCapability[] {
   return user.role === 'superadmin' || site.ownerId === user.id
     ? ['read', 'create', 'write', 'read_all']
