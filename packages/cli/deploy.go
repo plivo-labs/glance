@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -27,7 +28,8 @@ func walk(dir string, includeHidden bool) ([]string, error) {
 	var out []string
 	for _, e := range entries {
 		name := e.Name()
-		if name == ".git" || name == "node_modules" || name == ".DS_Store" {
+		// .glance holds the pull.json round-trip marker — internal bookkeeping, never site content.
+		if name == ".git" || name == "node_modules" || name == ".DS_Store" || name == pullMarkerDir {
 			continue
 		}
 		if !includeHidden && strings.HasPrefix(name, ".") {
@@ -118,6 +120,18 @@ func (c *client) deploy(argv []string) error {
 		return fmt.Errorf("No such file or directory: %s", root)
 	}
 
+	// A tree produced by `read --pull` carries a .glance/pull.json marker: redeploy it to the SAME
+	// site, pass the pulled contentVersion as the CAS token (editor replaces require it), and
+	// re-include dotfiles (they were pulled, so they're part of the source). The .glance/ dir itself
+	// is excluded from the walk above.
+	var marker *pullMarker
+	if info.IsDir() {
+		if m, ok := readPullMarker(root); ok {
+			marker = m
+			includeHidden = true
+		}
+	}
+
 	// Accept a single file OR a folder. A lone file uploads under its own name and is served at
 	// the site root (the content worker falls back to the only file).
 	var entries []deployEntry
@@ -141,9 +155,14 @@ func (c *client) deploy(argv []string) error {
 		return fmt.Errorf("No files to upload.")
 	}
 
+	// Name/space default from the pull marker (redeploy targets the same site) before falling back to
+	// the derived name / the caller's personal space — an editor's personal space is NOT where the
+	// owner's site lives, so a pulled redeploy must reuse the recorded target.
 	name := ""
 	if raw, present := flags["name"]; present {
 		name = raw.(string)
+	} else if marker != nil {
+		name = marker.Name
 	} else {
 		name = slugify(derived)
 	}
@@ -154,6 +173,8 @@ func (c *client) deploy(argv []string) error {
 	space := ""
 	if raw, present := flags["space"]; present {
 		space = raw.(string)
+	} else if marker != nil {
+		space = marker.Space
 	} else {
 		s, err := c.personalSpace()
 		if err != nil {
@@ -175,8 +196,9 @@ func (c *client) deploy(argv []string) error {
 		return fmt.Errorf("Could not check whether %s/%s already exists (%d).", space, name, code)
 	}
 	var ex struct {
-		Exists bool `json:"exists"`
-		Owned  bool `json:"owned"`
+		Exists     bool `json:"exists"`
+		Owned      bool `json:"owned"`
+		CanReplace bool `json:"canReplace"`
 	}
 	decErr := json.NewDecoder(exResp.Body).Decode(&ex)
 	exResp.Body.Close()
@@ -185,7 +207,10 @@ func (c *client) deploy(argv []string) error {
 	}
 	replace := false
 	if ex.Exists {
-		if !ex.Owned {
+		// Replace is gated on canReplace (owner / superadmin / editor) — an editor doesn't own the
+		// site but may redeploy its content. `|| Owned` keeps a newer CLI working against an older
+		// server that predates the canReplace field.
+		if !(ex.CanReplace || ex.Owned) {
 			return fmt.Errorf("%s/%s is taken by another user.", space, name)
 		}
 		ans := c.prompt(fmt.Sprintf("Site exists at %s/%s. Replace? (y/N) ", space, name))
@@ -203,6 +228,11 @@ func (c *client) deploy(argv []string) error {
 	// private) site to team on a routine content update. Absent on replace → server keeps the tier.
 	if visibilitySet || !replace {
 		_ = mw.WriteField("visibility", visibility)
+	}
+	// Pulled redeploy: send the version we pulled as the CAS token. The server REQUIRES it for an
+	// editor replace (409 on a stale one) and treats it as advisory for an owner.
+	if replace && marker != nil {
+		_ = mw.WriteField("expectedVersion", strconv.Itoa(marker.ContentVersion))
 	}
 	for _, e := range entries {
 		data, err := os.ReadFile(e.abs)

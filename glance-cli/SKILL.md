@@ -36,7 +36,7 @@ Put it in your shell profile to make it permanent. Token + URL are saved to `~/.
 | `glance move <space/slug> <new-space>` | moves a site to another space you belong to (keeps its files, comments, shares) |
 | `glance comments <space/slug> [--file <path>] [--open] [--json]` | prints a site's review comments as a markdown digest (or raw JSON) |
 | `glance reply <space/slug> <threadId> [message] [--tag <label>\|--no-tag]` | posts a reply to a comment thread (get the `threadId` from `glance comments`) |
-| `glance read <space/slug> [--file <path>]` | prints a deployed file's raw contents to stdout (HTML as stored) |
+| `glance read <space/slug> [--file <path>] [--pull <dir>]` | prints a file to stdout, or `--pull` downloads the whole site's source into a folder to edit + redeploy |
 | `glance logout` | revokes the server session and removes the local token |
 
 ### login
@@ -114,12 +114,27 @@ glance reply docs/api-reference k3f9q2 "typo fixed" --no-tag
 ```
 
 ### read
-Prints a deployed file's **raw contents** to stdout — the bytes as stored (HTML stays HTML; markdown stays markdown source, NOT the server-rendered HTML).
+Prints a deployed file's contents to stdout.
 
 - `<space/slug>` is required and must contain the slash (e.g. `docs/api-reference`).
 - `--file <path>` selects a file within the site (e.g. `--file guide.html`); omit it for the site root (a single-file site serves its lone file there).
 - Output is the file body only — no headers, no trailing newline — so it pipes cleanly: `glance read docs/api-reference --file index.html > index.html`.
+- **A single `read` of a `.md` file returns the server-RENDERED HTML, not the markdown source.** To get the exact source back (for editing and redeploying), use `--pull` below.
 - Every tier is access-gated (there is no anonymous tier), so `read` works only on sites you can view; a tier you can't access fails with the server's status. Errors print the HTTP status + a truncated server message.
+
+**`--pull <dir>`** — download the whole site's **source** into a local folder so you can edit it and redeploy:
+
+```
+glance read docs/api-reference --pull ./api-reference   # writes every file (source, not rendered) into ./api-reference
+# …edit the files…
+glance deploy ./api-reference                            # redeploys to the SAME site (remembers where it came from)
+```
+
+- Writes every file of the site — markdown as its true source, dotfiles included — into `<dir>`, plus a small `.glance/pull.json` marker that records the site and the version you pulled.
+- A later `glance deploy <dir>` reads that marker to target the same site automatically (no need to re-type `--space`/`--name`) and passes the pulled version so a stale redeploy is safely refused instead of clobbering someone else's newer change.
+- Needs edit rights: `--pull` works for a site you **own** or have been given **edit** access to. A view-only share can't pull the source.
+
+**Editor round-trip** — if someone shared a site with you as an *editor*, this is the whole loop with no browser and no git: `glance read <their-space>/<site> --pull ./site` → edit `./site` → `glance deploy ./site`. You can update that site's content even though you don't own it and aren't in its space.
 
 ## Visibility values
 `team` (default) · `private` · `members`.

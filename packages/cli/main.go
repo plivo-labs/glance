@@ -97,7 +97,7 @@ func printHelp() {
 	fmt.Println("  glance move <space/slug> <new-space>")
 	fmt.Println("  glance comments <space/slug> [--file <path>] [--open] [--json]")
 	fmt.Println("  glance reply <space/slug> <threadId> [message] [--tag <label> | --no-tag]")
-	fmt.Println("  glance read <space/slug> [--file <path>]")
+	fmt.Println("  glance read <space/slug> [--file <path>] [--pull <dir>]")
 	fmt.Println("  glance skill install")
 	fmt.Println("  glance upgrade")
 	fmt.Println("  glance version")
