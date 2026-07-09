@@ -239,10 +239,10 @@ function Viewer() {
     [contentOrigin],
   )
 
-  async function createThread(body: string) {
+  async function createThread(body: string, mentions: string[]) {
     if (!filePath || !composing) return
     try {
-      await comments.create(site, pendingToInput(filePath, body, composing))
+      await comments.create(site, pendingToInput(filePath, body, composing), mentions)
       setComposing(null)
       await refresh(filePath)
     } catch (err) {

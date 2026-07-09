@@ -98,9 +98,10 @@ export function ThreadCard({
             autoFocus
             placeholder="Reply…"
             submitLabel="Reply"
+            loadMentions={() => comments.mentionable(site)}
             onCancel={() => setReplying(false)}
-            onSubmit={async (body) => {
-              await run(() => comments.reply(site, thread.id, body))
+            onSubmit={async (body, mentions) => {
+              await run(() => comments.reply(site, thread.id, body, mentions))
               setReplying(false)
             }}
             onSubmitVoice={async (blob) => {

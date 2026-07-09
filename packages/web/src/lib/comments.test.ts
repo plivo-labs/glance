@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { pendingToInput } from './comments'
+import { pendingToInput, withMentions } from './comments'
 
 // Seam S2: the pending-anchor → create-payload map is pure, so the viewer's create path is
 // verifiable without a browser (the postMessage/iframe layer can't be smoked locally).
@@ -29,5 +29,24 @@ describe('pendingToInput — pending anchor → NewThreadInput', () => {
       body: 'love this bridge',
       anchorType: 'page',
     })
+  })
+})
+
+describe('C19 — withMentions: payload carries mentions when ids present, omits when none', () => {
+  test('non-empty ids → mentions key added, original fields preserved', () => {
+    expect(withMentions({ filePath: 'i.html', body: 'hi' }, ['u1', 'u2'])).toEqual({
+      filePath: 'i.html',
+      body: 'hi',
+      mentions: ['u1', 'u2'],
+    })
+  })
+
+  test('empty ids → no mentions key', () => {
+    expect(withMentions({ body: 'hi' }, [])).toEqual({ body: 'hi' })
+  })
+
+  test('absent ids → no mentions key', () => {
+    expect(withMentions({ body: 'hi' })).toEqual({ body: 'hi' })
+    expect('mentions' in withMentions({ body: 'hi' })).toBe(false)
   })
 })

@@ -247,13 +247,13 @@
 
     <div class="phase-h">Phase 3 — Composer autocomplete</div>
     <ul class="items">
-      <li class="item" data-status="todo" data-phase="3"><span class="stamp">todo</span>
+      <li class="item" data-status="done" data-phase="3"><span class="stamp">done</span>
         <div><div class="name"><span class="k">S7</span><span class="t"><code>@</code>-autocomplete in <code>Composer.tsx</code>: pure <code>mentionQuery</code>/<code>insertMention</code> helpers + dropdown (kbd nav) fed by the site-scoped mentionable list</span></div>
           <div class="meta">web · <span class="r-high">high risk</span> · <span class="dep">dep:4</span></div></div></li>
-      <li class="item" data-status="todo" data-phase="3"><span class="stamp">todo</span>
+      <li class="item" data-status="done" data-phase="3"><span class="stamp">done</span>
         <div><div class="name"><span class="k">S8</span><span class="t">Thread <code>mentions[]</code> through the whole submit contract: <code>onSubmit(body)→(body,mentions)</code> · Composer · ReviewRail · ThreadCard · viewer.createThread · <code>lib/comments.create/reply</code></span></div>
           <div class="meta">web · <span class="r-med">med risk</span> · <span class="dep">dep:7</span></div></div></li>
-      <li class="item gate" data-status="todo" data-phase="3"><span class="stamp">todo</span>
+      <li class="item gate" data-status="done" data-phase="3"><span class="stamp">done</span>
         <div><div class="name"><span class="k">G3</span><span class="t">Gate P3 — thermo-nuclear → suite green → commit</span></div>
           <div class="meta">/thermo-nuclear-code-quality-review on Phase-3 diff → findings → full suite → commit "Phase 3: …"</div></div></li>
     </ul>
@@ -299,7 +299,7 @@
       <li class="item" data-status="done"><span class="stamp">done</span>
         <div><div class="name"><span class="k">S-C</span><span class="t">Export/inject the notify helper so a test can stub it to throw (prove the comment still commits)</span></div>
           <div class="meta">unlocks C15 (fire-and-forget isolation)</div></div></li>
-      <li class="item" data-status="todo"><span class="stamp">todo</span>
+      <li class="item" data-status="done"><span class="stamp">done</span>
         <div><div class="name"><span class="k">S-D</span><span class="t">Extract pure web helpers — <code>mentionQuery</code>, <code>insertMention</code>, <code>notificationHref</code> — out of React (bun-testable, no DOM)</span></div>
           <div class="meta">unlocks C17–C19, C21</div></div></li>
     </ul>
@@ -371,13 +371,13 @@
 
     <div class="phase-h">Phase 3 — composer (web bun test)</div>
     <ul class="items">
-      <li class="item" data-status="todo"><span class="stamp">todo</span>
+      <li class="item" data-status="done"><span class="stamp">done</span>
         <div><div class="name"><span class="t">C17 · <code>mentionQuery(text,caret)</code> → active <code>@token</code> or null (trigger detection incl. mid-word / after-space)</span></div>
           <div class="meta">P1 · new-module-spec · gated by S-D</div></div></li>
-      <li class="item" data-status="todo"><span class="stamp">todo</span>
+      <li class="item" data-status="done"><span class="stamp">done</span>
         <div><div class="name"><span class="t">C18 · <code>insertMention(text,caret,user)</code> → replaces token with <code>@Name </code>, records id, caret after</span></div>
           <div class="meta">P1 · new-module-spec · gated by S-D</div></div></li>
-      <li class="item" data-status="todo"><span class="stamp">todo</span>
+      <li class="item" data-status="done"><span class="stamp">done</span>
         <div><div class="name"><span class="t">C19 · <code>create</code>/<code>reply</code> payload carries <code>mentions</code> when ids present, omits when none</span></div>
           <div class="meta">P1 · characterization · gated by S-D</div></div></li>
     </ul>
@@ -387,7 +387,7 @@
       <li class="item" data-status="todo"><span class="stamp">todo</span>
         <div><div class="name"><span class="t">C20 · schema inspection: recipient delete cascades; actor/site set-null (history survives) — <b>not</b> a harness test</span></div>
           <div class="meta">P1 · schema-inspection (FK off in harness)</div></div></li>
-      <li class="item" data-status="todo"><span class="stamp">todo</span>
+      <li class="item" data-status="done"><span class="stamp">done</span>
         <div><div class="name"><span class="t">C21 · <code>notificationHref(n)</code> → <code>/:space/:site/&lt;path&gt;?thread=&lt;id&gt;&amp;review=1</code></span></div>
           <div class="meta">P1 · new-module-spec · gated by S-D</div></div></li>
       <li class="item" data-status="todo"><span class="stamp">todo</span>
@@ -450,6 +450,8 @@
         <span>Server wiring: <code>listMentionableUsers</code> (visibility-branched, mirrors checkAccess; C5–C7) · <code>GET /mentionable</code> (C8) · thread+reply <code>mentions[]</code> → intersect-against-mentionable → fire-and-forget notify (C9–C15) · <code>/api/notifications</code> GET + <code>/read</code> (C16). S-B/S-C seams landed. Full suite 446 pass, typecheck + lint clean.</span></li>
       <li><span class="date">2026-07-09</span><span class="badge">G2</span>
         <span>Gate P2 — thermo-nuclear + independent adversarial review: security invariant (no mention can notify a user without site access) holds on all reachable paths. Hardened <code>listMentionableUsers</code> with an explicit archived→[] branch (finding #1) + reconciled the docstring for the intentional superadmin/single-domain deviations. Suite 447 pass. Phase 2 committed. 8 of 17 landed.</span></li>
+      <li><span class="date">2026-07-09</span><span class="badge">S7–S8</span>
+        <span>Composer autocomplete: pure <code>mentionQuery</code>/<code>insertMention</code>/<code>filterMentions</code>/<code>notificationHref</code> in <code>lib/mentions.ts</code> (C17/C18/C21) + <code>@</code>-dropdown (kbd nav, lazy site-scoped fetch). Submit contract <code>onSubmit(body,mentions)</code> threaded through Composer·ReviewRail·ThreadCard·viewer·<code>comments.create/reply</code> via pure <code>withMentions</code> (C19). Voice path unchanged. G3 review PASS (pure/impure split clean). Suite 465 pass, typecheck + lint clean. Phase 3 committed. 11 of 17 landed.</span></li>
     </ul>
   </section>
 

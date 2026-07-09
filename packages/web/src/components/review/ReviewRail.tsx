@@ -1,6 +1,6 @@
 import { MessageSquarePlus } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import type { PendingAnchor, Thread, ThreadStatus } from '@/lib/comments'
+import { comments, type PendingAnchor, type Thread, type ThreadStatus } from '@/lib/comments'
 import { timestampPrefix } from '@/lib/audio'
 import type { Me, ViewerSite } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -35,7 +35,7 @@ export function ReviewRail({
   threads: Thread[]
   composing: PendingAnchor | null
   onCancelComposer: () => void
-  onCreate: (body: string) => void | Promise<void>
+  onCreate: (body: string, mentions: string[]) => void | Promise<void>
   // Voice sibling of onCreate: submits the composer's recording as a voice thread on the same anchor.
   onCreateVoice: (blob: Blob) => void | Promise<void>
   onChanged: () => void
@@ -73,6 +73,7 @@ export function ReviewRail({
             focusOn={composing}
             placeholder="Add a comment…"
             submitLabel="Comment"
+            loadMentions={() => comments.mentionable(site)}
             onSubmit={onCreate}
             onSubmitVoice={onCreateVoice}
             onCancel={onCancelComposer}
