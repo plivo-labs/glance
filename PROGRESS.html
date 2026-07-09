@@ -228,19 +228,19 @@
 
     <div class="phase-h">Phase 2 — Server wiring (the correctness surface)</div>
     <ul class="items">
-      <li class="item" data-status="todo" data-phase="2"><span class="stamp">todo</span>
+      <li class="item" data-status="done" data-phase="2"><span class="stamp">done</span>
         <div><div class="name"><span class="k">S3</span><span class="t"><code>listMentionableUsers(site,callerId)</code> — visibility-branched, mirrors <code>checkAccess</code> (owner + user-shares + group-share members; +space members if <code>members</code>; +all if <code>team</code>)</span></div>
           <div class="meta">db/repo.ts · <span class="r-high">high risk</span></div></div></li>
-      <li class="item" data-status="todo" data-phase="2"><span class="stamp">todo</span>
+      <li class="item" data-status="done" data-phase="2"><span class="stamp">done</span>
         <div><div class="name"><span class="k">S4</span><span class="t"><code>GET /api/sites/:space/:site/mentionable</code> → <code>UserLite[]</code> (reuses resolved site + <code>checkAccess</code>)</span></div>
           <div class="meta">route · <span class="r-low">low risk</span> · <span class="dep">dep:3</span></div></div></li>
-      <li class="item" data-status="todo" data-phase="2"><span class="stamp">todo</span>
+      <li class="item" data-status="done" data-phase="2"><span class="stamp">done</span>
         <div><div class="name"><span class="k">S5</span><span class="t">Thread + reply bodies take <code>mentions[]</code>; intersect vs mentionable-set (dedup, drop self); <code>fireAndForget(createNotifications)</code> — never fail the comment; siteLabel from route params</span></div>
           <div class="meta">routes/comments.ts · <span class="r-high">high risk</span> · <span class="dep">dep:2,3</span></div></div></li>
-      <li class="item" data-status="todo" data-phase="2"><span class="stamp">todo</span>
+      <li class="item" data-status="done" data-phase="2"><span class="stamp">done</span>
         <div><div class="name"><span class="k">S6</span><span class="t"><code>GET /api/notifications → {items,unreadCount}</code> · <code>POST /api/notifications/read {ids?}</code> (no unread-count endpoint)</span></div>
           <div class="meta">routes/notifications.ts + index.ts mount · <span class="r-med">med risk</span> · <span class="dep">dep:2</span></div></div></li>
-      <li class="item gate" data-status="todo" data-phase="2"><span class="stamp">todo</span>
+      <li class="item gate" data-status="done" data-phase="2"><span class="stamp">done</span>
         <div><div class="name"><span class="k">G2</span><span class="t">Gate P2 — thermo-nuclear → suite green → commit</span></div>
           <div class="meta">/thermo-nuclear-code-quality-review on Phase-2 diff → findings → full suite → commit "Phase 2: …"</div></div></li>
     </ul>
@@ -293,10 +293,10 @@
       <li class="item" data-status="done"><span class="stamp">done</span>
         <div><div class="name"><span class="k">S-A</span><span class="t">Append <code>drizzle/0009</code> to harness <code>MIGRATIONS</code> + a <code>seedNotification</code> helper (like every other table)</span></div>
           <div class="meta">unlocks C1–C4, C10–C16</div></div></li>
-      <li class="item" data-status="todo"><span class="stamp">todo</span>
+      <li class="item" data-status="done"><span class="stamp">done</span>
         <div><div class="name"><span class="k">S-B</span><span class="t">Seed helpers for <code>spaceMembers</code> / <code>site_user_shares</code> / <code>site_group_shares</code> (reuse if present)</span></div>
           <div class="meta">unlocks C6–C9, C12 (visibility + group-share matrix)</div></div></li>
-      <li class="item" data-status="todo"><span class="stamp">todo</span>
+      <li class="item" data-status="done"><span class="stamp">done</span>
         <div><div class="name"><span class="k">S-C</span><span class="t">Export/inject the notify helper so a test can stub it to throw (prove the comment still commits)</span></div>
           <div class="meta">unlocks C15 (fire-and-forget isolation)</div></div></li>
       <li class="item" data-status="todo"><span class="stamp">todo</span>
@@ -331,40 +331,40 @@
 
     <div class="phase-h">Phase 2 — access + server</div>
     <ul class="items">
-      <li class="item" data-status="todo"><span class="stamp">todo</span>
+      <li class="item" data-status="done"><span class="stamp">done</span>
         <div><div class="name"><span class="t">C5 · mentionable <code>private</code> → owner + user-shares + group-share members only (plain space member excluded)</span></div>
           <div class="meta">P0 · property-equivalence (mirror checkAccess) · gated by S-B</div></div></li>
-      <li class="item" data-status="todo"><span class="stamp">todo</span>
+      <li class="item" data-status="done"><span class="stamp">done</span>
         <div><div class="name"><span class="t">C6 · mentionable <code>members</code> → adds space members</span></div>
           <div class="meta">P1 · property-equivalence · gated by S-B</div></div></li>
-      <li class="item" data-status="todo"><span class="stamp">todo</span>
+      <li class="item" data-status="done"><span class="stamp">done</span>
         <div><div class="name"><span class="t">C7 · mentionable <code>team</code> → all users; always excludes caller</span></div>
           <div class="meta">P1 · property-equivalence · gated by S-B</div></div></li>
-      <li class="item" data-status="todo"><span class="stamp">todo</span>
+      <li class="item" data-status="done"><span class="stamp">done</span>
         <div><div class="name"><span class="t">C8 · <code>GET /mentionable</code> → UserLite[]; 403 for a caller without site access</span></div>
           <div class="meta">P1 · new-module-spec · gated by S-B</div></div></li>
-      <li class="item" data-status="todo"><span class="stamp">todo</span>
+      <li class="item" data-status="done"><span class="stamp">done</span>
         <div><div class="name"><span class="t">C9 · POST thread <code>mentions:[valid]</code> → 1 row for target; <b>none for self</b> even if self is listed</span></div>
           <div class="meta">P0 · new-module-spec · gated by S-A</div></div></li>
-      <li class="item" data-status="todo"><span class="stamp">todo</span>
+      <li class="item" data-status="done"><span class="stamp">done</span>
         <div><div class="name"><span class="t">C10 · duplicate <code>@same</code> ids → exactly 1 notification (dedup)</span></div>
           <div class="meta">P1 · new-module-spec · gated by S-A</div></div></li>
-      <li class="item" data-status="todo"><span class="stamp">todo</span>
+      <li class="item" data-status="done"><span class="stamp">done</span>
         <div><div class="name"><span class="t">C11 · no-access mention dropped — private space-member gets 0; group-share member gets 1</span></div>
           <div class="meta">P0 · new-module-spec · gated by S-A,S-B</div></div></li>
-      <li class="item" data-status="todo"><span class="stamp">todo</span>
+      <li class="item" data-status="done"><span class="stamp">done</span>
         <div><div class="name"><span class="t">C12 · absent/empty <code>mentions</code> → 0 notifications, comment still created (no regression)</span></div>
           <div class="meta">P0 · characterization · gated by S-A</div></div></li>
-      <li class="item" data-status="todo"><span class="stamp">todo</span>
+      <li class="item" data-status="done"><span class="stamp">done</span>
         <div><div class="name"><span class="t">C13 · POST reply <code>mentions[]</code> → notification created</span></div>
           <div class="meta">P1 · new-module-spec · gated by S-A</div></div></li>
-      <li class="item" data-status="todo"><span class="stamp">todo</span>
+      <li class="item" data-status="done"><span class="stamp">done</span>
         <div><div class="name"><span class="t">C14 · voice thread/reply ignore mentions — 0 notifications (v1 hole, pinned)</span></div>
           <div class="meta">P2 · characterization · gated by S-A</div></div></li>
-      <li class="item" data-status="todo"><span class="stamp">todo</span>
+      <li class="item" data-status="done"><span class="stamp">done</span>
         <div><div class="name"><span class="t">C15 · notify failure does NOT fail the comment — comment persists + 2xx (fire-and-forget)</span></div>
           <div class="meta">P0 · new-module-spec · gated by S-C</div></div></li>
-      <li class="item" data-status="todo"><span class="stamp">todo</span>
+      <li class="item" data-status="done"><span class="stamp">done</span>
         <div><div class="name"><span class="t">C16 · <code>GET /api/notifications</code> caller-scoped + unreadCount; <code>POST /read</code> flips <code>readAt</code></span></div>
           <div class="meta">P0 · new-module-spec · gated by S-A</div></div></li>
     </ul>
@@ -446,6 +446,10 @@
         <span><code>db/notifications.ts</code>: <code>createNotifications</code> (batch) · <code>listNotifications</code>→{items,unreadCount} · <code>markRead</code> (recipient-scoped, idempotent). TDD C1–C4 green; full api suite 432 pass.</span></li>
       <li><span class="date">2026-07-09</span><span class="badge">G1</span>
         <span>Gate P1 — thermo-nuclear review PASS (no blockers; inline actor join over the comments name-map, events durability mirrored). Full api suite 432 pass. Phase 1 committed. 3 of 17 landed.</span></li>
+      <li><span class="date">2026-07-09</span><span class="badge">S3–S6</span>
+        <span>Server wiring: <code>listMentionableUsers</code> (visibility-branched, mirrors checkAccess; C5–C7) · <code>GET /mentionable</code> (C8) · thread+reply <code>mentions[]</code> → intersect-against-mentionable → fire-and-forget notify (C9–C15) · <code>/api/notifications</code> GET + <code>/read</code> (C16). S-B/S-C seams landed. Full suite 446 pass, typecheck + lint clean.</span></li>
+      <li><span class="date">2026-07-09</span><span class="badge">G2</span>
+        <span>Gate P2 — thermo-nuclear + independent adversarial review: security invariant (no mention can notify a user without site access) holds on all reachable paths. Hardened <code>listMentionableUsers</code> with an explicit archived→[] branch (finding #1) + reconciled the docstring for the intentional superadmin/single-domain deviations. Suite 447 pass. Phase 2 committed. 8 of 17 landed.</span></li>
     </ul>
   </section>
 

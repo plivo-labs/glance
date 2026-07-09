@@ -105,6 +105,9 @@ export async function listNotifications(
  *  `recipientId = userId` (a foreign id in `ids` can never cross that boundary) and gated on
  *  still-unread rows so re-marking is idempotent (never rewrites an existing readAt). */
 export async function markRead(db: DrizzleD1Database, userId: string, ids?: string[]): Promise<void> {
+  // Absent ids → mark all; a provided list → only those; an explicit empty list → nothing (an
+  // empty selection must never be read as "mark everything").
+  if (ids !== undefined && ids.length === 0) return
   const scope =
     ids && ids.length > 0
       ? and(eq(notifications.recipientId, userId), inArray(notifications.id, ids))
