@@ -1,0 +1,485 @@
+<!doctype html>
+<!--
+  ============================================================================
+  AGENT OPERATING PROTOCOL  (hidden from the rendered page — for agents only)
+  ============================================================================
+  If you were handed this file as a goal: it is a LIVE tracker, not a static
+  doc. You MUST keep it updated as you work. Loop until every item is
+  data-status="done" (or only out-of-scope items remain):
+
+    1. Pick the next item with data-status="todo" whose deps (dep:N in its
+       .meta) are all "done", in phase order. Never cross a Gate that isn't
+       done; never start phase N+1 while phase N has open items.
+    2. Set that item's data-status="wip" and redeploy (cmd below) so watchers
+       see it start.
+    3. Do the work TDD: one failing test -> minimal impl -> green. Verify.
+    4. Set the item's data-status="done" (or "blocked" + a Journal note if
+       genuinely stuck — never a false "done"). Append a dated <li> to the
+       Journal (section 07). Top counts + the Part II board recompute themselves.
+    5. If it was a phase's last step, run that phase's Gate item:
+       /thermo-nuclear-code-quality-review on the phase diff -> fix findings ->
+       full suite green -> mark the Gate done -> commit "Phase N: <summary>".
+    6. Redeploy after EVERY status change:
+          glance deploy PROGRESS.html --name mentions-progress      (answer y)
+    7. Repeat from 1. When done, do a final deploy and report.
+
+  Delegate: spin up sub-agents — Haiku for exploring/locating (finding utils,
+  callers, existing patterns, file paths), Sonnet for pure/mechanical execution
+  slices, Opus for higher-effort ones (cross-package, design, concurrency, codegen).
+  Run independent slices in parallel; keep it minimal — don't fan out beyond the work.
+
+  Rules: edit THIS file in place (never emit a new file); a status change is an
+  attribute edit only — preserve the markup/styling; the local file is source of
+  truth and Glance mirrors it. Step/gate items carry data-phase="N".
+  ============================================================================
+  Project: @-mention + homepage notifications (glance, feat/mention-notifications).
+  Plan of record: MENTIONS_PLAN.md. 3-agent adversarial review reconciled 2026-07-09.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>@-Mentions &amp; Notifications — Progress Ledger</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;1,9..144,400&family=IBM+Plex+Mono:wght@400;500;600&family=Newsreader:opsz,wght@6..72,400;6..72,500&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --paper:#f2ede1; --paper-2:#e9e2d2; --ink:#1c1a17; --ink-soft:#4a463d;
+    --faint:#8a8474; --rule:#cdc5b1; --accent:#8a2b28; --accent-ink:#fbf3ea;
+    --gold:#9a7b2e;
+    --s-todo:#8a8474; --s-wip:#9a7b2e; --s-done:#3f6b47; --s-blocked:#8a2b28;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;color:var(--ink);background:var(--paper);
+    font-family:"Newsreader",Georgia,serif;font-size:17px;line-height:1.6;
+    background-image:
+      linear-gradient(90deg,rgba(138,43,40,.015) 1px,transparent 1px),
+      radial-gradient(rgba(28,26,23,.028) 1px,transparent 1.4px);
+    background-size:100% 100%, 4px 4px;
+  }
+  body::before{content:"";position:fixed;inset:0 0 auto 0;height:5px;z-index:5;
+    background:linear-gradient(90deg,var(--accent) 0 34%,var(--gold) 34% 40%,transparent 40%);opacity:.9}
+  .mono{font-family:"IBM Plex Mono",monospace}
+  .wrap{max-width:940px;margin:0 auto;padding:0 40px}
+
+  /* ---------- Masthead ---------- */
+  header{padding:64px 0 30px;border-bottom:2px solid var(--ink)}
+  .eyebrow{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.32em;
+    text-transform:uppercase;color:var(--accent);display:flex;justify-content:space-between}
+  h1{font-family:"Fraunces",serif;font-weight:600;font-size:clamp(38px,6vw,68px);
+    line-height:1.02;margin:.28em 0 .18em;letter-spacing:-.01em}
+  .at{color:var(--accent);font-style:italic}
+  .bias{font-style:italic;color:var(--ink-soft);max-width:60ch;font-size:19px}
+  .ledger-line{display:flex;flex-wrap:wrap;margin-top:26px;
+    border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+  .stat{flex:1;min-width:120px;padding:14px 18px 14px 0;border-right:1px solid var(--rule)}
+  .stat:last-child{border-right:0}
+  .stat .n{font-family:"Fraunces",serif;font-size:34px;font-weight:600;line-height:1}
+  .stat .l{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.18em;
+    text-transform:uppercase;color:var(--faint);margin-top:6px}
+  .stat .n.accent{color:var(--accent)}
+
+  /* ---------- Part divider ---------- */
+  .part{display:flex;align-items:baseline;gap:18px;margin:64px 0 4px;padding-bottom:10px;
+    border-bottom:2px solid var(--ink)}
+  .part .roman{font-family:"IBM Plex Mono",monospace;font-size:13px;font-weight:600;
+    color:var(--accent);letter-spacing:.1em}
+  .part h2{font-family:"Fraunces",serif;font-size:34px;font-weight:600;margin:0;letter-spacing:-.01em}
+  .part .tag-line{margin-left:auto;font-family:"IBM Plex Mono",monospace;font-size:11px;
+    color:var(--faint);letter-spacing:.06em}
+
+  /* ---------- Sub-sections ---------- */
+  section{padding:40px 0 8px;border-bottom:1px solid var(--rule)}
+  .sec-head{display:flex;align-items:baseline;gap:16px;margin-bottom:20px}
+  .sec-num{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--accent);letter-spacing:.1em;padding-top:5px}
+  h3{font-family:"Fraunces",serif;font-weight:600;font-size:25px;margin:0;letter-spacing:-.01em}
+  .sec-note{margin-left:auto;font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--faint);letter-spacing:.06em}
+  .lede{color:var(--ink-soft);max-width:74ch;margin:0 0 6px}
+
+  .phase-h{font-family:"IBM Plex Mono",monospace;font-size:12px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--ink-soft);margin:26px 0 10px;display:flex;align-items:center;gap:12px}
+  .phase-h::after{content:"";flex:1;height:1px;background:var(--rule)}
+
+  /* ---------- Items ---------- */
+  ul.items{list-style:none;padding:0;margin:0}
+  li.item{display:grid;grid-template-columns:auto 1fr;gap:16px;align-items:start;
+    padding:15px 4px;border-bottom:1px dotted var(--rule);transition:background .2s}
+  li.item:last-child{border-bottom:0}
+  li.item:hover{background:rgba(138,43,40,.035)}
+  .stamp{font-family:"IBM Plex Mono",monospace;font-size:9.5px;font-weight:600;letter-spacing:.12em;
+    text-transform:uppercase;padding:4px 8px;border:1px solid currentColor;border-radius:2px;
+    white-space:nowrap;line-height:1;margin-top:4px;box-shadow:1.5px 1.5px 0 rgba(28,26,23,.12)}
+  [data-status="todo"]    .stamp{color:var(--s-todo)}
+  [data-status="wip"]     .stamp{color:var(--s-wip);
+    background:repeating-linear-gradient(45deg,transparent 0 5px,rgba(154,123,46,.09) 5px 10px)}
+  [data-status="done"]    .stamp{color:var(--s-done);background:rgba(63,107,71,.08)}
+  [data-status="blocked"] .stamp{color:var(--s-blocked);background:rgba(138,43,40,.08)}
+  [data-status="done"] .name{color:var(--faint)}
+  [data-status="done"] .name .t{text-decoration:line-through;text-decoration-color:var(--rule)}
+  .name{font-family:"Fraunces",serif;font-size:19px;font-weight:500;line-height:1.35}
+  .name .k{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--accent);font-weight:600;margin-right:8px}
+  .meta{font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--faint);margin-top:5px;letter-spacing:.02em}
+  .meta .dep{color:var(--ink-soft)}
+  .r-low{color:var(--s-done)} .r-med{color:var(--gold)} .r-high{color:var(--accent);font-weight:600}
+  li.gate{background:rgba(138,43,40,.04)}
+  li.gate .name{font-style:italic}
+  li.gate .name .k{color:var(--ink)}
+
+  blockquote{margin:22px 0 6px;padding:18px 22px;background:var(--paper-2);
+    border-left:3px solid var(--accent);font-size:16px;color:var(--ink-soft)}
+  blockquote b{color:var(--ink)}
+  ol.prose{padding-left:0;counter-reset:s;list-style:none;margin:6px 0}
+  ol.prose li{counter-increment:s;padding:9px 0 9px 44px;position:relative;
+    border-bottom:1px dotted var(--rule);max-width:80ch}
+  ol.prose li:last-child{border-bottom:0}
+  ol.prose li::before{content:counter(s,decimal-leading-zero);position:absolute;left:0;top:9px;
+    font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--accent);font-weight:600}
+  ol.prose b{font-weight:600;color:var(--ink)}
+  code{font-family:"IBM Plex Mono",monospace;font-size:.86em;background:var(--paper-2);
+    padding:1px 5px;border-radius:2px;color:var(--accent)}
+
+  /* ---------- Progress board (Part II) ---------- */
+  .board{margin-top:6px}
+  .prow{display:grid;grid-template-columns:150px 1fr 64px;gap:16px;align-items:center;
+    padding:14px 0;border-bottom:1px dotted var(--rule)}
+  .prow:last-child{border-bottom:0}
+  .prow .plabel{font-family:"IBM Plex Mono",monospace;font-size:12px;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--ink-soft)}
+  .bar{height:12px;background:var(--paper-2);border:1px solid var(--rule);border-radius:2px;overflow:hidden;position:relative}
+  .bar>i{display:block;height:100%;width:0;background:
+    repeating-linear-gradient(45deg,var(--s-done) 0 7px,#4b7a54 7px 14px);transition:width .6s cubic-bezier(.2,.7,.2,1)}
+  .prow .pct{font-family:"IBM Plex Mono",monospace;font-size:14px;font-weight:600;text-align:right;color:var(--accent)}
+  .nowbar{display:flex;gap:12px;align-items:center;padding:16px 20px;margin:18px 0 4px;
+    background:var(--paper-2);border-left:3px solid var(--gold);font-family:"IBM Plex Mono",monospace;font-size:13px}
+  .nowbar b{color:var(--ink)} .nowbar .lbl{color:var(--gold);letter-spacing:.14em;text-transform:uppercase;font-size:10.5px}
+
+  .journal{list-style:none;padding:0;margin:0}
+  .journal li{display:grid;grid-template-columns:auto auto 1fr;gap:14px;align-items:baseline;
+    padding:11px 0;border-bottom:1px dotted var(--rule);font-family:"IBM Plex Mono",monospace;font-size:13px;color:var(--ink-soft)}
+  .journal li:last-child{border-bottom:0}
+  .journal .date{color:var(--accent);font-weight:600;white-space:nowrap}
+  .journal .badge{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}
+
+  footer{padding:34px 0 60px;font-family:"IBM Plex Mono",monospace;font-size:11px;
+    color:var(--faint);letter-spacing:.08em;text-align:center}
+  footer b{color:var(--accent)}
+
+  @keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+  header,.part,section{animation:rise .7s cubic-bezier(.2,.7,.2,1) both}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="eyebrow"><span>Plan · TDD · Thermo-nuclear gates</span><span>Progress Ledger №001</span></div>
+    <h1><span class="at">@</span>-Mentions &amp; Homepage Notifications</h1>
+    <p class="bias">“Additive, not a refactor — one new table; everything else hangs off comments, access, and the router revalidator that already exist. Correctness before mechanics before UI.”</p>
+    <div class="ledger-line">
+      <div class="stat"><div class="n">4</div><div class="l">Phases</div></div>
+      <div class="stat"><div class="n">13</div><div class="l">Steps</div></div>
+      <div class="stat"><div class="n">22</div><div class="l">Test cases</div></div>
+      <div class="stat"><div class="n accent"><span id="done-count">0</span>/<span id="total-count">17</span></div><div class="l">Landed</div></div>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- ==================================================================== -->
+  <!-- ===========================  PART I · PLAN  ========================= -->
+  <!-- ==================================================================== -->
+  <div class="part"><span class="roman">I</span><h2>Plan</h2><span class="tag-line">static · phase order · deps · gates</span></div>
+
+  <!-- 00 · Shape -->
+  <section>
+    <div class="sec-head"><span class="sec-num">00</span><h3>The shape</h3><span class="sec-note">3-agent review, reconciled</span></div>
+    <p class="lede">Type <code>@</code> in a review comment → pick a user → on submit the client sends <code>mentions:[userId]</code>.
+      The server (in the existing comment POST handlers, where the site + access are already resolved) intersects those ids
+      against who can actually see the site, drops self, and <b>fire-and-forget</b> writes one <code>notifications</code> row each.
+      The tagged user's <b>homepage</b> shows a bell badge + a dashboard inbox card, fed by the root loader; a click deep-links
+      into the viewer with the thread open. Delivery is the router revalidator — refresh, or a single 60s tick. No WebSockets.</p>
+    <blockquote><b>Scope calls (signed off):</b> the viewer/review route is <b>outside</b> the app shell, so the bell lives on
+      homepage/shell pages only — a notification click navigates <i>into</i> the viewer. Voice comments have no <code>@</code>
+      UI, so <b>mentions are text-comment only in v1</b>. Mentionable set <b>mirrors <code>checkAccess</code></b> (incl. group
+      shares), never a naive union.</blockquote>
+  </section>
+
+  <!-- 01 · Steps -->
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><h3>Steps</h3><span class="sec-note">deps &amp; gates enforced</span></div>
+
+    <div class="phase-h">Phase 1 — Data &amp; repo (the greenfield core)</div>
+    <ul class="items">
+      <li class="item" data-status="done" data-phase="1"><span class="stamp">done</span>
+        <div><div class="name"><span class="k">S1</span><span class="t"><code>notifications</code> table + <code>0009</code> migration + <code>_journal.json</code> + append harness MIGRATIONS + <code>seedNotification</code></span></div>
+          <div class="meta">data-model · <span class="r-low">low risk</span></div></div></li>
+      <li class="item" data-status="wip" data-phase="1"><span class="stamp">wip</span>
+        <div><div class="name"><span class="k">S2</span><span class="t"><code>db/notifications.ts</code>: <code>createNotifications</code> · <code>listNotifications→{items,unreadCount}</code> · <code>markRead(userId,ids?)</code></span></div>
+          <div class="meta">repo-layer · <span class="r-med">med risk</span> · <span class="dep">dep:1</span></div></div></li>
+      <li class="item gate" data-status="done" data-phase="1"><span class="stamp">done</span>
+        <div><div class="name"><span class="k">G1</span><span class="t">Gate P1 — thermo-nuclear → suite green → commit</span></div>
+          <div class="meta">/thermo-nuclear-code-quality-review on Phase-1 diff → findings → full test/typecheck/lint → commit "Phase 1: …"</div></div></li>
+    </ul>
+
+    <div class="phase-h">Phase 2 — Server wiring (the correctness surface)</div>
+    <ul class="items">
+      <li class="item" data-status="todo" data-phase="2"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S3</span><span class="t"><code>listMentionableUsers(site,callerId)</code> — visibility-branched, mirrors <code>checkAccess</code> (owner + user-shares + group-share members; +space members if <code>members</code>; +all if <code>team</code>)</span></div>
+          <div class="meta">db/repo.ts · <span class="r-high">high risk</span></div></div></li>
+      <li class="item" data-status="todo" data-phase="2"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S4</span><span class="t"><code>GET /api/sites/:space/:site/mentionable</code> → <code>UserLite[]</code> (reuses resolved site + <code>checkAccess</code>)</span></div>
+          <div class="meta">route · <span class="r-low">low risk</span> · <span class="dep">dep:3</span></div></div></li>
+      <li class="item" data-status="todo" data-phase="2"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S5</span><span class="t">Thread + reply bodies take <code>mentions[]</code>; intersect vs mentionable-set (dedup, drop self); <code>fireAndForget(createNotifications)</code> — never fail the comment; siteLabel from route params</span></div>
+          <div class="meta">routes/comments.ts · <span class="r-high">high risk</span> · <span class="dep">dep:2,3</span></div></div></li>
+      <li class="item" data-status="todo" data-phase="2"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S6</span><span class="t"><code>GET /api/notifications → {items,unreadCount}</code> · <code>POST /api/notifications/read {ids?}</code> (no unread-count endpoint)</span></div>
+          <div class="meta">routes/notifications.ts + index.ts mount · <span class="r-med">med risk</span> · <span class="dep">dep:2</span></div></div></li>
+      <li class="item gate" data-status="todo" data-phase="2"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">G2</span><span class="t">Gate P2 — thermo-nuclear → suite green → commit</span></div>
+          <div class="meta">/thermo-nuclear-code-quality-review on Phase-2 diff → findings → full suite → commit "Phase 2: …"</div></div></li>
+    </ul>
+
+    <div class="phase-h">Phase 3 — Composer autocomplete</div>
+    <ul class="items">
+      <li class="item" data-status="todo" data-phase="3"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S7</span><span class="t"><code>@</code>-autocomplete in <code>Composer.tsx</code>: pure <code>mentionQuery</code>/<code>insertMention</code> helpers + dropdown (kbd nav) fed by the site-scoped mentionable list</span></div>
+          <div class="meta">web · <span class="r-high">high risk</span> · <span class="dep">dep:4</span></div></div></li>
+      <li class="item" data-status="todo" data-phase="3"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S8</span><span class="t">Thread <code>mentions[]</code> through the whole submit contract: <code>onSubmit(body)→(body,mentions)</code> · Composer · ReviewRail · ThreadCard · viewer.createThread · <code>lib/comments.create/reply</code></span></div>
+          <div class="meta">web · <span class="r-med">med risk</span> · <span class="dep">dep:7</span></div></div></li>
+      <li class="item gate" data-status="todo" data-phase="3"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">G3</span><span class="t">Gate P3 — thermo-nuclear → suite green → commit</span></div>
+          <div class="meta">/thermo-nuclear-code-quality-review on Phase-3 diff → findings → full suite → commit "Phase 3: …"</div></div></li>
+    </ul>
+
+    <div class="phase-h">Phase 4 — Notification surfaces</div>
+    <ul class="items">
+      <li class="item" data-status="todo" data-phase="4"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S9</span><span class="t"><code>rootLoader</code>: notifications as a <b>deferred</b> promise (not awaited — don't block first paint), <b>skipped when logged out</b>; give <code>/</code> route <code>id:'root'</code></span></div>
+          <div class="meta">web/main.tsx · <span class="r-med">med risk</span> · <span class="dep">dep:6</span></div></div></li>
+      <li class="item" data-status="todo" data-phase="4"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S10</span><span class="t"><code>Bell</code> + unread badge in <code>AppShell</code> (<code>&lt;Await&gt;</code>); dropdown; item click → deep-link <code>?thread&amp;review=1</code> + mark read → revalidate; open → mark-all-read</span></div>
+          <div class="meta">web/AppShell.tsx · <span class="r-med">med risk</span> · <span class="dep">dep:9</span></div></div></li>
+      <li class="item" data-status="todo" data-phase="4"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S11</span><span class="t">Viewer deep-link contract: read <code>?thread</code> + <code>?review</code> → open review rail + focus/scroll that thread</span></div>
+          <div class="meta">web/routes/viewer.tsx · <span class="r-med">med risk</span> · <span class="dep">dep:10</span></div></div></li>
+      <li class="item" data-status="todo" data-phase="4"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S12</span><span class="t">Dashboard "Notifications" inbox card via <code>useRouteLoaderData('root')</code> (same deferred source)</span></div>
+          <div class="meta">web/routes/dashboard.tsx · <span class="r-low">low risk</span> · <span class="dep">dep:9</span></div></div></li>
+      <li class="item" data-status="todo" data-phase="4"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S13</span><span class="t">Light freshness: one <code>setInterval(revalidate, 60_000)</code> in AppShell (ref-callback, cleared on unmount) + dashboard <code>shouldRevalidate</code> so the tick skips its 4 heavy feeds</span></div>
+          <div class="meta">web · <span class="r-med">med risk</span> · <span class="dep">dep:9</span></div></div></li>
+      <li class="item gate" data-status="todo" data-phase="4"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">G4</span><span class="t">Gate P4 — thermo-nuclear → suite green → browser smoke → commit</span></div>
+          <div class="meta">/thermo-nuclear + full suite + local agent-browser smoke (bell badge, click→thread, inbox, 60s tick) → commit "Phase 4: …"</div></div></li>
+    </ul>
+
+    <blockquote><b>Phase-exit gate (every phase):</b> after a phase's steps land, run
+      <span class="mono">/thermo-nuclear-code-quality-review</span> scoped to that phase's diff. Triage findings — fix the
+      legit ones, note any deferred with rationale. Re-run the full suite; <b>all tests must pass and no unaddressed
+      finding may remain before the phase is done</b> and the next starts. Then commit the phase.</blockquote>
+  </section>
+
+  <!-- 02 · Test seams -->
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h3>Test seams</h3><span class="sec-note">land before the cases they gate</span></div>
+    <ul class="items">
+      <li class="item" data-status="done"><span class="stamp">done</span>
+        <div><div class="name"><span class="k">S-A</span><span class="t">Append <code>drizzle/0009</code> to harness <code>MIGRATIONS</code> + a <code>seedNotification</code> helper (like every other table)</span></div>
+          <div class="meta">unlocks C1–C4, C10–C16</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S-B</span><span class="t">Seed helpers for <code>spaceMembers</code> / <code>site_user_shares</code> / <code>site_group_shares</code> (reuse if present)</span></div>
+          <div class="meta">unlocks C6–C9, C12 (visibility + group-share matrix)</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S-C</span><span class="t">Export/inject the notify helper so a test can stub it to throw (prove the comment still commits)</span></div>
+          <div class="meta">unlocks C15 (fire-and-forget isolation)</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S-D</span><span class="t">Extract pure web helpers — <code>mentionQuery</code>, <code>insertMention</code>, <code>notificationHref</code> — out of React (bun-testable, no DOM)</span></div>
+          <div class="meta">unlocks C17–C19, C21</div></div></li>
+    </ul>
+    <blockquote><b>Harness limit (state it, don't fake it):</b> the S-D harness runs <span class="mono">bun:sqlite</span> with
+      <b>FK enforcement OFF</b>, so cascade / set-null on user/site delete (<b>C20</b>) is <b>not</b> runtime-testable —
+      verify it by <b>migration + schema inspection</b>, not a green test.</blockquote>
+  </section>
+
+  <!-- 03 · Test cases -->
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h3>Test cases</h3>
+      <span class="sec-note">new-module-spec · characterization · property-equivalence</span></div>
+
+    <div class="phase-h">Phase 1 — repo (api bun harness)</div>
+    <ul class="items">
+      <li class="item" data-status="done"><span class="stamp">done</span>
+        <div><div class="name"><span class="t">C1 · <code>createNotifications</code> inserts N rows; <code>listNotifications</code> returns them newest-first</span></div>
+          <div class="meta">P0 · new-module-spec · gated by S-A</div></div></li>
+      <li class="item" data-status="done"><span class="stamp">done</span>
+        <div><div class="name"><span class="t">C2 · <code>listNotifications.unreadCount</code> counts only <code>readAt IS NULL</code></span></div>
+          <div class="meta">P0 · new-module-spec · gated by S-A</div></div></li>
+      <li class="item" data-status="done"><span class="stamp">done</span>
+        <div><div class="name"><span class="t">C3 · <code>markRead(userId)</code> clears all; <code>markRead(userId,[id])</code> clears one</span></div>
+          <div class="meta">P0 · new-module-spec · gated by S-A</div></div></li>
+      <li class="item" data-status="done"><span class="stamp">done</span>
+        <div><div class="name"><span class="t">C4 · list/markRead are recipient-scoped — never touch another user's rows</span></div>
+          <div class="meta">P0 · new-module-spec · gated by S-A</div></div></li>
+    </ul>
+
+    <div class="phase-h">Phase 2 — access + server</div>
+    <ul class="items">
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C5 · mentionable <code>private</code> → owner + user-shares + group-share members only (plain space member excluded)</span></div>
+          <div class="meta">P0 · property-equivalence (mirror checkAccess) · gated by S-B</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C6 · mentionable <code>members</code> → adds space members</span></div>
+          <div class="meta">P1 · property-equivalence · gated by S-B</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C7 · mentionable <code>team</code> → all users; always excludes caller</span></div>
+          <div class="meta">P1 · property-equivalence · gated by S-B</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C8 · <code>GET /mentionable</code> → UserLite[]; 403 for a caller without site access</span></div>
+          <div class="meta">P1 · new-module-spec · gated by S-B</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C9 · POST thread <code>mentions:[valid]</code> → 1 row for target; <b>none for self</b> even if self is listed</span></div>
+          <div class="meta">P0 · new-module-spec · gated by S-A</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C10 · duplicate <code>@same</code> ids → exactly 1 notification (dedup)</span></div>
+          <div class="meta">P1 · new-module-spec · gated by S-A</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C11 · no-access mention dropped — private space-member gets 0; group-share member gets 1</span></div>
+          <div class="meta">P0 · new-module-spec · gated by S-A,S-B</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C12 · absent/empty <code>mentions</code> → 0 notifications, comment still created (no regression)</span></div>
+          <div class="meta">P0 · characterization · gated by S-A</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C13 · POST reply <code>mentions[]</code> → notification created</span></div>
+          <div class="meta">P1 · new-module-spec · gated by S-A</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C14 · voice thread/reply ignore mentions — 0 notifications (v1 hole, pinned)</span></div>
+          <div class="meta">P2 · characterization · gated by S-A</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C15 · notify failure does NOT fail the comment — comment persists + 2xx (fire-and-forget)</span></div>
+          <div class="meta">P0 · new-module-spec · gated by S-C</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C16 · <code>GET /api/notifications</code> caller-scoped + unreadCount; <code>POST /read</code> flips <code>readAt</code></span></div>
+          <div class="meta">P0 · new-module-spec · gated by S-A</div></div></li>
+    </ul>
+
+    <div class="phase-h">Phase 3 — composer (web bun test)</div>
+    <ul class="items">
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C17 · <code>mentionQuery(text,caret)</code> → active <code>@token</code> or null (trigger detection incl. mid-word / after-space)</span></div>
+          <div class="meta">P1 · new-module-spec · gated by S-D</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C18 · <code>insertMention(text,caret,user)</code> → replaces token with <code>@Name </code>, records id, caret after</span></div>
+          <div class="meta">P1 · new-module-spec · gated by S-D</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C19 · <code>create</code>/<code>reply</code> payload carries <code>mentions</code> when ids present, omits when none</span></div>
+          <div class="meta">P1 · characterization · gated by S-D</div></div></li>
+    </ul>
+
+    <div class="phase-h">Phase 4 — surfaces</div>
+    <ul class="items">
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C20 · schema inspection: recipient delete cascades; actor/site set-null (history survives) — <b>not</b> a harness test</span></div>
+          <div class="meta">P1 · schema-inspection (FK off in harness)</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C21 · <code>notificationHref(n)</code> → <code>/:space/:site/&lt;path&gt;?thread=&lt;id&gt;&amp;review=1</code></span></div>
+          <div class="meta">P1 · new-module-spec · gated by S-D</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C22 · browser smoke: badge shows count → click navigates + opens thread + marks read; inbox lists; 60s tick refreshes without re-fetching dashboard feeds</span></div>
+          <div class="meta">P0 · agent-browser smoke (not bun)</div></div></li>
+    </ul>
+  </section>
+
+  <!-- 04 · Strategy -->
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><h3>Strategy</h3></div>
+    <ol class="prose">
+      <li>Greenfield feature → most cases are <b>new-module-spec</b> (drive the new abstraction into existence), not red-now-bug. Per step: <b>write the spec red → minimal impl → green.</b> Don't batch.</li>
+      <li><b>Seam tests land with their seam</b> — S-A (migration+seed) before any P1/P2 case; S-B (share/member seeders) before the mentionable matrix; S-C before the fire-and-forget isolation case; S-D before the web pure helpers.</li>
+      <li>The <b>mentionable set</b> is the one place to over-test: it's a <b>property-equivalence</b> pin against <code>checkAccess</code> across all four visibilities + both share kinds. Get C5–C7 green before wiring S5.</li>
+      <li><b>Fire-and-forget</b> (C15) is a correctness invariant, not a nicety: a mention-write blowing up must never 500 an otherwise-valid comment. Prove it with an injected throwing notifier.</li>
+      <li>UI (P4) is mostly non-bun — extract the <b>pure</b> bits (href builder, token parser) to unit-test, and cover the wiring with one <b>agent-browser smoke</b> (C22) at the P4 gate.</li>
+      <li><b>End of each phase: the thermo-nuclear gate</b> → fix findings → full suite green → one commit scoped to the phase.</li>
+    </ol>
+  </section>
+
+  <!-- 05 · Authoring order -->
+  <section>
+    <div class="sec-head"><span class="sec-num">05</span><h3>Authoring order</h3></div>
+    <ol class="prose">
+      <li>Seam <b>S-A</b> (0009 migration + harness MIGRATIONS + <code>seedNotification</code>) → C1–C4 → impl <code>db/notifications.ts</code>.</li>
+      <li>Seam <b>S-B</b> (member/share seeders) → mentionable equivalence pins C5–C8 → impl <code>listMentionableUsers</code>.</li>
+      <li>C9–C13, C16 (route reds) → impl S5/S6. Seam <b>S-C</b> → C15 (fire-and-forget). C14 pins the voice hole.</li>
+      <li>Seam <b>S-D</b> (extract pure web helpers) → C17–C19, C21.</li>
+      <li>C20 as a schema-inspection assertion (documented, not a harness test).</li>
+      <li>Wire P4 surfaces → C22 agent-browser smoke at the P4 gate.</li>
+    </ol>
+  </section>
+
+  <!-- ==================================================================== -->
+  <!-- =========================  PART II · PROGRESS  ====================== -->
+  <!-- ==================================================================== -->
+  <div class="part"><span class="roman">II</span><h2>Progress</h2><span class="tag-line">live · same items · redeployed each tick</span></div>
+
+  <!-- 06 · Status board (auto-derived from the Plan's data-status items) -->
+  <section>
+    <div class="sec-head"><span class="sec-num">06</span><h3>Status board</h3><span class="sec-note">per-phase completion</span></div>
+    <div class="nowbar"><span class="lbl">In flight</span><b id="now-slice">—</b></div>
+    <div class="board" id="board"><!-- rows injected from data-phase step items --></div>
+  </section>
+
+  <!-- 07 · Journal -->
+  <section>
+    <div class="sec-head"><span class="sec-num">07</span><h3>Journal</h3><span class="sec-note">newest last · absolute dates</span></div>
+    <ul class="journal">
+      <li><span class="date">2026-07-09</span><span class="badge">created</span>
+        <span>Worktree <code>feat/mention-notifications</code> cut. Plan drafted, 3-agent adversarial review (self · codex · cursor) reconciled &amp; signed off, TDD cases designed. Ledger deployed to Glance. 0 of 17 landed.</span></li>
+      <li><span class="date">2026-07-09</span><span class="badge">S1</span>
+        <span><code>notifications</code> table + <code>0009</code> migration landed; harness <code>MIGRATIONS</code> + <code>seedNotification</code> wired (S-A). Existing db suite green against the new schema.</span></li>
+      <li><span class="date">2026-07-09</span><span class="badge">S2</span>
+        <span><code>db/notifications.ts</code>: <code>createNotifications</code> (batch) · <code>listNotifications</code>→{items,unreadCount} · <code>markRead</code> (recipient-scoped, idempotent). TDD C1–C4 green; full api suite 432 pass.</span></li>
+      <li><span class="date">2026-07-09</span><span class="badge">G1</span>
+        <span>Gate P1 — thermo-nuclear review PASS (no blockers; inline actor join over the comments name-map, events durability mirrored). Full api suite 432 pass. Phase 1 committed. 3 of 17 landed.</span></li>
+    </ul>
+  </section>
+
+</main>
+
+<footer class="wrap">One page · Plan + Progress · edited in place &amp; redeployed each iteration via <b>glance deploy</b></footer>
+
+<script>
+  // Single source of truth: the Plan's data-status items drive every count + the Part II board.
+  (function(){
+    var steps = Array.prototype.slice.call(document.querySelectorAll('li.item[data-phase]'));
+    var done = steps.filter(function(li){return li.getAttribute('data-status')==='done'}).length;
+    var d=document.getElementById('done-count'), t=document.getElementById('total-count');
+    if(d) d.textContent=done; if(t) t.textContent=steps.length;
+    var wip = steps.filter(function(li){return li.getAttribute('data-status')==='wip'});
+    var now=document.getElementById('now-slice');
+    if(now) now.textContent = wip.length ? wip.map(function(li){
+      var k=li.querySelector('.k'), n=li.querySelector('.t');
+      return (k?k.textContent+' ':'')+(n?n.textContent:'');
+    }).join('  ·  ') : (done===steps.length ? 'complete' : 'idle — next slice pending');
+    var byPhase={};
+    steps.forEach(function(li){var p=li.getAttribute('data-phase');(byPhase[p]=byPhase[p]||[]).push(li)});
+    var board=document.getElementById('board');
+    var names={'1':'Data &amp; repo','2':'Server wiring','3':'Composer','4':'Surfaces'};
+    if(board) Object.keys(byPhase).sort().forEach(function(p){
+      var arr=byPhase[p], dn=arr.filter(function(li){return li.getAttribute('data-status')==='done'}).length;
+      var pct=Math.round(100*dn/arr.length);
+      var row=document.createElement('div'); row.className='prow';
+      row.innerHTML='<span class="plabel">P'+p+' · '+(names[p]||'')+'</span>'+
+        '<div class="bar"><i style="width:'+pct+'%"></i></div>'+
+        '<span class="pct">'+pct+'%</span>';
+      board.appendChild(row);
+    });
+  })();
+</script>
+</body>
+</html>
