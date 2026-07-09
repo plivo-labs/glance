@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { type LoaderFunctionArgs, useLoaderData, useParams } from 'react-router'
+import { type LoaderFunctionArgs, useLoaderData, useParams, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import { api, ApiError } from '@/lib/api'
 import { isAudioFile } from '@/lib/audio'
@@ -238,6 +238,28 @@ function Viewer() {
     },
     [contentOrigin],
   )
+
+  // Deep-link contract (a notification click lands here): `?review=1` opens the review rail and
+  // `?thread=<id>` focuses that thread — scroll the iframe to its anchor + its rail card into view,
+  // once the frame is loaded and that file's threads are in. `filePath` in the notification's URL
+  // path ensures the right file (and thus the thread) is what loads. Fires at most once.
+  const [searchParams] = useSearchParams()
+  const wantReview = searchParams.get('review') === '1'
+  const deepLinkThreadId = searchParams.get('thread')
+  const deepLinkFocused = useRef(false)
+
+  useEffect(() => {
+    if (wantReview) setReview(true)
+  }, [wantReview])
+
+  useEffect(() => {
+    if (deepLinkFocused.current || !deepLinkThreadId || !review || !loaded) return
+    const target = threads.find((t) => t.id === deepLinkThreadId)
+    if (!target) return
+    deepLinkFocused.current = true
+    focusAnchor(target)
+    document.getElementById(`thread-${target.id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  }, [deepLinkThreadId, review, loaded, threads, focusAnchor])
 
   async function createThread(body: string, mentions: string[]) {
     if (!filePath || !composing) return

@@ -260,22 +260,22 @@
 
     <div class="phase-h">Phase 4 — Notification surfaces</div>
     <ul class="items">
-      <li class="item" data-status="todo" data-phase="4"><span class="stamp">todo</span>
+      <li class="item" data-status="done" data-phase="4"><span class="stamp">done</span>
         <div><div class="name"><span class="k">S9</span><span class="t"><code>rootLoader</code>: notifications as a <b>deferred</b> promise (not awaited — don't block first paint), <b>skipped when logged out</b>; give <code>/</code> route <code>id:'root'</code></span></div>
           <div class="meta">web/main.tsx · <span class="r-med">med risk</span> · <span class="dep">dep:6</span></div></div></li>
-      <li class="item" data-status="todo" data-phase="4"><span class="stamp">todo</span>
+      <li class="item" data-status="done" data-phase="4"><span class="stamp">done</span>
         <div><div class="name"><span class="k">S10</span><span class="t"><code>Bell</code> + unread badge in <code>AppShell</code> (<code>&lt;Await&gt;</code>); dropdown; item click → deep-link <code>?thread&amp;review=1</code> + mark read → revalidate; open → mark-all-read</span></div>
           <div class="meta">web/AppShell.tsx · <span class="r-med">med risk</span> · <span class="dep">dep:9</span></div></div></li>
-      <li class="item" data-status="todo" data-phase="4"><span class="stamp">todo</span>
+      <li class="item" data-status="done" data-phase="4"><span class="stamp">done</span>
         <div><div class="name"><span class="k">S11</span><span class="t">Viewer deep-link contract: read <code>?thread</code> + <code>?review</code> → open review rail + focus/scroll that thread</span></div>
           <div class="meta">web/routes/viewer.tsx · <span class="r-med">med risk</span> · <span class="dep">dep:10</span></div></div></li>
-      <li class="item" data-status="todo" data-phase="4"><span class="stamp">todo</span>
+      <li class="item" data-status="done" data-phase="4"><span class="stamp">done</span>
         <div><div class="name"><span class="k">S12</span><span class="t">Dashboard "Notifications" inbox card via <code>useRouteLoaderData('root')</code> (same deferred source)</span></div>
           <div class="meta">web/routes/dashboard.tsx · <span class="r-low">low risk</span> · <span class="dep">dep:9</span></div></div></li>
-      <li class="item" data-status="todo" data-phase="4"><span class="stamp">todo</span>
+      <li class="item" data-status="done" data-phase="4"><span class="stamp">done</span>
         <div><div class="name"><span class="k">S13</span><span class="t">Light freshness: one <code>setInterval(revalidate, 60_000)</code> in AppShell (ref-callback, cleared on unmount) + dashboard <code>shouldRevalidate</code> so the tick skips its 4 heavy feeds</span></div>
           <div class="meta">web · <span class="r-med">med risk</span> · <span class="dep">dep:9</span></div></div></li>
-      <li class="item gate" data-status="todo" data-phase="4"><span class="stamp">todo</span>
+      <li class="item gate" data-status="done" data-phase="4"><span class="stamp">done</span>
         <div><div class="name"><span class="k">G4</span><span class="t">Gate P4 — thermo-nuclear → suite green → browser smoke → commit</span></div>
           <div class="meta">/thermo-nuclear + full suite + local agent-browser smoke (bell badge, click→thread, inbox, 60s tick) → commit "Phase 4: …"</div></div></li>
     </ul>
@@ -390,7 +390,7 @@
       <li class="item" data-status="done"><span class="stamp">done</span>
         <div><div class="name"><span class="t">C21 · <code>notificationHref(n)</code> → <code>/:space/:site/&lt;path&gt;?thread=&lt;id&gt;&amp;review=1</code></span></div>
           <div class="meta">P1 · new-module-spec · gated by S-D</div></div></li>
-      <li class="item" data-status="todo"><span class="stamp">todo</span>
+      <li class="item" data-status="done"><span class="stamp">done</span>
         <div><div class="name"><span class="t">C22 · browser smoke: badge shows count → click navigates + opens thread + marks read; inbox lists; 60s tick refreshes without re-fetching dashboard feeds</span></div>
           <div class="meta">P0 · agent-browser smoke (not bun)</div></div></li>
     </ul>
@@ -452,6 +452,10 @@
         <span>Gate P2 — thermo-nuclear + independent adversarial review: security invariant (no mention can notify a user without site access) holds on all reachable paths. Hardened <code>listMentionableUsers</code> with an explicit archived→[] branch (finding #1) + reconciled the docstring for the intentional superadmin/single-domain deviations. Suite 447 pass. Phase 2 committed. 8 of 17 landed.</span></li>
       <li><span class="date">2026-07-09</span><span class="badge">S7–S8</span>
         <span>Composer autocomplete: pure <code>mentionQuery</code>/<code>insertMention</code>/<code>filterMentions</code>/<code>notificationHref</code> in <code>lib/mentions.ts</code> (C17/C18/C21) + <code>@</code>-dropdown (kbd nav, lazy site-scoped fetch). Submit contract <code>onSubmit(body,mentions)</code> threaded through Composer·ReviewRail·ThreadCard·viewer·<code>comments.create/reply</code> via pure <code>withMentions</code> (C19). Voice path unchanged. G3 review PASS (pure/impure split clean). Suite 465 pass, typecheck + lint clean. Phase 3 committed. 11 of 17 landed.</span></li>
+      <li><span class="date">2026-07-09</span><span class="badge">S9–S13</span>
+        <span>Notification surfaces: root loader carries a DEFERRED notifications promise (skipped logged-out; <code>id:'root'</code>) · header <code>Bell</code> + unread badge (open → mark-all-read) · click → deep-link <code>?thread&amp;review=1</code> + mark one read · dashboard inbox card via <code>useRouteLoaderData('root')</code> · 60s <code>revalidate</code> tick with a <code>notifPoll</code> flag so the dashboard's <code>shouldRevalidate</code> skips its 4 heavy feeds. <code>RootData</code> relocated out of the entry file.</span></li>
+      <li><span class="date">2026-07-09</span><span class="badge">G4</span>
+        <span>Gate P4 — thermo-nuclear PASS + LIVE browser smoke (C22): full local stack, 0009 applied via real wrangler d1, bootstrapped session; bell badge showed the count, inbox listed newest-first, opening the bell marked-all-read (unreadCount→0), and clicking navigated to <code>/sam/demo/about.html?review=1</code>. Production <code>build:web</code> clean. Suite 465 pass, typecheck + lint green. Not browser-verified (route/unit-covered instead): in-iframe thread focus + the composer @-dropdown (need a fully hosted site) and the 60s no-refetch timing. Phase 4 committed. 17 of 17 landed — feature complete.</span></li>
     </ul>
   </section>
 

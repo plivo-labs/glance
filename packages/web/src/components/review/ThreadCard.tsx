@@ -35,7 +35,8 @@ export function ThreadCard({
   }
 
   return (
-    <div className="rounded-lg border bg-card p-3 text-card-foreground">
+    // id lets a notification deep-link scroll this card into view (viewer S11).
+    <div id={`thread-${thread.id}`} className="rounded-lg border bg-card p-3 text-card-foreground">
       <div className="mb-2 flex items-start justify-between gap-2">
         {thread.anchorType === 'element' && thread.anchor ? (
           <button type="button" onClick={() => onFocusAnchor(thread)} className="text-left hover:opacity-80">

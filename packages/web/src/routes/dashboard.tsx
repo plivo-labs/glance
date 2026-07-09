@@ -3,14 +3,16 @@ import {
   Await,
   Link,
   Navigate,
+  type ShouldRevalidateFunctionArgs,
   useAsyncError,
   useLoaderData,
   useLocation,
   useNavigate,
   useRevalidator,
+  useRouteLoaderData,
   useSearchParams,
 } from 'react-router'
-import { ChevronDown, Download, ExternalLink, Mic, Plus, Rocket, Upload } from 'lucide-react'
+import { Bell, ChevronDown, Download, ExternalLink, Mic, Plus, Rocket, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 import { CopyButton } from '@/components/CopyButton'
 import { DeployCard } from '@/components/DeployCard'
@@ -49,7 +51,12 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useOpenNotification } from '@/components/NotificationsBell'
 import { api, ApiError } from '@/lib/api'
+import { cn } from '@/lib/utils'
+import { notifPoll } from '@/lib/notifPoll'
+import type { NotificationList, RootData } from '@/lib/notifications'
+import { timeAgo } from '@/lib/time'
 import type { SiteSummary, SpaceSummary, TeamUpload } from '@/lib/types'
 
 // Stream the feeds instead of blocking the route on them: the shell paints at root-loader time,
@@ -63,6 +70,14 @@ export function loader() {
     spaces: api.get<SpaceSummary[]>('/api/spaces/mine'),
     team: api.get<TeamUpload[]>('/api/sites/team'),
   }
+}
+
+// The 60s notification poll revalidates the ROOT loader (notifications); this route's 4 feeds are
+// heavy and don't change on that cadence, so skip them for a poll-flagged revalidation. Every other
+// trigger (navigation, a mutation's revalidate()) refreshes normally.
+export function shouldRevalidate(arg: ShouldRevalidateFunctionArgs): boolean {
+  if (notifPoll.consume()) return false
+  return arg.defaultShouldRevalidate
 }
 
 // Sites shared with me — same table shell as Your sites, minus the owner-only actions.
@@ -107,6 +122,7 @@ export function Component() {
 
   return (
     <div className="space-y-10">
+      <NotificationsInbox />
       <Suspense fallback={<ToolbarSkeleton />}>
         <Await resolve={spaces} errorElement={<FeedError what="the deploy form" />}>
           {(spaces) => <DashboardToolbar spaces={spaces} />}
@@ -120,6 +136,63 @@ export function Component() {
         </Await>
       </Suspense>
     </div>
+  )
+}
+
+// Homepage "Notifications" inbox. The notifications live on the ROOT loader (deferred), which this
+// route's own loader can't see — so read them via useRouteLoaderData('root'). Hidden entirely when
+// there's nothing to show, so a caught-up dashboard stays clean.
+function NotificationsInbox() {
+  const root = useRouteLoaderData('root') as RootData | undefined
+  if (!root) return null
+  return (
+    <Suspense fallback={null}>
+      <Await resolve={root.notifications} errorElement={null}>
+        {(data: NotificationList) => <NotificationsInboxCard data={data} />}
+      </Await>
+    </Suspense>
+  )
+}
+
+function NotificationsInboxCard({ data }: { data: NotificationList }) {
+  const open = useOpenNotification()
+  if (data.items.length === 0) return null
+  return (
+    <Card className="gap-0 py-0">
+      <div className="flex items-center gap-2 border-b px-4 py-3">
+        <Bell className="size-4 text-muted-foreground" />
+        <h2 className="font-medium text-sm">Notifications</h2>
+        {data.unreadCount > 0 && (
+          <span className="rounded-full bg-primary/15 px-2 py-0.5 font-mono font-semibold text-[11px] text-primary">
+            {data.unreadCount} new
+          </span>
+        )}
+      </div>
+      <ul className="divide-y">
+        {data.items.slice(0, 5).map((n) => (
+          <li key={n.id}>
+            <button
+              type="button"
+              onClick={() => open(n)}
+              className={cn(
+                'flex w-full items-start gap-2 px-4 py-2.5 text-left text-sm hover:bg-accent/50',
+                !n.read && 'bg-primary/5',
+              )}
+            >
+              <span className={cn('mt-1.5 size-1.5 shrink-0 rounded-full', n.read ? 'bg-transparent' : 'bg-primary')} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">
+                  <span className="font-medium">{n.actorName ?? 'Someone'}</span> mentioned you
+                  {n.siteLabel ? ` in ${n.siteLabel}` : ''}
+                </span>
+                {n.snippet && <span className="block truncate text-muted-foreground text-xs">{n.snippet}</span>}
+                <span className="block text-muted-foreground text-xs">{timeAgo(n.createdAt)}</span>
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </Card>
   )
 }
 
