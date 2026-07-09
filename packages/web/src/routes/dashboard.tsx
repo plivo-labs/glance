@@ -10,7 +10,7 @@ import {
   useRevalidator,
   useSearchParams,
 } from 'react-router'
-import { ChevronDown, Download, ExternalLink, Mic, Plus, Rocket, Upload } from 'lucide-react'
+import { ChevronDown, Download, ExternalLink, Mic, Plus, Rocket, Terminal, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 import { CopyButton } from '@/components/CopyButton'
 import { DeployCard } from '@/components/DeployCard'
@@ -112,6 +112,7 @@ export function Component() {
           {(spaces) => <DashboardToolbar spaces={spaces} />}
         </Await>
       </Suspense>
+      <AgentSetup />
       <Suspense fallback={<TabsSkeleton />}>
         <Await resolve={tabsData} errorElement={<FeedError what="your sites" />}>
           {([sites, shared, spaces, team]) => (
@@ -318,6 +319,33 @@ function DashboardToolbar({ spaces }: { spaces: SpaceSummary[] }) {
       </div>
       <NewMenu spaces={spaces} />
     </div>
+  )
+}
+
+// Onboarding banner under the hero: the one-liner installs the CLI *and* the agent skill, so a user
+// can hand it to their coding agent (Claude, Codex, Cursor) and start shipping from the terminal.
+// Pointed at THIS deployment's origin (mirrors GET /api/install), same as InstallDialog — no feed
+// needed, so it renders outside the Suspense boundaries.
+function AgentSetup() {
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+  const installCmd = `curl -fsSL ${origin}/api/install | sh`
+  return (
+    <Card className="gap-4 border-primary/20 bg-primary/[0.03] p-5">
+      <div className="space-y-1">
+        <div className="flex items-center gap-2">
+          <Terminal className="size-4 text-primary" />
+          <h2 className="font-medium">Give this to your agent</h2>
+        </div>
+        <p className="text-muted-foreground text-sm">
+          Paste it into Claude, Codex, or Cursor — it installs the CLI and the glance skill, so your
+          agent can ship sites and read review comments straight from your terminal.
+        </p>
+      </div>
+      <div className="flex items-center gap-2 rounded-md border bg-background/60 p-2">
+        <code className="min-w-0 flex-1 truncate font-mono text-sm">{installCmd}</code>
+        <CopyButton text={installCmd} label="Copy" copiedMessage="Install command copied" />
+      </div>
+    </Card>
   )
 }
 
