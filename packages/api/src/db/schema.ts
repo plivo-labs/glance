@@ -42,6 +42,12 @@ export const sites = sqliteTable(
       .default('team'),
     status: text('status', { enum: ['active', 'archived'] }).notNull().default('active'),
     ownerId: text('ownerId').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    // Monotonic content-revision counter, bumped on every REPLACE. Editor replaces MUST pass the
+    // version they pulled (CAS: UPDATE … WHERE contentVersion=?) so a stale redeploy 409s instead
+    // of clobbering a newer one; owner replaces treat it as advisory. lastReplacedBy records who
+    // last swapped the bytes (owner id or an editor's user id) — read-only provenance today.
+    contentVersion: integer('contentVersion').notNull().default(0),
+    lastReplacedBy: text('lastReplacedBy'),
     createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
   },
   (t) => [unique('sites_space_slug_unq').on(t.spaceId, t.slug), index('sites_owner').on(t.ownerId)],
@@ -76,6 +82,10 @@ export const siteUserShares = sqliteTable(
   {
     siteId: text('siteId').notNull().references(() => sites.id, { onDelete: 'cascade' }),
     userId: text('userId').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    // Grant tier for THIS user on THIS site. 'viewer' = read-only (the long-standing share
+    // semantics, hence the default). 'editor' = may content-replace-redeploy (never rename/move/
+    // delete/visibility). Group shares stay view-only — there is no editor row on siteGroupShares.
+    role: text('role', { enum: ['viewer', 'editor'] }).notNull().default('viewer'),
   },
   (t) => [primaryKey({ columns: [t.siteId, t.userId] }), index('site_user_shares_user').on(t.userId)],
 )
