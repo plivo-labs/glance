@@ -151,6 +151,25 @@ export async function resolveIsShared(db: DrizzleD1Database, siteId: string, use
   return direct.length > 0 || viaGroup.length > 0
 }
 
+/**
+ * The user's DIRECT-share role on a site, or null if they have no direct share.
+ * Only direct `site_user_shares` rows carry a role — a group share (`site_group_shares`) is never
+ * an editor grant, so a group-only reacher resolves to null even though `resolveIsShared` is true.
+ * This is the edit-capability oracle: 'editor' → may content-replace; 'viewer'/null → may not.
+ */
+export async function resolveShareRole(
+  db: DrizzleD1Database,
+  siteId: string,
+  userId: string,
+): Promise<'viewer' | 'editor' | null> {
+  const row = await db
+    .select({ role: siteUserShares.role })
+    .from(siteUserShares)
+    .where(and(eq(siteUserShares.siteId, siteId), eq(siteUserShares.userId, userId)))
+    .limit(1)
+  return row[0]?.role ?? null
+}
+
 /** Set of space ids the user is a member of (mirrors `sharedSiteIds` for the search candidate query). */
 export async function memberSpaceIds(db: DrizzleD1Database, userId: string): Promise<Set<string>> {
   const rows = await db
@@ -173,30 +192,44 @@ export async function sharedSiteIds(db: DrizzleD1Database, userId: string): Prom
   return new Set([...direct, ...viaGroup].map((r) => r.siteId))
 }
 
-/** Current explicit share lists for a site. */
+/** A per-user share as stored: the user id plus their grant tier. */
+export type ShareUser = { userId: string; role: 'viewer' | 'editor' }
+
+/**
+ * Current explicit share lists for a site. Returns BOTH the role-aware `users` list (new callers)
+ * and the flat `userIds`/`groupIds` (the legacy shape the live web dialog still reads) — a superset,
+ * so no existing consumer breaks. Groups are always view-only (no role column on site_group_shares).
+ */
 export async function listSiteShares(
   db: DrizzleD1Database,
   siteId: string,
-): Promise<{ userIds: string[]; groupIds: string[] }> {
-  const u = await db.select({ id: siteUserShares.userId }).from(siteUserShares).where(eq(siteUserShares.siteId, siteId))
+): Promise<{ userIds: string[]; groupIds: string[]; users: ShareUser[] }> {
+  const u = await db
+    .select({ id: siteUserShares.userId, role: siteUserShares.role })
+    .from(siteUserShares)
+    .where(eq(siteUserShares.siteId, siteId))
   const g = await db
     .select({ id: siteGroupShares.spaceId })
     .from(siteGroupShares)
     .where(eq(siteGroupShares.siteId, siteId))
-  return { userIds: u.map((r) => r.id), groupIds: g.map((r) => r.id) }
+  return {
+    userIds: u.map((r) => r.id),
+    groupIds: g.map((r) => r.id),
+    users: u.map((r) => ({ userId: r.id, role: r.role })),
+  }
 }
 
-/** Replace a site's entire share set atomically (clear both tables, then re-insert). */
+/** Replace a site's entire share set atomically (clear both tables, then re-insert with roles). */
 export async function replaceSiteShares(
   db: DrizzleD1Database,
   siteId: string,
-  userIds: string[],
+  users: ShareUser[],
   groupIds: string[],
 ): Promise<void> {
   const ops = [
     db.delete(siteUserShares).where(eq(siteUserShares.siteId, siteId)),
     db.delete(siteGroupShares).where(eq(siteGroupShares.siteId, siteId)),
-    ...userIds.map((userId) => db.insert(siteUserShares).values({ siteId, userId })),
+    ...users.map(({ userId, role }) => db.insert(siteUserShares).values({ siteId, userId, role })),
     ...groupIds.map((spaceId) => db.insert(siteGroupShares).values({ siteId, spaceId })),
   ]
   // D1 runs the batch in a single atomic transaction.

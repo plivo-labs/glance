@@ -116,6 +116,15 @@ describe('P0-4/P0-3: modify authority is distinct from view authority', () => {
     expect(dataCapsFor({ id: 'userB', role: 'member' }, { ownerId: 'userA' })).toEqual(['read', 'create'])
   })
 
+  // editor-share residual-risk pin (confused-deputy, S9): dataCapsFor keys on ownerId ONLY, so a
+  // designated editor of someone else's site is indistinguishable from any other non-owner viewer —
+  // it can never mint write/read_all. This is the guard: if a future change threads share-role into
+  // cap minting, an editor could read-all/delete the OWNER's glance.db docs. Owner path unchanged.
+  test('dataCaps.editor.pin: an editor-share grantee still gets read+create only; owner unchanged', () => {
+    expect(dataCapsFor({ id: 'editor', role: 'member' }, { ownerId: 'owner' })).toEqual(['read', 'create'])
+    expect(dataCapsFor({ id: 'owner', role: 'member' }, { ownerId: 'owner' })).toEqual(['read', 'create', 'write', 'read_all'])
+  })
+
   test('ATTACK: a viewer token cannot modify — put/delete → 403; legacy read-only also blocked from create', async () => {
     const { app, tokens } = await scenario()
     expect((await req(app, tokens.viewerB, 'PUT', '/posts/x', { x: 1 })).status).toBe(403)

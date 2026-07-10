@@ -36,6 +36,9 @@ export interface SiteSummary {
   visibility: Visibility
   status: SiteStatus
   audio?: boolean // every file is audio — a recording/voice site; shows a Mic badge
+  // The caller's direct-share role on this site — set on the "Shared with me" feed so an editor row
+  // shows a "You can edit" badge. Absent on owned/team feeds.
+  role?: ShareRole
   url: string
   createdAt: string
 }
@@ -65,9 +68,13 @@ export interface UserLite {
   name: string | null
 }
 
+export type ShareRole = 'viewer' | 'editor'
+
 export interface ShareSet {
   userIds: string[]
   groupIds: string[]
+  // Role-aware user list (superset of userIds). Present on the new API; a viewer is the default.
+  users: { id: string; role: ShareRole }[]
 }
 
 export type SlugExists = { exists: false } | { exists: true; owned: boolean }

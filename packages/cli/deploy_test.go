@@ -14,13 +14,14 @@ import (
 )
 
 type deployState struct {
-	existsBody    string // response body for the /exists endpoint
-	existsStatus  int    // status for /exists; 0 -> 200
-	spacesMineHit bool
-	uploadPath    string
-	uploadQuery   string
-	visibility    string
-	files         map[string]string // rel filename -> contents (unstripped)
+	existsBody      string // response body for the /exists endpoint
+	existsStatus    int    // status for /exists; 0 -> 200
+	spacesMineHit   bool
+	uploadPath      string
+	uploadQuery     string
+	visibility      string
+	expectedVersion string            // the expectedVersion form field, if sent
+	files           map[string]string // rel filename -> contents (unstripped)
 }
 
 func newDeployServer(t *testing.T) (*httptest.Server, *deployState) {
@@ -54,6 +55,8 @@ func newDeployServer(t *testing.T) (*httptest.Server, *deployState) {
 					st.files[fn] = string(data)
 				} else if p.FormName() == "visibility" {
 					st.visibility = string(data)
+				} else if p.FormName() == "expectedVersion" {
+					st.expectedVersion = string(data)
 				}
 			}
 			io.WriteString(w, `{"url":"https://g`+strings.TrimPrefix(r.URL.Path, "/api/upload")+`"}`)
