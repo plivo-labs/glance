@@ -13,6 +13,7 @@ import { auth } from './routes/auth'
 import { comments } from './routes/comments'
 import { dataApi, dataToken } from './routes/data'
 import { notifications } from './routes/notifications'
+import { whatsNew } from './routes/whats-new'
 import { sites } from './routes/sites'
 import { spaces } from './routes/spaces'
 import { upload } from './routes/upload'
@@ -100,6 +101,7 @@ app.route('/api/upload', upload)
 app.route('/api/data-token', dataToken)
 app.route('/api/users', users)
 app.route('/api/notifications', notifications)
+app.route('/api/whats-new', whatsNew)
 app.route('/api/admin', admin)
 
 export default app

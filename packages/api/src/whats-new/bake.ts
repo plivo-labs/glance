@@ -85,7 +85,7 @@ export function parseFrontmatter(raw: string): { data: Record<string, string>; b
 /** A canonical release date is EXACTLY what `Date` round-trips to — `…SS.sssZ`. This makes plain
  *  lexicographic comparison a valid date order (offsets/date-only/variable-precision would break
  *  it: `.001Z` sorts before a bare `Z`). Rejects invalid calendar dates for free. */
-function isCanonicalDate(v: string): boolean {
+export function isCanonicalDate(v: string): boolean {
   const d = new Date(v)
   return !Number.isNaN(d.getTime()) && d.toISOString() === v
 }
