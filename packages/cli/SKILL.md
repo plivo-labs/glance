@@ -55,7 +55,23 @@ Device-code flow. If no browser opener is available (SSH/headless), open the pri
 ```bash
 glance deploy report.html                                  # → /<you>/report in your personal space
 glance deploy ./dist --space docs --name api-reference --visibility members
+glance deploy ./call-feedback                              # folder w/ index.html + audio/*.wav → a page with players
+glance deploy clip.mp3                                     # a single audio file → a playable audio page
 ```
+
+### Hosting media (audio, images, PDFs, fonts)
+A site is just its files, so any static asset in the folder is hosted and served with the correct type — images (png/jpg/gif/webp/svg), PDFs, fonts, and **audio** (mp3, wav, m4a, ogg, flac, aac, webm). Reference them from your HTML with **relative paths** and they resolve against the page:
+
+```html
+<audio src="audio/clip.mp3" controls></audio>
+<img src="pic.png">
+```
+
+- **Audio streams with seeking** — audio is served with HTTP byte-range support, so `<audio>` players can scrub and play without downloading the whole file first.
+- **A lone audio file is playable on its own** — `glance deploy clip.mp3` (no HTML) opens as a real audio player.
+- **Limits**: 20 MB per file, 200 files per deploy.
+
+The web app deploys the same way — drop a folder (or loose files, including a single mp3) onto the dashboard, or record audio right there — with the same result as `glance deploy`.
 
 ### delete
 Argument must be `space/slug` (with the slash), e.g. `glance delete docs/api-reference`.
