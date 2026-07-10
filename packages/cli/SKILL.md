@@ -134,7 +134,17 @@ glance deploy ./api-reference                            # redeploys to the SAME
 - A later `glance deploy <dir>` reads that marker to target the same site automatically (no need to re-type `--space`/`--name`) and passes the pulled version so a stale redeploy is safely refused instead of clobbering someone else's newer change.
 - Needs edit rights: `--pull` works for a site you **own** or have been given **edit** access to. A view-only share can't pull the source.
 
-**Editor round-trip** — if someone shared a site with you as an *editor*, this is the whole loop with no browser and no git: `glance read <their-space>/<site> --pull ./site` → edit `./site` → `glance deploy ./site`. You can update that site's content even though you don't own it and aren't in its space.
+**Editor round-trip** — if someone shared a site with you as an *editor*, this is the whole loop with no browser and no git:
+
+```
+glance read alice/roadmap --pull ./roadmap   # pull the source (records version, e.g. 7)
+# …add or remove content sections in ./roadmap…
+glance deploy ./roadmap                       # redeploys to the same site, sends the pulled version
+```
+
+You can update that site's content even though you don't own it and aren't in its space. If someone else redeployed since your pull, the deploy is refused as stale (409) — re-run the `--pull` to get the current version, reapply your change, and deploy again.
+
+**Editing etiquette — content, not chrome.** As an editor you own the *content*, not the site's look. Add or remove sections, update copy, correct data — but keep the owner's styling and layout intact: don't restyle, re-theme, change the CSS/structure, or re-lay-out the page. The owner set the design; an editor fills it in. (Renaming, moving, deleting, changing visibility, or editing the title aren't yours to do at all — those stay with the owner.)
 
 ## Visibility values
 `team` (default) · `private` · `members`.
