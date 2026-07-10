@@ -63,12 +63,20 @@ import type { SiteSummary, SpaceSummary, TeamUpload } from '@/lib/types'
 // unit-tested in lib/feedState.test.ts) maps the slots to the tab model — so each tab paints as
 // its OWN feed resolves instead of every tab waiting on the slowest call. A failed feed degrades
 // only its own tab; any 401 → login redirect.
+// Observe each promise's rejection at creation: the real handlers only attach in useFeedSlot's
+// post-mount effect, so a fast failure (or a revalidation racing an unmount) would otherwise
+// surface as an unhandled rejection. Same rule viewerLoader.ts applies to the comments prefetch.
+function observed<T>(p: Promise<T>): Promise<T> {
+  p.catch(() => {})
+  return p
+}
+
 export function loader() {
   return {
-    sites: api.get<SiteSummary[]>('/api/sites/mine'),
-    shared: api.get<SiteSummary[]>('/api/sites/shared'),
-    spaces: api.get<SpaceSummary[]>('/api/spaces/mine'),
-    team: api.get<TeamUpload[]>('/api/sites/team'),
+    sites: observed(api.get<SiteSummary[]>('/api/sites/mine')),
+    shared: observed(api.get<SiteSummary[]>('/api/sites/shared')),
+    spaces: observed(api.get<SpaceSummary[]>('/api/spaces/mine')),
+    team: observed(api.get<TeamUpload[]>('/api/sites/team')),
   }
 }
 

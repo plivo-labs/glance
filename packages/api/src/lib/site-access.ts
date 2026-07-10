@@ -80,7 +80,10 @@ export function isSharedFromFacts(facts: Pick<AccessFacts, 'directRole' | 'group
 
 /** The batch statements behind `AccessFacts`, in `assembleAccessFacts` order:
  *  [site, user, membership, direct share, group share] for an authed viewer, or just [site]
- *  when `userId` is null (no user → the other four facts are vacuously false/null). */
+ *  when `userId` is null (no user → the other four facts are vacuously false/null).
+ *  MIRROR: the direct-share/group-reach branches re-express db/repo.ts's canonical
+ *  directShareStmt/groupReachStmt SLUG-KEYED (no site id exists before this batch runs) —
+ *  a change to share-reach semantics must land in BOTH files. */
 function accessFactsStatements(
   db: DrizzleD1Database,
   spaceSlug: string,

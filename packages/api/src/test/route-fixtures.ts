@@ -17,7 +17,14 @@ export function makeRouteApp() {
   const db = makeDb()
   const kv = makeKv()
   const r2 = makeR2()
-  const env = { APP_URL, SESSION_SECRET: 's', GLANCE_SESSIONS: kv, GLANCE_FILES: r2 } as unknown as AppEnv['Bindings']
+  const env = {
+    APP_URL,
+    SESSION_SECRET: 's',
+    CONTENT_URL: 'https://content.example.com',
+    CONTENT_TOKEN_SECRET: 'content-secret',
+    GLANCE_SESSIONS: kv,
+    GLANCE_FILES: r2,
+  } as unknown as AppEnv['Bindings']
   const app = new Hono<AppEnv>()
   app.use('/api/*', requireSameOrigin)
   app.use('/api/*', async (c, next) => {

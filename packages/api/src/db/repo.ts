@@ -136,7 +136,9 @@ export async function isSpaceMember(db: DrizzleD1Database, spaceId: string, user
 // --- Share reach, defined ONCE per branch: a direct `site_user_shares` row (carries the role)
 // and group reach (`site_group_shares` joined through the user's space memberships). Optionally
 // scoped to one site; callers that need at most one row apply `.limit(1)` themselves. Every
-// share-reach read below is built from these two, so reach semantics can never drift. -----------
+// ID-KEYED share-reach read below is built from these two. MIRROR: lib/site-access.ts
+// accessFactsStatements re-expresses both branches SLUG-KEYED (the site id is unknown before
+// its batch runs) — a change to share-reach semantics must land in BOTH files. ------------------
 
 /** Direct-share rows for a user — `{siteId, role}` per grant, optionally scoped to one site. */
 function directShareStmt(db: DrizzleD1Database, userId: string, siteId?: string) {

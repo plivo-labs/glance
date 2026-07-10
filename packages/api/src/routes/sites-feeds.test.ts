@@ -5,7 +5,8 @@ import { APP_URL, at, auth, makeRouteApp, mintUser, postAuthRequests, type Route
 import type { AppEnv } from '../types'
 
 // S5b — GET /api/sites/mine and GET /api/sites/team fold the pure-audio badge INTO the site
-// select (one post-auth D1 request each; today a serial allAudioSiteIds follows the site rows).
+// select (one post-auth D1 request each; pre-S5b a serial audio-aggregate query followed the
+// site rows — that helper is gone, pureAudioSql rides the select).
 // T5.4/T5.5 pin today's semantics FIRST so the fold can't drift: one row per site regardless of
 // file count, /team's LIMIT 50 applies to SITES (a joined-files rewrite could eat it), the
 // audio-flag truth table, /mine's no-archived-filter quirk, and the sharedSiteIds Set surface

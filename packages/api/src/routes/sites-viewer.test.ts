@@ -1,42 +1,23 @@
 import { describe, expect, test } from 'bun:test'
-import { Hono } from 'hono'
-import { requireSameOrigin } from '../middleware/auth'
-import { makeDb, makeKv, seedFile, seedGroupShare, seedMember, seedSite, seedSpace, seedUser, seedUserShare } from '../test/harness'
+import type { Hono } from 'hono'
+import { seedFile, seedGroupShare, seedMember, seedSite, seedSpace, seedUserShare } from '../test/harness'
+import { makeRouteApp, mintUser as mintFixtureUser } from '../test/route-fixtures'
 import type { AppEnv } from '../types'
-import { sites } from './sites'
 
 // Viewer metadata endpoint (GET /api/sites/:space/:site) — the source of the gated content URL.
 // It reads the user inline via readSessionOrBearer, so a CLI Bearer token (no cookie) must mint
 // the same `/_t/<token>/…` URL the browser viewer gets — this is what `glance read` relies on.
 
-const APP_URL = 'https://glance.example.com'
 const CONTENT_URL = 'https://content.example.com'
 
-async function setup() {
-  const db = makeDb()
-  const kv = makeKv()
-  const env = {
-    APP_URL,
-    CONTENT_URL,
-    SESSION_SECRET: 's',
-    CONTENT_TOKEN_SECRET: 'cts',
-    GLANCE_SESSIONS: kv,
-  } as unknown as AppEnv['Bindings']
-  const app = new Hono<AppEnv>()
-  app.use('/api/*', requireSameOrigin)
-  app.use('/api/*', async (c, next) => {
-    c.set('db', db)
-    await next()
-  })
-  app.route('/api/sites', sites)
-  return { db, kv, app, env }
-}
+const setup = async () => makeRouteApp()
 
-async function mintUser(db: ReturnType<typeof makeDb>, kv: ReturnType<typeof makeKv>, id: string, role: 'member' | 'superadmin' = 'member') {
-  await seedUser(db, { id, role })
-  await kv.put(`cli:tok-${id}`, JSON.stringify({ id, email: `${id}@example.com`, name: null, role }))
-  return id
-}
+const mintUser = (
+  db: ReturnType<typeof makeRouteApp>['db'],
+  kv: ReturnType<typeof makeRouteApp>['kv'],
+  id: string,
+  role: 'member' | 'superadmin' = 'member',
+) => mintFixtureUser(db, kv, id, { role })
 
 const view = (app: Hono<AppEnv>, env: AppEnv['Bindings'], space: string, site: string, headers: Record<string, string> = {}) =>
   app.request(`/api/sites/${space}/${site}`, { headers }, env)

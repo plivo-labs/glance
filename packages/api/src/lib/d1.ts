@@ -19,7 +19,16 @@ export function chunk<T>(xs: T[], size: number): T[][] {
 /** `db.batch` over a statement ARRAY: owns the non-empty tuple cast D1's batch signature
  *  demands, so call sites assembling dynamic statement lists don't each repeat it. Empty input
  *  resolves to `[]` without touching D1 (a zero-statement batch would throw; no current call
- *  site can produce one, so this is a safe no-op rather than a reachable branch). */
+ *  site can produce one, so this is a safe no-op rather than a reachable branch).
+ *
+ *  TWO RULES bind every statement placed in a batch (here or via raw `db.batch`):
+ *  1. Result column names must be UNIQUE and expression columns must carry `.as(...)` — real
+ *     D1 maps BATCH rows by column name (loose queries are positional), so a duplicate name
+ *     collapses and silently shifts every later field. The test harness throws on violations
+ *     (see assertBatchSelectMapsByName in test/harness.ts).
+ *  2. A statement batched alongside access-facts must be a NON-FAILING SELECT (absent rows →
+ *     empty result, never a throw) — one rejected inner statement rejects the whole batch and
+ *     destroys the caller's 404/403/410 precedence. */
 export async function batchAll<T extends readonly BatchItem<'sqlite'>[]>(
   db: DrizzleD1Database,
   stmts: readonly [...T], // variadic-tuple param, so a literal keeps per-statement result types
