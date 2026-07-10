@@ -257,8 +257,9 @@ function Viewer() {
     const target = threads.find((t) => t.id === deepLinkThreadId)
     if (!target) return
     deepLinkFocused.current = true
+    // Scroll the iframe to the anchor; the rail reveals + scrolls the thread card itself (ReviewRail
+    // owns the open/resolved filter, so it can un-hide a resolved target).
     focusAnchor(target)
-    document.getElementById(`thread-${target.id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
   }, [deepLinkThreadId, review, loaded, threads, focusAnchor])
 
   async function createThread(body: string, mentions: string[]) {
@@ -361,6 +362,7 @@ function Viewer() {
             onFocusAnchor={focusAnchor}
             onStartComment={isAudio ? startPageComment : undefined}
             getCurrentTime={isAudio ? getCurrentTime : undefined}
+            focusThreadId={deepLinkThreadId}
           />
         )}
       </div>

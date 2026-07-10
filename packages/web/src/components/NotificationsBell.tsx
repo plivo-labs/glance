@@ -13,8 +13,8 @@ import { timeAgo } from '@/lib/time'
 import { cn } from '@/lib/utils'
 
 // Open a notification: deep-link into the viewer's review rail, mark that one read, and refresh via
-// the router revalidator. Shared by the header bell and the dashboard inbox card.
-export function useOpenNotification(): (n: Notification) => void {
+// the router revalidator.
+function useOpenNotification(): (n: Notification) => void {
   const navigate = useNavigate()
   const revalidator = useRevalidator()
   return (n) => {
