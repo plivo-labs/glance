@@ -15,7 +15,7 @@
     3. Do the work TDD: one failing test -> minimal impl -> green. Verify.
     4. Set the item's data-status="done" (or "blocked" + a Journal note if
        genuinely stuck — never a false "done"). Append a dated <li> to the
-       Journal (section 07). Top counts + the Part II board recompute themselves.
+       Journal (section 08). Top counts + the Part II board recompute themselves.
     5. If it was a phase's last step, run that phase's Gate item:
        /thermo-nuclear-code-quality-review on the phase diff -> fix findings ->
        full suite green -> mark the Gate done -> commit "Phase N: <summary>".
@@ -174,6 +174,19 @@
   .journal .date{color:var(--signal);white-space:nowrap}
   .journal .badge{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}
 
+  table.bench{width:100%;border-collapse:collapse;font-family:"Fragment Mono",monospace;font-size:12.5px;margin-top:6px}
+  table.bench th{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);
+    text-align:right;padding:8px 10px;border-bottom:1px solid var(--rule)}
+  table.bench th:first-child{text-align:left}
+  table.bench td{padding:9px 10px;border-bottom:1px dotted var(--rule);text-align:right;color:var(--ink-soft)}
+  table.bench td:first-child{text-align:left;color:var(--ink);font-family:"Instrument Serif",serif;font-size:16px}
+  table.bench tr:last-child td{border-bottom:0}
+  table.bench .ctl td{color:var(--faint);font-style:italic}
+  table.bench .ctl td:first-child{color:var(--faint)}
+  table.bench td.target{color:var(--signal)}
+  table.bench td.after{color:var(--phosphor)}
+  table.bench td.empty{color:var(--faint)}
+
   footer{padding:36px 0 62px;font-family:"Fragment Mono",monospace;font-size:11px;
     color:var(--faint);letter-spacing:.08em;text-align:center}
   footer b{color:var(--signal);font-weight:400}
@@ -294,7 +307,7 @@
     <ul class="items">
       <li class="item gate" data-status="todo" data-phase="final"><span class="stamp">todo</span>
         <div><div class="name"><span class="k">GF</span><span class="t">Final Gate — thermo-nuclear over the ENTIRE change + remote before/after benchmark</span></div>
-          <div class="meta">full-diff review → findings → full suite green → REMOTE preview/canary timings (serve doc+asset · /sites/shared · comments list) vs baseline — local timings don't validate the 140ms model → commit → final glance deploy. Tracker not done until this passes.</div></div></li>
+          <div class="meta">full-diff review → findings → full suite green → REMOTE preview/canary bench (bench/bench.ts) vs committed baseline → fill the §07 After columns — local timings don't validate the 140ms model → commit → final glance deploy. Tracker not done until this passes.</div></div></li>
     </ul>
 
     <blockquote><b>Phase-exit gate (every phase):</b> after a phase's steps land, run
@@ -550,9 +563,40 @@
     <div class="board" id="board"><!-- rows injected from data-phase step items --></div>
   </section>
 
-  <!-- 07 · Journal -->
+  <!-- 07 · Benchmark -->
   <section>
-    <div class="sec-head"><span class="sec-num">07</span><h3>Journal</h3><span class="sec-note">newest last · absolute dates</span></div>
+    <div class="sec-head"><span class="sec-num">07</span><h3>Benchmark — before / after</h3>
+      <span class="sec-note">p50 in ms · workers.dev origin · n=30 · fixture perf-bench</span></div>
+    <table class="bench">
+      <thead><tr>
+        <th>Journey</th><th>Baseline p50</th><th>p90</th><th>CloudFront p50</th>
+        <th>Plan (layers)</th><th>Expected Δ</th><th>After p50</th><th>Actual Δ</th>
+      </tr></thead>
+      <tbody>
+        <tr class="ctl"><td>/api/auth/me — floor (control)</td><td>212</td><td>223</td><td>224</td><td>—</td><td>0</td><td class="empty">·</td><td class="empty">·</td></tr>
+        <tr class="ctl"><td>viewer meta (control — S7 cleanup only)</td><td>395</td><td>474</td><td>413</td><td>—</td><td>~0</td><td class="empty">·</td><td class="empty">·</td></tr>
+        <tr><td>site-open doc (annotate path)</td><td>723</td><td>820</td><td>848</td><td>3 → 1</td><td class="target">−~280</td><td class="empty">·</td><td class="empty">·</td></tr>
+        <tr><td>site-open asset (cold)</td><td>716</td><td>808</td><td>791</td><td>3 → 1</td><td class="target">−~280</td><td class="empty">·</td><td class="empty">·</td></tr>
+        <tr><td>site-open asset (warm cache)</td><td>716</td><td>808</td><td>791</td><td>3 → 1 + R2 skipped</td><td class="target">−~580</td><td class="empty">·</td><td class="empty">·</td></tr>
+        <tr><td>/api/sites/shared</td><td>877</td><td>989</td><td>899</td><td>4 → 2</td><td class="target">−~280</td><td class="empty">·</td><td class="empty">·</td></tr>
+        <tr><td>/api/sites/mine</td><td>551</td><td>662</td><td>574</td><td>2 → 1</td><td class="target">−~140</td><td class="empty">·</td><td class="empty">·</td></tr>
+        <tr><td>/api/sites/team</td><td>554</td><td>614</td><td>569</td><td>2 → 1</td><td class="target">−~140</td><td class="empty">·</td><td class="empty">·</td></tr>
+        <tr><td>/api/spaces/:slug/sites</td><td>1043</td><td>1142</td><td>1054</td><td>5 → 3</td><td class="target">−~280</td><td class="empty">·</td><td class="empty">·</td></tr>
+        <tr><td>comments list</td><td>1040</td><td>1111</td><td>1055</td><td>5 → 2</td><td class="target">−~420</td><td class="empty">·</td><td class="empty">·</td></tr>
+      </tbody>
+    </table>
+    <blockquote><b>Filling the After columns (GF gate):</b> <code>wrangler versions upload</code> → run
+      <code>bun bench/bench.ts preview &lt;preview-url&gt; &lt;content-preview-url&gt;</code> → compare with
+      <code>bun bench/compare.ts bench/workersdev-2026-07-10-16-42.json bench/preview-*.json</code> and paste the
+      floor-adjusted p50s + deltas here. Baseline files are committed under <code>bench/</code>; the "warm cache" row
+      needs a second consecutive asset hit (the bench script's sequential iterations provide it after S3 lands —
+      compare iteration 1 vs 2+ in the raw samples). Expected Δ assumes ~140ms per D1 round trip; judge against the
+      floor-adjusted delta, not raw. Controls must move ~0 — if they drift, the network changed, trust the adjusted column.</blockquote>
+  </section>
+
+  <!-- 08 · Journal -->
+  <section>
+    <div class="sec-head"><span class="sec-num">08</span><h3>Journal</h3><span class="sec-note">newest last · absolute dates</span></div>
     <ul class="journal">
       <li><span class="date">2026-07-10</span><span class="badge">created</span>
         <span>Ledger drawn up from the 64-agent DB-query audit + codex/cursor consult (plan v2, cases v2 both consensus-hardened). Worktree perf/db-query-hot-paths off origin/main, baseline 417+91 tests green. 0 landed.</span></li>
