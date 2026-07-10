@@ -1,9 +1,7 @@
-import { Suspense, useMemo, useState } from 'react'
+import { type ReactNode, useEffect, useState } from 'react'
 import {
-  Await,
   Link,
   Navigate,
-  useAsyncError,
   useLoaderData,
   useLocation,
   useNavigate,
@@ -49,13 +47,22 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { api, ApiError } from '@/lib/api'
+import { api } from '@/lib/api'
+import {
+  deriveFeedState,
+  errorMessage,
+  type DashboardTab,
+  type FeedSlot,
+  type TabContent,
+  type TabId,
+} from '@/lib/feedState'
 import type { SiteSummary, SpaceSummary, TeamUpload } from '@/lib/types'
 
-// Stream the feeds instead of blocking the route on them: the shell paints at root-loader time,
-// the deploy card streams on `spaces` alone, and the tabs stream once their feeds resolve —
-// rather than the whole page staying blank until the slowest call returns. Promises are consumed
-// via <Await>; a failed feed degrades only its own section (FeedError), and a 401 → login.
+// Stream the feeds instead of blocking the route on them: the loader returns the four promises
+// un-awaited, the component tracks one slot per feed (useFeedSlot), and deriveFeedState (pure,
+// unit-tested in lib/feedState.test.ts) maps the slots to the tab model — so each tab paints as
+// its OWN feed resolves instead of every tab waiting on the slowest call. A failed feed degrades
+// only its own tab; any 401 → login redirect.
 export function loader() {
   return {
     sites: api.get<SiteSummary[]>('/api/sites/mine'),
@@ -90,134 +97,190 @@ function SharedSitesTable({ sites }: { sites: SiteSummary[] }) {
   )
 }
 
+// One slot per feed. Stale-while-revalidate on purpose: a revalidation hands us a NEW promise,
+// and we keep showing the settled slot until the new one settles — resetting to pending here
+// would flash every tab back to a skeleton on refetch. The cleanup flag drops out-of-order
+// settlements from a superseded promise.
+const PENDING = { status: 'pending' } as const
+
+function useFeedSlot<T>(promise: Promise<T>): FeedSlot<T> {
+  const [slot, setSlot] = useState<FeedSlot<T>>(PENDING)
+  useEffect(() => {
+    let superseded = false
+    promise.then(
+      (data) => {
+        if (!superseded) setSlot({ status: 'resolved', data })
+      },
+      (error: unknown) => {
+        if (!superseded) setSlot({ status: 'rejected', error })
+      },
+    )
+    return () => {
+      superseded = true
+    }
+  }, [promise])
+  return slot
+}
+
 export function Component() {
-  const { sites, shared, spaces, team } = useLoaderData() as {
+  const loaded = useLoaderData() as {
     sites: Promise<SiteSummary[]>
     shared: Promise<SiteSummary[]>
     spaces: Promise<SpaceSummary[]>
     team: Promise<TeamUpload[]>
   }
-  // The tabs need every count (and the conditional Shared tab) up front, so they share one Await on
-  // all four feeds. The deploy card only needs `spaces`, so it streams on its own — the primary
-  // action paints as soon as spaces resolves and a slow or failing feed can't block or break it.
-  // Each <Await> sees a STABLE promise across re-renders (a fresh Promise.all would re-suspend);
-  // revalidation yields new promises but React keeps the resolved UI through the RR transition, so
-  // refetch won't flash the skeletons — only the first paint does.
-  const tabsData = useMemo(() => Promise.all([sites, shared, spaces, team]), [sites, shared, spaces, team])
+  const slots = {
+    sites: useFeedSlot(loaded.sites),
+    shared: useFeedSlot(loaded.shared),
+    spaces: useFeedSlot(loaded.spaces),
+    team: useFeedSlot(loaded.team),
+  }
+  const [searchParams] = useSearchParams()
+  const location = useLocation()
+  // Controlled tabs (Radix Tabs is otherwise uncontrolled): the user's pick is `requestedTab`;
+  // deriveFeedState reconciles it against the tabs that exist and the two URL/feed-driven steers.
+  const [requestedTab, setRequestedTab] = useState<TabId>('sites')
+  const state = deriveFeedState(slots, {
+    requestedTab,
+    // #6 — a deep link ?new=space (from CommandPalette/ShareDialog, even while already on
+    // /dashboard) must select the Spaces tab so NewSpaceDialog mounts + opens.
+    wantsNewSpace: searchParams.get('new') === 'space',
+  })
+  // Reconcile during render, not in an effect (the repo's idiom). This CONSUMES the steering
+  // signal: once requestedTab is 'spaces', the next derive returns steerTo: null — fire-once.
+  // It also makes the #38 fallback sticky (active Shared tab emptied away → land on Your sites).
+  const target = state.steerTo ?? state.activeTab
+  if (requestedTab !== target) setRequestedTab(target)
+
+  // Any feed 401'd — the session lapsed. Bounce to login, preserving where we were.
+  if (state.unauthorized) {
+    return (
+      <Navigate to={`/login?next=${encodeURIComponent(location.pathname + location.search)}`} replace />
+    )
+  }
 
   return (
     <div className="space-y-10">
-      <Suspense fallback={<ToolbarSkeleton />}>
-        <Await resolve={spaces} errorElement={<FeedError what="the deploy form" />}>
-          {(spaces) => <DashboardToolbar spaces={spaces} />}
-        </Await>
-      </Suspense>
+      <ToolbarSection spaces={slots.spaces} />
       <AgentSetup />
-      <Suspense fallback={<TabsSkeleton />}>
-        <Await resolve={tabsData} errorElement={<FeedError what="your sites" />}>
-          {([sites, shared, spaces, team]) => (
-            <DashboardTabs sites={sites} shared={shared} spaces={spaces} team={team} />
-          )}
-        </Await>
-      </Suspense>
+      <Tabs value={state.activeTab} onValueChange={(t) => setRequestedTab(t as TabId)} className="gap-6">
+        <TabsList variant="line">
+          {state.tabs.map((tab) => (
+            <TabsTrigger key={tab.id} value={tab.id}>
+              {tab.label}
+              {tab.count !== null && <TabCount n={tab.count} />}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        {state.tabs.map((tab) => (
+          <TabsContent key={tab.id} value={tab.id}>
+            <TabBody tab={tab} />
+          </TabsContent>
+        ))}
+      </Tabs>
     </div>
   )
 }
 
-function DashboardTabs({
-  sites,
-  shared,
-  spaces,
-  team,
-}: {
-  sites: SiteSummary[]
-  shared: SiteSummary[]
-  spaces: SpaceSummary[]
-  team: TeamUpload[]
-}) {
-  const groupSpaces = spaces.filter((s) => s.type === 'group')
-  const [searchParams] = useSearchParams()
-  // Controlled tabs (Radix Tabs is otherwise uncontrolled) so we can steer the active tab in two
-  // cases the URL/feeds dictate. Reconcile during render, not in an effect (the repo's idiom):
-  const [tab, setTab] = useState('sites')
-  // #6 — a deep link ?new=space (from CommandPalette/ShareDialog, even while already on /dashboard)
-  // must select the Spaces tab so NewSpaceDialog mounts + opens.
-  if (searchParams.get('new') === 'space' && tab !== 'spaces') setTab('spaces')
-  // #38 — the Shared tab exists only while something is shared; if that feed empties during a
-  // revalidation while it's active, fall back to Your sites so the panel never blanks.
-  if (tab === 'shared' && shared.length === 0) setTab('sites')
+// The deploy card needs only `spaces`, so it renders off that slot alone — the primary action
+// paints as soon as spaces resolves and a slow or failing feed can't block or break it.
+function ToolbarSection({ spaces }: { spaces: FeedSlot<SpaceSummary[]> }) {
+  if (spaces.status === 'pending') return <ToolbarSkeleton />
+  if (spaces.status === 'rejected') {
+    return (
+      <EmptyState
+        title="Couldn't load the deploy form"
+        description={errorMessage(spaces.error, 'Something went wrong. Try refreshing.')}
+      />
+    )
+  }
+  return <DashboardToolbar spaces={spaces.data} />
+}
 
-  return (
-    <div className="space-y-10">
-      <Tabs value={tab} onValueChange={setTab} className="gap-6">
-        <TabsList variant="line">
-          <TabsTrigger value="sites">
-            Your sites
-            <TabCount n={sites.length} />
-          </TabsTrigger>
-          {shared.length > 0 && (
-            <TabsTrigger value="shared">
-              Shared with me
-              <TabCount n={shared.length} />
-            </TabsTrigger>
-          )}
-          <TabsTrigger value="spaces">
-            Your spaces
-            <TabCount n={groupSpaces.length} />
-          </TabsTrigger>
-          <TabsTrigger value="team">Team activity</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="sites">
-          {sites.length === 0 ? (
-            <EmptyState
-              icon={Rocket}
-              title="No sites yet"
-              description="Drop a folder above to ship your first."
-            />
-          ) : (
-            <SitesTable sites={sites} />
-          )}
-        </TabsContent>
-
-        {shared.length > 0 && (
-          <TabsContent value="shared">
-            <SharedSitesTable sites={shared} />
-          </TabsContent>
-        )}
-
-        <TabsContent value="spaces" className="space-y-4">
+// Per-tab body: loading skeleton / contained error / rows — each tab degrades alone.
+function TabBody({ tab }: { tab: DashboardTab }) {
+  switch (tab.id) {
+    case 'sites':
+      return (
+        <TabPanel content={tab.content} what="your sites">
+          {(sites) =>
+            sites.length === 0 ? (
+              <EmptyState
+                icon={Rocket}
+                title="No sites yet"
+                description="Drop a folder above to ship your first."
+              />
+            ) : (
+              <SitesTable sites={sites} />
+            )
+          }
+        </TabPanel>
+      )
+    case 'shared':
+      return (
+        <TabPanel content={tab.content} what="shared sites">
+          {(shared) => <SharedSitesTable sites={shared} />}
+        </TabPanel>
+      )
+    case 'spaces':
+      // The New-space row renders in every content state so ?new=space can open the dialog (#6)
+      // even while the feed is still loading. Rows here are the GROUP spaces (helper-filtered).
+      return (
+        <div className="space-y-4">
           <div className="flex justify-end">
             <NewSpaceDialog />
           </div>
-          {groupSpaces.length === 0 ? (
-            <EmptyState
-              title="No group spaces"
-              description="Create a space to collaborate with teammates."
-            />
-          ) : (
-            <div className="grid gap-3 sm:grid-cols-2">
-              {groupSpaces.map((s) => (
-                <SpaceCard key={s.id} space={s} />
-              ))}
-            </div>
-          )}
-        </TabsContent>
+          <TabPanel content={tab.content} what="your spaces">
+            {(groupSpaces) =>
+              groupSpaces.length === 0 ? (
+                <EmptyState
+                  title="No group spaces"
+                  description="Create a space to collaborate with teammates."
+                />
+              ) : (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {groupSpaces.map((s) => (
+                    <SpaceCard key={s.id} space={s} />
+                  ))}
+                </div>
+              )
+            }
+          </TabPanel>
+        </div>
+      )
+    case 'team':
+      return (
+        <TabPanel content={tab.content} what="team activity">
+          {(team) =>
+            team.length === 0 ? (
+              <EmptyState
+                icon={Rocket}
+                title="Nothing shipped yet"
+                description="Team-visible sites show up here as people deploy them."
+              />
+            ) : (
+              <TeamActivityTable team={team} />
+            )
+          }
+        </TabPanel>
+      )
+  }
+}
 
-        <TabsContent value="team">
-          {team.length === 0 ? (
-            <EmptyState
-              icon={Rocket}
-              title="Nothing shipped yet"
-              description="Team-visible sites show up here as people deploy them."
-            />
-          ) : (
-            <TeamActivityTable team={team} />
-          )}
-        </TabsContent>
-      </Tabs>
-    </div>
-  )
+function TabPanel<T>({
+  content,
+  what,
+  children,
+}: {
+  content: TabContent<T>
+  what: string
+  children: (rows: T) => ReactNode
+}) {
+  if (content.kind === 'loading') return <TabPanelSkeleton />
+  if (content.kind === 'error') {
+    return <EmptyState title={`Couldn't load ${what}`} description={content.message} />
+  }
+  return children(content.rows)
 }
 
 // First paint, before the feeds resolve — one placeholder per streamed section.
@@ -235,37 +298,14 @@ function ToolbarSkeleton() {
   )
 }
 
-function TabsSkeleton() {
+// A pending tab's panel — the tab list itself always paints immediately.
+function TabPanelSkeleton() {
   return (
-    <div className="space-y-6" aria-hidden>
-      <div className="flex gap-4">
-        {['a', 'b', 'c', 'd'].map((k) => (
-          <Skeleton key={k} className="h-7 w-28" />
-        ))}
-      </div>
-      <div className="space-y-2">
-        {['a', 'b', 'c', 'd', 'e'].map((k) => (
-          <Skeleton key={k} className="h-12 w-full rounded-lg" />
-        ))}
-      </div>
+    <div className="space-y-2" aria-hidden>
+      {['a', 'b', 'c', 'd', 'e'].map((k) => (
+        <Skeleton key={k} className="h-12 w-full rounded-lg" />
+      ))}
     </div>
-  )
-}
-
-// A feed rejected. 401 = the session lapsed → bounce to login, preserving where we were. Anything
-// else renders a contained inline error so one failed feed degrades only its own section instead
-// of taking down the whole route.
-function FeedError({ what }: { what: string }) {
-  const error = useAsyncError()
-  const location = useLocation()
-  if (error instanceof ApiError && error.status === 401) {
-    return <Navigate to={`/login?next=${encodeURIComponent(location.pathname + location.search)}`} replace />
-  }
-  return (
-    <EmptyState
-      title={`Couldn't load ${what}`}
-      description={error instanceof Error ? error.message : 'Something went wrong. Try refreshing.'}
-    />
   )
 }
 
@@ -325,7 +365,7 @@ function DashboardToolbar({ spaces }: { spaces: SpaceSummary[] }) {
 // Onboarding banner under the hero: the one-liner installs the CLI *and* the agent skill, so a user
 // can hand it to their coding agent (Claude, Codex, Cursor) and start shipping from the terminal.
 // Pointed at THIS deployment's origin (mirrors GET /api/install), same as InstallDialog — no feed
-// needed, so it renders outside the Suspense boundaries.
+// needed, so it renders immediately, independent of every feed slot.
 function AgentSetup() {
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
   const installCmd = `curl -fsSL ${origin}/api/install | sh`
