@@ -4,7 +4,7 @@
 import { describe, expect, test } from 'bun:test'
 import { and, eq } from 'drizzle-orm'
 import { siteUserShares, sites, spaceMembers, users } from './db/schema'
-import { accessFactsBySlugs } from './lib/site-access'
+import { fetchAccessFacts } from './lib/site-access'
 import { mintToken, setup as setupFixture, teamSite } from './test/content-fixtures'
 import { seedFile, seedGroupShare, seedMember, seedSite, seedSpace, seedUser, seedUserShare } from './test/harness'
 
@@ -303,10 +303,10 @@ describe('T1.2 dir-listing fallback stays out of the batch', () => {
 })
 
 // ---------------------------------------------------------------------------------------------
-// T1.6 [module spec] accessFactsBySlugs returns assembled facts matching hand-seeded
+// T1.6 [module spec] fetchAccessFacts (no extras) returns assembled facts matching hand-seeded
 // expectations (NOT compared against authorizeViewerById — no shared-oracle tautology).
 // ---------------------------------------------------------------------------------------------
-describe('T1.6 accessFactsBySlugs assembles hand-seeded facts', () => {
+describe('T1.6 fetchAccessFacts assembles hand-seeded facts', () => {
   async function base(s: Setup, visibility: 'private' | 'members' | 'team' = 'private') {
     const owner = await seedUser(s.db)
     const viewer = await seedUser(s.db, { email: 'viewer@example.com', name: 'Viewer' })
@@ -323,7 +323,7 @@ describe('T1.6 accessFactsBySlugs assembles hand-seeded facts', () => {
     await s.db
       .delete(siteUserShares)
       .where(and(eq(siteUserShares.siteId, siteId), eq(siteUserShares.userId, viewer)))
-    const facts = await accessFactsBySlugs(s.db, 'sp', 'site', viewer)
+    const { facts } = await fetchAccessFacts(s.db, 'sp', 'site', viewer)
     expect(facts.site?.id).toBe(siteId)
     expect(facts.user).toEqual({ id: viewer, email: 'viewer@example.com', name: 'Viewer', role: 'member' })
     expect(facts.isMember).toBe(false)
@@ -336,7 +336,7 @@ describe('T1.6 accessFactsBySlugs assembles hand-seeded facts', () => {
     const { viewer, sp } = await base(s, 'members')
     await seedMember(s.db, sp, viewer)
     await s.db.delete(spaceMembers).where(and(eq(spaceMembers.spaceId, sp), eq(spaceMembers.userId, viewer)))
-    const facts = await accessFactsBySlugs(s.db, 'sp', 'site', viewer)
+    const { facts } = await fetchAccessFacts(s.db, 'sp', 'site', viewer)
     expect(facts.site).not.toBeNull()
     expect(facts.isMember).toBe(false)
   })
@@ -344,7 +344,7 @@ describe('T1.6 accessFactsBySlugs assembles hand-seeded facts', () => {
   test('deleted user → user null, every user-derived fact false/null', async () => {
     const s = setup()
     await base(s)
-    const facts = await accessFactsBySlugs(s.db, 'sp', 'site', 'ghost-user')
+    const { facts } = await fetchAccessFacts(s.db, 'sp', 'site', 'ghost-user')
     expect(facts.site).not.toBeNull()
     expect(facts.user).toBeNull()
     expect(facts.isMember).toBe(false)
@@ -355,7 +355,7 @@ describe('T1.6 accessFactsBySlugs assembles hand-seeded facts', () => {
   test('missing site → site null; the user row (id-keyed) still resolves', async () => {
     const s = setup()
     const { viewer } = await base(s)
-    const facts = await accessFactsBySlugs(s.db, 'sp', 'no-such-site', viewer)
+    const { facts } = await fetchAccessFacts(s.db, 'sp', 'no-such-site', viewer)
     expect(facts.site).toBeNull()
     expect(facts.user?.id).toBe(viewer)
     expect(facts.isMember).toBe(false)
@@ -367,7 +367,7 @@ describe('T1.6 accessFactsBySlugs assembles hand-seeded facts', () => {
     const s = setup()
     const { viewer, siteId } = await base(s)
     await seedUserShare(s.db, siteId, viewer, 'editor')
-    const facts = await accessFactsBySlugs(s.db, 'sp', 'site', viewer)
+    const { facts } = await fetchAccessFacts(s.db, 'sp', 'site', viewer)
     expect(facts.directRole).toBe('editor')
     expect(facts.groupShared).toBe(false)
   })
@@ -378,7 +378,7 @@ describe('T1.6 accessFactsBySlugs assembles hand-seeded facts', () => {
     const group = await seedSpace(s.db, { createdBy: owner, slug: 'group' })
     await seedMember(s.db, group, viewer)
     await seedGroupShare(s.db, siteId, group)
-    const facts = await accessFactsBySlugs(s.db, 'sp', 'site', viewer)
+    const { facts } = await fetchAccessFacts(s.db, 'sp', 'site', viewer)
     expect(facts.groupShared).toBe(true)
     expect(facts.directRole).toBeNull()
     expect(facts.isMember).toBe(false) // group membership is NOT membership in the site's space
@@ -392,7 +392,7 @@ describe('T1.6 accessFactsBySlugs assembles hand-seeded facts', () => {
 describe('T1.7 fault injection and branch parity', () => {
   test('garbage slugs/user → batch resolves to all-empty facts, never throws', async () => {
     const s = setup()
-    const facts = await accessFactsBySlugs(s.db, "no'such--space", '../weird slug%', 'ghost')
+    const { facts } = await fetchAccessFacts(s.db, "no'such--space", '../weird slug%', 'ghost')
     expect(facts).toEqual({ site: null, user: null, isMember: false, directRole: null, groupShared: false })
   })
 

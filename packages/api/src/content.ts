@@ -105,7 +105,7 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
     .where(and(eq(spaces.slug, spaceSlug), eq(sites.slug, siteSlug), eq(files.path, reqPath)))
     .limit(1)
   const { facts, extras } = await fetchAccessFacts(db, spaceSlug, siteSlug, userId, fileStmt)
-  const [fileRows] = extras as [Awaited<typeof fileStmt>]
+  const [fileRows] = extras
 
   const siteRow = facts.site
   if (!siteRow) return notFound(c)

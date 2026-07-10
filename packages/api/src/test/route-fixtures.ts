@@ -4,6 +4,7 @@
 // mounted route group or env binding is inert for tests that never touch it.
 import { Hono } from 'hono'
 import { requireSameOrigin } from '../middleware/auth'
+import { comments } from '../routes/comments'
 import { sites } from '../routes/sites'
 import { spaces } from '../routes/spaces'
 import type { AppEnv } from '../types'
@@ -25,6 +26,8 @@ export function makeRouteApp() {
   })
   app.route('/api/sites', sites)
   app.route('/api/spaces', spaces)
+  // Same order as index.ts: sites first, then comments on the same mount (3-segment paths).
+  app.route('/api/sites', comments)
   return { app, env, db, kv, r2 }
 }
 

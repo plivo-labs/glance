@@ -1,5 +1,5 @@
 import { and, eq } from 'drizzle-orm'
-import type { BatchItem } from 'drizzle-orm/batch'
+import type { BatchItem, BatchResponse } from 'drizzle-orm/batch'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { isSpaceMember, resolveIsShared, toSessionUser } from '../db/repo'
 import { batchAll } from './d1'
@@ -149,31 +149,25 @@ function assembleAccessFacts(userId: string | null, rows: unknown[]): AccessFact
 
 /** Resolve the access facts PLUS any caller-fused slug-keyed statements in ONE db.batch round
  *  trip. `extras` run after the facts statements; their row-arrays come back in `extras`, same
- *  order — the batching (batchAll) and the slice-off index math live HERE, never at call sites. */
-export async function fetchAccessFacts(
+ *  order AND same per-statement row types (generic over the extras tuple, like batchAll) — the
+ *  batching, the slice-off index math, and the row typing live HERE, never at call sites. */
+export async function fetchAccessFacts<T extends readonly BatchItem<'sqlite'>[]>(
   db: DrizzleD1Database,
   spaceSlug: string,
   siteSlug: string,
   userId: string | null,
-  ...extras: BatchItem<'sqlite'>[]
-): Promise<{ facts: AccessFacts; extras: unknown[][] }> {
+  ...extras: [...T]
+): Promise<{ facts: AccessFacts; extras: BatchResponse<T> }> {
   const factsStmts = accessFactsStatements(db, spaceSlug, siteSlug, userId)
   const rows = await batchAll(db, [...factsStmts, ...extras])
   return {
     facts: assembleAccessFacts(userId, rows.slice(0, factsStmts.length)),
-    extras: rows.slice(factsStmts.length) as unknown[][],
+    // The ONE cast at this boundary: `rows` lost the tuple split when the facts statements and
+    // `extras` were flattened into a single batch array, so the tail slice is re-asserted back
+    // to the extras tuple's per-statement row types. Sound because batchAll returns results in
+    // statement order and the first factsStmts.length rows were consumed by the facts above.
+    extras: rows.slice(factsStmts.length) as unknown as BatchResponse<T>,
   }
-}
-
-/** Resolve the full access facts in ONE D1 round trip. */
-export async function accessFactsBySlugs(
-  db: DrizzleD1Database,
-  spaceSlug: string,
-  siteSlug: string,
-  userId: string | null,
-): Promise<AccessFacts> {
-  const { facts } = await fetchAccessFacts(db, spaceSlug, siteSlug, userId)
-  return facts
 }
 
 export type SiteAccess = {
