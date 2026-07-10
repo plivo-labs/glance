@@ -1,12 +1,12 @@
 import { useCallback, useState } from 'react'
 import { Link, NavLink, Outlet, useLoaderData, useNavigation } from 'react-router'
 import { Command, LogOut, Moon, Sun, SunMoon } from 'lucide-react'
-import type { Me } from '@/lib/types'
-import type { NotificationList } from '@/lib/notifications'
+import type { RootData } from '@/lib/notifications'
 import { api } from '@/lib/api'
 import { toggleTheme, useTheme } from '@/components/theme'
 import { CommandPalette } from '@/components/CommandPalette'
 import { NotificationsBell } from '@/components/NotificationsBell'
+import { WhatsNewButton } from '@/components/WhatsNewButton'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import {
@@ -20,7 +20,7 @@ import {
 import { cn } from '@/lib/utils'
 
 export function AppShell() {
-  const { user, notifications } = useLoaderData() as { user: Me | null; notifications: Promise<NotificationList> }
+  const { user, notifications, whatsNew } = useLoaderData() as RootData
   const nav = useNavigation()
   const theme = useTheme()
   const [cmdOpen, setCmdOpen] = useState(false)
@@ -85,6 +85,7 @@ export function AppShell() {
             <Button variant="ghost" size="icon" onClick={toggleTheme} aria-label="Toggle theme" title="Toggle theme">
               {theme === 'dark' ? <Moon className="size-4" /> : <Sun className="size-4" />}
             </Button>
+            {user && <WhatsNewButton whatsNew={whatsNew} />}
             {user && <NotificationsBell notifications={notifications} />}
             {user ? (
               <DropdownMenu>
