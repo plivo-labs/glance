@@ -3,9 +3,9 @@
 // the harness contracts those steps rely on: R2 true-byte model + etag rotation + onlyIf,
 // a Cache-API mock, D1 statement/batch counters, and the D1 100-bound-parameter cap.
 import { describe, expect, test } from 'bun:test'
-import { eq, inArray } from 'drizzle-orm'
-import { users } from '../db/schema'
-import { makeCaches, makeDb, makeR2, makeRecorder, seedUser } from './harness'
+import { eq, inArray, sql } from 'drizzle-orm'
+import { sites, spaces, users } from '../db/schema'
+import { makeCaches, makeDb, makeR2, makeRecorder, seedSite, seedSpace, seedUser } from './harness'
 
 describe('T0.1 makeR2 byte model', () => {
   test('binary put + ranged get slice BYTES; size is always the full byte length', async () => {
@@ -207,6 +207,70 @@ describe('T0.3 makeDb D1 counters + shared recorder timeline', () => {
     ])
     expect(recorder.counters['d1:batch']).toBe(1)
     expect(recorder.counters['d1:stmt']).toBe(3)
+  })
+})
+
+describe('T0.5 D1 batch result-name guard', () => {
+  // Real D1 `.batch()` returns rows as NAME-KEYED objects; drizzle's d1 driver rebuilds the row
+  // array via Object.keys (d1ToRawMapping), so duplicate result names collapse and shift every
+  // later field. Loose queries are immune (the d1 driver runs them through stmt.raw(), positional).
+  test('a batched two-table select with colliding result names throws', async () => {
+    const db = makeDb()
+    const uid = await seedUser(db)
+    const spId = await seedSpace(db, { createdBy: uid })
+    await seedSite(db, { spaceId: spId, ownerId: uid })
+    const collide = db
+      .select({ spaceSlug: spaces.slug, slug: sites.slug })
+      .from(sites)
+      .innerJoin(spaces, eq(sites.spaceId, spaces.id))
+    await expect(db.batch([collide] as never)).rejects.toThrow(/result-name collision.*"slug"/s)
+  })
+
+  test('the same shape with one side aliased passes', async () => {
+    const db = makeDb()
+    const uid = await seedUser(db)
+    const spId = await seedSpace(db, { createdBy: uid })
+    await seedSite(db, { spaceId: spId, ownerId: uid })
+    const aliased = db
+      .select({ spaceSlug: sql<string>`${spaces.slug}`.as('spaceSlug'), slug: sites.slug })
+      .from(sites)
+      .innerJoin(spaces, eq(sites.spaceId, spaces.id))
+    const [rows] = (await db.batch([aliased] as never)) as [{ spaceSlug: string; slug: string }[]]
+    expect(rows.length).toBe(1)
+    expect(rows[0].spaceSlug).toBe(spId) // seed defaults slug to the id
+  })
+
+  test('a batched unaliased expression column throws; aliased passes', async () => {
+    const db = makeDb()
+    await seedUser(db)
+    const bare = db.select({ count: sql<number>`count(*)` }).from(users)
+    await expect(db.batch([bare] as never)).rejects.toThrow(/unaliased expression/i)
+    const aliased = db.select({ count: sql<number>`count(*)`.as('count') }).from(users)
+    const [rows] = (await db.batch([aliased] as never)) as [{ count: number }[]]
+    expect(rows[0].count).toBe(1)
+  })
+
+  test('a LOOSE statement with duplicate result names does NOT throw (real D1 maps loose queries positionally via raw())', async () => {
+    const db = makeDb()
+    const uid = await seedUser(db)
+    const spId = await seedSpace(db, { createdBy: uid })
+    await seedSite(db, { spaceId: spId, ownerId: uid })
+    const rows = await db
+      .select({ spaceSlug: spaces.slug, slug: sites.slug })
+      .from(sites)
+      .innerJoin(spaces, eq(sites.spaceId, spaces.id))
+    expect(rows.length).toBe(1)
+    expect(rows[0].spaceSlug).toBe(spId)
+  })
+
+  test('batched writes and single-table selects stay unaffected', async () => {
+    const db = makeDb()
+    const uid = await seedUser(db)
+    await db.batch([
+      db.insert(users).values({ id: 'g-1', email: 'g1@example.com', name: null, role: 'member' }),
+      db.select().from(users).where(eq(users.id, uid)),
+    ] as never)
+    expect(db.counters.batchStmts).toBeGreaterThanOrEqual(2)
   })
 })
 

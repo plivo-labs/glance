@@ -14,9 +14,11 @@ const isAudioPathSql: SQL = or(
  * badge). EXISTS-based, so it can never multiply site rows or starve a LIMIT the way a raw
  * files JOIN would; the whole feed stays a single D1 statement. Costs one bound param per
  * audio extension (via `isAudioPathSql`) — budget for that under D1's 100-param cap when
- * folding it into a chunked `inArray` select.
+ * folding it into a chunked `inArray` select. Carries an explicit `AS "audio"` alias: real D1
+ * `.batch()` maps result rows by column NAME, and SQLite's name for an unaliased expression is
+ * undefined — a batched feed statement would come back mangled without it.
  */
-export function pureAudioSql(siteId: SQLWrapper): SQL<number> {
+export function pureAudioSql(siteId: SQLWrapper): SQL.Aliased<number> {
   const siteFiles = (extra: SQL) => sql`exists (select 1 from ${files} where ${files.siteId} = ${siteId}${extra})`
-  return sql<number>`(${siteFiles(sql``)} and not ${siteFiles(sql` and not (${isAudioPathSql})`)})`
+  return sql<number>`(${siteFiles(sql``)} and not ${siteFiles(sql` and not (${isAudioPathSql})`)})`.as('audio')
 }

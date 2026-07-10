@@ -246,11 +246,14 @@ sites.get('/shared', requireAuth, async (c) => {
   // extension binds = 98) and travelling in a single db.batch — kept a batch even for one chunk
   // so the request count stays 2 regardless of fan-out. Ids are unique across chunks, so no
   // dedupe is needed; re-sort newest-first in memory (per-chunk order is lost on flatten).
+  // spaceSlug carries an explicit SQL alias: spaces.slug and sites.slug both emit a result
+  // column named `slug`, and real D1 `.batch()` maps rows BY NAME, collapsing duplicates —
+  // which shifted every later field and emptied this feed in production.
   const rowStmts = chunk(ids, D1_MAX_IN).map((batch) =>
     db
       .select({
         id: sitesTable.id,
-        spaceSlug: spaces.slug,
+        spaceSlug: sql<string>`${spaces.slug}`.as('spaceSlug'),
         slug: sitesTable.slug,
         title: sitesTable.title,
         visibility: sitesTable.visibility,

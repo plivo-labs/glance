@@ -84,13 +84,15 @@ const slugThreadScope = (spaceSlug: string, siteSlug: string, filePath?: string)
   return filePath === undefined ? key : and(key, eq(commentThreads.filePath, filePath))
 }
 
-// The two list statements' select shapes, feeding `assembleThreadViews`.
+// The two list statements' select shapes, feeding `assembleThreadViews`. The four user columns
+// carry explicit SQL aliases: both users aliases emit result columns named `name`/`email`, and
+// real D1 `.batch()` maps rows BY NAME, collapsing duplicates (the harness guard enforces this).
 const THREAD_LIST_COLUMNS = {
   thread: commentThreads,
-  creatorName: threadCreator.name,
-  creatorEmail: threadCreator.email,
-  resolverName: threadResolver.name,
-  resolverEmail: threadResolver.email,
+  creatorName: sql<string | null>`${threadCreator.name}`.as('creatorName'),
+  creatorEmail: sql<string | null>`${threadCreator.email}`.as('creatorEmail'),
+  resolverName: sql<string | null>`${threadResolver.name}`.as('resolverName'),
+  resolverEmail: sql<string | null>`${threadResolver.email}`.as('resolverEmail'),
 }
 const COMMENT_LIST_COLUMNS = { comment: comments, authorName: users.name, authorEmail: users.email }
 

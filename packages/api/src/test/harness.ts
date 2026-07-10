@@ -90,6 +90,98 @@ const WRITE_VERB_RE = /^\s*(insert|update|delete)\b/i
 
 const newD1Counters = (): D1Counters => ({ batches: 0, loose: 0, batchStmts: 0, insert: 0, update: 0, delete: 0 })
 
+// --- D1 batch result-name guard --------------------------------------------------------------
+// Real D1 `.batch()` returns each row as a NAME-KEYED object, and drizzle's d1 driver rebuilds
+// the positional row array via Object.keys (`d1ToRawMapping` in drizzle-orm/d1/session.js). Two
+// result columns with the same name collapse into ONE key, silently shifting every later field
+// (e.g. selecting spaces.slug AND sites.slug emits two columns named "slug"); an unaliased
+// expression column gets whatever name SQLite invents — explicitly undefined behavior. LOOSE
+// queries are immune: the d1 driver runs them through `stmt.raw()` (positional). bun:sqlite maps
+// positionally in both modes, so without this guard the harness can never catch the class.
+// Enforced at the statement-execution seam for every SELECT executed inside db.batch.
+
+const IDENT = '"[^"]+"|[A-Za-z_][A-Za-z0-9_$]*'
+const IDENT_PATH_RE = new RegExp(`^(?:(?:${IDENT})\\.)*(${IDENT})$`)
+const TRAILING_AS_RE = new RegExp(`\\s+as\\s+(${IDENT})\\s*$`, 'i')
+const unquote = (s: string) => (s.startsWith('"') && s.endsWith('"') ? s.slice(1, -1) : s)
+
+/** Split a SELECT's top-level result list on commas, tracking paren depth and quote state
+ *  (tolerant — doubled-quote escapes toggle twice, which still nets out). Returns the raw item
+ *  texts, or null when the statement is not a SELECT. */
+function topLevelSelectItems(sqlText: string): string[] | null {
+  const m = /^\s*select\s+(?:distinct\s+|all\s+)?/i.exec(sqlText)
+  if (!m) return null
+  const items: string[] = []
+  const end = findTopLevelFrom(sqlText, m[0].length) ?? sqlText.length
+  let start = m[0].length
+  let depth = 0
+  let quote: '"' | "'" | null = null
+  for (let i = start; i < end; i++) {
+    const ch = sqlText[i]
+    if (quote) {
+      if (ch === quote) quote = null
+      continue
+    }
+    if (ch === '"' || ch === "'") quote = ch
+    else if (ch === '(') depth++
+    else if (ch === ')') depth--
+    else if (ch === ',' && depth === 0) {
+      items.push(sqlText.slice(start, i))
+      start = i + 1
+    }
+  }
+  items.push(sqlText.slice(start, end))
+  return items.map((x) => x.trim()).filter((x) => x.length > 0)
+}
+
+/** Index of the top-level FROM keyword (outside parens/quotes), or null (e.g. `select 1`). */
+function findTopLevelFrom(sqlText: string, from: number): number | null {
+  let depth = 0
+  let quote: '"' | "'" | null = null
+  for (let i = from; i < sqlText.length; i++) {
+    const ch = sqlText[i]
+    if (quote) {
+      if (ch === quote) quote = null
+      continue
+    }
+    if (ch === '"' || ch === "'") quote = ch
+    else if (ch === '(') depth++
+    else if (ch === ')') depth--
+    else if (depth === 0 && /[\s)]/.test(sqlText[i - 1] ?? ' ') && /^from\b/i.test(sqlText.slice(i))) return i
+  }
+  return null
+}
+
+/** Throw when a SELECT executed inside db.batch would be mangled by real D1's by-name batch row
+ *  mapping: duplicate result names, or an expression column with no `AS` alias. */
+function assertBatchSelectMapsByName(sqlText: string): void {
+  const items = topLevelSelectItems(sqlText)
+  if (!items) return // not a SELECT — writes return no result columns
+  const seen = new Set<string>()
+  for (const item of items) {
+    if (item === '*' || item.endsWith('.*')) continue // star: single-table expansion, names are the table's own
+    const aliased = TRAILING_AS_RE.exec(item)
+    let name: string
+    if (aliased) {
+      name = unquote(aliased[1])
+    } else {
+      const path = IDENT_PATH_RE.exec(item)
+      if (!path) {
+        throw new Error(
+          `D1 batch unaliased expression column: \`${item.slice(0, 80)}\` — real D1 batch maps rows by column NAME and SQLite's name for an unaliased expression is undefined; add .as('name'). SQL: ${sqlText.slice(0, 200)}`,
+        )
+      }
+      name = unquote(path[1])
+    }
+    if (seen.has(name)) {
+      throw new Error(
+        `D1 batch result-name collision: two columns named "${name}" — real D1 batch maps rows by name and collapses duplicates, shifting every later field; alias one (.as()). SQL: ${sqlText.slice(0, 200)}`,
+      )
+    }
+    seen.add(name)
+  }
+}
+
 /** Number of values a statement execution binds: drizzle's bun-sqlite driver spreads
  *  positional params (`stmt.all(...params)`); a single plain-object arg is named-param form. */
 function bindCount(args: unknown[]): number {
@@ -122,8 +214,10 @@ export function makeDb(recorder?: Recorder): HarnessDb {
       throw new Error(`D1 bind-parameter cap exceeded: statement binds ${bound} values (D1 max is ${D1_BIND_CAP})`)
     const verb = WRITE_VERB_RE.exec(sql)?.[1]?.toLowerCase() as 'insert' | 'update' | 'delete' | undefined
     if (verb) counters[verb]++
-    if (inBatch) counters.batchStmts++
-    else counters.loose++
+    if (inBatch) {
+      assertBatchSelectMapsByName(sql)
+      counters.batchStmts++
+    } else counters.loose++
     recorder?.record(verb ? `d1:stmt:${verb}` : 'd1:stmt')
   }
 

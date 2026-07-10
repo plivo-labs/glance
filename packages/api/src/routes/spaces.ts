@@ -72,7 +72,9 @@ spaces.get('/:slug', requireAuth, async (c) => {
   const [spaceRows, counted, memberRows] = await batchAll(db, [
     db.select().from(spacesTable).where(eq(spacesTable.slug, slug)).limit(1),
     db
-      .select({ count: sql<number>`count(*)` })
+      // Aliased: real D1 `.batch()` maps rows by column NAME and SQLite's name for an
+      // unaliased expression is undefined (harness guard enforces the alias).
+      .select({ count: sql<number>`count(*)`.as('count') })
       .from(spaceMembers)
       .innerJoin(spacesTable, eq(spaceMembers.spaceId, spacesTable.id))
       .where(eq(spacesTable.slug, slug)),
