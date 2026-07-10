@@ -1,8 +1,9 @@
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray, ne, sql } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { RESERVED_SLUGS, slugifyHandle } from '../lib/slug'
 import type { SessionUser } from '../types'
 import {
+  type Site,
   type SpaceType,
   type User,
   siteGroupShares,
@@ -190,6 +191,71 @@ export async function sharedSiteIds(db: DrizzleD1Database, userId: string): Prom
       .where(eq(spaceMembers.userId, userId)),
   ])
   return new Set([...direct, ...viaGroup].map((r) => r.siteId))
+}
+
+/** A user reduced to what an @-mention autocomplete needs. */
+export type UserLite = { id: string; name: string | null; email: string }
+
+/**
+ * The set of users who may be @-mentioned on a site — those the visibility tier would let in, so a
+ * mention can never notify (or leak) someone who can't open the site. Branches on visibility,
+ * MIRRORING the tier structure of `checkAccess` (not a naive union):
+ *   every tier → owner + explicit user-shares + members of group-shared spaces (additive grants);
+ *   `members`  → PLUS the site's own space members;
+ *   `team`     → ALL users (any authenticated user can open a team site);
+ *   `private`  → owner + shares only.
+ * The caller is always excluded (you don't mention yourself). Returned sorted by display name for a
+ * stable autocomplete. The route re-runs this on create as the authorization gate (defense in depth).
+ *
+ * Deliberate deviations from `checkAccess` (both fail-closed / safe):
+ *   - archived → nobody is mentionable (matches checkAccess's 410-for-all), enforced here directly.
+ *   - the superadmin universal-access bypass is NOT expanded here — an admin is mentionable only via
+ *     the normal owner/member/share paths (don't spam every admin on every private site).
+ * `team` returns the whole user table on the assumption of a single allowed login domain (domain
+ * gating happens at auth, not in this row set).
+ */
+export async function listMentionableUsers(
+  db: DrizzleD1Database,
+  site: Pick<Site, 'id' | 'spaceId' | 'visibility' | 'ownerId' | 'status'>,
+  callerId: string,
+): Promise<UserLite[]> {
+  // Archived sites are 410 for everyone (superadmin aside) — nobody is mentionable.
+  if (site.status === 'archived') return []
+
+  const project = { id: users.id, name: users.name, email: users.email }
+  const byName = sql`coalesce(${users.name}, ${users.email})`
+
+  // team: any authenticated user can open the site, so everyone (minus the caller) is mentionable.
+  if (site.visibility === 'team') {
+    return db.select(project).from(users).where(ne(users.id, callerId)).orderBy(byName)
+  }
+
+  // Additive grants shared by every non-team tier: owner + direct user-shares + group-share members.
+  const userShareRows = db
+    .select({ userId: siteUserShares.userId })
+    .from(siteUserShares)
+    .where(eq(siteUserShares.siteId, site.id))
+  const groupShareRows = db
+    .select({ userId: spaceMembers.userId })
+    .from(siteGroupShares)
+    .innerJoin(spaceMembers, eq(spaceMembers.spaceId, siteGroupShares.spaceId))
+    .where(eq(siteGroupShares.siteId, site.id))
+  // members: the site's own space members are mentionable on top of the grants.
+  const spaceMemberRows = db
+    .select({ userId: spaceMembers.userId })
+    .from(spaceMembers)
+    .where(eq(spaceMembers.spaceId, site.spaceId))
+
+  const grants =
+    site.visibility === 'members'
+      ? await Promise.all([userShareRows, groupShareRows, spaceMemberRows])
+      : await Promise.all([userShareRows, groupShareRows])
+
+  const ids = new Set<string>([site.ownerId])
+  for (const rows of grants) for (const r of rows) ids.add(r.userId)
+  ids.delete(callerId)
+  if (ids.size === 0) return []
+  return db.select(project).from(users).where(inArray(users.id, [...ids])).orderBy(byName)
 }
 
 /** A per-user share as stored: the user id plus their grant tier. */

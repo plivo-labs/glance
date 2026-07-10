@@ -1,4 +1,5 @@
 import { api } from '@/lib/api'
+import type { MentionUser } from '@/lib/mentions'
 import { extForMime } from '@/lib/recorder'
 import type { ViewerSite } from '@/lib/types'
 
@@ -67,6 +68,13 @@ export function pendingToInput(filePath: string, body: string, pending: PendingA
   return { filePath, body, quote: pending.quote }
 }
 
+/** Attach an explicit mentions list to a JSON payload, but ONLY when there are ids to send — an
+ *  empty/absent selection omits the key entirely (the server treats absent = no mentions). Pure so
+ *  the create/reply contract is verifiable without a network (seam S-D). */
+export function withMentions<T extends object>(payload: T, mentions?: string[]): T | (T & { mentions: string[] }) {
+  return mentions && mentions.length > 0 ? { ...payload, mentions } : payload
+}
+
 type SiteRef = Pick<ViewerSite, 'spaceSlug' | 'siteSlug'>
 
 // Anchor-shaping fields for a voice thread — everything a create payload carries EXCEPT the body,
@@ -81,9 +89,12 @@ const voiceFile = (blob: Blob) => new File([blob], `voice.${extForMime(blob.type
 
 export const comments = {
   list: (s: SiteRef, filePath: string) => api.get<Thread[]>(`${base(s)}?filePath=${encodeURIComponent(filePath)}`),
-  create: (s: SiteRef, input: NewThreadInput) => api.post<{ threadId: string }>(base(s), input),
-  reply: (s: SiteRef, threadId: string, body: string) =>
-    api.post<{ id: string }>(`${base(s)}/${threadId}/replies`, { body }),
+  // Who the caller may @-mention here (autocomplete source). Same access gate as commenting.
+  mentionable: (s: SiteRef) => api.get<MentionUser[]>(`/api/sites/${s.spaceSlug}/${s.siteSlug}/mentionable`),
+  create: (s: SiteRef, input: NewThreadInput, mentions?: string[]) =>
+    api.post<{ threadId: string }>(base(s), withMentions(input, mentions)),
+  reply: (s: SiteRef, threadId: string, body: string, mentions?: string[]) =>
+    api.post<{ id: string }>(`${base(s)}/${threadId}/replies`, withMentions({ body }, mentions)),
   // Voice thread: multipart create. The recording is `audio`; the anchor fields ride alongside
   // (element serialized as JSON, matching the route). Returns the same shape as `create`.
   createVoice: (s: SiteRef, blob: Blob, fields: VoiceCreateFields) => {

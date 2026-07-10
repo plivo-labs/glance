@@ -12,19 +12,25 @@ import { AppShell } from './components/AppShell'
 import { Button } from './components/ui/button'
 import { Toaster } from './components/ui/sonner'
 import { api, ApiError } from './lib/api'
+import { EMPTY_NOTIFICATIONS, type RootData, notifications } from './lib/notifications'
 import type { Me } from './lib/types'
 import './tailwind.css'
 
 // Root loader fetches identity ONCE before render (replaces a mount useEffect). It does
 // NOT redirect — the login page must render logged-out; protected route loaders guard
-// themselves.
-async function rootLoader(): Promise<{ user: Me | null }> {
+// themselves. Notifications ride along as a DEFERRED promise (not awaited — awaiting would block
+// the first paint of every shell route); the Bell/inbox consume it via <Await>. Skipped (resolved
+// empty) when logged out, and a failed fetch degrades to empty so it never breaks the shell.
+async function rootLoader(): Promise<RootData> {
+  let user: Me | null
   try {
-    return { user: await api.get<Me>('/api/auth/me') }
+    user = await api.get<Me>('/api/auth/me')
   } catch (err) {
-    if (err instanceof ApiError && err.status === 401) return { user: null }
-    throw err
+    if (err instanceof ApiError && err.status === 401) user = null
+    else throw err
   }
+  const list = user ? notifications.list().catch(() => EMPTY_NOTIFICATIONS) : Promise.resolve(EMPTY_NOTIFICATIONS)
+  return { user, notifications: list }
 }
 
 function RootError() {
@@ -67,6 +73,7 @@ const router = createBrowserRouter([
   { path: '/:space/:site/*', lazy: () => import('./routes/viewer'), ErrorBoundary: RootError },
   {
     path: '/',
+    id: 'root',
     Component: AppShell,
     loader: rootLoader,
     ErrorBoundary: RootError,

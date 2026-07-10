@@ -12,6 +12,8 @@ import {
   reopenThread,
   resolveThread,
 } from '../db/comments'
+import { createNotifications } from '../db/notifications'
+import { listMentionableUsers } from '../db/repo'
 import { fireAndForget } from '../lib/events'
 import { EXT_MIME, audioExtFromPart, contentType } from '../lib/mime'
 import type { ResolvedSite } from '../lib/site-access'
@@ -88,6 +90,53 @@ function cleanBody(v: unknown): string | null {
   const body = stripControlChars(v).trim()
   if (!body || body.length > MAX_COMMENT_BODY) return null
   return body
+}
+
+// Short preview of the comment body stored on the notification for the inbox/bell list.
+const MAX_SNIPPET = 200
+
+/** Raise mention notifications for a just-written comment. Explicit selections only (client sends
+ *  ids from the autocomplete): dedup, drop self, then INTERSECT against `listMentionableUsers` —
+ *  the same access set the autocomplete drew from — so a forged id for someone without access is
+ *  dropped server-side. Fire-and-forget and fully guarded: a failure here (or an empty/absent
+ *  selection) must NEVER fail or block the comment that already committed. */
+async function notifyMentions(
+  c: Context<AppEnv>,
+  site: ResolvedSite,
+  opts: { rawMentions: unknown; threadId: string; filePath: string; snippet: string },
+): Promise<void> {
+  try {
+    const callerId = c.get('user').id
+    const requested = Array.isArray(opts.rawMentions)
+      ? [...new Set(opts.rawMentions.filter((m): m is string => typeof m === 'string' && m !== callerId))]
+      : []
+    if (requested.length === 0) return
+    const db = c.get('db')
+    const allowed = new Set((await listMentionableUsers(db, site, callerId)).map((u) => u.id))
+    const recipients = requested.filter((id) => allowed.has(id))
+    if (recipients.length === 0) return
+    const { space, site: siteSlug } = c.req.param()
+    const siteLabel = `${space}/${siteSlug}`
+    const snippet = opts.snippet.slice(0, MAX_SNIPPET)
+    await fireAndForget(
+      c,
+      createNotifications(
+        db,
+        recipients.map((recipientId) => ({
+          recipientId,
+          type: 'mention' as const,
+          actorId: callerId,
+          siteId: site.id,
+          siteLabel,
+          threadId: opts.threadId,
+          filePath: opts.filePath,
+          snippet,
+        })),
+      ),
+    )
+  } catch {
+    // Notifications are best-effort — never surface to the caller (mirrors recordEvent).
+  }
 }
 
 type ThreadFields = {
@@ -182,6 +231,14 @@ comments.get('/:space/:site/comments', async (c) => {
   return c.json(await listThreads(c.get('db'), site.id, filePath))
 })
 
+// GET — who the caller may @-mention on this site (autocomplete source). Same access gate as
+// commenting (siteOrError), then the visibility-branched mentionable set minus the caller.
+comments.get('/:space/:site/mentionable', async (c) => {
+  const site = await siteOrError(c)
+  if (site instanceof Response) return site
+  return c.json(await listMentionableUsers(c.get('db'), site, c.get('user').id))
+})
+
 // GET — stream a voice comment's audio. Site-level access gate (siteOrError), then a dedicated
 // comment→thread→site lookup (NOT commentInSite — there's no threadId in this path). A text or
 // soft-deleted comment (audioKey nulled) 404s. The object is small (≤10MB), so we do one unranged
@@ -238,6 +295,7 @@ comments.post('/:space/:site/comments', async (c) => {
     quote: fields.quote,
     anchor: fields.anchor,
   })
+  await notifyMentions(c, site, { rawMentions: raw?.mentions, threadId: out.threadId, filePath: fields.filePath, snippet: body })
   return c.json(out, 201)
 })
 
@@ -301,6 +359,7 @@ comments.post('/:space/:site/comments/:threadId/replies', async (c) => {
   const body = cleanBody(raw?.body)
   if (!body) return c.json({ error: 'invalid body' }, 400)
   const id = await addComment(c.get('db'), { threadId: thread.id, authorId: c.get('user').id, body })
+  await notifyMentions(c, site, { rawMentions: raw?.mentions, threadId: thread.id, filePath: thread.filePath, snippet: body })
   return c.json({ id }, 201)
 })
 

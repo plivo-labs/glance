@@ -1,6 +1,6 @@
 import { MessageSquarePlus } from 'lucide-react'
-import { useMemo, useState } from 'react'
-import type { PendingAnchor, Thread, ThreadStatus } from '@/lib/comments'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { comments, type PendingAnchor, type Thread, type ThreadStatus } from '@/lib/comments'
 import { timestampPrefix } from '@/lib/audio'
 import type { Me, ViewerSite } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -29,17 +29,21 @@ export function ReviewRail({
   onFocusAnchor,
   onStartComment,
   getCurrentTime,
+  focusThreadId,
 }: {
   site: ViewerSite
   me: Me | null
   threads: Thread[]
   composing: PendingAnchor | null
   onCancelComposer: () => void
-  onCreate: (body: string) => void | Promise<void>
+  onCreate: (body: string, mentions: string[]) => void | Promise<void>
   // Voice sibling of onCreate: submits the composer's recording as a voice thread on the same anchor.
   onCreateVoice: (blob: Blob) => void | Promise<void>
   onChanged: () => void
   onFocusAnchor: (thread: Thread) => void
+  // A notification deep-link's target thread (S11): reveal it regardless of the open/resolved
+  // filter (switch to its tab) and scroll its card into view, once, when it lands in `threads`.
+  focusThreadId?: string | null
   // Set only for content with no DOM to select in (the audio view) — offers a plain "Add
   // comment" trigger that opens the composer with a bare page anchor, no text/element pending.
   onStartComment?: () => void
@@ -50,6 +54,22 @@ export function ReviewRail({
   const [filter, setFilter] = useState<ThreadStatus>('open')
 
   const active = useMemo(() => threads.filter((t) => t.status === filter).sort(byUpdatedDesc), [threads, filter])
+
+  // Deep-link reveal: when a notification's target thread arrives, switch to its status tab (so a
+  // resolved thread isn't hidden by the default 'open' filter) and scroll its card into view. Fires
+  // once per target id; the rAF lets the tab switch render the card before we scroll to it.
+  const revealedRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!focusThreadId || revealedRef.current === focusThreadId) return
+    const target = threads.find((t) => t.id === focusThreadId)
+    if (!target) return
+    revealedRef.current = focusThreadId
+    setFilter(target.status)
+    const raf = requestAnimationFrame(() =>
+      document.getElementById(`thread-${focusThreadId}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }),
+    )
+    return () => cancelAnimationFrame(raf)
+  }, [focusThreadId, threads])
 
   return (
     <aside className="flex max-h-[55vh] w-full shrink-0 flex-col border-t bg-background md:max-h-none md:h-full md:w-[360px] md:border-t-0 md:border-l">
@@ -73,6 +93,7 @@ export function ReviewRail({
             focusOn={composing}
             placeholder="Add a comment…"
             submitLabel="Comment"
+            loadMentions={() => comments.mentionable(site)}
             onSubmit={onCreate}
             onSubmitVoice={onCreateVoice}
             onCancel={onCancelComposer}

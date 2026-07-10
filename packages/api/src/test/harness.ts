@@ -12,6 +12,7 @@ import {
   type NewCommentThread,
   type NewEvent,
   type NewFileRow,
+  type NewNotification,
   type NewSite,
   type NewSpace,
   type NewUser,
@@ -19,6 +20,7 @@ import {
   commentThreads,
   events,
   files,
+  notifications,
   siteGroupShares,
   siteUserShares,
   sites,
@@ -38,6 +40,7 @@ const MIGRATIONS = [
   'drizzle/0007_add_indexes.sql',
   'drizzle/0008_comment_audio_key.sql',
   'drizzle/0009_editor_share.sql',
+  'drizzle/0010_notifications.sql',
 ]
 
 /** Fresh in-memory DB with the real schema applied. */
@@ -203,6 +206,28 @@ export async function seedEvent(db: DrizzleD1Database, o: Partial<NewEvent> = {}
     siteId: o.siteId ?? null,
     siteLabel: o.siteLabel ?? null,
     cliVersion: o.cliVersion ?? null,
+    createdAt: o.createdAt ?? new Date().toISOString(),
+  })
+  return id
+}
+
+/** Insert a `notifications` row; returns its id. Defaults: mention type, unread (readAt null). */
+export async function seedNotification(
+  db: DrizzleD1Database,
+  o: { recipientId: string } & Partial<NewNotification>,
+): Promise<string> {
+  const id = o.id ?? nextId('nt')
+  await db.insert(notifications).values({
+    id,
+    recipientId: o.recipientId,
+    type: o.type ?? 'mention',
+    actorId: o.actorId ?? null,
+    siteId: o.siteId ?? null,
+    siteLabel: o.siteLabel ?? null,
+    threadId: o.threadId ?? null,
+    filePath: o.filePath ?? null,
+    snippet: o.snippet ?? null,
+    readAt: o.readAt ?? null,
     createdAt: o.createdAt ?? new Date().toISOString(),
   })
   return id

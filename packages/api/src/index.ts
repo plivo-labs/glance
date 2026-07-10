@@ -12,6 +12,7 @@ import { admin } from './routes/admin'
 import { auth } from './routes/auth'
 import { comments } from './routes/comments'
 import { dataApi, dataToken } from './routes/data'
+import { notifications } from './routes/notifications'
 import { sites } from './routes/sites'
 import { spaces } from './routes/spaces'
 import { upload } from './routes/upload'
@@ -98,6 +99,7 @@ app.route('/api/upload', upload)
 // Session-authenticated mint for shared-backend data tokens (owner → read+write, viewer → read).
 app.route('/api/data-token', dataToken)
 app.route('/api/users', users)
+app.route('/api/notifications', notifications)
 app.route('/api/admin', admin)
 
 export default app
