@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -21,6 +23,7 @@ func (c *client) read(argv []string) error {
 		return fmt.Errorf("Usage: glance read <space/slug> [--file <path>]")
 	}
 	file, _ := flags["file"].(string)
+	pullDir, doPull := flags["pull"].(string)
 	if err := c.requireAuth(); err != nil {
 		return err
 	}
@@ -33,22 +36,23 @@ func (c *client) read(argv []string) error {
 	if !ok(resp) {
 		return fmt.Errorf("Could not read %s/%s (%d): %s", space, name, resp.StatusCode, bodySlice(resp))
 	}
+	// files[] + contentVersion are present only when the caller may replace (owner/editor/superadmin) —
+	// the manifest the pull needs. A plain viewer gets neither, so --pull refuses (below).
 	var meta struct {
-		ContentURL string `json:"contentUrl"`
+		ContentURL     string   `json:"contentUrl"`
+		Files          []string `json:"files"`
+		ContentVersion int      `json:"contentVersion"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil {
 		return err
 	}
 
-	// contentUrl always ends with '/'; append the in-site path (empty -> site root / single file).
-	// Encode each segment so paths with spaces/unicode resolve, mirroring a browser request.
-	segs := strings.Split(strings.TrimLeft(file, "/"), "/")
-	for i, s := range segs {
-		segs[i] = encodeURIComponent(s)
+	if doPull {
+		return c.pullTree(space, name, pullDir, meta.ContentURL, meta.Files, meta.ContentVersion)
 	}
-	path := strings.Join(segs, "/")
 
-	cres, err := c.http.Get(meta.ContentURL + path)
+	// contentUrl always ends with '/'; append the in-site path (empty -> site root / single file).
+	cres, err := c.http.Get(meta.ContentURL + encodePath(file))
 	if err != nil {
 		return err
 	}
@@ -66,4 +70,53 @@ func (c *client) read(argv []string) error {
 	}
 	_, err = c.out.Write(body) // raw bytes, no trailing newline (pipes cleanly)
 	return err
+}
+
+// pullTree downloads the whole site source into dir: each manifest file is fetched RAW (?raw=1 —
+// the .md source, not its rendered HTML) so a later `deploy` round-trips byte-identically, then a
+// .glance/pull.json marker records the site + version for a versioned redeploy. Dotfiles are written
+// as-is (the tree is trusted local output). Refuses when the manifest is empty — a plain viewer can't
+// see it, and there's nothing to pull.
+func (c *client) pullTree(space, name, dir, contentURL string, files []string, version int) error {
+	if len(files) == 0 {
+		return fmt.Errorf("Can't pull %s/%s: you need owner or editor access (no file manifest was returned).", space, name)
+	}
+	root, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	for _, rel := range files {
+		// Defense-in-depth: a manifest path is server-provided; never let one escape the target dir
+		// (e.g. "../../.ssh/authorized_keys"). Upload already sanitizes paths, but a filesystem write
+		// driven by a network response must contain itself.
+		dest := filepath.Join(root, filepath.FromSlash(rel))
+		if dest != root && !strings.HasPrefix(dest, root+string(os.PathSeparator)) {
+			return fmt.Errorf("refusing to write outside %s: %s", dir, rel)
+		}
+		cres, err := c.http.Get(contentURL + encodePath(rel) + "?raw=1")
+		if err != nil {
+			return err
+		}
+		if !ok(cres) {
+			code := cres.StatusCode
+			cres.Body.Close()
+			return fmt.Errorf("Could not pull %s (%d)", rel, code)
+		}
+		body, err := io.ReadAll(cres.Body)
+		cres.Body.Close()
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(dest, body, 0o644); err != nil {
+			return err
+		}
+	}
+	if err := writePullMarker(dir, pullMarker{Space: space, Name: name, ContentVersion: version}); err != nil {
+		return err
+	}
+	fmt.Fprintf(c.out, "Pulled %d file(s) → %s\n", len(files), dir)
+	return nil
 }

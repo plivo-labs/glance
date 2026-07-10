@@ -126,6 +126,21 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
   const object = await c.env.GLANCE_FILES.get(file.storageKey)
   if (!object) return notFound(c)
 
+  // Raw source mode (`glance read --pull`): stream the stored bytes verbatim — NO markdown render, NO
+  // annotate injection, NOT counted as a view. The pull needs the exact `.md` source (the default
+  // path renders it to HTML) so a pull → deploy round-trip is byte-identical. Already token-gated
+  // above; served as text/plain + nosniff so a browser can't be tricked into executing pulled bytes.
+  if (c.req.query('raw') === '1') {
+    return new Response(object.body, {
+      status: 200,
+      headers: {
+        'content-type': 'text/plain; charset=utf-8',
+        'x-content-type-options': 'nosniff',
+        'cache-control': 'no-store',
+      },
+    })
+  }
+
   // Usage analytics: count this as a viewer hit only for actual page loads (HTML + rendered
   // markdown), not every CSS/JS/image sub-resource — otherwise one navigation inflates to many.
   // userId is guaranteed non-null here (anonymous requests 403'd above), so every view is

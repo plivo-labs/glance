@@ -1,16 +1,18 @@
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import {
+  type ShareUser,
   isSpaceMember,
   listSiteShares,
   memberSpaceIds,
   replaceSiteShares,
   resolveIsShared,
+  resolveShareRole,
   sharedSiteIds,
 } from '../db/repo'
 import type { Visibility } from '../db/schema'
-import { files as filesTable, sites as sitesTable, spaces, users } from '../db/schema'
-import { checkAccess } from '../lib/access'
+import { files as filesTable, siteUserShares, sites as sitesTable, spaces, users } from '../db/schema'
+import { canReplace, checkAccess } from '../lib/access'
 import { allAudioSiteIds } from '../lib/site-audio'
 import { readSessionOrBearer } from '../lib/session'
 import { resolveSite } from '../lib/site-access'
@@ -266,7 +268,21 @@ sites.get('/shared', requireAuth, async (c) => {
   )
   const rows = batches.flat().sort(byCreatedAtDesc)
   const visible = rows.filter((r) => r.status === 'active' && r.ownerId !== user.id)
-  const audioSet = await allAudioSiteIds(db, visible.map((r) => r.id))
+  const visibleIds = visible.map((r) => r.id)
+  // Direct-share role per site so the dashboard can badge "You can edit". A site reached only via a
+  // group share has no direct row → treated as viewer (groups are never editor grants).
+  const roleRows = (
+    await Promise.all(
+      chunk(visibleIds, D1_MAX_IN).map((batch) =>
+        db
+          .select({ siteId: siteUserShares.siteId, role: siteUserShares.role })
+          .from(siteUserShares)
+          .where(and(eq(siteUserShares.userId, user.id), inArray(siteUserShares.siteId, batch))),
+      ),
+    )
+  ).flat()
+  const roleBySite = new Map(roleRows.map((r) => [r.siteId, r.role]))
+  const audioSet = await allAudioSiteIds(db, visibleIds)
   return c.json(
     visible.map((r) => ({
       id: r.id,
@@ -276,6 +292,7 @@ sites.get('/shared', requireAuth, async (c) => {
       visibility: r.visibility,
       status: r.status,
       audio: audioSet.has(r.id),
+      role: roleBySite.get(r.id) ?? 'viewer',
       url: `${c.env.APP_URL}/${r.spaceSlug}/${r.slug}`,
       createdAt: r.createdAt,
     })),
@@ -354,12 +371,16 @@ sites.get('/:spaceSlug/:siteSlug/exists', requireAuth, async (c) => {
   const site = await resolveSite(db, spaceSlug, siteSlug)
   if (!site) return c.json({ exists: false })
   // Existence is disclosed only to someone who could legitimately act on it — the site's space
-  // members (slug availability is per-space), its owner, or a superadmin. Anyone else gets the
-  // same not-found shape so an unauthorized caller can't probe cross-space for a site's existence.
-  const authorized =
-    user.role === 'superadmin' || site.ownerId === user.id || (await isSpaceMember(db, site.spaceId, user.id))
+  // members (slug availability is per-space), its owner, a superadmin, OR a direct editor grantee
+  // (typically NOT a space member — without this a non-member editor gets exists:false, the CLI
+  // then tries CREATE and 403s). Anyone else gets the same not-found shape so an unauthorized caller
+  // can't probe cross-space for a site's existence.
+  const isOwner = site.ownerId === user.id
+  const role = isOwner || user.role === 'superadmin' ? null : await resolveShareRole(db, site.id, user.id)
+  const replaceable = canReplace(user, site, role)
+  const authorized = replaceable || (await isSpaceMember(db, site.spaceId, user.id))
   if (!authorized) return c.json({ exists: false })
-  return c.json({ exists: true, owned: site.ownerId === user.id })
+  return c.json({ exists: true, owned: isOwner, canReplace: replaceable, contentVersion: site.contentVersion })
 })
 
 // GET /api/sites/:spaceSlug/:siteSlug — viewer metadata + a token-gated content URL.
@@ -376,13 +397,14 @@ sites.get('/:spaceSlug/:siteSlug', async (c) => {
   // leaks — running the session read early doesn't change the not-found-before-auth ordering.
   if (!site) return c.json({ error: 'not found' }, 404)
 
-  const [isMember, isShared, siteFiles] = user
+  const [isMember, isShared, role, siteFiles] = user
     ? await Promise.all([
         isSpaceMember(db, site.spaceId, user.id),
         resolveIsShared(db, site.id, user.id),
+        resolveShareRole(db, site.id, user.id),
         db.select({ path: filesTable.path }).from(filesTable).where(eq(filesTable.siteId, site.id)),
       ])
-    : [false, false, [] as { path: string }[]]
+    : [false, false, null, [] as { path: string }[]]
   const access = checkAccess(site, user, isMember, isShared)
   if (!access.ok) return c.json({ error: 'forbidden' }, access.status)
 
@@ -397,6 +419,10 @@ sites.get('/:spaceSlug/:siteSlug', async (c) => {
     CONTENT_TOKEN_TTL,
   )}/${spaceSlug}/${siteSlug}/`
 
+  // Manifest gate: only someone who can REPLACE the content (owner / superadmin / editor) gets the
+  // file list + contentVersion — the pull-and-redeploy payload. A plain viewer sees their canReplace:
+  // false and no manifest, so they can't enumerate the site's files.
+  const replaceable = canReplace(user, site, role)
   return c.json({
     id: site.id,
     spaceSlug,
@@ -404,9 +430,12 @@ sites.get('/:spaceSlug/:siteSlug', async (c) => {
     title: site.title,
     visibility: site.visibility,
     status: site.status,
-    isOwner: user?.id === site.ownerId,
+    isOwner: user.id === site.ownerId,
+    canReplace: replaceable,
+    ...(role ? { role } : {}),
     contentUrl,
     indexPath: resolveIndexPath(siteFiles.map((f) => f.path)),
+    ...(replaceable ? { files: siteFiles.map((f) => f.path), contentVersion: site.contentVersion } : {}),
   })
 })
 
@@ -420,6 +449,30 @@ function resolveIndexPath(paths: string[]): string {
   return paths.length === 1 ? paths[0] : ''
 }
 
+// Normalize a PUT /shares body into role-aware user grants + view-only group ids. Pure (no DB), so
+// it's unit-testable and keeps every cast out of the request path. Accepts the new `users:[{id,role}]`
+// shape and the legacy `userIds:[id]` list (defaulted to viewer; `users` wins on a collision). Groups
+// arrive as `groupIds:[id]` or `groups:[{id}]` and are ALWAYS view-only — an editor role on a group is
+// a client error (there is no role column on site_group_shares), surfaced as `{ error }`.
+export function parseShareGrants(body: unknown): { users: ShareUser[]; groupIds: string[] } | { error: string } {
+  const b = (body ?? {}) as Record<string, unknown>
+  const asIds = (v: unknown) =>
+    Array.isArray(v) ? [...new Set(v.filter((x): x is string => typeof x === 'string'))] : []
+  const groupObjs = Array.isArray(b.groups) ? (b.groups as { id?: unknown; role?: unknown }[]) : []
+  if (groupObjs.some((g) => g?.role === 'editor')) return { error: 'groups cannot be granted editor' }
+
+  const roles = new Map<string, 'viewer' | 'editor'>()
+  if (Array.isArray(b.users)) {
+    for (const u of b.users as { id?: unknown; role?: unknown }[]) {
+      if (typeof u?.id === 'string') roles.set(u.id, u.role === 'editor' ? 'editor' : 'viewer')
+    }
+  }
+  for (const id of asIds(b.userIds)) if (!roles.has(id)) roles.set(id, 'viewer')
+
+  const groupIds = [...new Set([...asIds(b.groupIds), ...asIds(groupObjs.map((g) => g?.id))])]
+  return { users: [...roles].map(([userId, role]) => ({ userId, role })), groupIds }
+}
+
 // GET /api/sites/:spaceSlug/:siteSlug/shares — owner-only: current explicit share lists.
 sites.get('/:spaceSlug/:siteSlug/shares', requireAuth, async (c) => {
   const user = c.get('user')
@@ -428,7 +481,14 @@ sites.get('/:spaceSlug/:siteSlug/shares', requireAuth, async (c) => {
   const site = await resolveSite(db, spaceSlug, siteSlug)
   if (!site) return c.json({ error: 'not found' }, 404)
   if (site.ownerId !== user.id && user.role !== 'superadmin') return c.json({ error: 'forbidden' }, 403)
-  return c.json(await listSiteShares(db, site.id))
+  const shares = await listSiteShares(db, site.id)
+  // Boundary shape: expose users as {id, role} (mirrors the PUT input); keep flat userIds/groupIds
+  // for the legacy web dialog.
+  return c.json({
+    userIds: shares.userIds,
+    groupIds: shares.groupIds,
+    users: shares.users.map((u) => ({ id: u.userId, role: u.role })),
+  })
 })
 
 // PUT /api/sites/:spaceSlug/:siteSlug/shares — owner-only: replace the whole share set.
@@ -440,28 +500,32 @@ sites.put('/:spaceSlug/:siteSlug/shares', requireAuth, async (c) => {
   if (!site) return c.json({ error: 'not found' }, 404)
   if (site.ownerId !== user.id && user.role !== 'superadmin') return c.json({ error: 'forbidden' }, 403)
 
-  const body = await c.req.json().catch(() => null)
-  const asIds = (v: unknown) =>
-    Array.isArray(v) ? [...new Set(v.filter((x): x is string => typeof x === 'string'))] : []
-  const wantUsers = asIds(body?.userIds)
-  const wantGroups = asIds(body?.groupIds)
+  const grants = parseShareGrants(await c.req.json().catch(() => null))
+  if ('error' in grants) return c.json({ error: grants.error }, 400)
 
-  // Keep only ids that exist (real users; group-type spaces) so a stale id can't fail the
-  // batch insert on an FK violation.
-  const validUsers = wantUsers.length
-    ? (await db.select({ id: users.id }).from(users).where(inArray(users.id, wantUsers))).map((r) => r.id)
-    : []
-  const validGroups = wantGroups.length
+  // Keep only ids that exist (real users; group-type spaces) so a stale id can't fail the batch
+  // insert on an FK violation.
+  const wantUsers = grants.users.map((u) => u.userId)
+  const present = wantUsers.length
+    ? new Set((await db.select({ id: users.id }).from(users).where(inArray(users.id, wantUsers))).map((r) => r.id))
+    : new Set<string>()
+  const validUsers = grants.users.filter((u) => present.has(u.userId))
+  const validGroups = grants.groupIds.length
     ? (
         await db
           .select({ id: spaces.id })
           .from(spaces)
-          .where(and(inArray(spaces.id, wantGroups), eq(spaces.type, 'group')))
+          .where(and(inArray(spaces.id, grants.groupIds), eq(spaces.type, 'group')))
       ).map((r) => r.id)
     : []
 
   await replaceSiteShares(db, site.id, validUsers, validGroups)
-  return c.json({ ok: true, userIds: validUsers, groupIds: validGroups })
+  return c.json({
+    ok: true,
+    userIds: validUsers.map((u) => u.userId),
+    groupIds: validGroups,
+    users: validUsers.map((u) => ({ id: u.userId, role: u.role })),
+  })
 })
 
 // PATCH /api/sites/:spaceSlug/:siteSlug — owner-only update of visibility/title.

@@ -39,7 +39,8 @@ const MIGRATIONS = [
   'drizzle/0006_glance_documents.sql',
   'drizzle/0007_add_indexes.sql',
   'drizzle/0008_comment_audio_key.sql',
-  'drizzle/0009_notifications.sql',
+  'drizzle/0009_editor_share.sql',
+  'drizzle/0010_notifications.sql',
 ]
 
 /** Fresh in-memory DB with the real schema applied. */
@@ -110,9 +111,14 @@ export async function seedSite(
   return id
 }
 
-/** Grant a user a direct (per-user) share on a site. */
-export async function seedUserShare(db: DrizzleD1Database, siteId: string, userId: string): Promise<void> {
-  await db.insert(siteUserShares).values({ siteId, userId })
+/** Grant a user a direct (per-user) share on a site. Role defaults to 'viewer' (today's semantics). */
+export async function seedUserShare(
+  db: DrizzleD1Database,
+  siteId: string,
+  userId: string,
+  role: 'viewer' | 'editor' = 'viewer',
+): Promise<void> {
+  await db.insert(siteUserShares).values({ siteId, userId, role })
 }
 
 /** Grant every member of a (group) space a share on a site. */
