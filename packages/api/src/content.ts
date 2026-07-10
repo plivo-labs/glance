@@ -156,17 +156,21 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
   }
 
   const frameAncestors = `frame-ancestors 'self' ${c.env.APP_URL}`
+  // The content origin this page is served from — the yardstick for "is this link external?".
+  // A link to any OTHER origin is rewritten to open in a new tab (see openExternalLinksInNewTab).
+  const selfOrigin = new URL(c.req.url).origin
 
   // Markdown → rendered HTML (served as text/html). Use the RESOLVED file's path for
   // type detection so a single `.md` file rendered at the root still renders. Raw HTML in
   // the source is escaped (see `markdown`), and a strict CSP is applied as defense-in-depth.
   if (/\.(md|markdown)$/i.test(file.path)) {
     const html = await markdown.parse(await object.text())
-    return c.html(renderMarkdownDoc(file.path, html), 200, {
+    const res = c.html(renderMarkdownDoc(file.path, html), 200, {
       'content-security-policy': markdownCsp(frameAncestors),
       'x-content-type-options': 'nosniff',
       'referrer-policy': 'no-referrer',
     })
+    return openExternalLinksInNewTab(res, selfOrigin)
   }
 
   // Annotate mode: gated HTML + ?glance_annotate=1 → buffer the body and inject the annotate
@@ -180,12 +184,13 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
       filePath: file.path, // the RESOLVED path (single-file fallback), not the URL guess
       appOrigin: c.env.APP_URL,
     })
-    return c.html(injected, 200, {
+    const res = c.html(injected, 200, {
       'content-security-policy': frameAncestors,
       'x-content-type-options': 'nosniff',
       'referrer-policy': 'no-referrer',
       'cache-control': 'no-store',
     })
+    return openExternalLinksInNewTab(res, selfOrigin)
   }
 
   const headers = new Headers()
@@ -230,7 +235,10 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
     }
     // status 200 ('none'/'multi') falls through to the full body below.
   }
-  return new Response(object.body, { headers })
+  const res = new Response(object.body, { headers })
+  // Uploaded HTML gets the external-link → new-tab rewrite (streamed, no buffering). Other file
+  // types (audio, images, CSS/JS, …) stream through verbatim — the rewriter only touches HTML.
+  return isHtmlFile(file.path) ? openExternalLinksInNewTab(res, selfOrigin) : res
 }
 
 // Record a page-view event without blocking the response. fireAndForget hands the D1 write to
@@ -300,6 +308,40 @@ export function injectDb(html: string, appOrigin: string): string {
   const doctype = /^\s*<!doctype[^>]*>/i.exec(html)
   if (doctype) return html.slice(0, doctype[0].length) + tags + html.slice(doctype[0].length)
   return tags + html
+}
+
+/** True when an anchor href points OFF this content origin — an absolute http(s) URL to another
+ *  origin. Relative paths, fragments, same-origin links, and non-http(s) schemes (mailto:, tel:)
+ *  are internal and left untouched. `base` is the content origin the page is served from. */
+export function isExternalHref(href: string, base: string): boolean {
+  let u: URL
+  try {
+    u = new URL(href, base)
+  } catch {
+    return false // unparseable (e.g. a bare fragment against a bad base) — treat as internal
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false
+  return u.origin !== new URL(base).origin
+}
+
+/** Rewrite a served HTML document so links to OTHER origins open in a new tab (`target="_blank"` +
+ *  `rel="noopener noreferrer"`); same-site/relative links keep in-viewer navigation. Streams via
+ *  HTMLRewriter — no full-body buffering. Paired with the viewer iframe's
+ *  `allow-popups allow-popups-to-escape-sandbox` sandbox so the new tab actually opens and isn't
+ *  itself sandboxed. Only ever applied to HTML the site owns — NOT the directory-listing/markdown
+ *  shells, whose `target="_top"` app links must stay as-is. */
+export function openExternalLinksInNewTab(res: Response, base: string): Response {
+  return new HTMLRewriter()
+    .on('a[href]', {
+      element(el) {
+        const href = el.getAttribute('href')
+        if (href && isExternalHref(href, base)) {
+          el.setAttribute('target', '_blank')
+          el.setAttribute('rel', 'noopener noreferrer')
+        }
+      },
+    })
+    .transform(res)
 }
 
 export function normalizePath(rest: string): string {
