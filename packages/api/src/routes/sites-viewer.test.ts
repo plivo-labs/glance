@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { Hono } from 'hono'
 import { requireSameOrigin } from '../middleware/auth'
-import { makeDb, makeKv, seedFile, seedMember, seedSite, seedSpace, seedUser } from '../test/harness'
+import { makeDb, makeKv, seedFile, seedGroupShare, seedMember, seedSite, seedSpace, seedUser, seedUserShare } from '../test/harness'
 import type { AppEnv } from '../types'
 import { sites } from './sites'
 
@@ -153,6 +153,103 @@ describe('GET /api/sites/:space/:site — indexPath (root-file resolution)', () 
     const dir = (await (await view(app, env, 'me', 'dir', { Authorization: 'Bearer tok-u1' })).json()) as { indexPath: string }
     expect(idx.indexPath).toBe('index.html')
     expect(dir.indexPath).toBe('')
+  })
+})
+
+// S7 pins — the meta route's share-reach contract, via the PUBLIC endpoint. `role` in the response
+// is the DIRECT share role only: a group-only reacher gets access (200) but NO role field, canReplace
+// false, and no manifest — group shares never confer edit capability. Pinned before the single-resolve
+// refactor so the response shape provably cannot drift.
+describe('GET /api/sites/:space/:site — share-reach role resolution (S7 pins)', () => {
+  type MetaBody = { role?: string; canReplace?: boolean; files?: string[]; contentVersion?: number }
+
+  // Private site: only an explicit share (or owner/superadmin) reaches it — no tier fallback.
+  async function seedPrivate() {
+    const { db, kv, app, env } = await setup()
+    await mintUser(db, kv, 'owner')
+    const space = await seedSpace(db, { createdBy: 'owner', slug: 'docs' })
+    await seedMember(db, space, 'owner')
+    const site = await seedSite(db, { spaceId: space, ownerId: 'owner', slug: 'report', visibility: 'private' })
+    await seedFile(db, null, site, { path: 'index.html', text: 'b' })
+    return { db, kv, app, env, site }
+  }
+
+  test('meta.groupOnly.viewerAccess: 200 with NO role field, canReplace:false, no manifest', async () => {
+    const { db, kv, app, env, site } = await seedPrivate()
+    await mintUser(db, kv, 'gv')
+    const grp = await seedSpace(db, { createdBy: 'owner', slug: 'grp' })
+    await seedMember(db, grp, 'gv')
+    await seedGroupShare(db, site, grp)
+
+    const res = await view(app, env, 'docs', 'report', { Authorization: 'Bearer tok-gv' })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as MetaBody
+    expect('role' in body).toBe(false)
+    expect(body.canReplace).toBe(false)
+    expect(body.files).toBeUndefined()
+    expect(body.contentVersion).toBeUndefined()
+  })
+
+  test('meta.directViewer: role viewer, canReplace:false, no manifest', async () => {
+    const { db, kv, app, env, site } = await seedPrivate()
+    await mintUser(db, kv, 'dv')
+    await seedUserShare(db, site, 'dv', 'viewer')
+
+    const res = await view(app, env, 'docs', 'report', { Authorization: 'Bearer tok-dv' })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as MetaBody
+    expect(body.role).toBe('viewer')
+    expect(body.canReplace).toBe(false)
+    expect(body.files).toBeUndefined()
+  })
+
+  test('meta.directEditorPlusGroup: direct role wins — editor, canReplace:true, manifest present', async () => {
+    const { db, kv, app, env, site } = await seedPrivate()
+    await mintUser(db, kv, 'ed')
+    await seedUserShare(db, site, 'ed', 'editor')
+    const grp = await seedSpace(db, { createdBy: 'owner', slug: 'grp' })
+    await seedMember(db, grp, 'ed')
+    await seedGroupShare(db, site, grp)
+
+    const res = await view(app, env, 'docs', 'report', { Authorization: 'Bearer tok-ed' })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as MetaBody
+    expect(body.role).toBe('editor')
+    expect(body.canReplace).toBe(true)
+    expect(body.files).toEqual(['index.html'])
+    expect(body.contentVersion).toBe(0)
+  })
+
+  test('meta.noReach: authed user with no share and no membership → 403', async () => {
+    const { db, kv, app, env } = await seedPrivate()
+    await mintUser(db, kv, 'st')
+    expect((await view(app, env, 'docs', 'report', { Authorization: 'Bearer tok-st' })).status).toBe(403)
+  })
+
+  test('meta.singleResolve: share reach rides ONE db.batch (direct role + group reach together)', async () => {
+    const { db, kv, app, env, site } = await seedPrivate()
+    await mintUser(db, kv, 'dv')
+    await seedUserShare(db, site, 'dv', 'viewer')
+    db.resetCounters()
+
+    const res = await view(app, env, 'docs', 'report', { Authorization: 'Bearer tok-dv' })
+    expect(res.status).toBe(200)
+    expect(db.counters.batches).toBe(1) // resolveShareAccess — the only share scan
+    // Loose/batch attribution races under Promise.all in the sequential harness shim, so pin the
+    // TOTAL: site resolve + membership + files + (direct-role + group-reach) = 5, down from 6.
+    expect(db.counters.loose + db.counters.batchStmts).toBe(5)
+  })
+
+  test('meta.superadmin: 200 with canReplace:true, manifest present, NO role field (no direct share)', async () => {
+    const { db, kv, app, env } = await seedPrivate()
+    await mintUser(db, kv, 'admin', 'superadmin')
+
+    const res = await view(app, env, 'docs', 'report', { Authorization: 'Bearer tok-admin' })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as MetaBody
+    expect('role' in body).toBe(false)
+    expect(body.canReplace).toBe(true)
+    expect(body.files).toEqual(['index.html'])
   })
 })
 

@@ -1,9 +1,11 @@
 import { and, desc, eq, ne, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
-import { createSpace, isSpaceMember, sharedSiteIds } from '../db/repo'
+import type { DrizzleD1Database } from 'drizzle-orm/d1'
+import { createSpace, foldSharedSiteRoles, sharedSiteRoleStmts } from '../db/repo'
 import { sites, spaceMembers, spaces as spacesTable, users } from '../db/schema'
 import { checkAccess } from '../lib/access'
-import { allAudioSiteIds } from '../lib/site-audio'
+import { batchAll } from '../lib/d1'
+import { pureAudioSql } from '../lib/site-audio'
 import { deleteSpaceObjects } from '../lib/storage'
 import { isValidSlug } from '../lib/slug'
 import { requireAuth } from '../middleware/auth'
@@ -49,49 +51,79 @@ spaces.get('/mine', requireAuth, async (c) => {
   return c.json(rows)
 })
 
-// GET /api/spaces/:slug — metadata + member count + caller membership.
+/** Caller-is-a-member-of-the-space-at-`slug` as one SELECT (membership joined through the slug, so
+ *  it needs no prior space-row read and can share a db.batch with it). Missing space → empty. */
+function memberOfSlugStmt(db: DrizzleD1Database, slug: string, userId: string) {
+  return db
+    .select({ userId: spaceMembers.userId })
+    .from(spaceMembers)
+    .innerJoin(spacesTable, eq(spaceMembers.spaceId, spacesTable.id))
+    .where(and(eq(spacesTable.slug, slug), eq(spaceMembers.userId, userId)))
+    .limit(1)
+}
+
+// GET /api/spaces/:slug — metadata + member count + caller membership, in ONE post-auth D1 request:
+// all three reads are independent non-failing SELECTs keyed on the slug, so they share a db.batch
+// and the 404 for a missing space is decided post-batch on the space row alone.
 spaces.get('/:slug', requireAuth, async (c) => {
   const user = c.get('user')
   const db = c.get('db')
   const slug = c.req.param('slug')
-  const space = (await db.select().from(spacesTable).where(eq(spacesTable.slug, slug)).limit(1))[0]
+  const [spaceRows, counted, memberRows] = await batchAll(db, [
+    db.select().from(spacesTable).where(eq(spacesTable.slug, slug)).limit(1),
+    db
+      .select({ count: sql<number>`count(*)` })
+      .from(spaceMembers)
+      .innerJoin(spacesTable, eq(spaceMembers.spaceId, spacesTable.id))
+      .where(eq(spacesTable.slug, slug)),
+    memberOfSlugStmt(db, slug, user.id),
+  ])
+  const space = spaceRows[0]
   if (!space) return c.json({ error: 'space not found' }, 404)
 
-  const counted = await db
-    .select({ count: sql<number>`count(*)` })
-    .from(spaceMembers)
-    .where(eq(spaceMembers.spaceId, space.id))
   const memberCount = Number(counted[0]?.count ?? 0)
-  const isMember = await isSpaceMember(db, space.id, user.id)
+  const isMember = memberRows.length > 0
   return c.json({ id: space.id, slug: space.slug, name: space.name, type: space.type, memberCount, isMember })
 })
 
-// GET /api/spaces/:slug/sites — sites in the space the caller can actually access.
+// GET /api/spaces/:slug/sites — sites in the space the caller can actually access, in ONE post-auth
+// D1 request. Every read is keyed on the slug (or the caller) rather than a prior space-row read, so
+// space existence, share reach, membership, and the site rows — with the pure-audio badge folded in
+// as a correlated scalar (pureAudioSql, as /mine and /team do) — all travel in a single db.batch.
+// Each statement is a non-failing SELECT (missing space → empty rows), so the 404 is decided
+// post-batch on the space row alone. Visibility filtering stays in JS (checkAccess); computing the
+// audio scalar for rows the caller can't see is harmless — only visible rows reach the response.
 spaces.get('/:slug/sites', requireAuth, async (c) => {
   const user = c.get('user')
   const db = c.get('db')
   const slug = c.req.param('slug')
-  const space = (await db.select().from(spacesTable).where(eq(spacesTable.slug, slug)).limit(1))[0]
-  if (!space) return c.json({ error: 'space not found' }, 404)
+  const [directStmt, viaGroupStmt] = sharedSiteRoleStmts(db, user.id)
+  const [spaceRows, direct, viaGroup, memberRows, rows] = await batchAll(db, [
+    db.select({ id: spacesTable.id }).from(spacesTable).where(eq(spacesTable.slug, slug)).limit(1),
+    directStmt,
+    viaGroupStmt,
+    memberOfSlugStmt(db, slug, user.id),
+    db
+      .select({
+        id: sites.id,
+        slug: sites.slug,
+        title: sites.title,
+        visibility: sites.visibility,
+        status: sites.status,
+        ownerId: sites.ownerId,
+        createdAt: sites.createdAt,
+        audio: pureAudioSql(sites.id),
+      })
+      .from(sites)
+      .innerJoin(spacesTable, eq(sites.spaceId, spacesTable.id))
+      .where(eq(spacesTable.slug, slug))
+      .orderBy(desc(sites.createdAt)),
+  ])
+  if (spaceRows.length === 0) return c.json({ error: 'space not found' }, 404)
 
-  const isMember = await isSpaceMember(db, space.id, user.id)
-  const shared = await sharedSiteIds(db, user.id)
-  const rows = await db
-    .select({
-      id: sites.id,
-      slug: sites.slug,
-      title: sites.title,
-      visibility: sites.visibility,
-      status: sites.status,
-      ownerId: sites.ownerId,
-      createdAt: sites.createdAt,
-    })
-    .from(sites)
-    .where(eq(sites.spaceId, space.id))
-    .orderBy(desc(sites.createdAt))
-
+  const isMember = memberRows.length > 0
+  const shared = foldSharedSiteRoles(direct, viaGroup)
   const visible = rows.filter((s) => checkAccess(s, user, isMember, shared.has(s.id)).ok)
-  const audioSet = await allAudioSiteIds(db, visible.map((s) => s.id))
   return c.json(
     visible.map((s) => ({
       id: s.id,
@@ -101,7 +133,7 @@ spaces.get('/:slug/sites', requireAuth, async (c) => {
       visibility: s.visibility,
       status: s.status,
       isOwner: s.ownerId === user.id,
-      audio: audioSet.has(s.id),
+      audio: s.audio === 1,
       url: `${c.env.APP_URL}/${slug}/${s.slug}`,
       createdAt: s.createdAt,
     })),

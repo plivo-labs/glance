@@ -1,43 +1,12 @@
 import { describe, expect, test } from 'bun:test'
-import { Hono } from 'hono'
-import { requireSameOrigin } from '../middleware/auth'
-import { makeDb, makeKv, makeR2, seedFile, seedMember, seedSite, seedSpace, seedUser } from '../test/harness'
+import type { Hono } from 'hono'
+import { seedFile, seedGroupShare, seedMember, seedSite, seedSpace, seedUserShare } from '../test/harness'
+import { auth, makeRouteApp as setup, mintUser, postAuthRequests } from '../test/route-fixtures'
 import type { AppEnv } from '../types'
-import { spaces } from './spaces'
 
 // Spaces routes mounted the way index.ts mounts them (requireSameOrigin global + spaces under
-// /api/spaces) so CSRF, auth and ownership are exercised end to end. GLANCE_FILES is a real R2
-// mock so the delete path's object purge is observable.
-
-const APP_URL = 'https://glance.example.com'
-
-async function setup() {
-  const db = makeDb()
-  const kv = makeKv()
-  const r2 = makeR2()
-  const env = { APP_URL, SESSION_SECRET: 's', GLANCE_SESSIONS: kv, GLANCE_FILES: r2 } as unknown as AppEnv['Bindings']
-  const app = new Hono<AppEnv>()
-  app.use('/api/*', requireSameOrigin)
-  app.use('/api/*', async (c, next) => {
-    c.set('db', db)
-    await next()
-  })
-  app.route('/api/spaces', spaces)
-  return { db, kv, r2, app, env }
-}
-
-async function mintUser(
-  db: ReturnType<typeof makeDb>,
-  kv: ReturnType<typeof makeKv>,
-  id: string,
-  role: 'member' | 'superadmin' = 'member',
-) {
-  await seedUser(db, { id, role })
-  await kv.put(`cli:tok-${id}`, JSON.stringify({ id, email: `${id}@example.com`, name: null, role }))
-  return id
-}
-
-const auth = (id: string) => ({ Authorization: `Bearer tok-${id}`, Origin: APP_URL, 'Content-Type': 'application/json' })
+// /api/spaces — via the shared route-fixtures app) so CSRF, auth and ownership are exercised
+// end to end. GLANCE_FILES is a real R2 mock so the delete path's object purge is observable.
 
 const invite = (app: Hono<AppEnv>, env: AppEnv['Bindings'], slug: string, id: string, body: unknown) =>
   app.request(`/api/spaces/${slug}/members`, { method: 'POST', headers: auth(id), body: JSON.stringify(body) }, env)
@@ -129,7 +98,7 @@ describe('DELETE /api/spaces/:slug', () => {
 
   test('superadmin may delete a group space holding other members’ sites (bypass)', async () => {
     const { db, kv, r2, app, env } = await setup()
-    await mintUser(db, kv, 'admin', 'superadmin')
+    await mintUser(db, kv, 'admin', { role: 'superadmin' })
     await mintUser(db, kv, 'u1')
     await seedSpace(db, { id: 'g', createdBy: 'u1', slug: 'acme' })
     await seedMember(db, 'g', 'u1')
@@ -139,6 +108,122 @@ describe('DELETE /api/spaces/:slug', () => {
     const res = await del(app, env, 'acme', 'admin')
     expect(res.status).toBe(200)
     expect(r2.store.has(k)).toBe(false)
+  })
+})
+
+// --- S6 T6.1 fixture: space 'acme' (owner + member 'mem') holding one site per visibility tier,
+// an explicit private→outsider share, a group-share vehicle ('grp', outsider is a member) granting
+// exactly one private site, and an archived team site. Expected id sets are hand-coded per viewer. ---
+async function seedVisibilityFixture() {
+  const ctx = await setup()
+  const { db, kv } = ctx
+  for (const [id, role] of [['owner', 'member'], ['mem', 'member'], ['out', 'member'], ['admin', 'superadmin']] as const)
+    await mintUser(db, kv, id, { role })
+  await seedSpace(db, { id: 'sp', createdBy: 'owner', slug: 'acme' })
+  await seedMember(db, 'sp', 'owner')
+  await seedMember(db, 'sp', 'mem')
+  await seedSite(db, { id: 't1', spaceId: 'sp', ownerId: 'owner', slug: 't1', visibility: 'team' })
+  await seedSite(db, { id: 'm1', spaceId: 'sp', ownerId: 'owner', slug: 'm1', visibility: 'members' })
+  await seedSite(db, { id: 'p1', spaceId: 'sp', ownerId: 'owner', slug: 'p1', visibility: 'private' })
+  await seedSite(db, { id: 'p-shared', spaceId: 'sp', ownerId: 'owner', slug: 'p-shared', visibility: 'private' })
+  await seedUserShare(db, 'p-shared', 'out', 'viewer')
+  await seedSite(db, { id: 'gone', spaceId: 'sp', ownerId: 'owner', slug: 'gone', visibility: 'team', status: 'archived' })
+  await seedSpace(db, { id: 'grp', createdBy: 'owner', slug: 'grp' })
+  await seedMember(db, 'grp', 'out')
+  await seedSite(db, { id: 'g1', spaceId: 'sp', ownerId: 'owner', slug: 'g1', visibility: 'private' })
+  await seedGroupShare(db, 'g1', 'grp')
+  return ctx
+}
+
+const listedIds = async (app: Hono<AppEnv>, env: AppEnv['Bindings'], viewer: string, slug = 'acme') => {
+  const res = await app.request(`/api/spaces/${slug}/sites`, { headers: auth(viewer) }, env)
+  expect(res.status).toBe(200)
+  return new Set(((await res.json()) as { id: string }[]).map((s) => s.id))
+}
+
+describe('GET /api/spaces/:slug/sites — visibility pins (S6 T6.1)', () => {
+  test('pin: an authed non-member sees team-tier + explicitly-shared sites only', async () => {
+    const { app, env } = await seedVisibilityFixture()
+    // t1 (team), p-shared (direct grant), g1 (group grant) — NOT m1/p1 (tier), NOT gone (archived).
+    expect(await listedIds(app, env, 'out')).toEqual(new Set(['t1', 'p-shared', 'g1']))
+  })
+
+  test('pin: an own-space member sees members-tier sites but not others’ private ones', async () => {
+    const { app, env } = await seedVisibilityFixture()
+    expect(await listedIds(app, env, 'mem')).toEqual(new Set(['t1', 'm1']))
+  })
+
+  test('pin: a group share grants exactly its site, not the whole space', async () => {
+    const { app, env } = await seedVisibilityFixture()
+    const ids = await listedIds(app, env, 'out')
+    expect(ids.has('g1')).toBe(true) // the granted site
+    expect(ids.has('p1')).toBe(false) // sibling private site in the same space stays hidden
+    expect(ids.has('m1')).toBe(false) // group share is not space membership
+  })
+
+  test('pin: superadmin sees every site including archived', async () => {
+    const { app, env } = await seedVisibilityFixture()
+    expect(await listedIds(app, env, 'admin')).toEqual(new Set(['t1', 'm1', 'p1', 'p-shared', 'g1', 'gone']))
+  })
+
+  test('pin: missing space → 404 even when sibling statements return empty (garbage slug)', async () => {
+    const { app, env } = await seedVisibilityFixture()
+    const sitesRes = await app.request('/api/spaces/no-such-space/sites', { headers: auth('out') }, env)
+    expect(sitesRes.status).toBe(404)
+    expect(await sitesRes.json()).toMatchObject({ error: 'space not found' })
+    const metaRes = await app.request('/api/spaces/no-such-space', { headers: auth('out') }, env)
+    expect(metaRes.status).toBe(404)
+  })
+})
+
+describe('GET /api/spaces/:slug/sites — post-auth D1 request budget (S6 T6.2)', () => {
+  test('perf: a populated listing (shares + group grant + audio) costs at most 3 post-auth D1 requests', async () => {
+    const { app, env, db } = await seedVisibilityFixture()
+    await seedFile(db, null, 't1', { path: 'take.mp3', mimeType: 'audio/mpeg' })
+    await seedFile(db, null, 'g1', { path: 'index.html' })
+    db.resetCounters()
+
+    const res = await app.request('/api/spaces/acme/sites', { headers: auth('out') }, env)
+    expect(res.status).toBe(200)
+    const rows = (await res.json()) as { id: string; audio: boolean }[]
+    expect(new Set(rows.map((r) => ({ id: r.id, audio: r.audio })))).toEqual(
+      new Set([
+        { id: 't1', audio: true },
+        { id: 'p-shared', audio: false },
+        { id: 'g1', audio: false },
+      ]),
+    )
+    expect(postAuthRequests(db)).toBeLessThanOrEqual(3)
+    // Exact shape: auth's getUserById is the only loose statement; the handler is ONE batch
+    // carrying all five SELECTs (space row, direct shares, group shares, membership, site rows).
+    expect(db.counters.loose).toBe(1)
+    expect(db.counters.batches).toBe(1)
+    expect(db.counters.batchStmts).toBe(5)
+  })
+})
+
+describe('GET /api/spaces/:slug — post-auth D1 request budget + member facts (S6 T6.2)', () => {
+  test('perf+values: memberCount/isMember are correct and cost at most 2 post-auth D1 requests', async () => {
+    const { db, kv, app, env } = await setup()
+    for (const id of ['owner', 'm2', 'm3', 'out']) await mintUser(db, kv, id)
+    await seedSpace(db, { id: 'sp', createdBy: 'owner', slug: 'acme' })
+    for (const id of ['owner', 'm2', 'm3']) await seedMember(db, 'sp', id)
+
+    db.resetCounters()
+    const asMember = await app.request('/api/spaces/acme', { headers: auth('m2') }, env)
+    expect(asMember.status).toBe(200)
+    expect(await asMember.json()).toMatchObject({ slug: 'acme', memberCount: 3, isMember: true })
+    expect(postAuthRequests(db)).toBeLessThanOrEqual(2)
+
+    db.resetCounters()
+    const asOutsider = await app.request('/api/spaces/acme', { headers: auth('out') }, env)
+    expect(asOutsider.status).toBe(200)
+    expect(await asOutsider.json()).toMatchObject({ slug: 'acme', memberCount: 3, isMember: false })
+    expect(postAuthRequests(db)).toBeLessThanOrEqual(2)
+    // Exact shape: ONE batch carrying all three SELECTs (space row, member count, membership).
+    expect(db.counters.loose).toBe(1)
+    expect(db.counters.batches).toBe(1)
+    expect(db.counters.batchStmts).toBe(3)
   })
 })
 

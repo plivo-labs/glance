@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm'
 import type { BatchItem } from 'drizzle-orm/batch'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { isSpaceMember, resolveIsShared, toSessionUser } from '../db/repo'
+import { batchAll } from './d1'
 import { siteGroupShares, siteUserShares, sites as sitesTable, spaceMembers, spaces, users } from '../db/schema'
 import type { User, Visibility } from '../db/schema'
 import type { SessionUser } from '../types'
@@ -148,7 +149,7 @@ function assembleAccessFacts(userId: string | null, rows: unknown[]): AccessFact
 
 /** Resolve the access facts PLUS any caller-fused slug-keyed statements in ONE db.batch round
  *  trip. `extras` run after the facts statements; their row-arrays come back in `extras`, same
- *  order — the batch tuple cast and the slice-off index math live HERE, never at call sites. */
+ *  order — the batching (batchAll) and the slice-off index math live HERE, never at call sites. */
 export async function fetchAccessFacts(
   db: DrizzleD1Database,
   spaceSlug: string,
@@ -157,8 +158,7 @@ export async function fetchAccessFacts(
   ...extras: BatchItem<'sqlite'>[]
 ): Promise<{ facts: AccessFacts; extras: unknown[][] }> {
   const factsStmts = accessFactsStatements(db, spaceSlug, siteSlug, userId)
-  const stmts = [...factsStmts, ...extras]
-  const rows = await db.batch(stmts as [(typeof stmts)[number], ...(typeof stmts)[number][]])
+  const rows = await batchAll(db, [...factsStmts, ...extras])
   return {
     facts: assembleAccessFacts(userId, rows.slice(0, factsStmts.length)),
     extras: rows.slice(factsStmts.length) as unknown[][],

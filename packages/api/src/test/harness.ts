@@ -210,6 +210,8 @@ export async function seedSite(
     title: o.title ?? null,
     visibility: o.visibility ?? 'team',
     status: o.status ?? 'active',
+    // Omitted → schema $defaultFn (now). Passable so ordering specs can pin exact timelines.
+    ...(o.createdAt !== undefined && { createdAt: o.createdAt }),
   })
   return id
 }
