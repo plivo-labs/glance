@@ -68,7 +68,8 @@ async function create(app: TestApp, token: string, collection: string, body: unk
 }
 
 // Bulk-seed n rows straight into the table (bypassing the route) to fill a site to its quota
-// without thousands of HTTP round-trips. Chunked to stay under SQLite's bound-parameter limit.
+// without thousands of HTTP round-trips. Chunked to stay under D1's 100-bound-parameter cap
+// (enforced by the harness): 12 rows x 8 bound values = 96.
 async function seedDocs(db: DrizzleD1Database, siteId: string, collection: string, n: number, createdBy: string) {
   const at = '2020-01-01T00:00:00.000Z'
   const rows = Array.from({ length: n }, (_, i) => ({
@@ -80,7 +81,7 @@ async function seedDocs(db: DrizzleD1Database, siteId: string, collection: strin
     createdAt: at,
     updatedAt: at,
   }))
-  for (let i = 0; i < rows.length; i += 400) await db.insert(documents).values(rows.slice(i, i + 400))
+  for (let i = 0; i < rows.length; i += 12) await db.insert(documents).values(rows.slice(i, i + 12))
 }
 
 describe('glance.db data plane — happy path', () => {
