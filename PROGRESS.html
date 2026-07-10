@@ -1,0 +1,597 @@
+<!doctype html>
+<!--
+  ============================================================================
+  AGENT OPERATING PROTOCOL  (hidden from the rendered page — for agents only)
+  ============================================================================
+  If you were handed this file as a goal: it is a LIVE tracker, not a static
+  doc. You MUST keep it updated as you work. Loop until every item is
+  data-status="done" (or only out-of-scope items remain):
+
+    1. Pick the next item with data-status="todo" whose deps (dep:N in its
+       .meta) are all "done", in phase order. Never cross a Gate that isn't
+       done; never start phase N+1 while phase N has open items.
+    2. Set that item's data-status="wip" and redeploy (cmd below) so watchers
+       see it start.
+    3. Do the work TDD: one failing test -> minimal impl -> green. Verify.
+    4. Set the item's data-status="done" (or "blocked" + a Journal note if
+       genuinely stuck — never a false "done"). Append a dated <li> to the
+       Journal (section 07). Top counts + the Part II board recompute themselves.
+    5. If it was a phase's last step, run that phase's Gate item:
+       /thermo-nuclear-code-quality-review on the phase diff -> fix findings ->
+       full suite green -> mark the Gate done -> commit "Phase N: <summary>".
+    6. Redeploy after EVERY status change:
+          glance deploy PROGRESS.html --name glance-perf-progress      (answer y)
+    7. Repeat from 1. When done, do a final deploy and report.
+
+  Delegate: spin up sub-agents — Haiku for exploring/locating (finding utils,
+  callers, existing patterns, file paths), Sonnet for pure/mechanical execution
+  slices, Opus for higher-effort ones (cross-package, design, concurrency, codegen).
+  Run independent slices in parallel; keep it minimal — don't fan out beyond the work.
+
+  Rules: edit THIS file in place (never emit a new file); a status change is an
+  attribute edit only — preserve the markup/styling; the local file is source of
+  truth and Glance mirrors it. Step/gate items carry data-phase="N".
+
+  Context for this tracker: worktree /Users/samuel.lawerence/tasks/glance-ship/glance-perf
+  branch perf/db-query-hot-paths. Full plan: /tmp/glance-perf-plan/plan.md ·
+  cases: /tmp/glance-perf-plan/tests.md · audit + consult verdicts referenced there.
+  Run tests from repo root: bun run test · typecheck · lint. Baseline green:
+  417 api + 91 web tests. HARD DESIGN CONSTRAINT: every statement placed in a
+  shared db.batch must be a non-failing SELECT (absent rows -> empty result,
+  never throw) — a rejected inner statement rejects the whole batch and
+  destroys 404/403/410 precedence.
+  ============================================================================
+  Structure: ONE self-contained page. Part I · Plan (steps, gates, seams, cases,
+  strategy, order) + Part II · Progress (per-phase bars + journal), both driven by
+  the same data-status="todo|wip|done|blocked" items.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Glance DB-query perf — Progress Ledger</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Fragment+Mono:ital@0;1&family=Crimson+Pro:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --ground:#0d1310; --ground-2:#121a16; --panel:#16201b; --ink:#e9e5d8; --ink-soft:#b5b0a0;
+    --faint:#6f7a70; --rule:#243029; --rule-soft:#1b2620;
+    --signal:#ffb454; --signal-dim:rgba(255,180,84,.14);
+    --phosphor:#7dd487; --alarm:#e5604c;
+    --s-todo:#6f7a70; --s-wip:#ffb454; --s-done:#7dd487; --s-blocked:#e5604c;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;color:var(--ink);background:var(--ground);
+    font-family:"Crimson Pro",Georgia,serif;font-size:17.5px;line-height:1.6;
+    background-image:
+      repeating-linear-gradient(0deg,rgba(233,229,216,.018) 0 1px,transparent 1px 3px),
+      radial-gradient(ellipse 90% 55% at 50% -10%,rgba(125,212,135,.05),transparent 60%),
+      radial-gradient(rgba(233,229,216,.022) 1px,transparent 1.4px);
+    background-size:100% 100%,100% 100%,5px 5px;
+  }
+  body::before{content:"";position:fixed;inset:0 0 auto 0;height:4px;z-index:5;
+    background:linear-gradient(90deg,var(--signal) 0 30%,var(--phosphor) 30% 36%,transparent 36%)}
+  ::selection{background:var(--signal);color:var(--ground)}
+  .mono{font-family:"Fragment Mono",monospace}
+  .wrap{max-width:960px;margin:0 auto;padding:0 42px}
+
+  /* ---------- Masthead ---------- */
+  header{padding:66px 0 32px;border-bottom:2px solid var(--rule)}
+  .eyebrow{font-family:"Fragment Mono",monospace;font-size:11px;letter-spacing:.3em;
+    text-transform:uppercase;color:var(--signal);display:flex;justify-content:space-between}
+  h1{font-family:"Instrument Serif",serif;font-weight:400;font-size:clamp(40px,6.4vw,74px);
+    line-height:1.0;margin:.3em 0 .16em;letter-spacing:.004em}
+  h1 em{font-style:italic;color:var(--signal)}
+  .bias{font-style:italic;color:var(--ink-soft);max-width:62ch;font-size:20px}
+  .ledger-line{display:flex;flex-wrap:wrap;margin-top:28px;
+    border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+  .stat{flex:1;min-width:120px;padding:15px 18px 15px 0;border-right:1px solid var(--rule)}
+  .stat:last-child{border-right:0}
+  .stat .n{font-family:"Instrument Serif",serif;font-size:38px;line-height:1}
+  .stat .l{font-family:"Fragment Mono",monospace;font-size:10.5px;letter-spacing:.18em;
+    text-transform:uppercase;color:var(--faint);margin-top:7px}
+  .stat .n.accent{color:var(--signal)}
+
+  /* ---------- Part divider ---------- */
+  .part{display:flex;align-items:baseline;gap:18px;margin:66px 0 4px;padding-bottom:10px;
+    border-bottom:2px solid var(--rule)}
+  .part .roman{font-family:"Fragment Mono",monospace;font-size:13px;color:var(--signal);letter-spacing:.1em}
+  .part h2{font-family:"Instrument Serif",serif;font-size:36px;font-weight:400;margin:0}
+  .part .tag-line{margin-left:auto;font-family:"Fragment Mono",monospace;font-size:11px;
+    color:var(--faint);letter-spacing:.06em}
+
+  /* ---------- Sub-sections ---------- */
+  section{padding:42px 0 10px;border-bottom:1px solid var(--rule-soft)}
+  .sec-head{display:flex;align-items:baseline;gap:16px;margin-bottom:20px}
+  .sec-num{font-family:"Fragment Mono",monospace;font-size:12px;color:var(--signal);letter-spacing:.1em;padding-top:6px}
+  h3{font-family:"Instrument Serif",serif;font-weight:400;font-size:27px;margin:0}
+  .sec-note{margin-left:auto;font-family:"Fragment Mono",monospace;font-size:11px;color:var(--faint);letter-spacing:.06em}
+
+  .phase-h{font-family:"Fragment Mono",monospace;font-size:12px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--ink-soft);margin:28px 0 10px;display:flex;align-items:center;gap:12px}
+  .phase-h .lat{color:var(--signal);letter-spacing:.04em;text-transform:none}
+  .phase-h::after{content:"";flex:1;height:1px;background:var(--rule)}
+
+  /* ---------- Items ---------- */
+  ul.items{list-style:none;padding:0;margin:0}
+  li.item{display:grid;grid-template-columns:auto 1fr;gap:16px;align-items:start;
+    padding:15px 6px;border-bottom:1px dotted var(--rule);transition:background .2s}
+  li.item:last-child{border-bottom:0}
+  li.item:hover{background:rgba(255,180,84,.045)}
+  .stamp{font-family:"Fragment Mono",monospace;font-size:9.5px;font-weight:400;letter-spacing:.12em;
+    text-transform:uppercase;padding:4px 8px;border:1px solid currentColor;border-radius:2px;
+    white-space:nowrap;line-height:1;margin-top:5px;box-shadow:2px 2px 0 rgba(0,0,0,.35)}
+  [data-status="todo"]    .stamp{color:var(--s-todo)}
+  [data-status="wip"]     .stamp{color:var(--s-wip);
+    background:repeating-linear-gradient(45deg,transparent 0 5px,var(--signal-dim) 5px 10px)}
+  [data-status="done"]    .stamp{color:var(--s-done);background:rgba(125,212,135,.09)}
+  [data-status="blocked"] .stamp{color:var(--s-blocked);background:rgba(229,96,76,.09)}
+  [data-status="done"] .name{color:var(--faint)}
+  [data-status="done"] .name .t{text-decoration:line-through;text-decoration-color:var(--rule)}
+  .name{font-family:"Instrument Serif",serif;font-size:20px;line-height:1.35}
+  .name .k{font-family:"Fragment Mono",monospace;font-size:12px;color:var(--signal);margin-right:8px}
+  .meta{font-family:"Fragment Mono",monospace;font-size:11.5px;color:var(--faint);margin-top:5px;letter-spacing:.02em;line-height:1.7}
+  .meta .dep{color:var(--ink-soft)}
+  .r-low{color:var(--s-done)} .r-med{color:var(--signal)} .r-high{color:var(--alarm)}
+  li.gate{background:rgba(255,180,84,.05);border-left:2px solid var(--signal);padding-left:12px}
+  li.gate .name{font-style:italic}
+  li.gate .name .k{color:var(--ink)}
+
+  blockquote{margin:24px 0 8px;padding:18px 22px;background:var(--panel);
+    border-left:3px solid var(--signal);font-size:16.5px;color:var(--ink-soft)}
+  blockquote b{color:var(--ink)}
+  code,.meta code{font-family:"Fragment Mono",monospace;font-size:.92em;color:var(--phosphor)}
+  ol.prose{padding-left:0;counter-reset:s;list-style:none;margin:6px 0}
+  ol.prose li{counter-increment:s;padding:9px 0 9px 46px;position:relative;
+    border-bottom:1px dotted var(--rule);max-width:76ch}
+  ol.prose li:last-child{border-bottom:0}
+  ol.prose li::before{content:counter(s,decimal-leading-zero);position:absolute;left:0;top:9px;
+    font-family:"Fragment Mono",monospace;font-size:12px;color:var(--signal)}
+  ol.prose b{font-weight:500;color:var(--ink)}
+
+  /* ---------- Progress board (Part II) ---------- */
+  .board{margin-top:6px}
+  .prow{display:grid;grid-template-columns:130px 1fr 64px;gap:16px;align-items:center;
+    padding:14px 0;border-bottom:1px dotted var(--rule)}
+  .prow:last-child{border-bottom:0}
+  .prow .plabel{font-family:"Fragment Mono",monospace;font-size:12px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--ink-soft)}
+  .bar{height:12px;background:var(--panel);border:1px solid var(--rule);border-radius:2px;overflow:hidden;position:relative}
+  .bar>i{display:block;height:100%;width:0;background:
+    repeating-linear-gradient(45deg,var(--s-done) 0 7px,#5cae68 7px 14px);transition:width .6s cubic-bezier(.2,.7,.2,1)}
+  .prow .pct{font-family:"Fragment Mono",monospace;font-size:14px;text-align:right;color:var(--signal)}
+  .nowbar{display:flex;gap:12px;align-items:center;padding:16px 20px;margin:18px 0 4px;
+    background:var(--panel);border-left:3px solid var(--signal);font-family:"Fragment Mono",monospace;font-size:13px}
+  .nowbar b{color:var(--ink);font-weight:400} .nowbar .lbl{color:var(--signal);letter-spacing:.14em;text-transform:uppercase;font-size:10.5px}
+
+  .journal{list-style:none;padding:0;margin:0}
+  .journal li{display:grid;grid-template-columns:auto auto 1fr;gap:14px;align-items:baseline;
+    padding:11px 0;border-bottom:1px dotted var(--rule);font-family:"Fragment Mono",monospace;font-size:13px;color:var(--ink-soft)}
+  .journal li:last-child{border-bottom:0}
+  .journal .date{color:var(--signal);white-space:nowrap}
+  .journal .badge{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}
+
+  footer{padding:36px 0 62px;font-family:"Fragment Mono",monospace;font-size:11px;
+    color:var(--faint);letter-spacing:.08em;text-align:center}
+  footer b{color:var(--signal);font-weight:400}
+
+  @keyframes rise{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+  header{animation:rise .7s cubic-bezier(.2,.7,.2,1) both}
+  .part,section{animation:rise .7s cubic-bezier(.2,.7,.2,1) both;animation-delay:.12s}
+  section:nth-of-type(2){animation-delay:.18s}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="eyebrow"><span>Plan · TDD · Thermo-nuclear gates</span><span>Progress Ledger №004</span></div>
+    <h1>Glance DB-query perf — <em>site-open + dashboard</em></h1>
+    <p class="bias">“Fewer round trips, identical semantics — access gates before side effects, read-your-write intact.”</p>
+    <div class="ledger-line">
+      <div class="stat"><div class="n">4+F</div><div class="l">Phases</div></div>
+      <div class="stat"><div class="n">14</div><div class="l">Steps</div></div>
+      <div class="stat"><div class="n">5</div><div class="l">Gates</div></div>
+      <div class="stat"><div class="n">52</div><div class="l">Test cases</div></div>
+      <div class="stat"><div class="n accent"><span id="done-count">0</span>/<span id="total-count">19</span></div><div class="l">Landed</div></div>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- ==================================================================== -->
+  <!-- ===========================  PART I · PLAN  ========================= -->
+  <!-- ==================================================================== -->
+  <div class="part"><span class="roman">I</span><h2>Plan</h2><span class="tag-line">static · phase order · deps · gates</span></div>
+
+  <!-- 01 · Steps -->
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><h3>Steps</h3><span class="sec-note">deps &amp; gates enforced</span></div>
+
+    <blockquote><b>Ground rules (bind every step):</b> every statement in a shared <code>db.batch</code> must be a
+      non-failing SELECT (absent row → empty result, never throw) or 404/403/410 precedence dies with the batch ·
+      metric is <b>“D1 requests”</b> (1 batch = 1 request; loose statements counted separately) — never wall-clock ·
+      existing suites are the regression net, never re-authored · <b>Excluded by decision:</b> F7 requireAuth
+      KV-trust (parked), voice/Whisper deferral, F6 access-decision cache (rejected — composes to zero after S1,
+      violates the content-worker revocation promise). Shared tab: <b>pop-in when resolved</b> (user-decided).</blockquote>
+
+    <div class="phase-h">Phase 1 — Content serve path <span class="lat">target: doc+asset −280ms, warm asset −300ms</span></div>
+    <ul class="items">
+      <li class="item" data-status="todo" data-phase="1"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S0</span><span class="t">Harness seams: cache mock, R2 byte-fidelity + per-kind counters, D1 request counters + timeline, 100-bind cap adapter</span></div>
+          <div class="meta">unlocks every counter/cache/range case · <span class="r-low">low risk</span> · zero prod code</div></div></li>
+      <li class="item" data-status="todo" data-phase="1"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S1</span><span class="t">accessFactsBySlugs primitive (site⨝space, user, membership, shares — one batch) + serve() rewrite; dir-listing fallback stays OUT of the batch</span></div>
+          <div class="meta">audit F1 · <span class="r-high">high risk</span> · <span class="dep">dep:S0</span> · status branches preserved: 404 no-store / untokened 403 / deleted-user 403 / archived 410-except-superadmin · consumers: content now, comments S9a + data.ts later</div></div></li>
+      <li class="item" data-status="todo" data-phase="1"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S2+S3</span><span class="t">Storage serving: single ranged R2 GET (null-size fallback, 416+etag probe, If-None-Match precedence) + Cache API on immutable storageKey (full-200 only, Range bypasses, tee'd put via waitUntil, encoded keys)</span></div>
+          <div class="meta">audit F8 + F6-replacement · <span class="r-med">med-high risk</span> · <span class="dep">dep:S0 (not S1)</span> · auth-before-cache always · client keeps private,no-cache</div></div></li>
+      <li class="item gate" data-status="todo" data-phase="1"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">G1</span><span class="t">Gate P1 — thermo-nuclear</span></div>
+          <div class="meta">/thermo-nuclear-code-quality-review on Phase-1 diff → findings → suite green → commit "Phase 1: …"</div></div></li>
+    </ul>
+
+    <div class="phase-h">Phase 2 — Dashboard + API feeds <span class="lat">target: /shared 4→2, /mine //team 2→1, spaces 5→3</span></div>
+    <ul class="items">
+      <li class="item" data-status="todo" data-phase="2"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S4</span><span class="t">allAudioSiteIds: multi-chunk via db.batch (single request)</span></div>
+          <div class="meta">consult find · <span class="r-low">low risk</span> · no-op ≤90 ids — correctness for big feeds</div></div></li>
+      <li class="item" data-status="todo" data-phase="2"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S5</span><span class="t">GET /sites/shared: sharedSiteRoles (direct role overrides group 'viewer') + audio on candidate ids concurrent with site rows — 4→2</span></div>
+          <div class="meta">audit F2 (trimmed) · <span class="r-med">med risk</span> · sharedSiteIds untouched for search/spaces callers</div></div></li>
+      <li class="item" data-status="todo" data-phase="2"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S5b</span><span class="t">Fold audio badge into /sites/mine + /team select (JOIN/EXISTS, no row explosion, LIMIT intact) — 2→1</span></div>
+          <div class="meta">audit rank 9 · <span class="r-low">low-med risk</span></div></div></li>
+      <li class="item" data-status="todo" data-phase="2"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S6</span><span class="t">Spaces: /spaces/:slug/sites 5→3 layers; /spaces/:slug count∥membership parallel</span></div>
+          <div class="meta">audit F5 · <span class="r-low">low-med risk</span> · <span class="dep">dep:S4</span></div></div></li>
+      <li class="item" data-status="todo" data-phase="2"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S7</span><span class="t">Viewer meta: single role-aware share resolve (kills duplicate siteUserShares scan) — cleanup, no RT claim</span></div>
+          <div class="meta">demoted by review · <span class="r-low">low risk</span> · canReplace must NOT gain group-editor</div></div></li>
+      <li class="item gate" data-status="todo" data-phase="2"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">G2</span><span class="t">Gate P2 — thermo-nuclear</span></div>
+          <div class="meta">/thermo-nuclear-code-quality-review on Phase-2 diff → findings → suite green → commit "Phase 2: …"</div></div></li>
+    </ul>
+
+    <div class="phase-h">Phase 3 — Comments path <span class="lat">target: list 5→2 (auth floor stays), mutations pre-write 1 batch</span></div>
+    <ul class="items">
+      <li class="item" data-status="todo" data-phase="3"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S8</span><span class="t">Comments list: composable statement builders + pure assembler; listThreads/listSiteThreads = one db.batch of 2 JOINed statements</span></div>
+          <div class="meta">audit F4 · <span class="r-med">med risk</span> · rowid tiebreak qualified · kills IN() bind-limit risk</div></div></li>
+      <li class="item" data-status="todo" data-phase="3"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S9a</span><span class="t">Comments routes adopt accessFactsBySlugs (2 auth layers → 1)</span></div>
+          <div class="meta"><span class="r-med">med-high risk</span> · <span class="dep">dep:S1</span> · requireAuth floor remains (F7 parked)</div></div></li>
+      <li class="item" data-status="todo" data-phase="3"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S9b</span><span class="t">GET list: fuse access batch + S8 statements into ONE batch; gate evaluated before results used</span></div>
+          <div class="meta"><span class="r-med">med risk</span> · <span class="dep">dep:S8,S9a</span></div></div></li>
+      <li class="item" data-status="todo" data-phase="3"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S9c</span><span class="t">Mutations: access + target reads (thread/comment) in one pre-write batch; voice-audio GET batched pre-R2</span></div>
+          <div class="meta"><span class="r-med">med risk</span> · <span class="dep">dep:S9a</span> · relationship checks (commentInSite) preserved</div></div></li>
+      <li class="item gate" data-status="todo" data-phase="3"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">G3</span><span class="t">Gate P3 — thermo-nuclear</span></div>
+          <div class="meta">/thermo-nuclear-code-quality-review on Phase-3 diff → findings → suite green → commit "Phase 3: …"</div></div></li>
+    </ul>
+
+    <div class="phase-h">Phase 4 — Web SPA <span class="lat">target: tabs paint on /mine; rail lands with the page</span></div>
+    <ul class="items">
+      <li class="item" data-status="todo" data-phase="4"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S10</span><span class="t">Dashboard: per-feed rendering via pure deriveFeedState — Your-sites on /mine resolve; Shared tab pops in when resolved; failed /team contained</span></div>
+          <div class="meta">consult find · <span class="r-low">low-med risk</span> · acknowledged resilience change · 401 → login redirect · gate needs browser assertions</div></div></li>
+      <li class="item" data-status="todo" data-phase="4"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S11</span><span class="t">Viewer: loader returns {site, commentsPromise} (unawaited); resolveEntryPath helper; generation-guarded arbitration; audio applies sans ready; splat-nav reset</span></div>
+          <div class="meta">audit F3 · <span class="r-med">med risk</span> · prefetch provisional until matching glance:ready · indexPath '' → no prefetch</div></div></li>
+      <li class="item gate" data-status="todo" data-phase="4"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">G4</span><span class="t">Gate P4 — thermo-nuclear + browser smoke</span></div>
+          <div class="meta">review on Phase-4 diff → findings → suite green → agent-browser smoke (tabs progressive paint, team-500 containment, pop-in no tab steal, viewer prefetch races) → commit "Phase 4: …"</div></div></li>
+    </ul>
+
+    <div class="phase-h">Final — whole-change review + benchmark</div>
+    <ul class="items">
+      <li class="item gate" data-status="todo" data-phase="final"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">GF</span><span class="t">Final Gate — thermo-nuclear over the ENTIRE change + remote before/after benchmark</span></div>
+          <div class="meta">full-diff review → findings → full suite green → REMOTE preview/canary timings (serve doc+asset · /sites/shared · comments list) vs baseline — local timings don't validate the 140ms model → commit → final glance deploy. Tracker not done until this passes.</div></div></li>
+    </ul>
+
+    <blockquote><b>Phase-exit gate (every phase):</b> after a phase's steps land, run
+      <span class="mono">/thermo-nuclear-code-quality-review</span> scoped to that phase's diff. Triage findings — fix the
+      legit ones, note any deferred with rationale. Re-run the full suite; <b>all tests must pass and no unaddressed
+      finding may remain before the phase is done</b> and the next starts. Then commit the phase.
+      <br><br><b>Final gate (once, at the end):</b> run it once more over the <b>entire</b> change —
+      cross-phase interactions and whole-feature complexity that per-phase, single-diff gates can miss — plus the
+      remote latency benchmark. The tracker is done only when this passes.</blockquote>
+  </section>
+
+  <!-- 02 · Test seams -->
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h3>Test seams</h3><span class="sec-note">all land inside S0 · zero prod code</span></div>
+    <ul class="items">
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S-A</span><span class="t">makeR2: true byte-model (Uint8Array/UTF-8), per-kind op counters (full/ranged/head/onlyIf), head(), etag-rotates-on-put</span></div>
+          <div class="meta">unlocks T0.1 · T2.1–2.6 · T3.1–3.2</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S-B</span><span class="t">makeCaches: clone-on-put, twice-readable match, match/put counters, failable on demand</span></div>
+          <div class="meta">unlocks T0.2 · T3.1–3.6 · T1.3 zero-cache asserts</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S-C</span><span class="t">D1 request counters: batch/loose/write-kind counts + ordered D1∕R2∕cache timeline + resetCounters()</span></div>
+          <div class="meta">unlocks every red-now RT case (T1.1 · T5.2–5.3 · T6.2 · T8.1 · T9.3–9.5)</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S-D</span><span class="t">Bind-cap adapter: reject any statement binding &gt;100 values (mirrors D1; bun-sqlite won't)</span></div>
+          <div class="meta">unlocks T8.2 (makes it genuinely red)</div></div></li>
+    </ul>
+  </section>
+
+  <!-- 03 · Test cases -->
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h3>Test cases</h3>
+      <span class="sec-note">red-now · characterization · property · new-module-spec</span></div>
+
+    <div class="phase-h">Phase 1 · S0 harness</div>
+    <ul class="items">
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T0.1 R2 mock byte fidelity: [0,127,128,255] range(2,2)→[128,255]; UTF-8 byte lengths; re-put rotates etag; head; onlyIf both ways</span></div>
+          <div class="meta">P0 · new-module-spec · writable today</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T0.2 cache mock: put stores clone (client body readable after; match twice-readable); counters; failable</span></div>
+          <div class="meta">P0 · new-module-spec · writable today</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T0.3 D1 counters: batch([a,b]) = 1 batch + 2 stmts; write kinds; reset excludes seeds; ordered timeline</span></div>
+          <div class="meta">P0 · new-module-spec · writable today</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T0.4 bind-cap adapter rejects &gt;100 bound values</span></div>
+          <div class="meta">P0 · new-module-spec · writable today</div></div></li>
+    </ul>
+
+    <div class="phase-h">Phase 1 · S1 access facts + serve</div>
+    <ul class="items">
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T1.1 happy-path non-HTML asset = ONE D1 request (1 batch, exact arity, 0 loose) before first R2 op — timeline-checked</span></div>
+          <div class="meta">P0 · red-now-bug (3 today) · gated by S-C</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T1.2 index exists → dir-listing stmt NOT in batch (arity); no-index dir may take 2nd request + still lists</span></div>
+          <div class="meta">P0 · red-now guard · gated by S-C</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T1.3 denial matrix (isolated fixtures): outsider-private 403 · archived-owner 410 · archived-superadmin 200 · untokened 403 · deleted-user 403 · missing-site 404 no-store — each denial: zero R2 AND zero cache ops</span></div>
+          <div class="meta">P0 · characterization · gated by S-A/B/C</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T1.4 live transitions, SAME token: 200→revoke share→403 · 200→remove membership→403 · 200→delete user→403 · 200→archive→410; zero R2 on denied hit</span></div>
+          <div class="meta">P0 · red-now (revocation promise through the batch) · writable after S1 lands</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T1.5 cross-space slug confusion: same site slug + file path in two spaces → each token serves ITS bytes; membership/share on A never authorizes B; A-token on B's URL → 403, zero D1</span></div>
+          <div class="meta">P0 · red-now guard vs slug-keyed joins · writable today</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T1.6 accessFactsBySlugs asserts ASSEMBLED FACTS vs hand-seeded expectations (revoked/removed/deleted/missing) — never vs authorizeViewerById (shared oracle)</span></div>
+          <div class="meta">P1 · new-module-spec · with S1</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T1.7 fault-injection: absent rows → empty results, batch never throws; raw=1/annotate/markdown identical request-count (no re-query per branch)</span></div>
+          <div class="meta">P1 · characterization · with S1</div></div></li>
+    </ul>
+
+    <div class="phase-h">Phase 1 · S2+S3 storage serving</div>
+    <ul class="items">
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T2.1 Range + non-null size: exactly ONE ranged R2 op (0 full), 206 slice + etag correct</span></div>
+          <div class="meta">P0 · red-now-bug (full+ranged today) · gated by S-A</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T2.2 416 past-end: etag + Content-Range bytes */N; 1 probe op, 0 ranged; zero-byte object (size===0) handled</span></div>
+          <div class="meta">P0 · red-now (post-design) · gated by S-A</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T2.3 null-size row: 206 via full-get fallback (ops documented); non-null path pins fullGets===0 forever</span></div>
+          <div class="meta">P1 · characterization + op-constraint · gated by S-A</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T2.4 conditionals w/ op-counts: INM+Range→304 (0 body ops, 0 cache reads) · stale If-Range→full 200 · matching If-Range→single ranged 206 · multi-range→full 200</span></div>
+          <div class="meta">P1 · characterization strengthened · gated by S-A</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T2.5 rangeable pins: .pdf/.css/.png 206 · .HTML (uppercase) not · markdown + ?raw=1 return BEFORE range handling</span></div>
+          <div class="meta">P1 · characterization · writable today</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T2.6 cold cache + D1 row + missing R2 → 404; site REPLACE mints new storageKeys → old cache entry unreachable</span></div>
+          <div class="meta">P0 · characterization + read-your-write · gated by S-A/B</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T3.1 cross-user cache share: A warms (tee'd put, client body intact) → B (different token) re-authed via D1, body FROM cache, 0 R2</span></div>
+          <div class="meta">P0 · new-module-spec · gated by S-A/B</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T3.2 WARM cache + Range: 0 cache reads, 1 ranged R2; 206/304 never cache.put</span></div>
+          <div class="meta">P0 · new-module-spec · gated by S-A/B</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T3.3 stored entry cacheable headers; client keeps private,no-cache; put-reject → client 200; match-throw → R2 fallback</span></div>
+          <div class="meta">P1 · new-module-spec · gated by S-B</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T3.4 collision-prone storageKeys ('a#b/x' vs 'a%23b/x', unicode, '?') as REAL rows through the route → distinct bodies + keys</span></div>
+          <div class="meta">P1 · new-module-spec · gated by S-B</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T3.5 warm-then-revoke: same token → 403, ZERO cache reads + zero R2 (auth-before-cache); 410 + deleted-user variants</span></div>
+          <div class="meta">P0 · red-now guard · gated by S-B</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T3.6 per-transform R2-vs-cache byte-identical (markdown / annotate / link-rewrite); raw=1 never warms + no view; cached HTML = exactly one view</span></div>
+          <div class="meta">P1 · property · gated by S-B</div></div></li>
+    </ul>
+
+    <div class="phase-h">Phase 2 · feeds</div>
+    <ul class="items">
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T4.1 91 ids → 1 batch / 90 → 1 loose stmt; hand-coded expected sets (.MP3 true, foo.mp3.bak false, zero-file false, mixed) straddling boundary; dup ids deduped</span></div>
+          <div class="meta">P0 · red-now-bug (serial chunks today) · gated by S-C</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T5.1 /shared roles NOT covered today: group-only→viewer · direct-editor+group→editor · two group shares→one row · drop direct, keep group→viewer · owned excluded · empty feed→zero site/audio queries</span></div>
+          <div class="meta">P0 · red-now + characterization · writable today</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T5.2 /shared post-auth D1 requests ≤ 2 (4 today)</span></div>
+          <div class="meta">P0 · red-now-bug · gated by S-C</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T5.3 /mine + /team post-auth D1 requests == 1 (audio folded)</span></div>
+          <div class="meta">P0 · red-now-bug · gated by S-C</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T5.4 JOIN explosion guards: multi-file audio site → ONE row; /team 51 sites, newest has 30 files → 50 DISTINCT newest (LIMIT uneaten); audio any-file semantics; hand-coded payloads</span></div>
+          <div class="meta">P0 · red-now guard vs S5b · writable today</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T5.5 pins: archived-mine still present (current behavior, don't fix silently); sharedSiteIds Set API smoke for search + spaces callers</span></div>
+          <div class="meta">P1 · characterization · writable today</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T5.6 91 shared candidates: roles + global newest-first across chunk boundary, editor grant on #91, no dupes</span></div>
+          <div class="meta">P1 · red-now boundary · dep S4</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T6.1 space visibility explicit: outsider = team + shared-private only · member = members-tier · group-share grants exact site · superadmin sees archived · missing space 404 under fault-injection</span></div>
+          <div class="meta">P0 · characterization · writable today</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T6.2 /spaces/:slug/sites ≤ 3 requests (5 today); /spaces/:slug ≤ 2 + first route test of memberCount/isMember values</span></div>
+          <div class="meta">P0 · red-now-bug · gated by S-C</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T7.1 viewer-meta via PUBLIC contract: group-only → 200, NO role, canReplace false, no manifest · direct viewer → role, no replace · direct editor+group → editor + replace + manifest · none → 403 · superadmin unchanged</span></div>
+          <div class="meta">P1 · characterization (replaces invalid isShared/canComment draft) · writable today</div></div></li>
+    </ul>
+
+    <div class="phase-h">Phase 3 · comments</div>
+    <ul class="items">
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T8.1 listThreads AND listSiteThreads: 1 batch, 0 loose (3 serial today); empty site also 1 batch → []</span></div>
+          <div class="meta">P0 · red-now-bug · gated by S-C</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T8.2 101 threads × 101 authors: old IN() rejected by cap adapter, new JOIN passes; (filePath,createdAt,rowid) order preserved post-join with equal createdAt</span></div>
+          <div class="meta">P0 · red-now-bug · gated by S-D</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T8.3 ACTUAL user deletion (ON DELETE SET NULL): author/creator/resolver independently → null-name views; two sites same filePath no bleed; empty thread beside populated</span></div>
+          <div class="meta">P1 · characterization (strengthens existing) · writable today</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T8.4 golden vectors: deterministic fixtures, expectations frozen as literals (no old-impl oracle) — soft-deletes/resolved/open/missing users → exact ThreadView[]</span></div>
+          <div class="meta">P1 · property · with S8</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T9.1 exact statuses: unauthed 401 · outsider-private 403 (no thread fields in body) · missing 404 · archived 410 · inaccessible+invalid filePath → access error; accessible+invalid → 400</span></div>
+          <div class="meta">P0 · characterization · writable today</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T9.2 read-your-write per mutation, focused: create/reply/resolve/reopen/edit/delete each followed by GET showing the change</span></div>
+          <div class="meta">P0 · characterization (guards fused reordering) · writable today</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T9.3 GET list = 1 requireAuth read + 1 fused batch; forbidden request → batched list results NEVER reach response (fault-injection)</span></div>
+          <div class="meta">P0 · red-now-bug · gated by S-C</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T9.4 relationship denials, zero writes/R2/AI each: other-site thread reply 404 · threadId≠comment.threadId 404 · foreign comment 404 · non-owner resolve · non-author edit · denied voice POST</span></div>
+          <div class="meta">P0 · red-now guard · gated by S-C</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T9.5 mutations pre-write = 1 batch; voice-audio GET pre-R2 ≤ 2 + denial matrix (foreign/mismatch/deleted/text/denied → zero R2)</span></div>
+          <div class="meta">P1 · red-now · gated by S-C</div></div></li>
+    </ul>
+
+    <div class="phase-h">Phase 4 · web</div>
+    <ul class="items">
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T10.1 deriveFeedState: mine resolved / others pending → Your-sites renderable, Shared ABSENT (pop-in)</span></div>
+          <div class="meta">P0 · new-module-spec · writable with helper</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T10.2 shared resolves &gt;0 → tab + count; ==0 → stays absent</span></div>
+          <div class="meta">P0 · new-module-spec</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T10.3 team rejected → contained error state; other tabs intact; 401 → login-redirect signal</span></div>
+          <div class="meta">P0 · new-module-spec</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T10.4 spaces resolve → count + ?new=space steering fires exactly once</span></div>
+          <div class="meta">P1 · new-module-spec</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T10.5 TEMPORAL: re-derive with new promise identities + same data → stable tab identity + active tab (incl. pop-in while user on Team)</span></div>
+          <div class="meta">P1 · new-module-spec · NOTE: helper tests can't fail the Promise.all bug — G4 browser smoke is the real net</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T11.1 resolveEntryPath: root+index → index.html · lone recording.webm → itself · indexPath '' → NO-PREFETCH sentinel · docs/ → docs/index.html · dot/traversal mirrors server</span></div>
+          <div class="meta">P0 · new-module-spec · helper must BE the wired prefetch key</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T11.2 generation arbitration: older same-path prefetch resolving after newer refresh → discarded; stale REJECTION never clears newer success</span></div>
+          <div class="meta">P0 · red-now vs naive path-key · new-module-spec</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T11.3 provisional rules: HTML applies only on matching glance:ready · mismatch → discard + fetch · no ready (dir listing) → never applied · AUDIO applies immediately sans ready · dup ready → no refetch</span></div>
+          <div class="meta">P0 · new-module-spec · kills the break-audio trap</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T11.4 splat-nav reset: loaded overlay returns; resolvedFilePath/threads/count/composing/generation reset; stale ready from OLD iframe src ignored</span></div>
+          <div class="meta">P1 · new-module-spec</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">T11.5 loader contract: resolves while commentsPromise pending; meta 401 → toLogin; 403/404/410 → no prefetch; prefetch rejection never rejects loader or blanks iframe</span></div>
+          <div class="meta">P1 · characterization + spec · writable with loader change</div></div></li>
+    </ul>
+  </section>
+
+  <!-- 04 · Strategy -->
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><h3>Strategy</h3></div>
+    <ol class="prose">
+      <li><b>S0 first, alone.</b> Every red-now case reads the counters; without them the RT claims are vibes.</li>
+      <li>Then <b>per step: red → fix → green</b>, one case at a time (vertical slices). Never batch reds.</li>
+      <li><b>Genuinely-new pins before the refactor they guard</b> (T1.3–1.5, T2.5–2.6, T5.1, T6.1, T7.1, T8.3, T9.1–9.2); existing suites are the regression net and are never re-authored.</li>
+      <li><b>No shared oracles:</b> facts vs hand-seeded expectations, golden vectors frozen as literals, hand-coded payloads — an equivalence test that calls the code-under-test's own helper proves nothing.</li>
+      <li><b>Batch statements never throw</b> — absent rows return empty; fault-injection cases (T1.7, T6.1, T9.3) pin status precedence.</li>
+      <li><b>End of each phase: thermo-nuclear gate</b> → fix findings → full suite green → commit before the next phase.</li>
+    </ol>
+  </section>
+
+  <!-- 05 · Authoring order -->
+  <section>
+    <div class="sec-head"><span class="sec-num">05</span><h3>Authoring order</h3></div>
+    <ol class="prose">
+      <li>S0 seams (T0.1–T0.4) — unlock all counter/cache/range/bind-cap cases</li>
+      <li>Writable-today pins: T1.5 · T2.5 · T5.1 · T5.4 · T6.1 · T7.1 · T8.3 · T9.1–9.2</li>
+      <li>Phase 1 red-nows with implementation: T1.1–1.4 → S1 · T2.1–2.4, T2.6, T3.1–3.5 → S2+S3</li>
+      <li>Phase 2: T4.1 → S4 · T5.2, T5.6 → S5 · T5.3 → S5b · T6.2 → S6 · T7.1 green through S7</li>
+      <li>Phase 3: T8.1–8.2 → S8 · T9.3 → S9a/S9b · T9.4–9.5 → S9c</li>
+      <li>Phase 4: T10.* → S10 · T11.* → S11 · browser smoke at G4</li>
+      <li>Property/golden pins last: T1.6 · T3.6 · T8.4</li>
+    </ol>
+  </section>
+
+  <!-- ==================================================================== -->
+  <!-- =========================  PART II · PROGRESS  ====================== -->
+  <!-- ==================================================================== -->
+  <div class="part"><span class="roman">II</span><h2>Progress</h2><span class="tag-line">live · same items · redeployed each tick</span></div>
+
+  <!-- 06 · Status board -->
+  <section>
+    <div class="sec-head"><span class="sec-num">06</span><h3>Status board</h3><span class="sec-note">per-phase completion</span></div>
+    <div class="nowbar"><span class="lbl">In flight</span><b id="now-slice">—</b></div>
+    <div class="board" id="board"><!-- rows injected from data-phase step items --></div>
+  </section>
+
+  <!-- 07 · Journal -->
+  <section>
+    <div class="sec-head"><span class="sec-num">07</span><h3>Journal</h3><span class="sec-note">newest last · absolute dates</span></div>
+    <ul class="journal">
+      <li><span class="date">2026-07-10</span><span class="badge">created</span>
+        <span>Ledger drawn up from the 64-agent DB-query audit + codex/cursor consult (plan v2, cases v2 both consensus-hardened). Worktree perf/db-query-hot-paths off origin/main, baseline 417+91 tests green. 0 landed.</span></li>
+      <li><span class="date">2026-07-10</span><span class="badge">baseline</span>
+        <span>Prod latency baselines captured pre-fix (bench/bench.ts, n=30, fixture samuel-lawerence/perf-bench): workers.dev floor 212ms · doc 723 · asset 716 · shared 877 · mine 551 · team 554 · spaceSites 1043 · comments 1040 (p50). CloudFront pass saved alongside. GF compares a wrangler-versions preview against bench/workersdev-2026-07-10-16-42.json via bench/compare.ts.</span></li>
+    </ul>
+  </section>
+
+</main>
+
+<footer class="wrap">One page · Plan + Progress · edited in place &amp; redeployed each iteration via <b>glance deploy PROGRESS.html --name glance-perf-progress</b></footer>
+
+<script>
+  // Single source of truth: the Plan's data-status items drive every count + the Part II board.
+  (function(){
+    var steps = Array.prototype.slice.call(document.querySelectorAll('li.item[data-phase]'));
+    var done = steps.filter(function(li){return li.getAttribute('data-status')==='done'}).length;
+    var d=document.getElementById('done-count'), t=document.getElementById('total-count');
+    if(d) d.textContent=done; if(t) t.textContent=steps.length;
+    var wip = steps.filter(function(li){return li.getAttribute('data-status')==='wip'});
+    var now=document.getElementById('now-slice');
+    if(now) now.textContent = wip.length ? wip.map(function(li){
+      var k=li.querySelector('.k'), n=li.querySelector('.t');
+      return (k?k.textContent+' ':'')+(n?n.textContent:'');
+    }).join('  ·  ') : (done===steps.length ? 'complete' : 'idle — next slice pending');
+    var byPhase={};
+    steps.forEach(function(li){var p=li.getAttribute('data-phase');(byPhase[p]=byPhase[p]||[]).push(li)});
+    var board=document.getElementById('board');
+    if(board) Object.keys(byPhase).sort().forEach(function(p){
+      var arr=byPhase[p], dn=arr.filter(function(li){return li.getAttribute('data-status')==='done'}).length;
+      var pct=Math.round(100*dn/arr.length);
+      var label=/^\d+$/.test(p) ? 'Phase '+p : p.charAt(0).toUpperCase()+p.slice(1);
+      var row=document.createElement('div'); row.className='prow';
+      row.innerHTML='<span class="plabel">'+label+'</span>'+
+        '<div class="bar"><i style="width:'+pct+'%"></i></div>'+
+        '<span class="pct">'+pct+'%</span>';
+      board.appendChild(row);
+    });
+  })();
+</script>
+</body>
+</html>
