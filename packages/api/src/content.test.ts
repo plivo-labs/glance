@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { Hono } from 'hono'
-import contentApp, { injectAnnotate, markdown, normalizePath, restOf } from './content'
+import contentApp, { injectAnnotate, normalizePath, restOf } from './content'
+import { markdown } from './lib/markdown'
 import { events, sites, spaces, users } from './db/schema'
 import { sanitizePath } from './lib/storage'
 import { signToken, verifyToken } from './lib/token'
@@ -67,6 +68,48 @@ describe('markdown XSS neutralization', () => {
     expect(html).toContain('<img src="https://example.com/a.png" alt="alt">')
     expect(html).toContain('<pre><code>')
     expect(html).toContain('<table>')
+  })
+})
+
+describe('A10 markdown served THROUGH the tokenized worker path stays safe', () => {
+  // Characterization pin: proves the content worker still renders `.md` through the SHARED
+  // escaping `markdown` instance after it moved to lib/markdown.ts (S1). Not `markdown.parse`
+  // in isolation — a real /_t/<token>/<space>/<site> request end to end.
+  function setup() {
+    const db = makeDb()
+    const r2 = makeR2()
+    const app = new Hono()
+    app.use('*', async (c, next) => {
+      c.set('db', db)
+      await next()
+    })
+    app.route('/', contentApp)
+    return { app, db, r2, env: { APP_URL: 'https://glance.example.com', CONTENT_TOKEN_SECRET: secret, GLANCE_FILES: r2 } }
+  }
+  async function gatedSite(db: ReturnType<typeof makeDb>) {
+    const uid = await seedUser(db, { id: 'u1' })
+    const sp = await seedSpace(db, { createdBy: uid, slug: 'sam' })
+    const siteId = await seedSite(db, { spaceId: sp, ownerId: uid, slug: 'site', visibility: 'team' })
+    const token = await signToken(secret, uid, 'sam/site', 300)
+    return { siteId, token }
+  }
+
+  test('raw HTML escaped, javascript: link defused, script-src none', async () => {
+    const { app, db, r2, env } = setup()
+    const { siteId, token } = await gatedSite(db)
+    await seedFile(db, r2, siteId, {
+      path: 'note.md',
+      text: '# Hi\n\n<script>alert(1)</script>\n\n[x](javascript:alert(1))\n',
+      mimeType: 'text/markdown',
+    })
+    const res = await app.request(`/_t/${token}/sam/site/note.md`, {}, env)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toContain('text/html')
+    expect(res.headers.get('content-security-policy')).toContain("script-src 'none'")
+    const body = await res.text()
+    expect(body).not.toContain('<script>alert(1)</script>')
+    expect(body).toContain('&lt;script&gt;')
+    expect(body).not.toContain('href="javascript:')
   })
 })
 

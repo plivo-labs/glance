@@ -41,6 +41,7 @@ const MIGRATIONS = [
   'drizzle/0008_comment_audio_key.sql',
   'drizzle/0009_editor_share.sql',
   'drizzle/0010_notifications.sql',
+  'drizzle/0011_whats_new_watermark.sql',
 ]
 
 /** Fresh in-memory DB with the real schema applied. */

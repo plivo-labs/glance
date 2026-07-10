@@ -93,6 +93,10 @@ export async function bootstrapSuperadminByEmail(
   db: DrizzleD1Database,
   rawEmail: string,
   name: string | null,
+  // Caught-up watermark for a freshly-inserted superadmin. Passed IN (not imported) so this widely-
+  // reached repo module never pulls whats-new/catalog into the content worker's bundle — the auth
+  // path supplies NEWEST_RELEASE_DATE; default null keeps an existing promotion / tests catalog-free.
+  lastSeenReleaseAt: string | null = null,
 ): Promise<SessionUser> {
   const email = rawEmail.toLowerCase()
   const existing = (await db.select().from(users).where(eq(users.email, email)).limit(1))[0]
@@ -105,7 +109,9 @@ export async function bootstrapSuperadminByEmail(
   }
 
   const id = crypto.randomUUID()
-  await db.insert(users).values({ id, email, name, googleId: null, role: 'superadmin' })
+  // Caught-up default (watermark = newest, supplied by the auth path) so a freshly bootstrapped
+  // superadmin isn't greeted by a backlog of "unread" release notes. Mirrors findOrCreateUser.
+  await db.insert(users).values({ id, email, name, googleId: null, role: 'superadmin', lastSeenReleaseAt })
   await createPersonalSpace(db, id, email)
   return { id, email, name, role: 'superadmin' }
 }

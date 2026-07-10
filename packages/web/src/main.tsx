@@ -14,6 +14,7 @@ import { Toaster } from './components/ui/sonner'
 import { api, ApiError } from './lib/api'
 import { EMPTY_NOTIFICATIONS, type RootData, notifications } from './lib/notifications'
 import type { Me } from './lib/types'
+import { EMPTY_WHATS_NEW, whatsNew } from './lib/whatsNew'
 import './tailwind.css'
 
 // Root loader fetches identity ONCE before render (replaces a mount useEffect). It does
@@ -30,7 +31,8 @@ async function rootLoader(): Promise<RootData> {
     else throw err
   }
   const list = user ? notifications.list().catch(() => EMPTY_NOTIFICATIONS) : Promise.resolve(EMPTY_NOTIFICATIONS)
-  return { user, notifications: list }
+  const news = user ? whatsNew.list().catch(() => EMPTY_WHATS_NEW) : Promise.resolve(EMPTY_WHATS_NEW)
+  return { user, notifications: list, whatsNew: news }
 }
 
 function RootError() {
@@ -82,6 +84,9 @@ const router = createBrowserRouter([
       { path: 'dashboard', lazy: () => import('./routes/dashboard') },
       { path: 'admin', lazy: () => import('./routes/admin') },
       { path: 'cli', lazy: () => import('./routes/cli') },
+      // Reserved slug (RESERVED_SLUGS) — MUST precede the `:space` catch-all so /whats-new resolves
+      // to the release-notes archive, not a space lookup.
+      { path: 'whats-new', lazy: () => import('./routes/whats-new') },
       { path: ':space', lazy: () => import('./routes/space') },
       { path: '*', lazy: () => import('./routes/not-found') },
     ],

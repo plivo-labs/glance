@@ -10,6 +10,11 @@ export const users = sqliteTable('users', {
   googleId: text('googleId').unique(),
   role: text('role', { enum: ['member', 'superadmin'] }).notNull().default('member'),
   createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
+  // "What's New" read watermark: the ISO-8601 UTC date through which this user has seen release
+  // notes. Nullable — null means "never seen any" (all releases unread). Set on the insert paths
+  // (findOrCreateUser / bootstrapSuperadminByEmail) so new signups start caught up. NO catalog
+  // import here — keeping the schema catalog-free is what stops the content worker from baking it in.
+  lastSeenReleaseAt: text('lastSeenReleaseAt'),
 })
 
 export const spaces = sqliteTable('spaces', {
