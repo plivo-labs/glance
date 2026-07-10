@@ -1,6 +1,6 @@
 import { Bell } from 'lucide-react'
-import { Suspense } from 'react'
-import { Await, useNavigate, useRevalidator } from 'react-router'
+import { Suspense, useEffect, useState } from 'react'
+import { Await, useNavigate } from 'react-router'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,26 +12,16 @@ import { type Notification, type NotificationList, notifications } from '@/lib/n
 import { timeAgo } from '@/lib/time'
 import { cn } from '@/lib/utils'
 
-// Open a notification: deep-link into the viewer's review rail, mark that one read, and refresh via
-// the router revalidator.
-function useOpenNotification(): (n: Notification) => void {
-  const navigate = useNavigate()
-  const revalidator = useRevalidator()
-  return (n) => {
-    void notifications.markRead([n.id]).then(() => revalidator.revalidate())
-    navigate(notificationHref(n))
-  }
-}
-
-// Header bell + unread badge, fed by the root loader's DEFERRED notifications promise. Opening the
-// bell marks all read; clicking an item deep-links into the viewer's review rail and marks that one
-// read. Every mutation refreshes via the router revalidator (no bespoke store). Lives only on shell
-// pages — the viewer route is outside AppShell, so a notification click navigates INTO the viewer.
+// Header bell + unread badge. The root loader's DEFERRED promise seeds the FIRST paint (via <Await>,
+// no mount-fetch flash); from there the Bell OWNS its data in local state — a self-contained 60s
+// poll and optimistic mark-read keep it fresh. No router revalidation, so nothing else (the
+// dashboard's heavy feeds) re-fetches on the Bell's account. Lives only on shell pages — the viewer
+// route is outside AppShell, so a notification click navigates INTO the viewer.
 export function NotificationsBell({ notifications: promise }: { notifications: Promise<NotificationList> }) {
   return (
     <Suspense fallback={<BellButton unread={0} />}>
       <Await resolve={promise} errorElement={<BellButton unread={0} />}>
-        {(data: NotificationList) => <BellMenu data={data} />}
+        {(data: NotificationList) => <BellMenu initial={data} />}
       </Await>
     </Suspense>
   )
@@ -50,16 +40,36 @@ function BellButton({ unread, ...props }: { unread: number } & React.ComponentPr
   )
 }
 
-function BellMenu({ data }: { data: NotificationList }) {
-  const revalidator = useRevalidator()
-  const openItem = useOpenNotification()
+function BellMenu({ initial }: { initial: NotificationList }) {
+  const navigate = useNavigate()
+  const [data, setData] = useState(initial)
 
-  // Opening the bell marks everything read (decision #6). Fire-and-forget, then revalidate so the
-  // badge + read styling reflect it.
+  // Self-contained 60s freshness: poll the list into local state. Nothing else re-fetches (the Bell
+  // is the only consumer). The root loader's promise is stable for the shell's lifetime, so seeding
+  // `initial` once is correct — this poll is what keeps it current.
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      void notifications.list().then(setData, () => {})
+    }, 60_000)
+    return () => window.clearInterval(id)
+  }, [])
+
+  // Opening the bell marks everything read (decision #6): optimistic local flip, then persist.
   function onOpenChange(open: boolean) {
     if (open && data.unreadCount > 0) {
-      void notifications.markRead().then(() => revalidator.revalidate())
+      setData((d) => ({ items: d.items.map((n) => ({ ...n, read: true })), unreadCount: 0 }))
+      void notifications.markRead().catch(() => {})
     }
+  }
+
+  // Open a notification: optimistic read + persist, then deep-link into the viewer's review rail.
+  function openItem(n: Notification) {
+    setData((d) => ({
+      items: d.items.map((x) => (x.id === n.id ? { ...x, read: true } : x)),
+      unreadCount: n.read ? d.unreadCount : Math.max(0, d.unreadCount - 1),
+    }))
+    void notifications.markRead([n.id]).catch(() => {})
+    navigate(notificationHref(n))
   }
 
   return (

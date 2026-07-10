@@ -3,7 +3,6 @@ import {
   Await,
   Link,
   Navigate,
-  type ShouldRevalidateFunctionArgs,
   useAsyncError,
   useLoaderData,
   useLocation,
@@ -51,7 +50,6 @@ import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api, ApiError } from '@/lib/api'
-import { notifPoll } from '@/lib/notifPoll'
 import type { SiteSummary, SpaceSummary, TeamUpload } from '@/lib/types'
 
 // Stream the feeds instead of blocking the route on them: the shell paints at root-loader time,
@@ -65,14 +63,6 @@ export function loader() {
     spaces: api.get<SpaceSummary[]>('/api/spaces/mine'),
     team: api.get<TeamUpload[]>('/api/sites/team'),
   }
-}
-
-// The 60s notification poll revalidates the ROOT loader (notifications); this route's 4 feeds are
-// heavy and don't change on that cadence, so skip them for a poll-flagged revalidation. Every other
-// trigger (navigation, a mutation's revalidate()) refreshes normally.
-export function shouldRevalidate(arg: ShouldRevalidateFunctionArgs): boolean {
-  if (notifPoll.consume()) return false
-  return arg.defaultShouldRevalidate
 }
 
 // Sites shared with me — same table shell as Your sites, minus the owner-only actions.

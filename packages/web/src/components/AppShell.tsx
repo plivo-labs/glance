@@ -1,10 +1,9 @@
 import { useCallback, useState } from 'react'
-import { Link, NavLink, Outlet, useLoaderData, useNavigation, useRevalidator } from 'react-router'
+import { Link, NavLink, Outlet, useLoaderData, useNavigation } from 'react-router'
 import { Command, LogOut, Moon, Sun, SunMoon } from 'lucide-react'
 import type { Me } from '@/lib/types'
 import type { NotificationList } from '@/lib/notifications'
 import { api } from '@/lib/api'
-import { notifPoll } from '@/lib/notifPoll'
 import { toggleTheme, useTheme } from '@/components/theme'
 import { CommandPalette } from '@/components/CommandPalette'
 import { NotificationsBell } from '@/components/NotificationsBell'
@@ -24,27 +23,7 @@ export function AppShell() {
   const { user, notifications } = useLoaderData() as { user: Me | null; notifications: Promise<NotificationList> }
   const nav = useNavigation()
   const theme = useTheme()
-  const revalidator = useRevalidator()
   const [cmdOpen, setCmdOpen] = useState(false)
-
-  // Light freshness for notifications: one 60s tick that revalidates the root loader (which carries
-  // the deferred notifications). `notifPoll.begin()` flags this as a poll so the dashboard's
-  // shouldRevalidate skips its 4 heavy feeds — only the root loader re-runs. Ref-callback idiom
-  // (returns its own cleanup, React 19) — no useEffect. Only runs while signed in.
-  const bindPoll = useCallback(
-    (node: HTMLDivElement | null) => {
-      if (!node || !user) return
-      const id = window.setInterval(() => {
-        // shouldRevalidate runs synchronously inside revalidate(), so the dashboard (if matched)
-        // consumes the flag here; end() clears it otherwise.
-        notifPoll.begin()
-        revalidator.revalidate()
-        notifPoll.end()
-      }, 60_000)
-      return () => window.clearInterval(id)
-    },
-    [user, revalidator],
-  )
 
   // ⌘K / Ctrl-K opens the palette. Listener attached in a ref callback that returns its
   // cleanup (React 19) — no useEffect.
@@ -78,7 +57,7 @@ export function AppShell() {
           nav.state !== 'idle' ? 'animate-pulse opacity-100' : 'opacity-0',
         )}
       />
-      <header ref={bindPoll} className="sticky top-0 z-40 border-b border-border/70 bg-background/80 backdrop-blur-md">
+      <header className="sticky top-0 z-40 border-b border-border/70 bg-background/80 backdrop-blur-md">
         <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4 sm:px-6">
           <Link to="/dashboard" className="flex items-center gap-2 font-mono text-sm font-semibold tracking-tight">
             <span className="size-2.5 rounded-[3px] bg-primary shadow-[0_0_12px_1px_var(--primary)]" />
