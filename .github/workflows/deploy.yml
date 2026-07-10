@@ -115,16 +115,19 @@ jobs:
         run: bun run build:web
 
       # Regenerate the COMMITTED string-module bundles from source so a stale checkout can't ship an
-      # old annotate client, glance.db client, or installer. The workers have no asset pipeline — they
-      # import these bundles at build time — and build:install also refreshes the /api/install script
-      # from the repo-root install.sh. Deploy what the source says, not whatever the commit happened
-      # to carry. (No Cloudflare token needed here, so it runs before the token-bearing steps.)
+      # old annotate client, glance.db client, installer, or What's New catalog. The workers have no
+      # asset pipeline — they import these bundles at build time — build:install also refreshes the
+      # /api/install script from the repo-root install.sh, and build:whatsnew re-bakes the release
+      # notes from src/whats-new/notes/*.md (the main worker's `wrangler deploy` has no prebuild, so
+      # miss this and an authored .md never reaches prod). Deploy what the source says, not whatever
+      # the commit happened to carry. (No Cloudflare token needed here, so it runs before the token steps.)
       - name: Regenerate committed bundles
         working-directory: packages/api
         run: |
           bun run build:annotate
           bun run build:db
           bun run build:install
+          bun run build:whatsnew
 
       # CLOUDFLARE_API_TOKEN is scoped to ONLY the wrangler steps (not the whole job) so it never
       # sits in the env of `bun install` / `build:web` / the bundle build, which execute third-party
