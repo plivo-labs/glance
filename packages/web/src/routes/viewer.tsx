@@ -337,7 +337,10 @@ function Viewer() {
                 // allow-top-navigation-by-user-activation: lets the directory-listing links (target=_top)
                 // break out to the app route on a user click, so the address bar updates. Gesture-gated,
                 // so iframed content can't silently redirect the tab.
-                sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-top-navigation-by-user-activation"
+                // allow-popups + allow-popups-to-escape-sandbox: the content worker rewrites external
+                // links (other origins) to target=_blank; these two flags let that click open a REAL
+                // new tab that isn't itself sandboxed, so the destination site loads normally.
+                sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms allow-top-navigation-by-user-activation"
               />
             )}
             {!isAudio && !loaded && (
