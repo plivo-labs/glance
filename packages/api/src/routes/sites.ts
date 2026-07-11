@@ -6,14 +6,16 @@ import {
   listSiteShares,
   memberSpaceIds,
   replaceSiteShares,
-  resolveIsShared,
+  resolveShareAccess,
   resolveShareRole,
   sharedSiteIds,
+  sharedSiteRoles,
 } from '../db/repo'
 import type { Visibility } from '../db/schema'
-import { files as filesTable, siteUserShares, sites as sitesTable, spaces, users } from '../db/schema'
+import { files as filesTable, sites as sitesTable, spaces, users } from '../db/schema'
 import { canReplace, checkAccess } from '../lib/access'
-import { allAudioSiteIds } from '../lib/site-audio'
+import { batchAll, chunk, D1_MAX_IN } from '../lib/d1'
+import { pureAudioSql } from '../lib/site-audio'
 import { readSessionOrBearer } from '../lib/session'
 import { resolveSite } from '../lib/site-access'
 import { isValidSlug } from '../lib/slug'
@@ -37,17 +39,6 @@ export const sites = new Hono<AppEnv>()
 // Over-fetch a little past the result cap so the in-memory checkAccess pass can drop a few
 // non-openable candidates and still fill the cap.
 const SEARCH_SCAN_CAP = 200
-
-// D1 caps a single statement at 100 bound parameters, so an `inArray` over a candidate id list
-// must be split into batches and the per-batch results unioned — otherwise a large member-space /
-// shared-site list throws. Kept under 100 to leave room for the query's other bound values.
-const D1_MAX_IN = 90
-
-function chunk<T>(xs: T[], size: number): T[][] {
-  const out: T[][] = []
-  for (let i = 0; i < xs.length; i += size) out.push(xs.slice(i, i + size))
-  return out
-}
 
 // Escape LIKE metacharacters (`%`, `_`, and the `\` escape char itself) so a user's literal
 // `%`/`_` can't act as wildcards. Pair the bound value with `ESCAPE '\'` in the query.
@@ -100,9 +91,8 @@ export async function searchSites(
   const shared = isSuper ? new Set<string>() : await sharedSiteIds(db, user.id)
 
   // Candidate reach as a set of bounded WHERE clauses, unioned in memory: `X AND (A OR B OR C)`
-  // ≡ union of `X AND A`, `X AND B`, `X AND C`, and no single statement's `inArray` can exceed
-  // D1's 100-param cap (member-space / shared id lists are chunked). superadmin ⇒ every active
-  // match (undefined reach, which `and` drops).
+  // ≡ union of `X AND A`, `X AND B`, `X AND C`. Member-space / shared id lists are chunked under
+  // D1's bind cap (see lib/d1.ts). superadmin ⇒ every active match (undefined reach, which `and` drops).
   const active = eq(sitesTable.status, 'active')
   const reaches = isSuper
     ? [undefined]
@@ -205,7 +195,8 @@ sites.post('/', requireAuth, async (c) => {
   return c.json({ id, spaceSlug, siteSlug, url: `${c.env.APP_URL}/${spaceSlug}/${siteSlug}` }, 201)
 })
 
-// GET /api/sites/mine — sites owned by the caller, newest first.
+// GET /api/sites/mine — sites owned by the caller, newest first. The pure-audio badge rides the
+// site select as a correlated scalar (pureAudioSql), so the whole feed is ONE D1 request.
 sites.get('/mine', requireAuth, async (c) => {
   const user = c.get('user')
   const db = c.get('db')
@@ -218,13 +209,13 @@ sites.get('/mine', requireAuth, async (c) => {
       visibility: sitesTable.visibility,
       status: sitesTable.status,
       createdAt: sitesTable.createdAt,
+      audio: pureAudioSql(sitesTable.id),
     })
     .from(sitesTable)
     .innerJoin(spaces, eq(sitesTable.spaceId, spaces.id))
     .where(eq(sitesTable.ownerId, user.id))
     .orderBy(desc(sitesTable.createdAt))
 
-  const audioSet = await allAudioSiteIds(db, rows.map((r) => r.id))
   return c.json(
     rows.map((r) => ({
       id: r.id,
@@ -233,7 +224,7 @@ sites.get('/mine', requireAuth, async (c) => {
       title: r.title,
       visibility: r.visibility,
       status: r.status,
-      audio: audioSet.has(r.id),
+      audio: r.audio === 1,
       url: `${c.env.APP_URL}/${r.spaceSlug}/${r.slug}`,
       createdAt: r.createdAt,
     })),
@@ -241,48 +232,43 @@ sites.get('/mine', requireAuth, async (c) => {
 })
 
 // GET /api/sites/shared — sites shared with the caller (directly or via a group), newest first.
+// Two D1 requests total: the roles layer, then the site rows (audio folded in) in one batch.
 sites.get('/shared', requireAuth, async (c) => {
   const user = c.get('user')
   const db = c.get('db')
-  const ids = [...(await sharedSiteIds(db, user.id))]
+  // Layer 1 (one request): every reachable site id WITH its effective role — a direct row's role
+  // overrides a group-derived viewer, so the dashboard can badge "You can edit" from this alone.
+  const roles = await sharedSiteRoles(db, user.id)
+  const ids = [...roles.keys()]
   if (ids.length === 0) return c.json([])
-  // Chunk the shared-id list under D1's 100-param cap and union — ids are unique across chunks,
-  // so no dedupe is needed; re-sort newest-first in memory (per-batch order is lost on flatten).
-  const batches = await Promise.all(
-    chunk(ids, D1_MAX_IN).map((batch) =>
-      db
-        .select({
-          id: sitesTable.id,
-          spaceSlug: spaces.slug,
-          slug: sitesTable.slug,
-          title: sitesTable.title,
-          visibility: sitesTable.visibility,
-          status: sitesTable.status,
-          ownerId: sitesTable.ownerId,
-          createdAt: sitesTable.createdAt,
-        })
-        .from(sitesTable)
-        .innerJoin(spaces, eq(sitesTable.spaceId, spaces.id))
-        .where(inArray(sitesTable.id, batch)),
-    ),
+  // Layer 2 (one request): site rows with the pure-audio badge folded in as a correlated scalar
+  // (pureAudioSql, as /mine and /team do), chunked under D1's 100-param cap (90 ids + 8 audio-
+  // extension binds = 98) and travelling in a single db.batch — kept a batch even for one chunk
+  // so the request count stays 2 regardless of fan-out. Ids are unique across chunks, so no
+  // dedupe is needed; re-sort newest-first in memory (per-chunk order is lost on flatten).
+  // spaceSlug carries an explicit SQL alias: spaces.slug and sites.slug both emit a result
+  // column named `slug`, and real D1 `.batch()` maps rows BY NAME, collapsing duplicates —
+  // which shifted every later field and emptied this feed in production.
+  const rowStmts = chunk(ids, D1_MAX_IN).map((batch) =>
+    db
+      .select({
+        id: sitesTable.id,
+        spaceSlug: sql<string>`${spaces.slug}`.as('spaceSlug'),
+        slug: sitesTable.slug,
+        title: sitesTable.title,
+        visibility: sitesTable.visibility,
+        status: sitesTable.status,
+        ownerId: sitesTable.ownerId,
+        createdAt: sitesTable.createdAt,
+        audio: pureAudioSql(sitesTable.id),
+      })
+      .from(sitesTable)
+      .innerJoin(spaces, eq(sitesTable.spaceId, spaces.id))
+      .where(inArray(sitesTable.id, batch)),
   )
-  const rows = batches.flat().sort(byCreatedAtDesc)
+  const rowChunks = await batchAll(db, rowStmts)
+  const rows = rowChunks.flat().sort(byCreatedAtDesc)
   const visible = rows.filter((r) => r.status === 'active' && r.ownerId !== user.id)
-  const visibleIds = visible.map((r) => r.id)
-  // Direct-share role per site so the dashboard can badge "You can edit". A site reached only via a
-  // group share has no direct row → treated as viewer (groups are never editor grants).
-  const roleRows = (
-    await Promise.all(
-      chunk(visibleIds, D1_MAX_IN).map((batch) =>
-        db
-          .select({ siteId: siteUserShares.siteId, role: siteUserShares.role })
-          .from(siteUserShares)
-          .where(and(eq(siteUserShares.userId, user.id), inArray(siteUserShares.siteId, batch))),
-      ),
-    )
-  ).flat()
-  const roleBySite = new Map(roleRows.map((r) => [r.siteId, r.role]))
-  const audioSet = await allAudioSiteIds(db, visibleIds)
   return c.json(
     visible.map((r) => ({
       id: r.id,
@@ -291,8 +277,8 @@ sites.get('/shared', requireAuth, async (c) => {
       title: r.title,
       visibility: r.visibility,
       status: r.status,
-      audio: audioSet.has(r.id),
-      role: roleBySite.get(r.id) ?? 'viewer',
+      audio: r.audio === 1,
+      role: roles.get(r.id) ?? 'viewer',
       url: `${c.env.APP_URL}/${r.spaceSlug}/${r.slug}`,
       createdAt: r.createdAt,
     })),
@@ -315,6 +301,7 @@ sites.get('/team', requireAuth, async (c) => {
       createdAt: sitesTable.createdAt,
       uploaderName: users.name,
       uploaderEmail: users.email,
+      audio: pureAudioSql(sitesTable.id),
     })
     .from(sitesTable)
     .innerJoin(spaces, eq(sitesTable.spaceId, spaces.id))
@@ -322,7 +309,6 @@ sites.get('/team', requireAuth, async (c) => {
     .where(and(eq(sitesTable.status, 'active'), eq(sitesTable.visibility, 'team')))
     .orderBy(desc(sitesTable.createdAt))
     .limit(50)
-  const audioSet = await allAudioSiteIds(db, rows.map((r) => r.id))
   return c.json(
     rows.map((r) => ({
       id: r.id,
@@ -331,7 +317,7 @@ sites.get('/team', requireAuth, async (c) => {
       title: r.title,
       visibility: r.visibility,
       status: r.status,
-      audio: audioSet.has(r.id),
+      audio: r.audio === 1,
       url: `${c.env.APP_URL}/${r.spaceSlug}/${r.slug}`,
       createdAt: r.createdAt,
       uploaderName: r.uploaderName,
@@ -397,15 +383,18 @@ sites.get('/:spaceSlug/:siteSlug', async (c) => {
   // leaks — running the session read early doesn't change the not-found-before-auth ordering.
   if (!site) return c.json({ error: 'not found' }, 404)
 
-  const [isMember, isShared, role, siteFiles] = user
+  // ONE role-aware share resolve (S7): direct role + group reach in a single batch — checkAccess
+  // consumes the combined reach, while `role`/canReplace stay bound to the DIRECT role only (a
+  // group-only reacher gets viewer-grade access but no role field and no manifest).
+  const [isMember, share, siteFiles] = user
     ? await Promise.all([
         isSpaceMember(db, site.spaceId, user.id),
-        resolveIsShared(db, site.id, user.id),
-        resolveShareRole(db, site.id, user.id),
+        resolveShareAccess(db, site.id, user.id),
         db.select({ path: filesTable.path }).from(filesTable).where(eq(filesTable.siteId, site.id)),
       ])
-    : [false, false, null, [] as { path: string }[]]
-  const access = checkAccess(site, user, isMember, isShared)
+    : [false, { isShared: false, directRole: null } as const, [] as { path: string }[]]
+  const role = share.directRole
+  const access = checkAccess(site, user, isMember, share.isShared)
   if (!access.ok) return c.json({ error: 'forbidden' }, access.status)
 
   // Every tier requires an authenticated viewer (checkAccess 401s otherwise), so `user` is

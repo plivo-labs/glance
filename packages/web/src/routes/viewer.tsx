@@ -4,12 +4,13 @@ import { toast } from 'sonner'
 import { api, ApiError } from '@/lib/api'
 import { isAudioFile } from '@/lib/audio'
 import { attachDbBroker } from '@/lib/dbBroker'
-import { toLogin } from '@/lib/nav'
 import { cn } from '@/lib/utils'
 import { comments, type PendingAnchor, pendingToInput, type Thread } from '@/lib/comments'
 import { type Intent, parseIntent } from '@/lib/parseIntent'
+import { type ArbiterEvent, type ArbiterState, type Decision, initialArbiter, stepArbiter } from '@/lib/prefetchArbiter'
 import { recordVisit } from '@/lib/recents'
-import type { Me, ViewerSite } from '@/lib/types'
+import type { Me } from '@/lib/types'
+import { loadViewer, PREFETCH_FAILED, type PrefetchResult, type ViewerLoaderData } from '@/lib/viewerLoader'
 import { AudioView } from '@/components/AudioView'
 import { Spinner } from '@/components/states'
 import { CommandPalette } from '@/components/CommandPalette'
@@ -17,14 +18,12 @@ import { type CanvasWidth, ViewerTopBar } from '@/components/ViewerTopBar'
 import { ReviewRail, type ReviewMode } from '@/components/review/ReviewRail'
 import { ViewerSidebar } from '@/components/ViewerSidebar'
 
+// S11: the loader resolves on SITE META alone; the comments prefetch for the predicted entry file
+// is fired unawaited and rides along as a pending promise — the iframe never waits on comments.
+// All the logic (401 redirect, no-prefetch-on-meta-failure, null-entry root) lives in
+// lib/viewerLoader where it's unit-tested.
 export async function loader({ params, request }: LoaderFunctionArgs) {
-  try {
-    return await api.get<ViewerSite>(`/api/sites/${params.space}/${params.site}`)
-  } catch (err) {
-    // 401 → sign in, returning here afterward; 403/404/410 bubble to the ErrorBoundary.
-    if (err instanceof ApiError && err.status === 401) throw toLogin(request)
-    throw err
-  }
+  return loadViewer({ space: params.space ?? '', site: params.site ?? '', sitePath: params['*'] ?? '', request })
 }
 
 // The paint payload the iframe understands: a text anchor (re-find quote) or an element anchor
@@ -44,7 +43,7 @@ export function Component() {
 }
 
 function Viewer() {
-  const site = useLoaderData() as ViewerSite
+  const { site, entryPath, commentsPromise } = useLoaderData() as ViewerLoaderData
 
   // Optional in-site file path from the route splat (`/space/site/docs/page.html`). Appended to the
   // content URL so a deep link / the directory-listing fallback opens that specific file; '' = root.
@@ -54,19 +53,21 @@ function Viewer() {
   const audioRef = useRef<HTMLAudioElement>(null)
   // Latest file path reported by the iframe's 'ready' intent, stashed unconditionally so the
   // me-resolution effect below can flush it even when 'ready' beats the /api/auth/me fetch on a
-  // fresh load (see the recordVisit gate in the intent handler).
+  // fresh load (see the recordVisit gate in the intent handler). NOT arbiter.current.readyPath:
+  // that resets to null on navReset, and this deliberately survives it so the OLD file's genuine
+  // visit still flushes when Me resolves after a splat nav.
   const lastReadyPathRef = useRef<string | null>(null)
   const contentOrigin = useMemo(() => new URL(site.contentUrl).origin, [site.contentUrl])
   const src = useMemo(() => withAnnotate(appendPath(site.contentUrl, sitePath)), [site.contentUrl, sitePath])
-  // At the site root the splat is '' but the content worker still resolves it to a concrete file
-  // (a lone upload, e.g. recording.webm) — `indexPath` is that resolved file, so audio detection,
-  // the player src, and comment anchoring all work at the root URL, not just at `/…/recording.webm`.
-  const entryPath = sitePath || site.indexPath
+  // `entryPath` (loader-resolved via resolveEntryPath, mirroring the server's normalizePath) is
+  // the concrete file this URL serves — at the root that's the API's indexPath (root index.html or
+  // the lone-upload fallback, e.g. recording.webm), so audio detection, the player src, and comment
+  // anchoring work at the root URL too. null = the site has no known root entry (never guess).
   // Audio has no HTML document to frame — it gets a native player instead of the sandboxed
   // iframe, and (unlike the iframe src) no ?glance_annotate param: that flag only triggers the
   // HTML-injection transform in content.ts, which never applies to audio.
-  const isAudio = useMemo(() => isAudioFile(entryPath), [entryPath])
-  const audioSrc = useMemo(() => appendPath(site.contentUrl, entryPath), [site.contentUrl, entryPath])
+  const isAudio = useMemo(() => entryPath !== null && isAudioFile(entryPath), [entryPath])
+  const audioSrc = useMemo(() => appendPath(site.contentUrl, entryPath ?? ''), [site.contentUrl, entryPath])
 
   const [review, setReview] = useState(false)
   // Within review, Read = normal browsing + text-select-to-comment; Annotate = also hover/click an
@@ -123,16 +124,62 @@ function Viewer() {
     win.postMessage({ type: 'glance:pending', selector: pendingSelector }, contentOrigin)
   }, [pendingSelector, loaded, contentOrigin])
 
-  const refresh = useCallback(
-    async (fp: string) => {
-      try {
-        setThreads(await comments.list(site, fp))
-      } catch (err) {
-        toast.error(err instanceof ApiError ? err.message : 'Failed to load comments')
-      }
+  // ── S11 comments-load arbitration ────────────────────────────────────────────────────────────
+  // The loader fires a comments prefetch BEFORE the iframe mounts; this pure reducer
+  // (lib/prefetchArbiter) owns every ordering rule — generations (newer loads invalidate all older
+  // in-flight results), provisional HTML prefetches (held until a matching glance:ready), stale
+  // readys after a splat nav. The component only executes its decisions.
+  const arbiter = useRef<ArbiterState<Thread[]>>(initialArbiter(entryPath))
+
+  const applyDecision = useCallback((decision: Decision<Thread[]>) => {
+    if (decision.kind === 'apply') setThreads(decision.data)
+    else if (decision.kind === 'error')
+      toast.error(decision.error instanceof ApiError ? decision.error.message : 'Failed to load comments')
+    // none / ignore / discard: stale or unconfirmed results die silently — never clear state,
+    // never toast over a newer success. ('refetch' is handled at the ready dispatch site.)
+  }, [])
+
+  const dispatch = useCallback(
+    (event: ArbiterEvent<Thread[]>) => {
+      const step = stepArbiter(arbiter.current, event)
+      arbiter.current = step.state
+      setResolvedFilePath(step.state.readyPath)
+      applyDecision(step.decision)
+      return step
     },
-    [site],
+    [applyDecision],
   )
+
+  // Stable site ref for fetches: slugs never change within a mount (Component keys on them).
+  const siteRef = useMemo(() => ({ spaceSlug: site.spaceSlug, siteSlug: site.siteSlug }), [site.spaceSlug, site.siteSlug])
+
+  // Start a comments load through the arbiter. `prefetch` adopts the loader's in-flight promise
+  // (it never rejects — failures arrive as PREFETCH_FAILED); ad-hoc loads fetch here, and only a
+  // CURRENT-generation failure surfaces (the reducer ignores stale rejections).
+  const loadThreads = useCallback(
+    (path: string, opts?: { provisional?: boolean; prefetch?: Promise<PrefetchResult> }) => {
+      const { state } = dispatch({ type: 'start', path, provisional: opts?.provisional ?? false })
+      const gen = state.inFlight?.gen
+      if (gen === undefined) return Promise.resolve()
+      // Returned so a mutation flow can await the refresh (keeps the composer busy until the list
+      // is applied) — the chain itself never rejects, every outcome settles through the arbiter.
+      if (opts?.prefetch) {
+        return opts.prefetch.then((r) => {
+          if (r === PREFETCH_FAILED) dispatch({ type: 'settled', gen, ok: false, error: null })
+          else dispatch({ type: 'settled', gen, ok: true, data: r })
+        })
+      }
+      return comments.list(siteRef, path).then(
+        (data) => void dispatch({ type: 'settled', gen, ok: true, data }),
+        (error: unknown) => void dispatch({ type: 'settled', gen, ok: false, error }),
+      )
+    },
+    [dispatch, siteRef],
+  )
+
+  // Mutation refresh (create/reply/resolve): a fresh generation, so any older in-flight list
+  // result — prefetch included — can no longer clobber what this returns.
+  const refresh = useCallback((fp: string) => loadThreads(fp), [loadThreads])
 
   // Actionable count for the toolbar badge: open threads (mirrors the rail's default "open" list).
   const openCount = useMemo(() => threads.filter((t) => t.status === 'open').length, [threads])
@@ -157,7 +204,14 @@ function Viewer() {
       if (!intent) return
       if (intent.type === 'ready') {
         // Audio has no iframe/'ready'; for HTML this is where the SPA learns the current file.
-        setResolvedFilePath(intent.filePath)
+        // The arbiter arbitrates: a matching ready applies the parked prefetch, a mismatch discards
+        // it and orders a fresh fetch, a duplicate or a stale ready (old iframe doc after a splat
+        // nav) is ignored outright — including for recordVisit below.
+        const { state, decision } = dispatch({ type: 'ready', path: intent.filePath })
+        if (decision.kind === 'refetch') loadThreads(decision.path)
+        // 'ignore' covers duplicates too — a duplicate ready no longer double-counts a visit.
+        if (decision.kind === 'ignore') return
+        if (state.readyPath !== intent.filePath) return
         lastReadyPathRef.current = intent.filePath
         // Every in-iframe navigation fires 'ready' with the real current file — the only place the
         // SPA learns it, since the URL doesn't change on in-page navigation. Skip until Me resolves
@@ -174,7 +228,7 @@ function Viewer() {
     }
     window.addEventListener('message', onMsg)
     return () => window.removeEventListener('message', onMsg)
-  }, [contentOrigin, me, review, site.spaceSlug, site.siteSlug, site.title])
+  }, [contentOrigin, me, review, site.spaceSlug, site.siteSlug, site.title, dispatch, loadThreads])
 
   useEffect(() => {
     api
@@ -193,12 +247,31 @@ function Viewer() {
       .catch(() => setMe(null))
   }, [site.spaceSlug, site.siteSlug, site.title])
 
-  // Load threads once the frame reports ready — powers the toolbar count badge before review opens,
-  // and seeds the rail. The frame is already mounted, so this is just a fetch, never a reload; the
-  // rail then stays fresh via onCreate/onChanged.
+  // Consume the loader's prefetch + reset on splat navigation (viewer → another file in the SAME
+  // site; cross-site nav remounts via the Component key). A nav brings the loading overlay back and
+  // clears per-file state, and the arbiter reset makes any in-flight result or late ready from the
+  // OLD file inert. Each loader run yields a fresh commentsPromise — consumed exactly once (by
+  // identity), so revalidations can't double-start a load. Threads then reach state only through
+  // arbiter decisions: prefetch apply (HTML on matching ready, audio on settle), ready-driven
+  // refetch, or mutation refresh — powering the toolbar badge before review opens and seeding the
+  // rail, which stays fresh via onCreate/onChanged.
+  const prevSitePath = useRef(sitePath)
+  const consumedPrefetch = useRef<Promise<PrefetchResult> | null>(null)
   useEffect(() => {
-    if (filePath) refresh(filePath)
-  }, [filePath, refresh])
+    if (prevSitePath.current !== sitePath) {
+      prevSitePath.current = sitePath
+      dispatch({ type: 'navReset', expected: entryPath })
+      setThreads([])
+      setComposing(null)
+      setLoaded(false)
+    }
+    if (commentsPromise && commentsPromise !== consumedPrefetch.current && entryPath !== null) {
+      consumedPrefetch.current = commentsPromise
+      // HTML stays provisional until its glance:ready confirms the path; audio has no iframe (and
+      // thus no ready) — it applies as soon as it settles, keeping the audio player's rail working.
+      loadThreads(entryPath, { provisional: !isAudio, prefetch: commentsPromise })
+    }
+  }, [sitePath, entryPath, commentsPromise, isAudio, dispatch, loadThreads])
 
   useEffect(paint, [paint])
   useEffect(postMode, [postMode])
@@ -326,7 +399,7 @@ function Viewer() {
         <div className="relative flex min-h-0 min-w-0 flex-1 justify-center bg-muted/20">
           <div className={cn('relative h-full w-full', WIDTH_CLASS[width])}>
             {isAudio ? (
-              <AudioView src={audioSrc} fileName={entryPath.split('/').pop() ?? entryPath} audioRef={audioRef} />
+              <AudioView src={audioSrc} fileName={(entryPath ?? '').split('/').pop() ?? ''} audioRef={audioRef} />
             ) : (
               <iframe
                 ref={iframeRef}

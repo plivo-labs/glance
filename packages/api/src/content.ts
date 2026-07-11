@@ -5,16 +5,22 @@ import { ANNOTATE_CSS, ANNOTATE_JS, ANNOTATE_VERSION } from './annotate/bundle'
 import { GLANCE_DB_JS, GLANCE_DB_VERSION } from './glancedb/bundle'
 import { type NewEvent, files, sites, spaces } from './db/schema'
 import { fireAndForget, recordEvent } from './lib/events'
+import { checkAccess } from './lib/access'
 import { escapeHtml, markdown } from './lib/markdown'
 import { contentType } from './lib/mime'
+import { type CacheLike, IMMUTABLE, readFullObject } from './lib/object-read'
 import { decideRange } from './lib/range'
-import { authorizeViewerById } from './lib/site-access'
+import { fetchAccessFacts, isSharedFromFacts } from './lib/site-access'
 import { verifyToken } from './lib/token'
 import type { Bindings } from './types'
 
-// `db` is optional: production runs no middleware that sets it, so getDb() falls back to a
-// request-scoped client built from the D1 binding; tests inject the in-memory harness db.
-type ContentEnv = { Bindings: Bindings; Variables: { db?: DrizzleD1Database } }
+// Re-exported so cache-key consumers (tests) keep a single import site next to the route.
+export { storageCacheKey } from './lib/object-read'
+
+// `db`/`caches` are optional: production runs no middleware that sets them — getDb() falls back
+// to a request-scoped client built from the D1 binding, getCache() to the runtime's global
+// `caches.default`. Tests inject the in-memory harness db and cache mocks.
+type ContentEnv = { Bindings: Bindings; Variables: { db?: DrizzleD1Database; caches?: { default: CacheLike } } }
 type Ctx = Context<ContentEnv>
 
 // Content worker (glance-content.<acct>.workers.dev): streams uploaded file bytes from
@@ -29,6 +35,22 @@ function getDb(c: Ctx): DrizzleD1Database {
   return c.get('db') ?? drizzle(c.env.GLANCE_DB)
 }
 
+// The edge cache for full-200 object reads. In the Workers runtime this is the global
+// `caches.default`; bun has no global `caches` (and no `.default` on a standard CacheStorage),
+// so uninjected tests resolve null and serve straight from R2 — today's exact op shape.
+function getCache(c: Ctx): CacheLike | null {
+  const injected = c.get('caches')
+  if (injected) return injected.default
+  const global = (globalThis as unknown as { caches?: { default?: CacheLike } }).caches
+  return global?.default ?? null
+}
+
+// Full-200 reads of immutable objects live in lib/object-read (cache-fronted, tee'd warm).
+// This shim owns the Hono plumbing: the request-scoped cache/bucket and the waitUntil hook.
+function readStoredObject(c: Ctx, storageKey: string, contentTypeHeader: string) {
+  return readFullObject(getCache(c), c.env.GLANCE_FILES, storageKey, contentTypeHeader, (p) => fireAndForget(c, p))
+}
+
 // A 404 on the content origin must never be cached. Right after an upload a read can miss
 // transiently (edge/timing); a cached 404 would then outlive the miss and strand a freshly
 // published site. `no-store` keeps every not-found re-checked against live state.
@@ -39,9 +61,8 @@ function notFound(c: Ctx): Response {
 app.get('/', (c) => c.text('Glance content origin', 200))
 
 // Annotate-mode client assets. Registered BEFORE the /:space/:site/* catch-all so `_glance`
-// isn't captured as a space slug. Long-cache + content-versioned query (?v=) makes them
-// immutable per build. The bundle is the string produced by scripts/build-annotate.ts.
-const IMMUTABLE = 'public, max-age=31536000, immutable'
+// isn't captured as a space slug. Long-cache (IMMUTABLE) + content-versioned query (?v=) makes
+// them immutable per build. The bundle is the string produced by scripts/build-annotate.ts.
 app.get('/_glance/annotate.js', (c) =>
   c.body(ANNOTATE_JS, 200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': IMMUTABLE }),
 )
@@ -70,41 +91,42 @@ app.get('/:space/:site/*', (c) => serve(c, c.req.param('space'), c.req.param('si
 // `userId` is the token-bound viewer for gated requests, or null for public requests.
 async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, userId: string | null): Promise<Response> {
   const db = getDb(c)
-  const siteRow = (
-    await db
-      .select({
-        id: sites.id,
-        spaceId: sites.spaceId,
-        visibility: sites.visibility,
-        status: sites.status,
-        ownerId: sites.ownerId,
-      })
-      .from(sites)
-      .innerJoin(spaces, eq(sites.spaceId, spaces.id))
-      .where(and(eq(spaces.slug, spaceSlug), eq(sites.slug, siteSlug)))
-      .limit(1)
-  )[0]
+  const reqPath = normalizePath(rest)
+  const cols = { path: files.path, storageKey: files.storageKey, mimeType: files.mimeType, size: files.size }
+  // ONE D1 round trip: the slug-keyed access facts (site / user / membership / shares) plus the
+  // file row, fused into a single batch. The file statement joins by BOTH slugs too (the site id
+  // is unknown before the batch runs), and every statement returns empty rows rather than
+  // throwing, so the 404/403/410 precedence below is decided AFTER the batch in today's order.
+  const fileStmt = db
+    .select(cols)
+    .from(files)
+    .innerJoin(sites, eq(files.siteId, sites.id))
+    .innerJoin(spaces, eq(sites.spaceId, spaces.id))
+    .where(and(eq(spaces.slug, spaceSlug), eq(sites.slug, siteSlug), eq(files.path, reqPath)))
+    .limit(1)
+  const { facts, extras } = await fetchAccessFacts(db, spaceSlug, siteSlug, userId, fileStmt)
+  const [fileRows] = extras
+
+  const siteRow = facts.site
   if (!siteRow) return notFound(c)
 
   if (userId === null) {
     // Untokened request: no public tier exists, so anonymous access is never allowed.
     return c.text('Forbidden', 403)
   }
-  // Gated path: reconstruct the bound user and re-authorize against live state, through the same
-  // authorizeViewerById → checkAccess the data plane uses — both surfaces enforce the SAME rules.
-  // The archive decision lives THERE (410 for everyone except superadmin), so routing it through
-  // checkAccess lets a superadmin still view an archived site instead of a blanket early 410.
-  const { access } = await authorizeViewerById(db, siteRow, userId)
+  // Gated path: the token-bound user was re-read live in the batch; a deleted user fails closed
+  // exactly like the old authorizeViewerById did. Authorization then runs through the same
+  // checkAccess the data plane uses — both surfaces enforce the SAME rules. The archive decision
+  // lives THERE (410 for everyone except superadmin), so routing it through checkAccess lets a
+  // superadmin still view an archived site instead of a blanket early 410.
+  if (!facts.user) return c.text('Forbidden', 403)
+  const access = checkAccess(siteRow, facts.user, facts.isMember, isSharedFromFacts(facts))
   if (!access.ok) {
     if (access.status === 410) return c.text('This site has been archived', 410)
     return c.text('Forbidden', access.status)
   }
 
-  const reqPath = normalizePath(rest)
-  const cols = { path: files.path, storageKey: files.storageKey, mimeType: files.mimeType, size: files.size }
-  let file = (
-    await db.select(cols).from(files).where(and(eq(files.siteId, siteRow.id), eq(files.path, reqPath))).limit(1)
-  )[0]
+  let file = fileRows[0]
 
   // Directory request (root, or any `…/`) with no index.html. Rather than a bare 404 — which
   // leaves an author who dropped a folder without a root index.html staring at a blank frame
@@ -122,15 +144,31 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
     }
   }
   if (!file) return notFound(c)
+  const { path, storageKey, size } = file
+  const mime = contentType(path, file.mimeType)
+  const isMd = /\.(md|markdown)$/i.test(path)
+  const isHtml = isHtmlFile(path)
 
-  const object = await c.env.GLANCE_FILES.get(file.storageKey)
-  if (!object) return notFound(c)
+  const frameAncestors = `frame-ancestors 'self' ${c.env.APP_URL}`
+  // The content origin this page is served from — the yardstick for "is this link external?".
+  // A link to any OTHER origin is rewritten to open in a new tab (see openExternalLinksInNewTab).
+  const selfOrigin = new URL(c.req.url).origin
+  // Usage analytics: count this as a viewer hit only for actual page loads (HTML + rendered
+  // markdown), not every CSS/JS/image sub-resource — otherwise one navigation inflates to many.
+  // userId is guaranteed non-null here (anonymous requests 403'd above), so every view is
+  // attributable to a known team member: exact unique-viewer counts, no IP hashing needed.
+  const view = () =>
+    trackView(c, db, { type: 'view', action: path, userId, siteId: siteRow.id, siteLabel: `${spaceSlug}/${siteSlug}` })
 
-  // Raw source mode (`glance read --pull`): stream the stored bytes verbatim — NO markdown render, NO
-  // annotate injection, NOT counted as a view. The pull needs the exact `.md` source (the default
-  // path renders it to HTML) so a pull → deploy round-trip is byte-identical. Already token-gated
-  // above; served as text/plain + nosniff so a browser can't be tricked into executing pulled bytes.
+  // Raw source mode (`glance read --pull`): stream the stored bytes verbatim — NO markdown render,
+  // NO annotate injection, NOT counted as a view, and NEVER through the cache (a pull must always
+  // reflect live R2, and must not warm entries it will never revisit). The pull needs the exact
+  // `.md` source (the default path renders it to HTML) so a pull → deploy round-trip is
+  // byte-identical. Already token-gated above; served as text/plain + nosniff so a browser can't
+  // be tricked into executing pulled bytes.
   if (c.req.query('raw') === '1') {
+    const object = await c.env.GLANCE_FILES.get(storageKey)
+    if (!object) return notFound(c)
     return new Response(object.body, {
       status: 200,
       headers: {
@@ -141,31 +179,17 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
     })
   }
 
-  // Usage analytics: count this as a viewer hit only for actual page loads (HTML + rendered
-  // markdown), not every CSS/JS/image sub-resource — otherwise one navigation inflates to many.
-  // userId is guaranteed non-null here (anonymous requests 403'd above), so every view is
-  // attributable to a known team member: exact unique-viewer counts, no IP hashing needed.
-  if (/\.(md|markdown)$/i.test(file.path) || isHtmlFile(file.path)) {
-    await trackView(c, db, {
-      type: 'view',
-      action: file.path,
-      userId,
-      siteId: siteRow.id,
-      siteLabel: `${spaceSlug}/${siteSlug}`,
-    })
-  }
-
-  const frameAncestors = `frame-ancestors 'self' ${c.env.APP_URL}`
-  // The content origin this page is served from — the yardstick for "is this link external?".
-  // A link to any OTHER origin is rewritten to open in a new tab (see openExternalLinksInNewTab).
-  const selfOrigin = new URL(c.req.url).origin
-
-  // Markdown → rendered HTML (served as text/html). Use the RESOLVED file's path for
-  // type detection so a single `.md` file rendered at the root still renders. Raw HTML in
-  // the source is escaped (see `markdown`), and a strict CSP is applied as defense-in-depth.
-  if (/\.(md|markdown)$/i.test(file.path)) {
-    const html = await markdown.parse(await object.text())
-    const res = c.html(renderMarkdownDoc(file.path, html), 200, {
+  // Markdown → rendered HTML (served as text/html), BEFORE any conditional/range handling — a
+  // Range header on a .md is ignored, exactly as before. The raw source is a full-body read of
+  // an immutable object, so it rides the cache layer like every other full read. Use the
+  // RESOLVED file's path for type detection so a single `.md` file rendered at the root still
+  // renders. Raw HTML in the source is escaped (see `markdown`), strict CSP as defense-in-depth.
+  if (isMd) {
+    const read = await readStoredObject(c, storageKey, mime)
+    if (!read) return notFound(c)
+    await view()
+    const html = await markdown.parse(await new Response(read.body).text())
+    const res = c.html(renderMarkdownDoc(path, html), 200, {
       'content-security-policy': markdownCsp(frameAncestors),
       'x-content-type-options': 'nosniff',
       'referrer-policy': 'no-referrer',
@@ -176,12 +200,16 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
   // Annotate mode: gated HTML + ?glance_annotate=1 → buffer the body and inject the annotate
   // client + boot payload, plus the glance.db SDK (broker mode — the page gets an API, never a
   // credential; the app viewer's parent frame answers). Every serve here is already token-gated
-  // (anonymous requests 403 above), so the flag always applies to an authed viewer. The bytes
-  // change, so we DROP the ETag and don't cache.
-  if (userId !== null && c.req.query('glance_annotate') === '1' && isHtmlFile(file.path)) {
-    const injected = injectAnnotate(injectDb(await object.text(), c.env.APP_URL), {
+  // (anonymous requests 403 above), so the flag always applies to an authed viewer. The RAW
+  // bytes come through the cache layer (immutable full read); the INJECTED bytes change per
+  // request, so the response DROPS the ETag and is never cached.
+  if (c.req.query('glance_annotate') === '1' && isHtml) {
+    const read = await readStoredObject(c, storageKey, mime)
+    if (!read) return notFound(c)
+    await view()
+    const injected = injectAnnotate(injectDb(await new Response(read.body).text(), c.env.APP_URL), {
       siteId: siteRow.id,
-      filePath: file.path, // the RESOLVED path (single-file fallback), not the URL guess
+      filePath: path, // the RESOLVED path (single-file fallback), not the URL guess
       appOrigin: c.env.APP_URL,
     })
     const res = c.html(injected, 200, {
@@ -194,8 +222,7 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
   }
 
   const headers = new Headers()
-  headers.set('content-type', contentType(file.path, file.mimeType))
-  headers.set('etag', object.httpEtag)
+  headers.set('content-type', mime)
   headers.set('x-content-type-options', 'nosniff')
   headers.set('content-security-policy', frameAncestors)
   // Uploaded HTML lives at a path that carries the gated-content token; no-referrer stops
@@ -203,42 +230,129 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
   headers.set('referrer-policy', 'no-referrer')
   // These bytes are per-viewer (the URL carries a user-bound token): `private` keeps shared/proxy
   // caches from retaining them, while `no-cache` lets the viewer's OWN browser store-and-revalidate
-  // against the ETag (→ the 304 below), so a revalidation costs a header round-trip, not the body.
+  // against the ETag (→ the 304 in serveStoredObject), so a revalidation costs a header
+  // round-trip, not the body.
   headers.set('cache-control', 'private, no-cache')
   // HTML isn't a seekable media type here (annotate-injected pages already took the branch
   // above; a plain gated page has no player to seek in) — advertise + honor ranges only for
   // everything else (audio today; any other binary falls out the same door for free).
-  const rangeable = !isHtmlFile(file.path)
+  const rangeable = !isHtml
   if (rangeable) headers.set('accept-ranges', 'bytes')
-  // Honor the conditional request: when the viewer already holds this exact ETag, answer 304 and
-  // skip re-streaming the body (the caching headers still ride along so the cached entry stays fresh).
-  // This MUST win over Range (RFC 7233 §3.1): a matching If-None-Match short-circuits before we
-  // ever look at Range/If-Range below.
-  if (c.req.header('if-none-match') === object.httpEtag) return new Response(null, { status: 304, headers })
+  return serveStoredObject(c, { storageKey, size, headers, rangeable, isHtml, mime, view, selfOrigin })
+}
 
-  const rangeHeader = c.req.header('range')
-  const ifRange = c.req.header('if-range')
-  // A stale If-Range precondition (client's cached range predates this ETag) means the Range no
-  // longer applies — fall through to a full 200 body instead of a mismatched slice.
-  if (rangeable && rangeHeader && (!ifRange || ifRange === object.httpEtag)) {
-    // `file.size` (D1, already selected above) is the cheapest total we have; `object.size`
-    // (free — same R2 object we already fetched) covers the rare pre-size-column row.
-    const total = file.size ?? object.size
-    const decision = decideRange(rangeHeader, total, headers)
-    if (decision.status === 416) return new Response(null, { status: 416, headers })
+/** The storage tail of serve(): conditional (If-None-Match) probe, both Range flows (sized
+ *  single-ranged-get and the legacy null-size full-get-first fallback), and the cache-fronted
+ *  full-200 read — plus the HTML-only view() record and external-link rewrite. `headers`
+ *  arrives pre-built (type/CSP/cache-control/accept-ranges); etag and range headers are
+ *  stamped onto it here. */
+async function serveStoredObject(
+  c: Ctx,
+  args: {
+    storageKey: string
+    size: number | null
+    headers: Headers
+    rangeable: boolean
+    isHtml: boolean
+    mime: string
+    view: () => Promise<void>
+    selfOrigin: string
+  },
+): Promise<Response> {
+  const { storageKey, size, headers, rangeable, isHtml, mime, view, selfOrigin } = args
+
+  // Honor the conditional request: when the viewer already holds this exact ETag, answer 304 and
+  // skip re-streaming the body. This MUST win over Range (RFC 7233 §3.1), so it runs before any
+  // Range handling — and the current etag is resolved with a head() probe, so a revalidation hit
+  // moves ZERO body bytes (no full get, no ranged get, no cache read).
+  const inm = c.req.header('if-none-match')
+  let probedEtag: string | undefined
+  if (inm !== undefined) {
+    const probe = await c.env.GLANCE_FILES.head(storageKey)
+    if (!probe) return notFound(c)
+    probedEtag = probe.httpEtag
+    if (inm === probe.httpEtag) {
+      headers.set('etag', probe.httpEtag)
+      if (isHtml) await view() // parity with the 200 path: an HTML revalidation is still a page load
+      return new Response(null, { status: 304, headers })
+    }
+  }
+
+  // Full 200 straight from R2, bypassing the cache — the fallout paths of a Range-carrying
+  // request (multi-range / malformed spec / stale If-Range). Range requests never touch the
+  // cache in either direction, so these stay off it too. decideRange may already have stamped
+  // slice headers; a full body must not carry them.
+  const serveFullDirect = async (): Promise<Response> => {
+    headers.delete('content-range')
+    headers.delete('content-length')
+    const object = await c.env.GLANCE_FILES.get(storageKey)
+    if (!object) return notFound(c)
+    headers.set('etag', object.httpEtag)
+    return new Response(object.body, { headers })
+  }
+
+  const rangeHeader = rangeable ? c.req.header('range') : undefined
+  if (rangeHeader && size != null) {
+    // D1 already told us the total (`files.size`), so the range is decided BEFORE any R2 op —
+    // a satisfiable single range then costs exactly ONE ranged get, never a full one.
+    // (`!= null` — a zero-byte object is a real size, not a falsy skip.)
+    const ifRange = c.req.header('if-range')
+    const decision = decideRange(rangeHeader, size, headers)
+    if (decision.status === 416) {
+      // The 416 must still carry the current etag → ONE head() probe, zero body bytes (reuse
+      // the If-None-Match probe's etag when that branch already paid for it).
+      const etag = probedEtag ?? (await c.env.GLANCE_FILES.head(storageKey))?.httpEtag
+      if (etag === undefined) return notFound(c)
+      // A STALE If-Range means the Range no longer applies at all (RFC 7233 §3.2) → full 200.
+      if (ifRange !== undefined && ifRange !== etag) return serveFullDirect()
+      headers.set('etag', etag)
+      return new Response(null, { status: 416, headers })
+    }
     if (decision.status === 206) {
       const { start, end } = decision
-      // A second, ranged R2 get streams only the requested window (never buffers the whole object).
-      const ranged = await c.env.GLANCE_FILES.get(file.storageKey, { range: { offset: start, length: end - start + 1 } })
+      const ranged = await c.env.GLANCE_FILES.get(storageKey, { range: { offset: start, length: end - start + 1 } })
       if (!ranged) return notFound(c)
+      // If-Range is checked against the etag the ranged get itself reports, so the matching
+      // (common) case still costs a single R2 op; a stale one falls back to a full 200 (rare).
+      if (ifRange !== undefined && ifRange !== ranged.httpEtag) return serveFullDirect()
+      headers.set('etag', ranged.httpEtag)
       return new Response(ranged.body, { status: 206, headers })
     }
-    // status 200 ('none'/'multi') falls through to the full body below.
+    // 'none' / 'multi' → full body (the request carried a Range header, so stay off the cache).
+    return serveFullDirect()
   }
-  const res = new Response(object.body, { headers })
+  if (rangeHeader) {
+    // Legacy pre-size-column row (files.size NULL): the full get supplies total + etag first, so
+    // a 206 here still costs full + ranged — today's exact shape, kept only for rare old rows.
+    const object = await c.env.GLANCE_FILES.get(storageKey)
+    if (!object) return notFound(c)
+    headers.set('etag', object.httpEtag)
+    const ifRange = c.req.header('if-range')
+    // A stale If-Range precondition (client's cached range predates this ETag) means the Range
+    // no longer applies — fall through to the full 200 body instead of a mismatched slice.
+    if (!ifRange || ifRange === object.httpEtag) {
+      const decision = decideRange(rangeHeader, object.size, headers)
+      if (decision.status === 416) return new Response(null, { status: 416, headers })
+      if (decision.status === 206) {
+        const { start, end } = decision
+        const ranged = await c.env.GLANCE_FILES.get(storageKey, { range: { offset: start, length: end - start + 1 } })
+        if (!ranged) return notFound(c)
+        return new Response(ranged.body, { status: 206, headers })
+      }
+    }
+    return new Response(object.body, { headers })
+  }
+
+  // Full-200 read of an immutable object → served through the cache layer (live D1 auth already
+  // ran in serve() — the cache is never consulted before the access gate).
+  const read = await readStoredObject(c, storageKey, mime)
+  if (!read) return notFound(c)
+  headers.set('etag', read.etag)
+  if (isHtml) await view()
+  const res = new Response(read.body, { headers })
   // Uploaded HTML gets the external-link → new-tab rewrite (streamed, no buffering). Other file
   // types (audio, images, CSS/JS, …) stream through verbatim — the rewriter only touches HTML.
-  return isHtmlFile(file.path) ? openExternalLinksInNewTab(res, selfOrigin) : res
+  return isHtml ? openExternalLinksInNewTab(res, selfOrigin) : res
 }
 
 // Record a page-view event without blocking the response. fireAndForget hands the D1 write to

@@ -44,8 +44,159 @@ const MIGRATIONS = [
   'drizzle/0011_whats_new_watermark.sql',
 ]
 
-/** Fresh in-memory DB with the real schema applied. */
-export function makeDb(): DrizzleD1Database {
+// --- S0 recorder: one shared, ordered timeline across D1/R2/cache mocks so perf specs can
+// assert exact op INTERLEAVING (e.g. "cache:match before r2:full"), not just per-mock totals.
+// Entry scheme: 'd1:batch' | 'd1:stmt' | 'd1:stmt:<insert|update|delete>' | 'r2:<full|ranged|
+// head|onlyIf|put>' | 'cache:<match|put|delete>'. Every factory takes the recorder as an
+// OPTIONAL param, so existing call sites (makeDb(), makeR2()) keep working unchanged. ---
+
+/** Shared op recorder: ordered `timeline` + per-entry `counters`. `resetCounters()` clears
+ *  BOTH (typical use: after seeding, so seed ops are excluded from assertions). */
+export function makeRecorder() {
+  const timeline: string[] = []
+  const counters: Record<string, number> = {}
+  return {
+    timeline,
+    counters,
+    record(entry: string) {
+      timeline.push(entry)
+      counters[entry] = (counters[entry] ?? 0) + 1
+    },
+    resetCounters() {
+      timeline.length = 0
+      for (const k of Object.keys(counters)) delete counters[k]
+    },
+  }
+}
+export type Recorder = ReturnType<typeof makeRecorder>
+
+/** D1 op counters exposed on the harness db. `loose` = statements executed OUTSIDE a
+ *  db.batch; `batchStmts` = statements executed inside one; `insert`/`update`/`delete`
+ *  count writes by SQL verb regardless of loose/batch placement. */
+export type D1Counters = {
+  batches: number
+  loose: number
+  batchStmts: number
+  insert: number
+  update: number
+  delete: number
+}
+export type HarnessDb = DrizzleD1Database & { counters: D1Counters; resetCounters: () => void }
+
+// D1 rejects statements binding more than 100 parameters; bun:sqlite happily accepts them,
+// which would let an over-wide `inArray` pass in tests and blow up in production. Enforced
+// always-on at the statement-execution seam.
+const D1_BIND_CAP = 100
+const WRITE_VERB_RE = /^\s*(insert|update|delete)\b/i
+
+const newD1Counters = (): D1Counters => ({ batches: 0, loose: 0, batchStmts: 0, insert: 0, update: 0, delete: 0 })
+
+// --- D1 batch result-name guard --------------------------------------------------------------
+// Real D1 `.batch()` returns each row as a NAME-KEYED object, and drizzle's d1 driver rebuilds
+// the positional row array via Object.keys (`d1ToRawMapping` in drizzle-orm/d1/session.js). Two
+// result columns with the same name collapse into ONE key, silently shifting every later field
+// (e.g. selecting spaces.slug AND sites.slug emits two columns named "slug"); an unaliased
+// expression column gets whatever name SQLite invents — explicitly undefined behavior. LOOSE
+// queries are immune: the d1 driver runs them through `stmt.raw()` (positional). bun:sqlite maps
+// positionally in both modes, so without this guard the harness can never catch the class.
+// Enforced at the statement-execution seam for every SELECT executed inside db.batch.
+
+const IDENT = '"[^"]+"|[A-Za-z_][A-Za-z0-9_$]*'
+const IDENT_PATH_RE = new RegExp(`^(?:(?:${IDENT})\\.)*(${IDENT})$`)
+const TRAILING_AS_RE = new RegExp(`\\s+as\\s+(${IDENT})\\s*$`, 'i')
+const unquote = (s: string) => (s.startsWith('"') && s.endsWith('"') ? s.slice(1, -1) : s)
+
+/** Split a SELECT's top-level result list on commas, tracking paren depth and quote state
+ *  (tolerant — doubled-quote escapes toggle twice, which still nets out). Returns the raw item
+ *  texts, or null when the statement is not a SELECT. */
+function topLevelSelectItems(sqlText: string): string[] | null {
+  const m = /^\s*select\s+(?:distinct\s+|all\s+)?/i.exec(sqlText)
+  if (!m) return null
+  const items: string[] = []
+  const end = findTopLevelFrom(sqlText, m[0].length) ?? sqlText.length
+  let start = m[0].length
+  let depth = 0
+  let quote: '"' | "'" | null = null
+  for (let i = start; i < end; i++) {
+    const ch = sqlText[i]
+    if (quote) {
+      if (ch === quote) quote = null
+      continue
+    }
+    if (ch === '"' || ch === "'") quote = ch
+    else if (ch === '(') depth++
+    else if (ch === ')') depth--
+    else if (ch === ',' && depth === 0) {
+      items.push(sqlText.slice(start, i))
+      start = i + 1
+    }
+  }
+  items.push(sqlText.slice(start, end))
+  return items.map((x) => x.trim()).filter((x) => x.length > 0)
+}
+
+/** Index of the top-level FROM keyword (outside parens/quotes), or null (e.g. `select 1`). */
+function findTopLevelFrom(sqlText: string, from: number): number | null {
+  let depth = 0
+  let quote: '"' | "'" | null = null
+  for (let i = from; i < sqlText.length; i++) {
+    const ch = sqlText[i]
+    if (quote) {
+      if (ch === quote) quote = null
+      continue
+    }
+    if (ch === '"' || ch === "'") quote = ch
+    else if (ch === '(') depth++
+    else if (ch === ')') depth--
+    else if (depth === 0 && /[\s)]/.test(sqlText[i - 1] ?? ' ') && /^from\b/i.test(sqlText.slice(i))) return i
+  }
+  return null
+}
+
+/** Throw when a SELECT executed inside db.batch would be mangled by real D1's by-name batch row
+ *  mapping: duplicate result names, or an expression column with no `AS` alias. */
+function assertBatchSelectMapsByName(sqlText: string): void {
+  const items = topLevelSelectItems(sqlText)
+  if (!items) return // not a SELECT — writes return no result columns
+  const seen = new Set<string>()
+  for (const item of items) {
+    if (item === '*' || item.endsWith('.*')) continue // star: single-table expansion, names are the table's own
+    const aliased = TRAILING_AS_RE.exec(item)
+    let name: string
+    if (aliased) {
+      name = unquote(aliased[1])
+    } else {
+      const path = IDENT_PATH_RE.exec(item)
+      if (!path) {
+        throw new Error(
+          `D1 batch unaliased expression column: \`${item.slice(0, 80)}\` — real D1 batch maps rows by column NAME and SQLite's name for an unaliased expression is undefined; add .as('name'). SQL: ${sqlText.slice(0, 200)}`,
+        )
+      }
+      name = unquote(path[1])
+    }
+    if (seen.has(name)) {
+      throw new Error(
+        `D1 batch result-name collision: two columns named "${name}" — real D1 batch maps rows by name and collapses duplicates, shifting every later field; alias one (.as()). SQL: ${sqlText.slice(0, 200)}`,
+      )
+    }
+    seen.add(name)
+  }
+}
+
+/** Number of values a statement execution binds: drizzle's bun-sqlite driver spreads
+ *  positional params (`stmt.all(...params)`); a single plain-object arg is named-param form. */
+function bindCount(args: unknown[]): number {
+  if (args.length === 1 && args[0] !== null && typeof args[0] === 'object' && !ArrayBuffer.isView(args[0]))
+    return Object.keys(args[0] as object).length
+  return args.length
+}
+
+/** Fresh in-memory DB with the real schema applied. Every statement execution is observed
+ *  (drizzle's bun-sqlite driver funnels through `sqlite.prepare(...)` then
+ *  `.run/.all/.get/.values`), feeding `db.counters`, the optional shared recorder, and the
+ *  D1 bind-cap guard. Migrations run BEFORE the wrap, so they are never counted; seeds ARE
+ *  counted — call `db.resetCounters()` after seeding to exclude them. */
+export function makeDb(recorder?: Recorder): HarnessDb {
   const sqlite = new Database(':memory:')
   for (const file of MIGRATIONS) {
     const sql = readFileSync(join(import.meta.dir, '../..', file), 'utf8')
@@ -54,16 +205,62 @@ export function makeDb(): DrizzleD1Database {
       if (trimmed) sqlite.run(trimmed)
     }
   }
-  const db = drizzle(sqlite) as unknown as DrizzleD1Database & {
+
+  const counters = newD1Counters()
+  let inBatch = false
+
+  const observe = (sql: string, args: unknown[]) => {
+    const bound = bindCount(args)
+    if (bound > D1_BIND_CAP)
+      throw new Error(`D1 bind-parameter cap exceeded: statement binds ${bound} values (D1 max is ${D1_BIND_CAP})`)
+    const verb = WRITE_VERB_RE.exec(sql)?.[1]?.toLowerCase() as 'insert' | 'update' | 'delete' | undefined
+    if (verb) counters[verb]++
+    if (inBatch) {
+      assertBatchSelectMapsByName(sql)
+      counters.batchStmts++
+    } else counters.loose++
+    recorder?.record(verb ? `d1:stmt:${verb}` : 'd1:stmt')
+  }
+
+  // Statement-execution seam: wrap prepare() (drizzle's only entry) and shadow the four
+  // execution methods on each returned statement instance — the rest of the native
+  // Statement surface (columnNames etc.) stays untouched.
+  const EXEC_METHODS = ['run', 'all', 'get', 'values'] as const
+  const origPrepare = sqlite.prepare.bind(sqlite)
+  const wrapStmt = (stmt: ReturnType<typeof origPrepare>, sql: string) => {
+    for (const m of EXEC_METHODS) {
+      const orig = (stmt[m] as (...a: unknown[]) => unknown).bind(stmt)
+      ;(stmt as unknown as Record<string, unknown>)[m] = (...args: unknown[]) => {
+        observe(sql, args)
+        return orig(...args)
+      }
+    }
+    return stmt
+  }
+  sqlite.prepare = ((sql: string, ...rest: unknown[]) =>
+    wrapStmt((origPrepare as (...a: unknown[]) => ReturnType<typeof origPrepare>)(sql, ...rest), sql)) as never
+
+  const db = drizzle(sqlite) as unknown as HarnessDb & {
     batch(stmts: Promise<unknown>[]): Promise<unknown[]>
   }
   // D1 exposes atomic `.batch`; bun-sqlite does not. Run sequentially (sync driver) so
-  // FK-ordered inserts (spaces before space_members) still land in order.
+  // FK-ordered inserts (spaces before space_members) still land in order. Drizzle queries
+  // are lazy thenables — they execute when awaited HERE, so the inBatch flag attributes
+  // their driver-level statements to the batch (verified in harness.test.ts).
   db.batch = async (stmts) => {
-    const out: unknown[] = []
-    for (const s of stmts) out.push(await s)
-    return out
+    counters.batches++
+    recorder?.record('d1:batch')
+    inBatch = true
+    try {
+      const out: unknown[] = []
+      for (const s of stmts) out.push(await s)
+      return out
+    } finally {
+      inBatch = false
+    }
   }
+  db.counters = counters
+  db.resetCounters = () => Object.assign(counters, newD1Counters())
   return db
 }
 
@@ -108,6 +305,8 @@ export async function seedSite(
     title: o.title ?? null,
     visibility: o.visibility ?? 'team',
     status: o.status ?? 'active',
+    // Omitted → schema $defaultFn (now). Passable so ordering specs can pin exact timelines.
+    ...(o.createdAt !== undefined && { createdAt: o.createdAt }),
   })
   return id
 }
@@ -255,75 +454,195 @@ export function makeKv() {
   }
 }
 
-/** Byte-faithful latin1 string (one char per byte) so a binary `put` (ArrayBuffer / Uint8Array)
- *  stores exactly as many chars as bytes — `sliceRange`/range serving indexes by char = byte.
- *  Chunked to stay under the argument-count stack limit on large inputs. */
-function bytesToLatin1(bytes: Uint8Array): string {
-  const CHUNK = 0x8000
-  let out = ''
-  for (let i = 0; i < bytes.length; i += CHUNK) out += String.fromCharCode(...bytes.subarray(i, i + CHUNK))
-  return out
-}
-
-/** R2's 3 range shapes (`{offset, length?}` / `{offset?, length}` / `{suffix}`), applied to
- *  an in-memory string body. `size` on the returned object is always the FULL object size —
- *  matching real R2 (`R2Object.size` is unaffected by the requested range) — so callers must
- *  slice the body, not the reported size. */
-function sliceRange(body: string, range: { offset?: number; length?: number; suffix?: number } | undefined): string {
-  if (!range) return body
-  const total = body.length
-  if ('suffix' in range && range.suffix != null) return body.slice(Math.max(0, total - range.suffix))
+/** R2's 3 range shapes (`{offset, length?}` / `{offset?, length}` / `{suffix}`), sliced on
+ *  BYTES. `size` on the returned object is always the FULL object size — matching real R2
+ *  (`R2Object.size` is unaffected by the requested range) — so callers must slice the body,
+ *  not the reported size. */
+function sliceRange(
+  bytes: Uint8Array,
+  range: { offset?: number; length?: number; suffix?: number } | undefined,
+): Uint8Array {
+  if (!range) return bytes
+  const total = bytes.length
+  if ('suffix' in range && range.suffix != null) return bytes.slice(Math.max(0, total - range.suffix))
   const start = range.offset ?? 0
   const end = range.length != null ? start + range.length : total
-  return body.slice(start, end)
+  return bytes.slice(start, end)
 }
 
-/** In-memory stand-in for the GLANCE_FILES R2 bucket: get/put/delete over string bodies,
- *  with a `gets()` counter so the reconcile zero-work gate ("R2.get not invoked") is testable.
- *  `get` returns an object exposing `text()`, `body` (the string is a valid BodyInit), a
- *  stable `httpEtag`, and `size`, matching the surface content.ts/upload.ts use. Accepts the
- *  `range` get option (single-range only, mirroring content.ts's own scope) so range-serving
- *  tests can exercise a real slice instead of always getting the full body back. */
-export function makeR2() {
-  const store = new Map<string, { body: string; httpMetadata?: { contentType?: string } }>()
-  let gets = 0
+/** Coerce every R2 put body shape to owned bytes: string → UTF-8 encode; ArrayBuffer /
+ *  ArrayBufferView → copied bytes; ReadableStream → collected bytes. */
+async function toBytes(value: string | ReadableStream | ArrayBuffer | ArrayBufferView): Promise<Uint8Array> {
+  if (typeof value === 'string') return new TextEncoder().encode(value)
+  if (value instanceof ArrayBuffer) return new Uint8Array(value.slice(0))
+  if (ArrayBuffer.isView(value))
+    return new Uint8Array(value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength))
+  if (value && typeof (value as ReadableStream).getReader === 'function')
+    return new Uint8Array(await new Response(value as ReadableStream).arrayBuffer())
+  return new Uint8Array()
+}
+
+/** Etag comparison the way real R2 tolerates client forms: strip a weak `W/` prefix and
+ *  surrounding quotes, compare the opaque value. */
+function normalizeEtag(etag: string): string {
+  const strong = etag.startsWith('W/') ? etag.slice(2) : etag
+  return strong.length >= 2 && strong.startsWith('"') && strong.endsWith('"') ? strong.slice(1, -1) : strong
+}
+
+type R2Conditional = { etagMatches?: string | string[]; etagDoesNotMatch?: string | string[] }
+
+/** R2Conditional check (etag conditions only — uploadedBefore/After are out of scope here).
+ *  All present conditions must hold, matching real R2. */
+function etagConditionsHold(onlyIf: R2Conditional, currentEtag: string): boolean {
+  const current = normalizeEtag(currentEtag)
+  const list = (x: string | string[]) => (Array.isArray(x) ? x : [x]).map(normalizeEtag)
+  if (onlyIf.etagMatches != null && !list(onlyIf.etagMatches).includes(current)) return false
+  if (onlyIf.etagDoesNotMatch != null && list(onlyIf.etagDoesNotMatch).includes(current)) return false
+  return true
+}
+
+/** In-memory stand-in for the GLANCE_FILES R2 bucket with a TRUE BYTE model: bodies are
+ *  stored as Uint8Array (string puts UTF-8-encoded), ranges slice bytes, `size` is always
+ *  the full BYTE length, and `httpEtag` ROTATES on every put of the same key (quoted,
+ *  version-suffixed — real R2 etags change when content changes; rotating unconditionally
+ *  keeps stale-etag tests honest even for same-body re-puts).
+ *
+ *  `get` returns `body` (Uint8Array — a valid BodyInit), `text()` (UTF-8 decode of the
+ *  sliced bytes), `arrayBuffer()`, `size`, `httpEtag`, `httpMetadata`. With `onlyIf`
+ *  ({etagMatches}/{etagDoesNotMatch}, string or array, weak/quoted forms tolerated), a
+ *  FAILED precondition resolves to a body-LESS object (mirroring real R2: R2Object, not
+ *  R2ObjectBody — no body/text/arrayBuffer keys) so callers can distinguish "precondition
+ *  failed" (metadata only) from "missing" (null). `head(key)` returns the same body-less
+ *  shape. Per-kind counters via `ops()` → {full, ranged, head, onlyIf} (a get with BOTH
+ *  onlyIf and range counts as onlyIf); the legacy `gets()` total counts every get() call
+ *  (full + ranged + onlyIf — head excluded). Feeds the shared recorder when given one. */
+export function makeR2(recorder?: Recorder) {
+  const store = new Map<string, { body: Uint8Array; httpMetadata?: { contentType?: string }; httpEtag: string }>()
+  const versions = new Map<string, number>() // survives delete → an etag is never reused
+  const ops = { full: 0, ranged: 0, head: 0, onlyIf: 0 }
+  const meta = (key: string, v: { body: Uint8Array; httpMetadata?: { contentType?: string }; httpEtag: string }) => ({
+    key,
+    size: v.body.length,
+    httpEtag: v.httpEtag,
+    httpMetadata: v.httpMetadata,
+  })
   return {
-    get: (key: string, options?: { range?: { offset?: number; length?: number; suffix?: number } }) => {
-      gets++
+    get: (
+      key: string,
+      options?: {
+        range?: { offset?: number; length?: number; suffix?: number }
+        onlyIf?: R2Conditional
+      },
+    ) => {
+      const kind = options?.onlyIf ? 'onlyIf' : options?.range ? 'ranged' : 'full'
+      ops[kind]++
+      recorder?.record(`r2:${kind}`)
       const v = store.get(key)
       if (!v) return Promise.resolve(null)
+      // Failed precondition → R2Object (metadata only), NOT R2ObjectBody: no body/text/arrayBuffer.
+      if (options?.onlyIf && !etagConditionsHold(options.onlyIf, v.httpEtag)) return Promise.resolve(meta(key, v))
       const body = sliceRange(v.body, options?.range)
       return Promise.resolve({
+        ...meta(key, v),
         body,
-        size: v.body.length,
-        httpEtag: `"${key}"`,
-        httpMetadata: v.httpMetadata,
-        text: () => Promise.resolve(body),
-        arrayBuffer: () => Promise.resolve(new TextEncoder().encode(body).buffer),
+        text: () => Promise.resolve(new TextDecoder().decode(body)),
+        arrayBuffer: () => Promise.resolve(body.slice().buffer),
       })
+    },
+    head: (key: string) => {
+      ops.head++
+      recorder?.record('r2:head')
+      const v = store.get(key)
+      return Promise.resolve(v ? meta(key, v) : null)
     },
     put: async (
       key: string,
       value: string | ReadableStream | ArrayBuffer | ArrayBufferView,
       options?: { httpMetadata?: { contentType?: string } },
     ) => {
-      const body =
-        typeof value === 'string'
-          ? value
-          : value instanceof ArrayBuffer
-            ? bytesToLatin1(new Uint8Array(value))
-            : ArrayBuffer.isView(value)
-              ? bytesToLatin1(new Uint8Array(value.buffer, value.byteOffset, value.byteLength))
-              : value && typeof (value as ReadableStream).getReader === 'function'
-                ? await new Response(value as ReadableStream).text()
-                : ''
-      store.set(key, { body, httpMetadata: options?.httpMetadata })
+      const version = (versions.get(key) ?? 0) + 1
+      versions.set(key, version)
+      store.set(key, { body: await toBytes(value), httpMetadata: options?.httpMetadata, httpEtag: `"${key}-v${version}"` })
+      recorder?.record('r2:put')
     },
     delete: (keys: string | string[]) => {
       for (const k of Array.isArray(keys) ? keys : [keys]) store.delete(k)
       return Promise.resolve()
     },
     store,
-    gets: () => gets,
+    ops: () => ({ ...ops }),
+    gets: () => ops.full + ops.ranged + ops.onlyIf,
+  }
+}
+
+/** In-memory stand-in for the Workers Cache API (`caches.default.{match,put,delete}`,
+ *  Request|string keys — string keys must be absolute URLs, like the real API). `put`
+ *  reads from a CLONE, so the caller's response body stays readable; `match` mints a
+ *  FRESH Response per call (bytes + headers + status), readable every time. Counters:
+ *  {matches, puts, hits, misses}. `failNextMatch(err)`/`failNextPut(err)` make exactly
+ *  the next call reject (the attempt is still counted and recorded — the op was issued,
+ *  it just failed); `reset()` clears store, counters, and pending failures. */
+export function makeCaches(recorder?: Recorder) {
+  const store = new Map<string, { body: Uint8Array; status: number; statusText: string; headers: [string, string][] }>()
+  const newCounters = () => ({ matches: 0, puts: 0, hits: 0, misses: 0 })
+  const counters = newCounters()
+  let nextMatchError: unknown = null
+  let nextPutError: unknown = null
+  const keyOf = (key: Request | string | URL) => (key instanceof Request ? key.url : new URL(String(key)).href)
+  return {
+    default: {
+      match: async (key: Request | string | URL): Promise<Response | undefined> => {
+        counters.matches++
+        recorder?.record('cache:match')
+        if (nextMatchError != null) {
+          const err = nextMatchError
+          nextMatchError = null
+          throw err
+        }
+        const entry = store.get(keyOf(key))
+        if (!entry) {
+          counters.misses++
+          return undefined
+        }
+        counters.hits++
+        const body = entry.status === 204 || entry.status === 304 ? null : entry.body.slice()
+        return new Response(body, { status: entry.status, statusText: entry.statusText, headers: entry.headers })
+      },
+      put: async (key: Request | string | URL, response: Response): Promise<void> => {
+        counters.puts++
+        recorder?.record('cache:put')
+        if (nextPutError != null) {
+          const err = nextPutError
+          nextPutError = null
+          throw err
+        }
+        // Store from a clone: the caller keeps a readable body (real cache.put contract).
+        const body = new Uint8Array(await response.clone().arrayBuffer())
+        store.set(keyOf(key), {
+          body,
+          status: response.status,
+          statusText: response.statusText,
+          headers: [...response.headers.entries()],
+        })
+      },
+      delete: async (key: Request | string | URL): Promise<boolean> => {
+        recorder?.record('cache:delete')
+        return store.delete(keyOf(key))
+      },
+    },
+    store,
+    counters,
+    failNextMatch(err: unknown) {
+      nextMatchError = err
+    },
+    failNextPut(err: unknown) {
+      nextPutError = err
+    },
+    reset() {
+      store.clear()
+      Object.assign(counters, newCounters())
+      nextMatchError = null
+      nextPutError = null
+    },
   }
 }

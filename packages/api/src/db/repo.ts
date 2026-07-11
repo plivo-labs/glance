@@ -1,5 +1,6 @@
 import { and, eq, inArray, ne, sql } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
+import { batchAll } from '../lib/d1'
 import { RESERVED_SLUGS, slugifyHandle } from '../lib/slug'
 import type { SessionUser } from '../types'
 import {
@@ -138,24 +139,54 @@ export async function isSpaceMember(db: DrizzleD1Database, spaceId: string, user
   return row.length > 0
 }
 
+// --- Share reach, defined ONCE per branch: a direct `site_user_shares` row (carries the role)
+// and group reach (`site_group_shares` joined through the user's space memberships). Optionally
+// scoped to one site; callers that need at most one row apply `.limit(1)` themselves. Every
+// ID-KEYED share-reach read below is built from these two. MIRROR: lib/site-access.ts
+// accessFactsStatements re-expresses both branches SLUG-KEYED (the site id is unknown before
+// its batch runs) — a change to share-reach semantics must land in BOTH files. ------------------
+
+/** Direct-share rows for a user — `{siteId, role}` per grant, optionally scoped to one site. */
+function directShareStmt(db: DrizzleD1Database, userId: string, siteId?: string) {
+  return db
+    .select({ siteId: siteUserShares.siteId, role: siteUserShares.role })
+    .from(siteUserShares)
+    .where(and(eq(siteUserShares.userId, userId), siteId === undefined ? undefined : eq(siteUserShares.siteId, siteId)))
+}
+
+/** Group-reach rows for a user — `{siteId}` per site reachable via a group share on a space
+ *  they belong to, optionally scoped to one site. Group reach never carries a role. */
+function groupReachStmt(db: DrizzleD1Database, userId: string, siteId?: string) {
+  return db
+    .select({ siteId: siteGroupShares.siteId })
+    .from(siteGroupShares)
+    .innerJoin(spaceMembers, eq(spaceMembers.spaceId, siteGroupShares.spaceId))
+    .where(and(eq(spaceMembers.userId, userId), siteId === undefined ? undefined : eq(siteGroupShares.siteId, siteId)))
+}
+
+/**
+ * ONE role-aware share resolve for a (site, user): the direct-share role AND group reach in a
+ * single db.batch round trip. `isShared` (checkAccess's input) is any reach — a direct share of
+ * either role OR a group share; a group-only reacher is viewer-grade for ACCESS purposes only,
+ * so `directRole` stays null for them. The edit oracle (`canReplace`) must consume `directRole`,
+ * never `isShared` — group shares are never an editor grant.
+ */
+export async function resolveShareAccess(
+  db: DrizzleD1Database,
+  siteId: string,
+  userId: string,
+): Promise<{ isShared: boolean; directRole: 'viewer' | 'editor' | null }> {
+  const [direct, viaGroup] = await batchAll(db, [
+    directShareStmt(db, userId, siteId).limit(1),
+    groupReachStmt(db, userId, siteId).limit(1),
+  ])
+  const directRole = direct[0]?.role ?? null
+  return { isShared: directRole !== null || viaGroup.length > 0, directRole }
+}
+
 /** True if a site is explicitly shared with the user — directly, or via a group they're in. */
 export async function resolveIsShared(db: DrizzleD1Database, siteId: string, userId: string): Promise<boolean> {
-  // Direct and via-group grants are independent — resolve both in one round trip rather than
-  // serially. Drops the direct-hit short-circuit (one extra cheap query) to save a round trip.
-  const [direct, viaGroup] = await Promise.all([
-    db
-      .select({ siteId: siteUserShares.siteId })
-      .from(siteUserShares)
-      .where(and(eq(siteUserShares.siteId, siteId), eq(siteUserShares.userId, userId)))
-      .limit(1),
-    db
-      .select({ siteId: siteGroupShares.siteId })
-      .from(siteGroupShares)
-      .innerJoin(spaceMembers, eq(spaceMembers.spaceId, siteGroupShares.spaceId))
-      .where(and(eq(siteGroupShares.siteId, siteId), eq(spaceMembers.userId, userId)))
-      .limit(1),
-  ])
-  return direct.length > 0 || viaGroup.length > 0
+  return (await resolveShareAccess(db, siteId, userId)).isShared
 }
 
 /**
@@ -169,11 +200,7 @@ export async function resolveShareRole(
   siteId: string,
   userId: string,
 ): Promise<'viewer' | 'editor' | null> {
-  const row = await db
-    .select({ role: siteUserShares.role })
-    .from(siteUserShares)
-    .where(and(eq(siteUserShares.siteId, siteId), eq(siteUserShares.userId, userId)))
-    .limit(1)
+  const row = await directShareStmt(db, userId, siteId).limit(1)
   return row[0]?.role ?? null
 }
 
@@ -186,17 +213,41 @@ export async function memberSpaceIds(db: DrizzleD1Database, userId: string): Pro
   return new Set(rows.map((r) => r.spaceId))
 }
 
-/** Set of site ids explicitly shared with the user (direct + via group membership). */
+/**
+ * Every site shared with the user (same reach as `sharedSiteIds`: direct OR group via space
+ * membership) WITH the effective role, in ONE D1 request — both branch selects travel in a single
+ * db.batch, and each is a join on userId (no id collection → no bind-cap exposure at any fan-out).
+ * Group shares are always 'viewer'; a direct row's role OVERRIDES a group-derived viewer (direct
+ * editor + group → editor). Feeds GET /sites/shared; the edit oracle stays `resolveShareRole`.
+ */
+export async function sharedSiteRoles(db: DrizzleD1Database, userId: string): Promise<Map<string, 'viewer' | 'editor'>> {
+  const [direct, viaGroup] = await batchAll(db, sharedSiteRoleStmts(db, userId))
+  return foldSharedSiteRoles(direct, viaGroup)
+}
+
+/** The two share-reach SELECTs behind `sharedSiteRoles` (direct rows with role, group reach),
+ *  exposed so a route can ride them in its OWN db.batch alongside other statements — fusing the
+ *  roles layer into an existing round trip. Fold the results with `foldSharedSiteRoles`. */
+export function sharedSiteRoleStmts(db: DrizzleD1Database, userId: string) {
+  return [directShareStmt(db, userId), groupReachStmt(db, userId)] as const
+}
+
+/** Fold the `sharedSiteRoleStmts` results: group shares are always 'viewer'; a direct row's role
+ *  OVERRIDES a group-derived viewer (direct editor + group → editor). */
+export function foldSharedSiteRoles(
+  direct: { siteId: string; role: 'viewer' | 'editor' }[],
+  viaGroup: { siteId: string }[],
+): Map<string, 'viewer' | 'editor'> {
+  const roles = new Map<string, 'viewer' | 'editor'>()
+  for (const r of viaGroup) roles.set(r.siteId, 'viewer')
+  for (const r of direct) roles.set(r.siteId, r.role) // direct wins over group-derived viewer
+  return roles
+}
+
+/** Set of site ids explicitly shared with the user (direct + via group membership). Derived from
+ *  `sharedSiteRoles` so the two can never drift on reach semantics (roles are simply dropped). */
 export async function sharedSiteIds(db: DrizzleD1Database, userId: string): Promise<Set<string>> {
-  const [direct, viaGroup] = await Promise.all([
-    db.select({ siteId: siteUserShares.siteId }).from(siteUserShares).where(eq(siteUserShares.userId, userId)),
-    db
-      .select({ siteId: siteGroupShares.siteId })
-      .from(siteGroupShares)
-      .innerJoin(spaceMembers, eq(spaceMembers.spaceId, siteGroupShares.spaceId))
-      .where(eq(spaceMembers.userId, userId)),
-  ])
-  return new Set([...direct, ...viaGroup].map((r) => r.siteId))
+  return new Set((await sharedSiteRoles(db, userId)).keys())
 }
 
 /** A user reduced to what an @-mention autocomplete needs. */
@@ -298,12 +349,11 @@ export async function replaceSiteShares(
   users: ShareUser[],
   groupIds: string[],
 ): Promise<void> {
-  const ops = [
+  // D1 runs the batch in a single atomic transaction.
+  await batchAll(db, [
     db.delete(siteUserShares).where(eq(siteUserShares.siteId, siteId)),
     db.delete(siteGroupShares).where(eq(siteGroupShares.siteId, siteId)),
     ...users.map(({ userId, role }) => db.insert(siteUserShares).values({ siteId, userId, role })),
     ...groupIds.map((spaceId) => db.insert(siteGroupShares).values({ siteId, spaceId })),
-  ]
-  // D1 runs the batch in a single atomic transaction.
-  await db.batch(ops as [(typeof ops)[number], ...(typeof ops)[number][]])
+  ])
 }

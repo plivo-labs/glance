@@ -1,23 +1,28 @@
 import { type Context, Hono } from 'hono'
+import type { BatchItem, BatchResponse } from 'drizzle-orm/batch'
 import { type ElementAnchor, normalizeText, parseElementAnchor } from '../lib/anchor'
 import {
   addComment,
+  assembleThreadViews,
+  commentByIdStmt,
+  commentsWithAuthorsBySlugsStmt,
   createThread,
   deleteComment,
   editComment,
-  getComment,
-  getThread,
-  listSiteThreads,
-  listThreads,
   reopenThread,
   resolveThread,
+  threadByIdStmt,
+  threadOfCommentStmt,
+  threadsWithUsersBySlugsStmt,
 } from '../db/comments'
 import { createNotifications } from '../db/notifications'
+import type { Comment, CommentThread } from '../db/schema'
 import { listMentionableUsers } from '../db/repo'
 import { fireAndForget } from '../lib/events'
+import { checkAccess } from '../lib/access'
 import { EXT_MIME, audioExtFromPart, contentType } from '../lib/mime'
-import type { ResolvedSite } from '../lib/site-access'
-import { resolveSiteForAccess } from '../lib/site-access'
+import type { AccessFacts, ResolvedSite } from '../lib/site-access'
+import { fetchAccessFacts, isSharedFromFacts } from '../lib/site-access'
 import { decideRange } from '../lib/range'
 import { deleteKeys } from '../lib/storage'
 import { transcribeVoice } from '../lib/transcribe'
@@ -69,17 +74,74 @@ function canComment(_site: ResolvedSite, access: { ok: boolean }): boolean {
 const canModerate = (site: ResolvedSite, user: SessionUser): boolean =>
   site.ownerId === user.id || user.role === 'superadmin'
 
-/** Resolve the site, run the shared access check, and enforce `canComment`. Returns the site
- *  or a Response the caller should return as-is. */
-async function siteOrError(c: Context<AppEnv>): Promise<ResolvedSite | Response> {
-  const user = c.get('user')
-  const { space, site } = c.req.param()
-  const { site: row, access } = await resolveSiteForAccess(c.get('db'), space, site, user)
-  if (!row) return c.json({ error: 'not found' }, 404)
-  // Surface checkAccess's real status so an archived site returns 410 (gone), not a flat 403;
-  // `canComment` stays the gate (access.ok ⇒ a non-access refusal would still be 403).
-  if (!canComment(row, access)) return c.json({ error: 'forbidden' }, access.ok ? 403 : access.status)
-  return row
+/** PURE post-batch gate on assembled access facts: missing site → 404, then `checkAccess` (the
+ *  live session user from requireAuth is the subject, exactly as before) with `canComment` as
+ *  the gate. Surfaces checkAccess's real status so an archived site returns 410 (gone), not a
+ *  flat 403 (access.ok ⇒ a non-access refusal would still be 403). Evaluated AFTER the facts
+ *  batch resolves — a route that fuses extra statements into that batch (S9b) must return this
+ *  denial WITHOUT touching their rows. Returns the site or a Response to return as-is. */
+function siteFromFacts(c: Context<AppEnv>, facts: AccessFacts): ResolvedSite | Response {
+  if (!facts.site) return c.json({ error: 'not found' }, 404)
+  const access = checkAccess(facts.site, c.get('user'), facts.isMember, isSharedFromFacts(facts))
+  if (!canComment(facts.site, access)) return c.json({ error: 'forbidden' }, access.ok ? 403 : access.status)
+  return facts.site
+}
+
+/** THE route-level gate: params → the access facts (S9a: one slug-keyed db.batch where the old
+ *  resolveSiteForAccess did the same reads in three round trips) plus any caller-fused extra
+ *  statements riding that SAME batch (S9b/S9c) → siteFromFacts. requireAuth's own loose user
+ *  read stays — a parked policy (audit F7) — so every comments endpoint is 2+ D1 requests
+ *  minimum. Returns the denial Response to return as-is, or the site plus the extras' typed row
+ *  arrays (untouched by the gate — each route orders its own post-checks). */
+async function gated<T extends readonly BatchItem<'sqlite'>[]>(
+  c: Context<AppEnv>,
+  ...extras: [...T]
+): Promise<{ site: ResolvedSite; extras: BatchResponse<T> } | Response> {
+  const { space, site: siteSlug } = c.req.param()
+  const { facts, extras: rows } = await fetchAccessFacts(c.get('db'), space, siteSlug, c.get('user').id, ...extras)
+  const site = siteFromFacts(c, facts)
+  if (site instanceof Response) return site
+  return { site, extras: rows }
+}
+
+/** The thread-in-site relationship gate shared by every thread-targeted route: an absent row and
+ *  a thread from ANOTHER site get the same opaque 404 (never leak cross-site existence). */
+const threadInSite = (thread: CommentThread | undefined, siteId: string): thread is CommentThread =>
+  thread !== undefined && thread.siteId === siteId
+
+/** S9c: ONE pre-write batch for a thread-targeted mutation — the 5 access facts PLUS the URL's
+ *  thread row (id-keyed from the path, so known pre-batch; non-failing). Access is gated here
+ *  (siteFromFacts precedence unchanged); the thread row comes back UNCHECKED because the routes
+ *  order their remaining checks differently (resolve/reopen put the role 403 BEFORE the thread
+ *  404 — pinned by comments.test.ts's member-cannot-resolve spec). */
+async function siteWithUrlThread(
+  c: Context<AppEnv>,
+): Promise<{ site: ResolvedSite; thread: CommentThread | undefined } | Response> {
+  const { threadId } = c.req.param()
+  const gate = await gated(c, threadByIdStmt(c.get('db'), threadId))
+  if (gate instanceof Response) return gate
+  return { site: gate.site, thread: gate.extras[0][0] }
+}
+
+/** S9c replacement for the old serial commentInSite: ONE pre-write batch — access facts + the
+ *  URL's comment AND thread rows (both ids are in the path, so both reads are known pre-batch).
+ *  Check order preserved exactly: access → comment-missing / threadId-mismatch 404 → deleted 404
+ *  → thread-in-site 404. The threadId ≠ comment.threadId check stays a post-batch comparison
+ *  (T9.4), which also makes the thread-by-URL-id read equivalent to the old thread-by-
+ *  comment.threadId read: past the mismatch check the two ids are equal. */
+async function siteWithUrlComment(c: Context<AppEnv>): Promise<{ site: ResolvedSite; comment: Comment } | Response> {
+  const db = c.get('db')
+  const { threadId, commentId } = c.req.param()
+  const gate = await gated(c, commentByIdStmt(db, commentId), threadByIdStmt(db, threadId))
+  if (gate instanceof Response) return gate
+  const { site, extras } = gate
+  const comment = extras[0][0]
+  if (!comment || comment.threadId !== threadId) return c.json({ error: 'not found' }, 404)
+  // An already soft-deleted comment is gone: editing / re-deleting it is a silent no-op that could
+  // resurface a redacted thread, so treat it as not found.
+  if (comment.deletedAt !== null) return c.json({ error: 'not found' }, 404)
+  if (!threadInSite(extras[1][0], site.id)) return c.json({ error: 'not found' }, 404)
+  return { site, comment }
 }
 
 /** Validate a comment body: strip control chars, then require a non-empty string within the cap.
@@ -220,36 +282,53 @@ const isMultipart = (c: Context<AppEnv>): boolean =>
 comments.use('*', requireAuth)
 
 // GET — list threads (+ ordered comments). With ?filePath, one file's threads; with NO filePath
-// at all, the whole site's threads. Authz is site-level (siteOrError), so the site-wide list
+// at all, the whole site's threads. Authz is site-level (siteFromFacts), so the site-wide list
 // exposes nothing the per-file list didn't.
+//
+// S9b: ONE fused db.batch — the 5 slug-keyed access facts PLUS the two S8 list statements (also
+// slug-keyed: the site id is unknown pre-batch). Every statement is a non-failing SELECT, so the
+// gate is EVALUATED AFTER the batch in today's precedence: 404/403/410 first — a denial returns
+// without ever touching the already-fetched list rows (accepted design) — then the filePath 400
+// (an invalid filePath was batched too; it just matches no rows, which the 400 discards).
 comments.get('/:space/:site/comments', async (c) => {
-  const site = await siteOrError(c)
-  if (site instanceof Response) return site
+  const db = c.get('db')
+  const { space, site: siteSlug } = c.req.param()
   const filePath = c.req.query('filePath')
-  if (filePath === undefined) return c.json(await listSiteThreads(c.get('db'), site.id))
-  if (!filePath || tooLong(filePath, MAX_PATH)) return c.json({ error: 'filePath required' }, 400)
-  return c.json(await listThreads(c.get('db'), site.id, filePath))
+  const gate = await gated(
+    c,
+    threadsWithUsersBySlugsStmt(db, space, siteSlug, filePath),
+    commentsWithAuthorsBySlugsStmt(db, space, siteSlug, filePath),
+  )
+  if (gate instanceof Response) return gate
+  if (filePath !== undefined && (!filePath || tooLong(filePath, MAX_PATH)))
+    return c.json({ error: 'filePath required' }, 400)
+  const [threadRows, commentRows] = gate.extras
+  return c.json(assembleThreadViews(threadRows, commentRows))
 })
 
 // GET — who the caller may @-mention on this site (autocomplete source). Same access gate as
-// commenting (siteOrError), then the visibility-branched mentionable set minus the caller.
+// commenting, then the visibility-branched mentionable set minus the caller.
 comments.get('/:space/:site/mentionable', async (c) => {
-  const site = await siteOrError(c)
-  if (site instanceof Response) return site
-  return c.json(await listMentionableUsers(c.get('db'), site, c.get('user').id))
+  const gate = await gated(c)
+  if (gate instanceof Response) return gate
+  return c.json(await listMentionableUsers(c.get('db'), gate.site, c.get('user').id))
 })
 
-// GET — stream a voice comment's audio. Site-level access gate (siteOrError), then a dedicated
-// comment→thread→site lookup (NOT commentInSite — there's no threadId in this path). A text or
-// soft-deleted comment (audioKey nulled) 404s. The object is small (≤10MB), so we do one unranged
-// R2 get and slice in memory for a Range request rather than a second range-get.
+// GET — stream a voice comment's audio. S9c: the access facts, the comment, and its thread
+// (reached THROUGH the comment — there's no threadId in this path, so the join walks the
+// relationship inside the statement) resolve in ONE batch; the whole pre-R2 D1 bill is that
+// batch + requireAuth's loose read. Gate precedence unchanged: access → comment (a text or
+// soft-deleted comment 404s — audioKey nulled) → thread-in-site. The object is small (≤10MB),
+// so we do one unranged R2 get and slice in memory for a Range request.
 comments.get('/:space/:site/comments/audio/:commentId', async (c) => {
-  const site = await siteOrError(c)
-  if (site instanceof Response) return site
-  const comment = await getComment(c.get('db'), c.req.param('commentId'))
+  const db = c.get('db')
+  const commentId = c.req.param('commentId')
+  const gate = await gated(c, commentByIdStmt(db, commentId), threadOfCommentStmt(db, commentId))
+  if (gate instanceof Response) return gate
+  const { site, extras } = gate
+  const comment = extras[0][0]
   if (!comment || comment.deletedAt !== null || !comment.audioKey) return c.json({ error: 'not found' }, 404)
-  const thread = await getThread(c.get('db'), comment.threadId)
-  if (!thread || thread.siteId !== site.id) return c.json({ error: 'not found' }, 404)
+  if (!threadInSite(extras[1][0]?.thread, site.id)) return c.json({ error: 'not found' }, 404)
   const object = await c.env.GLANCE_FILES.get(comment.audioKey)
   if (!object) return c.json({ error: 'not found' }, 404)
 
@@ -276,8 +355,9 @@ comments.get('/:space/:site/comments/audio/:commentId', async (c) => {
 // POST — create a thread + its opening comment. The anchor is stored, not resolved (the client
 // paints it against the rendered DOM at view time).
 comments.post('/:space/:site/comments', async (c) => {
-  const site = await siteOrError(c)
-  if (site instanceof Response) return site
+  const gate = await gated(c)
+  if (gate instanceof Response) return gate
+  const { site } = gate
   if (isMultipart(c)) return createVoiceThread(c, site)
 
   const raw = await c.req.json().catch(() => null)
@@ -347,12 +427,13 @@ async function createVoiceThread(c: Context<AppEnv>, site: ResolvedSite): Promis
   }
 }
 
-// POST — flat reply to a thread.
+// POST — flat reply to a thread. S9c: the thread read rides the access batch (siteWithUrlThread),
+// so the whole pre-write D1 bill is one batch + requireAuth's loose read.
 comments.post('/:space/:site/comments/:threadId/replies', async (c) => {
-  const site = await siteOrError(c)
-  if (site instanceof Response) return site
-  const thread = await getThread(c.get('db'), c.req.param('threadId'))
-  if (!thread || thread.siteId !== site.id) return c.json({ error: 'not found' }, 404)
+  const gate = await siteWithUrlThread(c)
+  if (gate instanceof Response) return gate
+  const { site, thread } = gate
+  if (!threadInSite(thread, site.id)) return c.json({ error: 'not found' }, 404)
   if (isMultipart(c)) return replyVoiceComment(c, thread.id)
 
   const raw = await c.req.json().catch(() => null)
@@ -380,14 +461,16 @@ async function replyVoiceComment(c: Context<AppEnv>, threadId: string): Promise<
   }
 }
 
-// PATCH — resolve / reopen a thread (owner or superadmin only).
+// PATCH — resolve / reopen a thread (owner or superadmin only). S9c fused pre-write batch; the
+// role 403 still comes BEFORE the thread 404 (the batched thread row goes unused on a 403 —
+// accepted design, same as the GET list's denial).
 comments.patch('/:space/:site/comments/:threadId', async (c) => {
-  const site = await siteOrError(c)
-  if (site instanceof Response) return site
+  const gate = await siteWithUrlThread(c)
+  if (gate instanceof Response) return gate
+  const { site, thread } = gate
   const user = c.get('user')
   if (!canModerate(site, user)) return c.json({ error: 'forbidden' }, 403)
-  const thread = await getThread(c.get('db'), c.req.param('threadId'))
-  if (!thread || thread.siteId !== site.id) return c.json({ error: 'not found' }, 404)
+  if (!threadInSite(thread, site.id)) return c.json({ error: 'not found' }, 404)
   const raw = await c.req.json().catch(() => null)
   if (raw?.status === 'resolved') await resolveThread(c.get('db'), thread.id, user.id)
   else if (raw?.status === 'open') await reopenThread(c.get('db'), thread.id)
@@ -395,12 +478,11 @@ comments.patch('/:space/:site/comments/:threadId', async (c) => {
   return c.json({ ok: true })
 })
 
-// PATCH — edit a comment (author only).
+// PATCH — edit a comment (author only). S9c fused pre-write batch (siteWithUrlComment).
 comments.patch('/:space/:site/comments/:threadId/messages/:commentId', async (c) => {
-  const site = await siteOrError(c)
-  if (site instanceof Response) return site
-  const comment = await commentInSite(c, site.id)
-  if (comment instanceof Response) return comment
+  const gate = await siteWithUrlComment(c)
+  if (gate instanceof Response) return gate
+  const { comment } = gate
   if (comment.authorId !== c.get('user').id) return c.json({ error: 'forbidden' }, 403)
   const raw = await c.req.json().catch(() => null)
   const body = cleanBody(raw?.body)
@@ -409,13 +491,12 @@ comments.patch('/:space/:site/comments/:threadId/messages/:commentId', async (c)
   return c.json({ ok: true })
 })
 
-// DELETE — soft-delete a comment (author, or owner/superadmin).
+// DELETE — soft-delete a comment (author, or owner/superadmin). S9c fused pre-write batch.
 comments.delete('/:space/:site/comments/:threadId/messages/:commentId', async (c) => {
-  const site = await siteOrError(c)
-  if (site instanceof Response) return site
+  const gate = await siteWithUrlComment(c)
+  if (gate instanceof Response) return gate
+  const { site, comment } = gate
   const user = c.get('user')
-  const comment = await commentInSite(c, site.id)
-  if (comment instanceof Response) return comment
   if (comment.authorId !== user.id && !canModerate(site, user)) return c.json({ error: 'forbidden' }, 403)
   // Capture the audio key before the delete nulls it, then hard-delete the recording off the
   // serving path — the row survives redacted, the audio does not (documented voice asymmetry).
@@ -424,16 +505,3 @@ comments.delete('/:space/:site/comments/:threadId/messages/:commentId', async (c
   if (audioKey) await fireAndForget(c, deleteKeys(c.env.GLANCE_FILES, [audioKey]))
   return c.json({ ok: true })
 })
-
-/** Load the path's comment and confirm it belongs to this site's thread. 404 otherwise. */
-async function commentInSite(c: Context<AppEnv>, siteId: string) {
-  const { threadId, commentId } = c.req.param()
-  const comment = await getComment(c.get('db'), commentId)
-  if (!comment || comment.threadId !== threadId) return c.json({ error: 'not found' }, 404)
-  // An already soft-deleted comment is gone: editing / re-deleting it is a silent no-op that could
-  // resurface a redacted thread, so treat it as not found.
-  if (comment.deletedAt !== null) return c.json({ error: 'not found' }, 404)
-  const thread = await getThread(c.get('db'), comment.threadId)
-  if (!thread || thread.siteId !== siteId) return c.json({ error: 'not found' }, 404)
-  return comment
-}
