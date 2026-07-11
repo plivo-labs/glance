@@ -1,5 +1,6 @@
 import { api } from '@/lib/api'
 import type { Me } from '@/lib/types'
+import type { WhatsNewList } from '@/lib/whatsNew'
 
 // Web client for the notifications API. Mirrors the api NotificationView / listNotifications shape.
 // The unread count rides the list response — no separate count endpoint (the root loader carries it).
@@ -25,9 +26,14 @@ export interface NotificationList {
 
 export const EMPTY_NOTIFICATIONS: NotificationList = { items: [], unreadCount: 0 }
 
-// The root loader's data: identity (awaited) + a DEFERRED notifications promise the Bell/inbox
-// consume via <Await>. Lives here (not in the entry file) so consumers don't import from main.tsx.
-export type RootData = { user: Me | null; notifications: Promise<NotificationList> }
+// The root loader's data: identity (awaited) + DEFERRED promises the header widgets consume via
+// <Await> — notifications (Bell/inbox) and whatsNew (Sparkles panel). Lives here (not in the entry
+// file) so consumers don't import from main.tsx.
+export type RootData = {
+  user: Me | null
+  notifications: Promise<NotificationList>
+  whatsNew: Promise<WhatsNewList>
+}
 
 export const notifications = {
   list: () => api.get<NotificationList>('/api/notifications'),

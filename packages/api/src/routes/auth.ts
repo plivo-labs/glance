@@ -4,6 +4,7 @@ import { Hono } from 'hono'
 import { deleteCookie, getSignedCookie, setSignedCookie } from 'hono/cookie'
 import { users } from '../db/schema'
 import { bootstrapSuperadminByEmail, createPersonalSpace, superadminStatus, toSessionUser } from '../db/repo'
+import { NEWEST_RELEASE_DATE } from '../whats-new/catalog'
 import { requireAuth } from '../middleware/auth'
 import { bootstrapDecision } from '../lib/bootstrap'
 import { createGoogle, isGoogleEnabled, OAUTH_SCOPES } from '../lib/oauth'
@@ -145,7 +146,7 @@ auth.post('/bootstrap', async (c) => {
   // Session (KV) is confirmed before the run is marked "done"; the flag is set only AFTER a
   // successful mint, so a KV failure mid-way leaves it unset and the (anti-lockout) decision
   // lets a retry recover without re-locking the deploy. Once set, bootstrap is one-shot (410).
-  const user = await bootstrapSuperadminByEmail(db, c.env.SUPERADMIN_EMAIL, null)
+  const user = await bootstrapSuperadminByEmail(db, c.env.SUPERADMIN_EMAIL, null, NEWEST_RELEASE_DATE)
   await createSession(c, user)
   await c.env.GLANCE_SESSIONS.put(BOOTSTRAP_COMPLETE_KEY, '1')
   return c.json({ ok: true, user })
@@ -258,7 +259,11 @@ export async function findOrCreateUser(
 
   const id = crypto.randomUUID()
   const role = email === env.SUPERADMIN_EMAIL.toLowerCase() ? 'superadmin' : 'member'
-  await db.insert(users).values({ id, email, name: claims.name ?? null, googleId: claims.sub, role })
+  // New signups start caught up on release notes (watermark = newest), so they don't land on an
+  // inbox full of "unread" features that shipped before they existed. null would mean all-unread.
+  await db
+    .insert(users)
+    .values({ id, email, name: claims.name ?? null, googleId: claims.sub, role, lastSeenReleaseAt: NEWEST_RELEASE_DATE })
   await createPersonalSpace(db, id, email)
   return { id, email, name: claims.name ?? null, role }
 }

@@ -41,6 +41,7 @@ const MIGRATIONS = [
   'drizzle/0008_comment_audio_key.sql',
   'drizzle/0009_editor_share.sql',
   'drizzle/0010_notifications.sql',
+  'drizzle/0011_whats_new_watermark.sql',
 ]
 
 // --- S0 recorder: one shared, ordered timeline across D1/R2/cache mocks so perf specs can

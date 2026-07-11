@@ -8,6 +8,7 @@
     "build:annotate": "bun scripts/build-annotate.ts",
     "build:db": "bun scripts/build-db.ts",
     "build:install": "bun scripts/build-install.ts",
+    "build:whatsnew": "bun scripts/build-whatsnew.ts",
     "deploy": "wrangler deploy",
     "deploy:content": "bun run build:annotate && bun run build:db && wrangler deploy --config wrangler.content.jsonc"
   },

@@ -6,6 +6,7 @@ export const RESERVED_SLUGS = new Set([
   'api', 'admin', 'login', 'logout', 'dashboard', 'content', 'assets', 'auth',
   'static', 'public', 'app', 'www', 'health', 'me', 'settings', 'about', 'help',
   'spaces', 'sites', 'upload', 'files', 'cli', 'new', 'edit', 'delete', '_t',
+  'whats-new',
 ])
 
 const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])$/
