@@ -10,6 +10,7 @@ import { trackCliUsage } from './middleware/analytics'
 import { requireSameOrigin } from './middleware/auth'
 import { admin } from './routes/admin'
 import { auth } from './routes/auth'
+import { commentFeed } from './routes/comment-feed'
 import { comments } from './routes/comments'
 import { dataApi, dataToken } from './routes/data'
 import { notifications } from './routes/notifications'
@@ -96,6 +97,7 @@ app.route('/api/sites', sites)
 // Comments live under /api/sites/:space/:site/comments — three segments, so no collision with
 // the two-segment site routes above. Mounted separately to keep the comments surface isolated.
 app.route('/api/sites', comments)
+app.route('/api/comments', commentFeed)
 app.route('/api/upload', upload)
 // Session-authenticated mint for shared-backend data tokens (owner → read+write, viewer → read).
 app.route('/api/data-token', dataToken)

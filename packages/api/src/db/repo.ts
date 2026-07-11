@@ -216,7 +216,7 @@ export function memberSpaceIdsStmt(db: DrizzleD1Database, userId: string) {
 /** Set of space ids the user is a member of (mirrors `sharedSiteIds` for the search candidate query). */
 export async function memberSpaceIds(db: DrizzleD1Database, userId: string): Promise<Set<string>> {
   const rows = await memberSpaceIdsStmt(db, userId)
-  return new Set(rows.map((r) => r.spaceId))
+  return foldMemberSpaceIds(rows)
 }
 
 /**
@@ -248,6 +248,11 @@ export function foldSharedSiteRoles(
   for (const r of viaGroup) roles.set(r.siteId, 'viewer')
   for (const r of direct) roles.set(r.siteId, r.role) // direct wins over group-derived viewer
   return roles
+}
+
+/** Fold the `memberSpaceIdsStmt` batched rows into a Set of space ids. */
+export function foldMemberSpaceIds(rows: { spaceId: string }[]): Set<string> {
+  return new Set(rows.map((r) => r.spaceId))
 }
 
 /** Set of site ids explicitly shared with the user (direct + via group membership). Derived from
