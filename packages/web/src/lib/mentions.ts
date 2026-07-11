@@ -1,5 +1,7 @@
 // Pure @-mention helpers, extracted from the Composer so they're bun-testable without a DOM.
-// The composer owns the textarea + dropdown; these own the string math and the notification link.
+// The composer owns the textarea + dropdown; these own the string math plus the notification link.
+
+import { encodePathSegments } from './paths'
 
 export interface MentionUser {
   id: string
@@ -60,7 +62,11 @@ export function notificationHref(n: {
   threadId: string | null
 }): string {
   if (!n.siteLabel) return '/'
-  const path = n.filePath ? `/${n.filePath.replace(/^\/+/, '')}` : ''
+  // Encode each path segment (mirrors ViewerSidebar's entryHref) — upload sanitization lets `?`
+  // and `#` through, and unencoded they truncate the pathname into query/fragment territory.
+  const path = n.filePath
+    ? `/${encodePathSegments(n.filePath.replace(/^\/+/, ''))}`
+    : ''
   const params = new URLSearchParams()
   if (n.threadId) params.set('thread', n.threadId)
   params.set('review', '1')

@@ -24,6 +24,7 @@ import {
 import { SitesTable } from '@/components/SitesTable'
 import { SortableTable, type Column } from '@/components/SortableTable'
 import { EmptyState, Spinner } from '@/components/states'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import {
@@ -55,10 +56,13 @@ import {
   type FeedSlot,
   type TabContent,
   type TabId,
+  feedRowPath,
 } from '@/lib/feedState'
-import type { SiteSummary, SpaceSummary, TeamUpload } from '@/lib/types'
+import { notificationHref } from '@/lib/mentions'
+import { timeAgo } from '@/lib/time'
+import type { CommentFeedItem, SiteSummary, SpaceSummary, TeamUpload } from '@/lib/types'
 
-// Stream the feeds instead of blocking the route on them: the loader returns the four promises
+// Stream the feeds instead of blocking the route on them: the loader returns the five promises
 // un-awaited, the component tracks one slot per feed (useFeedSlot), and deriveFeedState (pure,
 // unit-tested in lib/feedState.test.ts) maps the slots to the tab model — so each tab paints as
 // its OWN feed resolves instead of every tab waiting on the slowest call. A failed feed degrades
@@ -77,6 +81,7 @@ export function loader() {
     shared: observed(api.get<SiteSummary[]>('/api/sites/shared')),
     spaces: observed(api.get<SpaceSummary[]>('/api/spaces/mine')),
     team: observed(api.get<TeamUpload[]>('/api/sites/team')),
+    comments: observed(api.get<CommentFeedItem[]>('/api/comments/feed')),
   }
 }
 
@@ -136,12 +141,14 @@ export function Component() {
     shared: Promise<SiteSummary[]>
     spaces: Promise<SpaceSummary[]>
     team: Promise<TeamUpload[]>
+    comments: Promise<CommentFeedItem[]>
   }
   const slots = {
     sites: useFeedSlot(loaded.sites),
     shared: useFeedSlot(loaded.shared),
     spaces: useFeedSlot(loaded.spaces),
     team: useFeedSlot(loaded.team),
+    comments: useFeedSlot(loaded.comments),
   }
   const [searchParams] = useSearchParams()
   const location = useLocation()
@@ -272,6 +279,21 @@ function TabBody({ tab }: { tab: DashboardTab }) {
           }
         </TabPanel>
       )
+    case 'comments':
+      return (
+        <TabPanel content={tab.content} what="comments">
+          {(comments) =>
+            comments.length === 0 ? (
+              <EmptyState
+                title="No comments yet"
+                description="Mentions of you and comments you write will land here."
+              />
+            ) : (
+              <CommentsFeed comments={comments} />
+            )
+          }
+        </TabPanel>
+      )
   }
 }
 
@@ -351,6 +373,73 @@ function TeamActivityTable({ team }: { team: TeamUpload[] }) {
       getRowKey={(u) => u.id}
       initialSort={{ key: 'when', dir: 'desc' }}
     />
+  )
+}
+
+// ─── Comments ────────────────────────────────────────────────────────────────
+
+function CommentsFeed({ comments }: { comments: CommentFeedItem[] }) {
+  return (
+    <ul className="divide-y rounded-xl border">
+      {comments.map((item) => {
+        const path = feedRowPath(item)
+        const href = notificationHref({
+          siteLabel: `${item.spaceSlug}/${item.siteSlug}`,
+          filePath: item.filePath,
+          threadId: item.threadId,
+        })
+        const v =
+          item.kind === 'mention'
+            ? { author: item.actorName ?? 'Someone', verb: ' mentioned you', editedSuffix: false }
+            : { author: 'You', verb: '', editedSuffix: !!item.editedAt }
+        return (
+          <li key={`${item.kind}:${item.id}`}>
+            <Link
+              to={href}
+              className="flex items-start gap-3 px-4 py-3 transition-colors hover:bg-accent"
+            >
+              <span className="mt-0.5 w-16 shrink-0 rounded bg-muted px-1.5 py-0.5 text-center font-mono text-[10px] text-muted-foreground">
+                {item.kind}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm">
+                  <span className="font-medium">{v.author}</span>
+                  {v.verb}
+                  {item.snippet != null && (
+                    <>
+                      {' — "'}
+                      {item.snippet}
+                      {'"'}
+                    </>
+                  )}
+                </p>
+                <p className="truncate text-muted-foreground text-xs">
+                  <span className="font-mono">
+                    {item.spaceSlug}/{item.siteSlug}
+                  </span>
+                  {path && (
+                    <>
+                      {' · '}
+                      <span className="font-mono">{path}</span>
+                    </>
+                  )}
+                  {' · '}
+                  {timeAgo(item.createdAt)}
+                  {v.editedSuffix && ' · edited'}
+                </p>
+              </div>
+              {item.threadStatus === 'open' ? (
+                <Badge variant="success">open</Badge>
+              ) : (
+                <Badge variant="secondary" className="text-muted-foreground">
+                  resolved
+                </Badge>
+              )}
+            </Link>
+          </li>
+        )
+      })}
+    </ul>
   )
 }
 

@@ -78,4 +78,13 @@ describe('C21 — notificationHref: deep-link into the viewer review rail', () =
   test('no site label → home', () => {
     expect(notificationHref({ siteLabel: null, filePath: null, threadId: null })).toBe('/')
   })
+
+  test('encodes ? and # in path segments so they cannot truncate the pathname', () => {
+    expect(notificationHref({ siteLabel: 'acme/doc', filePath: 'Q3?Report.html', threadId: 't1' })).toBe(
+      '/acme/doc/Q3%3FReport.html?thread=t1&review=1',
+    )
+    expect(notificationHref({ siteLabel: 'acme/doc', filePath: 'notes#draft.html', threadId: 't1' })).toBe(
+      '/acme/doc/notes%23draft.html?thread=t1&review=1',
+    )
+  })
 })

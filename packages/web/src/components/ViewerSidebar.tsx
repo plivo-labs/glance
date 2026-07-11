@@ -1,5 +1,6 @@
 import { X } from 'lucide-react'
 import { Link } from 'react-router'
+import { encodePathSegments } from '@/lib/paths'
 import { clear, type RecentEntry, removeEntry, siteName, useRecents, visibleEntries } from '@/lib/recents'
 import { timeAgo } from '@/lib/time'
 import { cn } from '@/lib/utils'
@@ -69,7 +70,7 @@ export function ViewerSidebar({
 }
 
 function entryHref(spaceSlug: string, siteSlug: string, filePath: string): string {
-  return filePath ? `/${spaceSlug}/${siteSlug}/${filePath.split('/').map(encodeURIComponent).join('/')}` : `/${spaceSlug}/${siteSlug}`
+  return filePath ? `/${spaceSlug}/${siteSlug}/${encodePathSegments(filePath)}` : `/${spaceSlug}/${siteSlug}`
 }
 
 function Row({
