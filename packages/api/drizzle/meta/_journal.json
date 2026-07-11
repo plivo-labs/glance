@@ -85,6 +85,13 @@
       "when": 1783400100000,
       "tag": "0011_whats_new_watermark",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1783843200000,
+      "tag": "0012_comments_author_index",
+      "breakpoints": true
     }
   ]
 }

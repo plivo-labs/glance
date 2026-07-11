@@ -160,7 +160,11 @@ export const comments = sqliteTable(
     // holds the server-side transcript so the CLI/agent review loop still reads everything as text.
     audioKey: text('audioKey'),
   },
-  (t) => [index('comments_thread_created').on(t.threadId, t.createdAt), index('comments_author').on(t.authorId)],
+  (t) => [
+    index('comments_thread_created').on(t.threadId, t.createdAt),
+    // Covers the authored feed arm: WHERE authorId = ? AND deletedAt IS NULL ORDER BY createdAt DESC.
+    index('comments_author_deleted_created').on(t.authorId, t.deletedAt, t.createdAt),
+  ],
 )
 
 // Generic per-site document store backing the browser `glance.db` SDK (shared backend).
