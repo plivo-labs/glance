@@ -6,6 +6,7 @@ import { Hono } from 'hono'
 import { requireSameOrigin } from '../middleware/auth'
 import { commentFeed } from '../routes/comment-feed'
 import { comments } from '../routes/comments'
+import { summary } from '../routes/summary'
 import { sites } from '../routes/sites'
 import { spaces } from '../routes/spaces'
 import type { AppEnv } from '../types'
@@ -36,6 +37,7 @@ export function makeRouteApp() {
   app.route('/api/spaces', spaces)
   // Same order as index.ts: sites first, then comments on the same mount (3-segment paths).
   app.route('/api/sites', comments)
+  app.route('/api/sites', summary)
   app.route('/api/comments', commentFeed)
   return { app, env, db, kv, r2 }
 }

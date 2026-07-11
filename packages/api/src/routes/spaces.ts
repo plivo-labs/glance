@@ -5,7 +5,7 @@ import { createSpace, foldSharedSiteRoles, sharedSiteRoleStmts } from '../db/rep
 import { sites, spaceMembers, spaces as spacesTable, users } from '../db/schema'
 import { checkAccess } from '../lib/access'
 import { batchAll } from '../lib/d1'
-import { pureAudioSql } from '../lib/site-audio'
+import { siteFeedColumns, toFeedRow } from '../lib/site-feed'
 import { deleteSpaceObjects } from '../lib/storage'
 import { isValidSlug } from '../lib/slug'
 import { requireAuth } from '../middleware/auth'
@@ -107,14 +107,8 @@ spaces.get('/:slug/sites', requireAuth, async (c) => {
     memberOfSlugStmt(db, slug, user.id),
     db
       .select({
-        id: sites.id,
-        slug: sites.slug,
-        title: sites.title,
-        visibility: sites.visibility,
-        status: sites.status,
+        ...siteFeedColumns(),
         ownerId: sites.ownerId,
-        createdAt: sites.createdAt,
-        audio: pureAudioSql(sites.id),
       })
       .from(sites)
       .innerJoin(spacesTable, eq(sites.spaceId, spacesTable.id))
@@ -128,16 +122,8 @@ spaces.get('/:slug/sites', requireAuth, async (c) => {
   const visible = rows.filter((s) => checkAccess(s, user, isMember, shared.has(s.id)).ok)
   return c.json(
     visible.map((s) => ({
-      id: s.id,
-      spaceSlug: slug,
-      siteSlug: s.slug,
-      title: s.title,
-      visibility: s.visibility,
-      status: s.status,
+      ...toFeedRow(s, c.env.APP_URL),
       isOwner: s.ownerId === user.id,
-      audio: s.audio === 1,
-      url: `${c.env.APP_URL}/${slug}/${s.slug}`,
-      createdAt: s.createdAt,
     })),
   )
 })

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { extractText, pickEntry, resolveIndexPath, TEXT_CAP, type EntryFile } from './extract'
+import { extractText, isSupportedEntry, pickEntry, resolveIndexPath, TEXT_CAP, type EntryFile } from './extract'
 
 describe('pickEntry', () => {
   test('prefers the root index, returns a lone file, and rejects ambiguous sites', () => {
@@ -30,6 +30,26 @@ describe('pickEntry', () => {
 
     for (const files of fixtures) {
       expect(pickEntry(files)?.path ?? '').toBe(resolveIndexPath(files.map((file) => file.path)))
+    }
+  })
+})
+
+describe('isSupportedEntry', () => {
+  test('supports HTML and Markdown paths with nullable MIME types', () => {
+    for (const path of ['index.html', 'page.htm', 'readme.md', 'notes.markdown']) {
+      expect(isSupportedEntry({ path, mimeType: null }), path).toBe(true)
+    }
+  })
+
+  test('rejects code, styles, media, images, and plain text', () => {
+    for (const entry of [
+      { path: 'app.js', mimeType: 'text/javascript' },
+      { path: 'style.css', mimeType: 'text/css' },
+      { path: 'clip.webm', mimeType: 'audio/webm' },
+      { path: 'pic.png', mimeType: 'image/png' },
+      { path: 'notes.txt', mimeType: 'text/plain' },
+    ]) {
+      expect(isSupportedEntry(entry), entry.path).toBe(false)
     }
   })
 })

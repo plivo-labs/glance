@@ -36,6 +36,7 @@ export interface SiteSummary {
   visibility: Visibility
   status: SiteStatus
   audio?: boolean // every file is audio — a recording/voice site; shows a Mic badge
+  hasSummary?: boolean // the site has a stored AI summary; shows a sparkle badge
   // The caller's direct-share role on this site — set on the "Shared with me" feed so an editor row
   // shows a "You can edit" badge. Absent on owned/team feeds.
   role?: ShareRole

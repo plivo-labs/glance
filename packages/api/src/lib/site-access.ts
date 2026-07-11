@@ -180,6 +180,20 @@ export type SiteAccess = {
   access: AccessResult
 }
 
+/** Assemble the canonical access result from one slug-keyed facts batch. Route layers own the
+ *  response shape/precedence (for example, missing site → 404 before the access result). */
+export function siteAccessFromFacts(facts: AccessFacts, user: SessionUser | null): SiteAccess {
+  const isShared = isSharedFromFacts(facts)
+  return {
+    site: facts.site,
+    isMember: facts.isMember,
+    isShared,
+    access: facts.site
+      ? checkAccess(facts.site, user, facts.isMember, isShared)
+      : { ok: false, status: 403 },
+  }
+}
+
 /** Resolve a site and run the full access check for `user` in one shot: row → membership →
  *  explicit share → `checkAccess`. When the site is missing, `site` is null (caller returns
  *  404); `access` then carries a forbidden result so a caller that ignores `site` still fails

@@ -1,3 +1,5 @@
+import type { Bindings } from '../types'
+
 export const PROMPT_VERSION = 1
 export const WORKERS_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast'
 
@@ -18,6 +20,19 @@ export type SummarizeDeps = {
   azure?: AzureConfig
   fetchImpl?: typeof fetch
   timeoutMs?: number
+}
+
+export function summarizeDeps(
+  env: Pick<Bindings, 'AI' | 'AZURE_OPENAI_ENDPOINT' | 'AZURE_OPENAI_API_KEY' | 'AZURE_OPENAI_DEPLOYMENT'>,
+): SummarizeDeps {
+  return {
+    ai: env.AI,
+    azure: {
+      endpoint: env.AZURE_OPENAI_ENDPOINT,
+      apiKey: env.AZURE_OPENAI_API_KEY,
+      deployment: env.AZURE_OPENAI_DEPLOYMENT,
+    },
+  }
 }
 
 export type ProviderKind = 'azure' | 'workers'

@@ -288,6 +288,12 @@
         <span><b>lib/summarize.ts</b> landed (codex xhigh, C8–C14): resolveProvider 3-non-blank-secrets table, hardened system prompt with page text ONLY in user message, Azure chat completions pinned api-version 2024-10-21 + api-key header + one retry on 429/5xx only + per-attempt AbortController, Workers <code>llama-3.3-70b-instruct-fp8-fast</code> reading {response}, no failover (pinned), never throws; Bindings + .dev.vars.example extended. Codex hung ~34m on a stray <code>npm pack</code> doc-check AFTER finishing the code — cancelled, work certified as-is. Verified fresh: api 661/661, web green, typecheck + lint clean. Phase-1 steps complete → G1 gate.</span></li>
       <li><span class="date">2026-07-11 23:42</span><span class="badge">Gate G1</span>
         <span>Gate workflow (simplify → suite → thermo) over the Phase-1 diff. Simplify applied 3 cleanups (pickEntry derives from resolveIndexPath, HTMLRewriter handler dedupe, shared readAzure guard); thermo returned 11 findings (3M/5L/3nit). 9 fixed via codex: schema.ts layout + invariants comment + updatedAt $onUpdate, journal 0013 when made monotonic + newline, summarize.ts scoped catches + single provider dispatch + optional-chain narrows, two-pass HTMLRewriter rationale, FK-pragma comment, honest test rename. 1 deferred: &ldquo;resolveIndexPath belongs in a site-entry module not extract.ts&rdquo; — contradicts the plan&rsquo;s S-1 ruling (extract.ts pinned at sign-off); revisit at Final Gate. Suite fresh: 661/661 + typecheck + lint. Committed &ldquo;Phase 1&rdquo;.</span></li>
+      <li><span class="date">2026-07-12 00:00</span><span class="badge">S4 + S-3</span>
+        <span><b>routes/summary.ts</b> landed (codex xhigh, C16&ndash;C29 with C16/C17/C18/C26 red-first): comments-style isolated router, denial mapping = the comments.ts <code>{error:'forbidden'}+access.status</code> idiom, strict POST order cache&rarr;provider&rarr;limiter&rarr;files&rarr;R2&rarr;extract&rarr;generate&rarr;upsert (unavailable POSTs never consume limiter quota &mdash; ruling 6), versionRead stamped pre-generation (C22), post-upsert re-read keeps stale honest. SUMMARY_LIMITER (5/60s, ns 1002) added to BOTH the local skip-worktree wrangler.jsonc AND the committed placeholder blob via staged-blob swap. Verified fresh: api 675/675, web 156/156, typecheck + lint clean.</span></li>
+      <li><span class="date">2026-07-12 00:08</span><span class="badge">S5</span>
+        <span><b>hasSummary</b> in all four feeds (codex high, C31 characterization pinned GREEN against current feeds BEFORE the fragment, then C30 red-first, C32): new lib/site-summary.ts <code>hasSummarySql()</code> mirroring pureAudioSql (aliased EXISTS — D1 name-collapse guard), serialized <code>=== 1</code> like audio, budgets pinned unchanged (/mine 1, /team 1, /shared &le;2, spaces batch 1), /team 50-distinct cap intact, web SiteSummary gains hasSummary. Verified fresh: api 677/677, web 156/156, typecheck + lint clean. Phase-2 steps complete → G2 gate.</span></li>
+      <li><span class="date">2026-07-12 01:32</span><span class="badge">Gate G2</span>
+        <span>Gate workflow over the Phase-2 diff: suite green post-simplify, thermo returned 9 findings (3M/5L/1nit) — ALL fixed via codex xhigh: summary routes now gate through ONE slug-keyed <b>fetchAccessFacts batch</b> with the summaries row fused as an extra (new shared <code>siteAccessFromFacts</code> in site-access.ts, comments.ts consumes it identically), shared feed-row helper <b>lib/site-feed.ts</b> dedupes the 4× select+mapper blocks, <code>isSupportedEntry</code> predicate in extract.ts kills the fragile empty-body probe, generic <code>pickEntry&lt;T&gt;</code> deletes the cast, <code>summarizeDeps(env)</code> helper, post-upsert re-read dropped (GET owns staleness per C22), house-style body parse, test scaffold fixtures. Codex hung ~1h AFTER its own 679-green report (2nd occurrence of the post-completion hang) — cancelled, certified on-disk state. Verified fresh: api 679/679 (+2 isSupportedEntry), web 156/156, typecheck + lint. Committed &ldquo;Phase 2&rdquo;.</span></li>
     </ul>
   </section>
 
@@ -318,13 +324,13 @@
 
     <div class="phase-h">Phase 2 — API route + feeds</div>
     <ul class="items">
-      <li class="item" data-status="todo" data-phase="2"><span class="stamp">todo</span>
+      <li class="item" data-status="done" data-phase="2"><span class="stamp">done</span>
         <div><div class="name"><span class="k">S4</span><span class="t">routes/summary.ts — own Hono router mounted at /api/sites (comments-style isolation), requireAuth on '*', resolveSiteForAccess gate. GET: cache state only, server-computed stale, currentVersion in response, never generates. POST {force?}: fresh hit → cached zero-AI/R2/limiter → SUMMARY_LIMITER.limit({key:user.id}) → files rows → pickEntry → 422 unsupported → readFullObject(storageKey) → extract → summarizeSite → upsert (last-write-wins; stamps the version READ). No provider → 'unavailable'. Failure → 502 {error,retryable:true}, row untouched; cold failure leaves no row. wrangler.jsonc SUMMARY_LIMITER binding (+ sync skip-worktree local copy).</span></div>
           <div class="meta">cases C16–C29 · <span class="r-high">high risk</span> · <span class="dep">dep:S1,S2,S3</span></div></div></li>
-      <li class="item" data-status="todo" data-phase="2"><span class="stamp">todo</span>
+      <li class="item" data-status="done" data-phase="2"><span class="stamp">done</span>
         <div><div class="name"><span class="k">S5</span><span class="t">hasSummary — ONE shared aliased EXISTS/LEFT-JOIN fragment folded into the existing single-batch feed queries (/mine · /shared · /team · /api/spaces/:slug/sites), .as() alias (name-collapse guard), cardinality + request budgets unchanged; web SiteSummary type gains hasSummary.</span></div>
           <div class="meta">cases C30–C32 · <span class="r-low">low risk</span> · <span class="dep">dep:S1</span></div></div></li>
-      <li class="item gate" data-status="todo" data-phase="2"><span class="stamp">todo</span>
+      <li class="item gate" data-status="done" data-phase="2"><span class="stamp">done</span>
         <div><div class="name"><span class="k">G2</span><span class="t">Gate P2 — thermo-nuclear</span></div>
           <div class="meta">/thermo-nuclear-code-quality-review on Phase-2 diff → findings → suite green → commit &ldquo;Phase 2: …&rdquo;</div></div></li>
     </ul>
@@ -401,7 +407,7 @@
       <li class="item" data-status="done"><span class="stamp">done</span>
         <div><div class="name"><span class="k">S-2</span><span class="t">summarizeSite takes injected deps {ai, azure, fetchImpl (default globalThis.fetch), timeoutMs} — mirrors transcribeVoice(ai,…); no global stubbing in tests.</span></div>
           <div class="meta">unlocks C8–C14 · part of S3</div></div></li>
-      <li class="item" data-status="todo"><span class="stamp">todo</span>
+      <li class="item" data-status="done"><span class="stamp">done</span>
         <div><div class="name"><span class="k">S-3</span><span class="t">(exists) per-request env injection: AI stub {run} (comments.test.ts idiom), harness R2 op spies, SUMMARY_LIMITER stub {limit:async({key})→{success}}.</span></div>
           <div class="meta">unlocks C16–C29 · no code change</div></div></li>
       <li class="item" data-status="done"><span class="stamp">done</span>

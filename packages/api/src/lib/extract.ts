@@ -25,18 +25,22 @@ export function resolveIndexPath(paths: string[]): string {
   return paths.length === 1 ? paths[0] : ''
 }
 
-export function pickEntry(files: EntryFile[]): EntryFile | null {
+export function pickEntry<T extends EntryFile>(files: T[]): T | null {
   const path = resolveIndexPath(files.map((file) => file.path))
   return files.find((file) => file.path === path) ?? null
 }
 
+export function isSupportedEntry(entry: EntryFile): boolean {
+  return /\.(md|markdown)$/i.test(entry.path) || /\.html?$/i.test(entry.path) || entry.mimeType === 'text/html'
+}
+
 export async function extractText(entry: EntryFile, body: string): Promise<Extracted> {
-  if (/\.(md|markdown)$/i.test(entry.path)) {
-    return extracted(body)
+  if (!isSupportedEntry(entry)) {
+    return { ok: false, reason: 'unsupported' }
   }
 
-  if (!/\.html?$/i.test(entry.path) && entry.mimeType !== 'text/html') {
-    return { ok: false, reason: 'unsupported' }
+  if (/\.(md|markdown)$/i.test(entry.path)) {
+    return extracted(body)
   }
 
   // HTMLRewriter handlers observe the input stream, so a collector on the stripping rewriter

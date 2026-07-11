@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { Hono } from 'hono'
+import { siteSummaries } from '../db/schema'
 import { seedFile, seedMember, seedSite, seedSpace, seedUserShare } from '../test/harness'
 import { APP_URL, at, auth, makeRouteApp, mintUser, postAuthRequests, type RouteApp } from '../test/route-fixtures'
 import type { AppEnv } from '../types'
@@ -26,20 +27,149 @@ const getJson = <T>(app: Hono<AppEnv>, env: AppEnv['Bindings'], path: string, id
   app.request(path, { headers: auth(id) }, env).then((r) => r.json() as Promise<T>)
 
 type MineRow = { id: string; siteSlug: string; status: string; audio: boolean }
-type TeamRow = { id: string; audio: boolean }
+type TeamRow = { id: string; audio: boolean; hasSummary: boolean }
+
+describe('C31 — site feed characterization before summary badge', () => {
+  test('freezes every current feed field and post-auth request budget', async () => {
+    const { app, env, db, kv } = await setup()
+    await mintUser(db, kv, 'me', { email: 'me@e.com' })
+    await seedSite(db, {
+      id: 'voice',
+      spaceId: 'acme',
+      ownerId: 'owner',
+      slug: 'voice',
+      title: 'Voice note',
+      visibility: 'team',
+      createdAt: at(7),
+    })
+    await seedFile(db, null, 'voice', { path: 'take.mp3', text: 'b' })
+    await seedUserShare(db, 'voice', 'me', 'editor')
+
+    db.resetCounters()
+    expect(await getJson(app, env, '/api/sites/mine', 'owner')).toEqual([
+      {
+        id: 'voice',
+        spaceSlug: 'acme',
+        siteSlug: 'voice',
+        title: 'Voice note',
+        visibility: 'team',
+        status: 'active',
+        audio: true,
+        hasSummary: false,
+        url: `${APP_URL}/acme/voice`,
+        createdAt: at(7),
+      },
+    ])
+    expect(postAuthRequests(db)).toBe(1)
+
+    db.resetCounters()
+    expect(await getJson(app, env, '/api/sites/shared', 'me')).toEqual([
+      {
+        id: 'voice',
+        spaceSlug: 'acme',
+        siteSlug: 'voice',
+        title: 'Voice note',
+        visibility: 'team',
+        status: 'active',
+        audio: true,
+        hasSummary: false,
+        role: 'editor',
+        url: `${APP_URL}/acme/voice`,
+        createdAt: at(7),
+      },
+    ])
+    expect(postAuthRequests(db)).toBeLessThanOrEqual(2)
+
+    db.resetCounters()
+    expect(await getJson(app, env, '/api/sites/team', 'owner')).toEqual([
+      {
+        id: 'voice',
+        spaceSlug: 'acme',
+        siteSlug: 'voice',
+        title: 'Voice note',
+        visibility: 'team',
+        status: 'active',
+        audio: true,
+        hasSummary: false,
+        url: `${APP_URL}/acme/voice`,
+        createdAt: at(7),
+        uploaderName: null,
+        uploaderEmail: 'owner@e.com',
+      },
+    ])
+    expect(postAuthRequests(db)).toBe(1)
+
+    db.resetCounters()
+    expect(await getJson(app, env, '/api/spaces/acme/sites', 'me')).toEqual([
+      {
+        id: 'voice',
+        spaceSlug: 'acme',
+        siteSlug: 'voice',
+        title: 'Voice note',
+        visibility: 'team',
+        status: 'active',
+        isOwner: false,
+        audio: true,
+        hasSummary: false,
+        url: `${APP_URL}/acme/voice`,
+        createdAt: at(7),
+      },
+    ])
+    expect(postAuthRequests(db)).toBe(1)
+    expect(db.counters.batches).toBe(1)
+  })
+})
+
+describe('C32 — summary badge on the remaining site feeds', () => {
+  test('/shared, /team, and /spaces/:slug/sites report summary presence per site', async () => {
+    const { app, env, db, kv } = await setup()
+    await mintUser(db, kv, 'me', { email: 'me@e.com' })
+    await seedSite(db, { id: 'summarized', spaceId: 'acme', ownerId: 'owner', slug: 'summarized', createdAt: at(2) })
+    await seedSite(db, { id: 'plain', spaceId: 'acme', ownerId: 'owner', slug: 'plain', createdAt: at(1) })
+    await db.insert(siteSummaries).values({
+      siteId: 'summarized',
+      summary: 's',
+      contentVersion: 0,
+      promptVersion: 1,
+      provider: 'workers',
+      model: 'm',
+    })
+    await seedUserShare(db, 'summarized', 'me')
+    await seedUserShare(db, 'plain', 'me')
+
+    const summaryFlags = (rows: { id: string; hasSummary: boolean }[]) =>
+      rows.map(({ id, hasSummary }) => ({ id, hasSummary }))
+    const expected = [
+      { id: 'summarized', hasSummary: true },
+      { id: 'plain', hasSummary: false },
+    ]
+
+    expect(summaryFlags(await getJson(app, env, '/api/sites/shared', 'me'))).toEqual(expected)
+    expect(summaryFlags(await getJson(app, env, '/api/sites/team', 'owner'))).toEqual(expected)
+    expect(summaryFlags(await getJson(app, env, '/api/spaces/acme/sites', 'me'))).toEqual(expected)
+  })
+})
 
 describe('feeds — audio badge pins (S5b T5.4)', () => {
-  test('pin: /mine — a 30-file pure-audio site is exactly ONE row, full payload unchanged', async () => {
+  test('C30: /mine — summary is per site and a summarized 30-file site is exactly ONE row', async () => {
     const { app, env, db } = await setup()
     await seedSite(db, { id: 'voice', spaceId: 'acme', ownerId: 'owner', slug: 'voice', visibility: 'private', createdAt: at(2) })
     for (let i = 0; i < 30; i++) await seedFile(db, null, 'voice', { path: `take-${i}.mp3`, text: 'b' })
+    await db.insert(siteSummaries).values({
+      siteId: 'voice',
+      summary: 's',
+      contentVersion: 0,
+      promptVersion: 1,
+      provider: 'workers',
+      model: 'm',
+    })
     await seedSite(db, { id: 'doc', spaceId: 'acme', ownerId: 'owner', slug: 'doc', createdAt: at(1) })
     await seedFile(db, null, 'doc', { path: 'index.html', text: 'b' })
 
     // Hand-coded: one row PER SITE (30 files must not explode the feed), newest first.
     expect(await getJson(app, env, '/api/sites/mine', 'owner')).toEqual([
-      { id: 'voice', spaceSlug: 'acme', siteSlug: 'voice', title: null, visibility: 'private', status: 'active', audio: true, url: `${APP_URL}/acme/voice`, createdAt: at(2) },
-      { id: 'doc', spaceSlug: 'acme', siteSlug: 'doc', title: null, visibility: 'team', status: 'active', audio: false, url: `${APP_URL}/acme/doc`, createdAt: at(1) },
+      { id: 'voice', spaceSlug: 'acme', siteSlug: 'voice', title: null, visibility: 'private', status: 'active', audio: true, hasSummary: true, url: `${APP_URL}/acme/voice`, createdAt: at(2) },
+      { id: 'doc', spaceSlug: 'acme', siteSlug: 'doc', title: null, visibility: 'team', status: 'active', audio: false, hasSummary: false, url: `${APP_URL}/acme/doc`, createdAt: at(1) },
     ])
   })
 
@@ -59,9 +189,10 @@ describe('feeds — audio badge pins (S5b T5.4)', () => {
     // The 30-file site is pure audio; the file-less rest are not. Full payload on the head row.
     expect(rows[0]).toEqual({
       id: 's51', spaceSlug: 'acme', siteSlug: 's51', title: null, visibility: 'team', status: 'active',
-      audio: true, url: `${APP_URL}/acme/s51`, createdAt: at(51), uploaderName: null, uploaderEmail: 'owner@e.com',
+      audio: true, hasSummary: false, url: `${APP_URL}/acme/s51`, createdAt: at(51), uploaderName: null, uploaderEmail: 'owner@e.com',
     })
     expect(rows.slice(1).every((r) => r.audio === false)).toBe(true)
+    expect(rows.every((r) => r.hasSummary === false)).toBe(true)
   })
 
   test('pin: audio truth table — all-audio true; audio+non-audio false; zero-file false', async () => {

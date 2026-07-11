@@ -16,7 +16,7 @@ import { files as filesTable, sites as sitesTable, spaces, users } from '../db/s
 import { canReplace, checkAccess } from '../lib/access'
 import { batchAll, chunk, D1_MAX_IN } from '../lib/d1'
 import { resolveIndexPath } from '../lib/extract'
-import { pureAudioSql } from '../lib/site-audio'
+import { siteFeedColumns, toFeedRow } from '../lib/site-feed'
 import { readSessionOrBearer } from '../lib/session'
 import { resolveSite } from '../lib/site-access'
 import { isValidSlug } from '../lib/slug'
@@ -202,33 +202,14 @@ sites.get('/mine', requireAuth, async (c) => {
   const user = c.get('user')
   const db = c.get('db')
   const rows = await db
-    .select({
-      id: sitesTable.id,
-      spaceSlug: spaces.slug,
-      slug: sitesTable.slug,
-      title: sitesTable.title,
-      visibility: sitesTable.visibility,
-      status: sitesTable.status,
-      createdAt: sitesTable.createdAt,
-      audio: pureAudioSql(sitesTable.id),
-    })
+    .select(siteFeedColumns())
     .from(sitesTable)
     .innerJoin(spaces, eq(sitesTable.spaceId, spaces.id))
     .where(eq(sitesTable.ownerId, user.id))
     .orderBy(desc(sitesTable.createdAt))
 
   return c.json(
-    rows.map((r) => ({
-      id: r.id,
-      spaceSlug: r.spaceSlug,
-      siteSlug: r.slug,
-      title: r.title,
-      visibility: r.visibility,
-      status: r.status,
-      audio: r.audio === 1,
-      url: `${c.env.APP_URL}/${r.spaceSlug}/${r.slug}`,
-      createdAt: r.createdAt,
-    })),
+    rows.map((r) => toFeedRow(r, c.env.APP_URL)),
   )
 })
 
@@ -253,15 +234,8 @@ sites.get('/shared', requireAuth, async (c) => {
   const rowStmts = chunk(ids, D1_MAX_IN).map((batch) =>
     db
       .select({
-        id: sitesTable.id,
-        spaceSlug: sql<string>`${spaces.slug}`.as('spaceSlug'),
-        slug: sitesTable.slug,
-        title: sitesTable.title,
-        visibility: sitesTable.visibility,
-        status: sitesTable.status,
+        ...siteFeedColumns(),
         ownerId: sitesTable.ownerId,
-        createdAt: sitesTable.createdAt,
-        audio: pureAudioSql(sitesTable.id),
       })
       .from(sitesTable)
       .innerJoin(spaces, eq(sitesTable.spaceId, spaces.id))
@@ -272,16 +246,8 @@ sites.get('/shared', requireAuth, async (c) => {
   const visible = rows.filter((r) => r.status === 'active' && r.ownerId !== user.id)
   return c.json(
     visible.map((r) => ({
-      id: r.id,
-      spaceSlug: r.spaceSlug,
-      siteSlug: r.slug,
-      title: r.title,
-      visibility: r.visibility,
-      status: r.status,
-      audio: r.audio === 1,
+      ...toFeedRow(r, c.env.APP_URL),
       role: roles.get(r.id) ?? 'viewer',
-      url: `${c.env.APP_URL}/${r.spaceSlug}/${r.slug}`,
-      createdAt: r.createdAt,
     })),
   )
 })
@@ -293,16 +259,9 @@ sites.get('/team', requireAuth, async (c) => {
   const db = c.get('db')
   const rows = await db
     .select({
-      id: sitesTable.id,
-      spaceSlug: spaces.slug,
-      slug: sitesTable.slug,
-      title: sitesTable.title,
-      visibility: sitesTable.visibility,
-      status: sitesTable.status,
-      createdAt: sitesTable.createdAt,
+      ...siteFeedColumns(),
       uploaderName: users.name,
       uploaderEmail: users.email,
-      audio: pureAudioSql(sitesTable.id),
     })
     .from(sitesTable)
     .innerJoin(spaces, eq(sitesTable.spaceId, spaces.id))
@@ -312,15 +271,7 @@ sites.get('/team', requireAuth, async (c) => {
     .limit(50)
   return c.json(
     rows.map((r) => ({
-      id: r.id,
-      spaceSlug: r.spaceSlug,
-      siteSlug: r.slug,
-      title: r.title,
-      visibility: r.visibility,
-      status: r.status,
-      audio: r.audio === 1,
-      url: `${c.env.APP_URL}/${r.spaceSlug}/${r.slug}`,
-      createdAt: r.createdAt,
+      ...toFeedRow(r, c.env.APP_URL),
       uploaderName: r.uploaderName,
       uploaderEmail: r.uploaderEmail,
     })),
