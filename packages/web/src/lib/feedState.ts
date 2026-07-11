@@ -7,6 +7,7 @@
 // derive an identical model, so revalidation can't churn tabs or steal the active one).
 
 import { ApiError } from './api'
+import { slugify } from './slug'
 import type { CommentFeedItem, SiteSummary, SpaceSummary, TeamUpload } from './types'
 
 export type FeedSlot<T> =
@@ -115,4 +116,13 @@ export function deriveFeedState(
     unauthorized: Object.values(slots).some(isUnauthorized),
     steerTo: view.wantsNewSpace && activeTab !== 'spaces' ? 'spaces' : null,
   }
+}
+
+/** Hide a root file path when it only repeats the site identity. Nested paths remain useful
+ *  context even when their basename matches the site slug. */
+export function feedRowPath(item: { filePath: string; siteSlug: string }): string | null {
+  if (item.filePath === 'index.html') return null
+  if (item.filePath.includes('/')) return item.filePath
+  const basename = item.filePath.replace(/\.[^.]*$/, '')
+  return slugify(basename) === item.siteSlug ? null : item.filePath
 }

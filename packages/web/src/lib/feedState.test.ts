@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { ApiError } from './api'
-import { deriveFeedState, type FeedSlot, type FeedSlots } from './feedState'
+import { deriveFeedState, feedRowPath, type FeedSlot, type FeedSlots } from './feedState'
+import { notificationHref } from './mentions'
 import type { CommentFeedItem, SiteSummary, SpaceSummary, TeamUpload } from './types'
 
 // deriveFeedState is the dashboard's per-feed render brain: these tests pin which tabs exist,
@@ -349,5 +350,41 @@ describe('deriveFeedState', () => {
       expect(state.tabs.at(-1)?.id).toBe('comments')
       expect({ ...state, tabs: state.tabs.filter((tab) => tab.id !== 'comments') }).toEqual(expected)
     }
+  })
+})
+
+describe('C5.4 — feedRowPath: hide redundant root-file paths', () => {
+  test('hides index.html', () => {
+    expect(feedRowPath({ filePath: 'index.html', siteSlug: 'anything' })).toBeNull()
+  })
+
+  test('hides a lone file whose basename matches the site slug', () => {
+    expect(feedRowPath({ filePath: 'report.html', siteSlug: 'report' })).toBeNull()
+  })
+
+  test('slugifies a spaced basename before matching the site slug', () => {
+    expect(feedRowPath({ filePath: 'Q3 Report.html', siteSlug: 'q3-report' })).toBeNull()
+  })
+
+  test('shows a nested path even when its basename could match', () => {
+    expect(feedRowPath({ filePath: 'charts/revenue.html', siteSlug: 'revenue' })).toBe(
+      'charts/revenue.html',
+    )
+  })
+
+  test('matching is extension-agnostic', () => {
+    expect(feedRowPath({ filePath: 'report.md', siteSlug: 'report' })).toBeNull()
+  })
+
+  test('matching is case-insensitive through slugify', () => {
+    expect(feedRowPath({ filePath: 'REPORT.HTML', siteSlug: 'report' })).toBeNull()
+  })
+
+  test('a hidden display path is still carried by notificationHref', () => {
+    const item = { filePath: 'report.html', siteSlug: 'report' }
+    expect(feedRowPath(item)).toBeNull()
+    expect(notificationHref({ siteLabel: 'docs/report', filePath: item.filePath, threadId: 't1' })).toBe(
+      '/docs/report/report.html?thread=t1&review=1',
+    )
   })
 })

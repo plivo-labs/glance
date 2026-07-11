@@ -1,8 +1,7 @@
 // Pure @-mention helpers, extracted from the Composer so they're bun-testable without a DOM.
-// The composer owns the textarea + dropdown; these own the string math plus notification/feed-row
-// link and display helpers.
+// The composer owns the textarea + dropdown; these own the string math plus the notification link.
 
-import { slugify } from './slug'
+import { encodePathSegments } from './paths'
 
 export interface MentionUser {
   id: string
@@ -66,19 +65,10 @@ export function notificationHref(n: {
   // Encode each path segment (mirrors ViewerSidebar's entryHref) — upload sanitization lets `?`
   // and `#` through, and unencoded they truncate the pathname into query/fragment territory.
   const path = n.filePath
-    ? `/${n.filePath.replace(/^\/+/, '').split('/').map(encodeURIComponent).join('/')}`
+    ? `/${encodePathSegments(n.filePath.replace(/^\/+/, ''))}`
     : ''
   const params = new URLSearchParams()
   if (n.threadId) params.set('thread', n.threadId)
   params.set('review', '1')
   return `/${n.siteLabel}${path}?${params.toString()}`
-}
-
-/** Hide a root file path when it only repeats the site identity. Nested paths remain useful
- *  context even when their basename matches the site slug. */
-export function feedRowPath(item: { filePath: string; siteSlug: string }): string | null {
-  if (item.filePath === 'index.html') return null
-  if (item.filePath.includes('/')) return item.filePath
-  const basename = item.filePath.replace(/\.[^.]*$/, '')
-  return slugify(basename) === item.siteSlug ? null : item.filePath
 }

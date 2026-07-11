@@ -18,9 +18,9 @@ type SiteStatus = (typeof sites.$inferSelect)['status']
 // Access filtering runs AFTER this newest-per-arm window, so a user whose newest 200
 // candidates are inaccessible sees an under-filled feed (accepted contract, pinned later
 // by route case C4.9; fix would be a bigger cap, never cursors).
-export const FEED_SCAN_WINDOW = 200
-export const FEED_LIMIT = 50
-export const FEED_SNIPPET_LENGTH = 200
+const FEED_SCAN_WINDOW = 200
+const FEED_LIMIT = 50
+const FEED_SNIPPET_LENGTH = 200
 
 // Thread/site/space columns shared by both candidate arms. Every column is aliased with .as() —
 // D1 batch results map by result-column NAME, so unaliased join columns would silently collide.
@@ -105,7 +105,7 @@ type FeedCandidate =
 
 const KIND_RANK = { mention: 0, authored: 1 } as const
 
-function snippet(body: string): string {
+export function truncateSnippet(body: string): string {
   const s = body.slice(0, FEED_SNIPPET_LENGTH)
   return s.length === FEED_SNIPPET_LENGTH && /[\uD800-\uDBFF]$/.test(s) ? s.slice(0, -1) : s
 }
@@ -134,7 +134,7 @@ function toCommentFeedItem(candidate: FeedCandidate): CommentFeedItem {
     ? {
         kind: 'authored',
         ...common,
-        snippet: snippet(candidate.row.body),
+        snippet: truncateSnippet(candidate.row.body),
         actorName: null,
         editedAt: candidate.row.editedAt,
       }

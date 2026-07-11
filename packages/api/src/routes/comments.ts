@@ -15,6 +15,7 @@ import {
   threadOfCommentStmt,
   threadsWithUsersBySlugsStmt,
 } from '../db/comments'
+import { truncateSnippet } from '../db/comment-feed'
 import { createNotifications } from '../db/notifications'
 import type { Comment, CommentThread } from '../db/schema'
 import { listMentionableUsers } from '../db/repo'
@@ -154,9 +155,6 @@ function cleanBody(v: unknown): string | null {
   return body
 }
 
-// Short preview of the comment body stored on the notification for the inbox/bell list.
-const MAX_SNIPPET = 200
-
 /** Raise mention notifications for a just-written comment. Explicit selections only (client sends
  *  ids from the autocomplete): dedup, drop self, then INTERSECT against `listMentionableUsers` —
  *  the same access set the autocomplete drew from — so a forged id for someone without access is
@@ -179,7 +177,7 @@ async function notifyMentions(
     if (recipients.length === 0) return
     const { space, site: siteSlug } = c.req.param()
     const siteLabel = `${space}/${siteSlug}`
-    const snippet = opts.snippet.slice(0, MAX_SNIPPET)
+    const snippet = truncateSnippet(opts.snippet)
     await fireAndForget(
       c,
       createNotifications(

@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/command'
 import { toggleTheme } from '@/components/theme'
 import { api } from '@/lib/api'
+import { encodePathSegments } from '@/lib/paths'
 import { siteName, useRecents, visibleEntries } from '@/lib/recents'
 import type { Me, SiteSummary, SpaceSummary } from '@/lib/types'
 
@@ -117,7 +118,7 @@ export function CommandPalette({
             {recentRows.map((e) => {
               const name = siteName(e)
               const href = e.filePath
-                ? `/${e.spaceSlug}/${e.siteSlug}/${e.filePath.split('/').map(encodeURIComponent).join('/')}`
+                ? `/${e.spaceSlug}/${e.siteSlug}/${encodePathSegments(e.filePath)}`
                 : `/${e.spaceSlug}/${e.siteSlug}`
               return (
                 <CommandItem

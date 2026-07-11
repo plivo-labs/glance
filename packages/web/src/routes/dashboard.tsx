@@ -56,8 +56,9 @@ import {
   type FeedSlot,
   type TabContent,
   type TabId,
+  feedRowPath,
 } from '@/lib/feedState'
-import { feedRowPath, notificationHref } from '@/lib/mentions'
+import { notificationHref } from '@/lib/mentions'
 import { timeAgo } from '@/lib/time'
 import type { CommentFeedItem, SiteSummary, SpaceSummary, TeamUpload } from '@/lib/types'
 

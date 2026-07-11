@@ -7,6 +7,7 @@ import { attachDbBroker } from '@/lib/dbBroker'
 import { cn } from '@/lib/utils'
 import { comments, type PendingAnchor, pendingToInput, type Thread } from '@/lib/comments'
 import { type Intent, parseIntent } from '@/lib/parseIntent'
+import { encodePathSegments } from '@/lib/paths'
 import { type ArbiterEvent, type ArbiterState, type Decision, initialArbiter, stepArbiter } from '@/lib/prefetchArbiter'
 import { recordVisit } from '@/lib/recents'
 import type { Me } from '@/lib/types'
@@ -459,5 +460,5 @@ function withAnnotate(u: string): string {
 // path so sub-resources still resolve relative to the site root. Each segment is encoded.
 function appendPath(contentUrl: string, filePath: string): string {
   if (!filePath) return contentUrl
-  return contentUrl + filePath.split('/').map(encodeURIComponent).join('/')
+  return contentUrl + encodePathSegments(filePath)
 }
