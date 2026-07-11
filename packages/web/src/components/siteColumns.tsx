@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { ExternalLink, Mic } from 'lucide-react'
+import { ExternalLink, Mic, Sparkles } from 'lucide-react'
 import type { Column } from '@/components/SortableTable'
 import { VisibilityBadge } from '@/components/visibility'
 import { Badge } from '@/components/ui/badge'
@@ -24,6 +24,7 @@ export function nameColumn<T extends SiteSummary>(): Column<T> {
     render: (s) => (
       <div className="flex items-center gap-2">
         {s.audio && <Mic className="size-3.5 shrink-0 text-primary" aria-label="Audio" />}
+        {s.hasSummary && <Sparkles className="size-3.5 shrink-0 text-primary" aria-label="Has AI summary" />}
         <span className="truncate font-medium">{s.title ?? s.siteSlug}</span>
         {s.status === 'archived' && <Badge variant="secondary">archived</Badge>}
         {/* "Shared with me" feed only: an editor grantee can redeploy this site's content. */}

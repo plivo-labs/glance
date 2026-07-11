@@ -1,9 +1,10 @@
 import { useCallback, useState } from 'react'
 import { useRevalidator } from 'react-router'
-import { Copy, FolderInput, MoreVertical, Pencil, Share2, Trash2 } from 'lucide-react'
+import { Copy, FolderInput, MoreVertical, Pencil, Share2, Sparkles, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { ShareDialog } from '@/components/ShareDialog'
+import { SummarySheet } from '@/components/SummarySheet'
 import {
   actionsColumn,
   createdColumn,
@@ -34,6 +35,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { MountSensor } from '@/components/ui/mount-sensor'
 import { api } from '@/lib/api'
 import type { SiteSummary, SpaceSummary, Visibility } from '@/lib/types'
 
@@ -87,7 +89,7 @@ function OwnerVisibilityCell({ site }: { site: SiteSummary }) {
   return <VisibilityMenu trigger="chip" value={visibility} onChange={changeVisibility} />
 }
 
-type RowDialog = 'rename' | 'move' | 'share' | 'delete' | null
+type RowDialog = 'rename' | 'move' | 'share' | 'summary' | 'delete' | null
 
 // Open + a kebab that collapses Rename / Move / Share / Copy link / Delete.
 function OwnerActions({ site }: { site: SiteSummary }) {
@@ -127,6 +129,10 @@ function OwnerActions({ site }: { site: SiteSummary }) {
             <Share2 />
             Share…
           </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setDialog('summary')}>
+            <Sparkles />
+            {site.hasSummary ? 'Summary' : 'Summarize'}
+          </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => void copyLink()}>
             <Copy />
             Copy link
@@ -149,6 +155,13 @@ function OwnerActions({ site }: { site: SiteSummary }) {
         title={site.title}
         open={dialog === 'share'}
         onOpenChange={(o) => !o && close()}
+      />
+      <SummarySheet
+        spaceSlug={site.spaceSlug}
+        siteSlug={site.siteSlug}
+        open={dialog === 'summary'}
+        onOpenChange={(o) => !o && close()}
+        onGenerated={refresh}
       />
       <ConfirmDialog
         open={dialog === 'delete'}
@@ -268,13 +281,8 @@ function MoveDialog({
   const [spaces, setSpaces] = useState<SpaceSummary[]>([])
   const [target, setTarget] = useState('')
 
-  // Load spaces when the dialog opens. The ref lives on a plain sensor <div> below (NOT on
-  // DialogContent): Radix recomposes the content ref on every render, so a ref-callback there
-  // fires on every render (detach+reattach) — a fetch + setState would loop forever. A plain
-  // element's ref is uncomposed, so this stable callback fires once per open. (cf. CommandPalette.)
   const loadOnMount = useCallback(
-    (node: HTMLDivElement | null) => {
-      if (!node) return
+    () => {
       setTarget('')
       setBusy(true)
       api
@@ -309,7 +317,7 @@ function MoveDialog({
   return (
     <Dialog open={open} onOpenChange={(o) => !saving && onOpenChange(o)}>
       <DialogContent>
-        <div ref={loadOnMount} hidden aria-hidden="true" />
+        <MountSensor onMount={loadOnMount} />
         <DialogHeader>
           <DialogTitle>Move site</DialogTitle>
           <DialogDescription className="font-mono">{site.url}</DialogDescription>

@@ -294,6 +294,14 @@
         <span><b>hasSummary</b> in all four feeds (codex high, C31 characterization pinned GREEN against current feeds BEFORE the fragment, then C30 red-first, C32): new lib/site-summary.ts <code>hasSummarySql()</code> mirroring pureAudioSql (aliased EXISTS — D1 name-collapse guard), serialized <code>=== 1</code> like audio, budgets pinned unchanged (/mine 1, /team 1, /shared &le;2, spaces batch 1), /team 50-distinct cap intact, web SiteSummary gains hasSummary. Verified fresh: api 677/677, web 156/156, typecheck + lint clean. Phase-2 steps complete → G2 gate.</span></li>
       <li><span class="date">2026-07-12 01:32</span><span class="badge">Gate G2</span>
         <span>Gate workflow over the Phase-2 diff: suite green post-simplify, thermo returned 9 findings (3M/5L/1nit) — ALL fixed via codex xhigh: summary routes now gate through ONE slug-keyed <b>fetchAccessFacts batch</b> with the summaries row fused as an extra (new shared <code>siteAccessFromFacts</code> in site-access.ts, comments.ts consumes it identically), shared feed-row helper <b>lib/site-feed.ts</b> dedupes the 4× select+mapper blocks, <code>isSupportedEntry</code> predicate in extract.ts kills the fragile empty-body probe, generic <code>pickEntry&lt;T&gt;</code> deletes the cast, <code>summarizeDeps(env)</code> helper, post-upsert re-read dropped (GET owns staleness per C22), house-style body parse, test scaffold fixtures. Codex hung ~1h AFTER its own 679-green report (2nd occurrence of the post-completion hang) — cancelled, certified on-disk state. Verified fresh: api 679/679 (+2 isSupportedEntry), web 156/156, typecheck + lint. Committed &ldquo;Phase 2&rdquo;.</span></li>
+      <li><span class="date">2026-07-12 01:47</span><span class="badge">S6</span>
+        <span><b>web lib/summary.ts + SummarySheet</b> landed (codex xhigh, C33 8 sequences + C34 wire red-first, 15 new web tests): pure summaryReducer with request-token <b>late-GET arbitration</b> (stale-token responses ignored — the postResolved-then-late-GET pin), failure keeps prior snapshot, 422 → honest &ldquo;nothing to summarize&rdquo; unavailable reason; siteSummary wire fns on the api helper; SummarySheet controlled component (WhatsNewButton sheet composition + ShareDialog mount-sensor idiom, all six wireframe states, no artificial client timeout). Stop-when-done clause fixed the codex post-completion hang. Verified fresh: api 679/679, web 171/171, typecheck + lint clean.</span></li>
+      <li><span class="date">2026-07-12 01:49</span><span class="badge">S7</span>
+        <span>ViewerTopBar <b>TL;DR</b> button (cursor grok-4.5, mechanical tier): Sparkles ghost button mirroring the Comments styling in BOTH review and non-review branches, one SummarySheet instance fragment-wrapped outside the header. Verified fresh: api 679/679, web 171/171, typecheck clean.</span></li>
+      <li><span class="date">2026-07-12 01:51</span><span class="badge">S8</span>
+        <span>Dashboard wiring (cursor grok-4.5): Sparkles badge in shared <code>nameColumn</code> when hasSummary (Mic-badge idiom), kebab item &ldquo;Summarize&rdquo;/&ldquo;Summary&rdquo; in OwnerActions, controlled SummarySheet with <code>onGenerated={refresh}</code> (revalidator) — sparkle appears post-generation without reload. Verified fresh: api 679/679, web 171/171, typecheck + lint clean. Phase-3 steps complete → G3 gate.</span></li>
+      <li><span class="date">2026-07-12 02:04</span><span class="badge">Gate G3</span>
+        <span>Gate workflow over the Phase-3 diff: suite green post-simplify, thermo returned 5 findings (3M/1L/1nit) — ALL fixed via codex: reducer is now the ONLY HTTP-error classifier (failed state carries <code>retryable/rateLimited/retryForce</code>; SummarySheet renders flags, zero status sniffing; Try-again hidden for non-retryable), retry-force intent decided at <code>generateStarted</code> (the fresh-row-no-op server invariant now lives in the machine, test-pinned), shared <code>ui/MountSensor</code> extracts the 3rd copy of the Radix ref-recomposition sensor idiom (ShareDialog migrated; CommandPalette legitimately skipped — its callback does unmount cleanup), conditional spreads flattened. Verified fresh: api 679/679, web 172/172, typecheck + lint. Committed &ldquo;Phase 3&rdquo;.</span></li>
     </ul>
   </section>
 
@@ -337,16 +345,16 @@
 
     <div class="phase-h">Phase 3 — Web UI</div>
     <ul class="items">
-      <li class="item" data-status="todo" data-phase="3"><span class="stamp">todo</span>
+      <li class="item" data-status="done" data-phase="3"><span class="stamp">done</span>
         <div><div class="name"><span class="k">S6</span><span class="t">web lib/summary.ts reducer (state machine: empty · generating · fresh · stale · failed-keeps-prior · unavailable; late-GET arbitration) + api-helper wire fns (never useFetcher for /api/*) + SummarySheet controlled component (ui/sheet, ShareDialog open pattern + Radix mount sensor), stale banner from response currentVersion, no artificial client timeout (70B is slow), &ldquo;entry page only&rdquo; note.</span></div>
           <div class="meta">cases C33–C34 · <span class="r-med">med risk</span> · <span class="dep">dep:S4</span></div></div></li>
-      <li class="item" data-status="todo" data-phase="3"><span class="stamp">todo</span>
+      <li class="item" data-status="done" data-phase="3"><span class="stamp">done</span>
         <div><div class="name"><span class="k">S7</span><span class="t">ViewerTopBar &ldquo;TL;DR&rdquo; button → opens the sheet (both review and non-review render branches).</span></div>
           <div class="meta">case C35 (smoke) · <span class="r-low">low risk</span> · <span class="dep">dep:S6</span></div></div></li>
-      <li class="item" data-status="todo" data-phase="3"><span class="stamp">todo</span>
+      <li class="item" data-status="done" data-phase="3"><span class="stamp">done</span>
         <div><div class="name"><span class="k">S8</span><span class="t">Dashboard row: sparkle in shared siteColumns when hasSummary, &ldquo;Summarize&rdquo; in row kebab otherwise; same sheet, controlled open; sparkle appears post-generation without reload (revalidate/local bump).</span></div>
           <div class="meta">case C35 (smoke) · <span class="r-low">low risk</span> · <span class="dep">dep:S5,S6</span></div></div></li>
-      <li class="item gate" data-status="todo" data-phase="3"><span class="stamp">todo</span>
+      <li class="item gate" data-status="done" data-phase="3"><span class="stamp">done</span>
         <div><div class="name"><span class="k">G3</span><span class="t">Gate P3 — thermo-nuclear</span></div>
           <div class="meta">/thermo-nuclear-code-quality-review on Phase-3 diff → findings → suite green → commit &ldquo;Phase 3: …&rdquo;</div></div></li>
     </ul>

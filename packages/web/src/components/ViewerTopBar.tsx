@@ -1,10 +1,12 @@
-import { Check, ChevronRight, Command, History, MessageSquare } from 'lucide-react'
+import { Check, ChevronRight, Command, History, MessageSquare, Sparkles } from 'lucide-react'
+import { useState } from 'react'
 import { Link } from 'react-router'
 import type { ViewerSite } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Segmented } from '@/components/ui/segmented'
 import { ShareDialog } from '@/components/ShareDialog'
+import { SummarySheet } from '@/components/SummarySheet'
 import type { ReviewMode } from '@/components/review/ReviewRail'
 
 // Canvas width for the preview iframe: full-bleed, a wide column, or a narrow reading measure
@@ -52,6 +54,7 @@ export function ViewerTopBar({
   onToggleSidebar: () => void
   onSearch: () => void
 }) {
+  const [summaryOpen, setSummaryOpen] = useState(false)
   return (
     <header className="flex h-12 shrink-0 items-center gap-3 border-b bg-background px-3">
       <Link to="/dashboard" className="flex shrink-0 items-center gap-2 font-mono font-semibold text-sm tracking-tight">
@@ -92,35 +95,38 @@ export function ViewerTopBar({
         </Button>
         <Segmented value={width} options={WIDTHS} onChange={onWidth} />
         {review ? (
-          <>
-            <Segmented value={mode} options={MODES} onChange={onMode} />
-            {site.isOwner && <ShareDialog spaceSlug={site.spaceSlug} siteSlug={site.siteSlug} title={site.title} compact />}
-            <Button size="sm" variant="secondary" onClick={onExit}>
-              <Check className="size-3.5" />
-              Done
-            </Button>
-          </>
+          <Segmented value={mode} options={MODES} onChange={onMode} />
         ) : (
-          <>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={onReview}
-              className={cn('gap-1.5', commentCount > 0 && 'text-primary')}
-              title={commentCount > 0 ? `${commentCount} open comment${commentCount === 1 ? '' : 's'}` : 'Comments'}
-            >
-              <MessageSquare className="size-3.5" />
-              Comments
-              {commentCount > 0 && (
-                <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 font-semibold text-[10px] text-primary-foreground leading-none tabular-nums">
-                  {commentCount > 9 ? '9+' : commentCount}
-                </span>
-              )}
-            </Button>
-            {site.isOwner && <ShareDialog spaceSlug={site.spaceSlug} siteSlug={site.siteSlug} title={site.title} compact />}
-          </>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={onReview}
+            className={cn('gap-1.5', commentCount > 0 && 'text-primary')}
+            title={commentCount > 0 ? `${commentCount} open comment${commentCount === 1 ? '' : 's'}` : 'Comments'}
+          >
+            <MessageSquare className="size-3.5" />
+            Comments
+            {commentCount > 0 && (
+              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 font-semibold text-[10px] text-primary-foreground leading-none tabular-nums">
+                {commentCount > 9 ? '9+' : commentCount}
+              </span>
+            )}
+          </Button>
+        )}
+        <Button size="sm" variant="ghost" className="gap-1.5" title="AI summary" onClick={() => setSummaryOpen(true)}>
+          <Sparkles className="size-3.5" />
+          TL;DR
+        </Button>
+        {site.isOwner && <ShareDialog spaceSlug={site.spaceSlug} siteSlug={site.siteSlug} title={site.title} compact />}
+        {review && (
+          <Button size="sm" variant="secondary" onClick={onExit}>
+            <Check className="size-3.5" />
+            Done
+          </Button>
         )}
       </div>
+      {/* Sheet renders through a portal, so it can live inside the header without affecting layout. */}
+      <SummarySheet spaceSlug={site.spaceSlug} siteSlug={site.siteSlug} open={summaryOpen} onOpenChange={setSummaryOpen} />
     </header>
   )
 }
