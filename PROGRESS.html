@@ -7,194 +7,192 @@
   doc. You MUST keep it updated as you work. Loop until every item is
   data-status="done" (or only out-of-scope items remain):
 
-    1. Pick the next item with data-status="todo" whose deps (dep:N in its
+    1. Pick the next item with data-status="todo" whose deps (dep:Sn in its
        .meta) are all "done", in phase order. Never cross a Gate that isn't
        done; never start phase N+1 while phase N has open items.
     2. Set that item's data-status="wip" and redeploy (cmd below) so watchers
        see it start.
     3. Do the work TDD: one failing test -> minimal impl -> green. Verify.
     4. Set the item's data-status="done" (or "blocked" + a Journal note if
-       genuinely stuck — never a false "done"). Append a dated <li> to the
-       Journal (section 08). Top counts + the Part II board recompute themselves.
+       genuinely stuck — never a false "done"). Append a <li> to the Journal
+       (section 03) stamped with the current date AND time (YYYY-MM-DD HH:MM —
+       run `date '+%Y-%m-%d %H:%M'`, never guess the time). Top counts + the
+       Part I board recompute themselves.
     5. If it was a phase's last step, run that phase's Gate item:
        /thermo-nuclear-code-quality-review on the phase diff -> fix findings ->
        full suite green -> mark the Gate done -> commit "Phase N: <summary>".
     6. Redeploy after EVERY status change:
-          glance deploy PROGRESS.html --name glance-perf-progress      (answer y)
+          glance deploy PROGRESS.html --name site-summary-progress      (answer y)
     7. Repeat from 1. When done, do a final deploy and report.
 
-  Delegate: spin up sub-agents — Haiku for exploring/locating (finding utils,
-  callers, existing patterns, file paths), Sonnet for pure/mechanical execution
-  slices, Opus for higher-effort ones (cross-package, design, concurrency, codegen).
-  Run independent slices in parallel; keep it minimal — don't fan out beyond the work.
+  Execution & delegation: follow the /implement-plan-progress skill
+  (~/.claude/skills/implement-plan-progress/SKILL.md) — it owns the executor
+  split (who implements what), parallelism rules, and verification discipline.
+  If the skill is unavailable, implement slices yourself via sub-agents,
+  review every diff, and re-run Verify — never trust an executor's "all green".
 
   Rules: edit THIS file in place (never emit a new file); a status change is an
   attribute edit only — preserve the markup/styling; the local file is source of
   truth and Glance mirrors it. Step/gate items carry data-phase="N".
 
-  Context for this tracker: worktree /Users/samuel.lawerence/tasks/glance-ship/glance-perf
-  branch perf/db-query-hot-paths. Full plan: /tmp/glance-perf-plan/plan.md ·
-  cases: /tmp/glance-perf-plan/tests.md · audit + consult verdicts referenced there.
-  Run tests from repo root: bun run test · typecheck · lint. Baseline green:
-  417 api + 91 web tests. HARD DESIGN CONSTRAINT: every statement placed in a
-  shared db.batch must be a non-failing SELECT (absent rows -> empty result,
-  never throw) — a rejected inner statement rejects the whole batch and
-  destroys 404/403/410 precedence.
+  Context for this tracker: worktree
+  /Users/samuel.lawerence/tasks/glance-ship/glance-site-summary, branch
+  site-summary off main (bootstrapped: bun install + cf-typegen done; baseline
+  green 643 api + 156 web tests). Decided proposal (5 consult rounds) lives at
+  summarize-button-proposal.html in this worktree (live on Glance). Plan +
+  case-design scaffolding: /tmp/summarize-plan/. Run tests from repo root:
+  bun run test · typecheck · lint (biome LINT ONLY — never `check --write`,
+  it reformats pre-existing drift repo-wide). Repo gotchas: schema.ts bundles
+  into the content worker (new table ok, heavy imports NOT); harness applies
+  ALL migrations before seeding; D1 batch maps rows BY NAME — alias duplicate
+  columns with .as(); skip-worktree local wrangler configs drift from HEAD —
+  verify committed state with `git show HEAD:<file>`; git pushes need the
+  `samuellawerentz` gh account.
   ============================================================================
-  Structure: ONE self-contained page. Part I · Plan (steps, gates, seams, cases,
-  strategy, order) + Part II · Progress (per-phase bars + journal), both driven by
-  the same data-status="todo|wip|done|blocked" items.
 -->
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Glance DB-query perf — Progress Ledger</title>
+<title>Summarize Button — Progress Console</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Fragment+Mono:ital@0;1&family=Crimson+Pro:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Martian+Mono:wght@300;400;600&display=swap" rel="stylesheet" />
 <style>
   :root{
-    --ground:#0d1310; --ground-2:#121a16; --panel:#16201b; --ink:#e9e5d8; --ink-soft:#b5b0a0;
-    --faint:#6f7a70; --rule:#243029; --rule-soft:#1b2620;
-    --signal:#ffb454; --signal-dim:rgba(255,180,84,.14);
-    --phosphor:#7dd487; --alarm:#e5604c;
-    --s-todo:#6f7a70; --s-wip:#ffb454; --s-done:#7dd487; --s-blocked:#e5604c;
+    --bg:#131110; --bg-2:#1b1815; --bg-3:#242019; --ink:#ece4d3; --ink-soft:#b3a893;
+    --faint:#7d745f; --rule:#332e26; --rule-2:#453e32;
+    --amber:#e8a33d; --green:#6fbf8a; --red:#d96a55; --cyan:#7db8b0;
+    --s-todo:#7d745f; --s-wip:#e8a33d; --s-done:#6fbf8a; --s-blocked:#d96a55;
   }
   *{box-sizing:border-box}
   html{scroll-behavior:smooth}
   body{
-    margin:0;color:var(--ink);background:var(--ground);
-    font-family:"Crimson Pro",Georgia,serif;font-size:17.5px;line-height:1.6;
+    margin:0;background:var(--bg);color:var(--ink);
+    font-family:"Martian Mono",monospace;font-size:13.5px;line-height:1.65;
     background-image:
-      repeating-linear-gradient(0deg,rgba(233,229,216,.018) 0 1px,transparent 1px 3px),
-      radial-gradient(ellipse 90% 55% at 50% -10%,rgba(125,212,135,.05),transparent 60%),
-      radial-gradient(rgba(233,229,216,.022) 1px,transparent 1.4px);
-    background-size:100% 100%,100% 100%,5px 5px;
+      linear-gradient(rgba(236,228,211,.022) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(236,228,211,.022) 1px,transparent 1px);
+    background-size:52px 52px;
   }
-  body::before{content:"";position:fixed;inset:0 0 auto 0;height:4px;z-index:5;
-    background:linear-gradient(90deg,var(--signal) 0 30%,var(--phosphor) 30% 36%,transparent 36%)}
-  ::selection{background:var(--signal);color:var(--ground)}
-  .mono{font-family:"Fragment Mono",monospace}
-  .wrap{max-width:960px;margin:0 auto;padding:0 42px}
+  body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:9;
+    background:repeating-linear-gradient(0deg,transparent 0 3px,rgba(0,0,0,.055) 3px 4px)}
+  body::after{content:"";position:fixed;inset:0 0 auto 0;height:4px;z-index:10;
+    background:linear-gradient(90deg,var(--amber) 0 30%,var(--green) 30% 36%,transparent 36%)}
+  .serif{font-family:"Instrument Serif",serif}
+  .wrap{max-width:960px;margin:0 auto;padding:0 36px}
 
   /* ---------- Masthead ---------- */
-  header{padding:66px 0 32px;border-bottom:2px solid var(--rule)}
-  .eyebrow{font-family:"Fragment Mono",monospace;font-size:11px;letter-spacing:.3em;
-    text-transform:uppercase;color:var(--signal);display:flex;justify-content:space-between}
-  h1{font-family:"Instrument Serif",serif;font-weight:400;font-size:clamp(40px,6.4vw,74px);
-    line-height:1.0;margin:.3em 0 .16em;letter-spacing:.004em}
-  h1 em{font-style:italic;color:var(--signal)}
-  .bias{font-style:italic;color:var(--ink-soft);max-width:62ch;font-size:20px}
-  .ledger-line{display:flex;flex-wrap:wrap;margin-top:28px;
-    border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
-  .stat{flex:1;min-width:120px;padding:15px 18px 15px 0;border-right:1px solid var(--rule)}
+  header{padding:66px 0 30px;border-bottom:1px solid var(--rule-2)}
+  .eyebrow{font-size:10px;letter-spacing:.34em;text-transform:uppercase;color:var(--amber);
+    display:flex;justify-content:space-between;font-weight:400}
+  h1{font-family:"Instrument Serif",serif;font-weight:400;font-size:clamp(42px,6.4vw,72px);
+    line-height:1.0;margin:.3em 0 .15em;letter-spacing:.005em}
+  h1 em{font-style:italic;color:var(--amber)}
+  .bias{font-family:"Instrument Serif",serif;font-style:italic;font-size:21px;color:var(--ink-soft);max-width:58ch}
+  .ledger-line{display:flex;flex-wrap:wrap;margin-top:28px;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+  .stat{flex:1;min-width:118px;padding:14px 18px 14px 0;border-right:1px solid var(--rule)}
   .stat:last-child{border-right:0}
-  .stat .n{font-family:"Instrument Serif",serif;font-size:38px;line-height:1}
-  .stat .l{font-family:"Fragment Mono",monospace;font-size:10.5px;letter-spacing:.18em;
-    text-transform:uppercase;color:var(--faint);margin-top:7px}
-  .stat .n.accent{color:var(--signal)}
+  .stat .n{font-family:"Instrument Serif",serif;font-size:38px;line-height:1;color:var(--ink)}
+  .stat .l{font-size:9.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--faint);margin-top:7px}
+  .stat .n.accent{color:var(--amber)}
 
   /* ---------- Part divider ---------- */
-  .part{display:flex;align-items:baseline;gap:18px;margin:66px 0 4px;padding-bottom:10px;
-    border-bottom:2px solid var(--rule)}
-  .part .roman{font-family:"Fragment Mono",monospace;font-size:13px;color:var(--signal);letter-spacing:.1em}
+  .part{display:flex;align-items:baseline;gap:18px;margin:62px 0 4px;padding-bottom:10px;border-bottom:1px solid var(--rule-2)}
+  .part .roman{font-size:12px;font-weight:600;color:var(--amber);letter-spacing:.12em}
   .part h2{font-family:"Instrument Serif",serif;font-size:36px;font-weight:400;margin:0}
-  .part .tag-line{margin-left:auto;font-family:"Fragment Mono",monospace;font-size:11px;
-    color:var(--faint);letter-spacing:.06em}
+  .part .tag-line{margin-left:auto;font-size:10px;color:var(--faint);letter-spacing:.08em}
 
-  /* ---------- Sub-sections ---------- */
-  section{padding:42px 0 10px;border-bottom:1px solid var(--rule-soft)}
-  .sec-head{display:flex;align-items:baseline;gap:16px;margin-bottom:20px}
-  .sec-num{font-family:"Fragment Mono",monospace;font-size:12px;color:var(--signal);letter-spacing:.1em;padding-top:6px}
+  section{padding:38px 0 10px;border-bottom:1px solid var(--rule)}
+  .sec-head{display:flex;align-items:baseline;gap:16px;margin-bottom:18px}
+  .sec-num{font-size:11px;color:var(--amber);letter-spacing:.1em;padding-top:6px}
   h3{font-family:"Instrument Serif",serif;font-weight:400;font-size:27px;margin:0}
-  .sec-note{margin-left:auto;font-family:"Fragment Mono",monospace;font-size:11px;color:var(--faint);letter-spacing:.06em}
+  .sec-note{margin-left:auto;font-size:10px;color:var(--faint);letter-spacing:.08em}
 
-  .phase-h{font-family:"Fragment Mono",monospace;font-size:12px;letter-spacing:.16em;
-    text-transform:uppercase;color:var(--ink-soft);margin:28px 0 10px;display:flex;align-items:center;gap:12px}
-  .phase-h .lat{color:var(--signal);letter-spacing:.04em;text-transform:none}
+  .phase-h{font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--ink-soft);
+    margin:26px 0 8px;display:flex;align-items:center;gap:12px}
   .phase-h::after{content:"";flex:1;height:1px;background:var(--rule)}
 
   /* ---------- Items ---------- */
   ul.items{list-style:none;padding:0;margin:0}
-  li.item{display:grid;grid-template-columns:auto 1fr;gap:16px;align-items:start;
-    padding:15px 6px;border-bottom:1px dotted var(--rule);transition:background .2s}
+  li.item{display:grid;grid-template-columns:auto 1fr;gap:15px;align-items:start;
+    padding:13px 6px;border-bottom:1px dotted var(--rule);transition:background .2s}
   li.item:last-child{border-bottom:0}
-  li.item:hover{background:rgba(255,180,84,.045)}
-  .stamp{font-family:"Fragment Mono",monospace;font-size:9.5px;font-weight:400;letter-spacing:.12em;
-    text-transform:uppercase;padding:4px 8px;border:1px solid currentColor;border-radius:2px;
-    white-space:nowrap;line-height:1;margin-top:5px;box-shadow:2px 2px 0 rgba(0,0,0,.35)}
+  li.item:hover{background:rgba(232,163,61,.045)}
+  .stamp{font-size:8.5px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;
+    padding:4px 8px;border:1px solid currentColor;border-radius:2px;white-space:nowrap;line-height:1;margin-top:4px}
   [data-status="todo"]    .stamp{color:var(--s-todo)}
   [data-status="wip"]     .stamp{color:var(--s-wip);
-    background:repeating-linear-gradient(45deg,transparent 0 5px,var(--signal-dim) 5px 10px)}
-  [data-status="done"]    .stamp{color:var(--s-done);background:rgba(125,212,135,.09)}
-  [data-status="blocked"] .stamp{color:var(--s-blocked);background:rgba(229,96,76,.09)}
+    background:repeating-linear-gradient(45deg,transparent 0 5px,rgba(232,163,61,.13) 5px 10px);
+    box-shadow:0 0 10px rgba(232,163,61,.25)}
+  [data-status="done"]    .stamp{color:var(--s-done);background:rgba(111,191,138,.09)}
+  [data-status="blocked"] .stamp{color:var(--s-blocked);background:rgba(217,106,85,.1)}
   [data-status="done"] .name{color:var(--faint)}
-  [data-status="done"] .name .t{text-decoration:line-through;text-decoration-color:var(--rule)}
-  .name{font-family:"Instrument Serif",serif;font-size:20px;line-height:1.35}
-  .name .k{font-family:"Fragment Mono",monospace;font-size:12px;color:var(--signal);margin-right:8px}
-  .meta{font-family:"Fragment Mono",monospace;font-size:11.5px;color:var(--faint);margin-top:5px;letter-spacing:.02em;line-height:1.7}
-  .meta .dep{color:var(--ink-soft)}
-  .r-low{color:var(--s-done)} .r-med{color:var(--signal)} .r-high{color:var(--alarm)}
-  li.gate{background:rgba(255,180,84,.05);border-left:2px solid var(--signal);padding-left:12px}
-  li.gate .name{font-style:italic}
+  [data-status="done"] .name .t{text-decoration:line-through;text-decoration-color:var(--rule-2)}
+  .name{font-size:14.5px;font-weight:400;line-height:1.5;color:var(--ink)}
+  .name .k{font-size:11px;color:var(--amber);font-weight:600;margin-right:8px}
+  .meta{font-size:10.5px;color:var(--faint);margin-top:5px;letter-spacing:.02em;font-weight:300}
+  .meta .dep{color:var(--cyan)}
+  .r-low{color:var(--green)} .r-med{color:var(--amber)} .r-high{color:var(--red);font-weight:600}
+  li.gate{background:rgba(232,163,61,.05);border-left:2px solid var(--amber);padding-left:10px}
   li.gate .name .k{color:var(--ink)}
 
-  blockquote{margin:24px 0 8px;padding:18px 22px;background:var(--panel);
-    border-left:3px solid var(--signal);font-size:16.5px;color:var(--ink-soft)}
-  blockquote b{color:var(--ink)}
-  code,.meta code{font-family:"Fragment Mono",monospace;font-size:.92em;color:var(--phosphor)}
+  blockquote{margin:22px 0 8px;padding:16px 20px;background:var(--bg-2);
+    border-left:2px solid var(--amber);font-size:12px;color:var(--ink-soft);font-weight:300}
+  blockquote b{color:var(--ink);font-weight:600}
+  code{background:var(--bg-3);border:1px solid var(--rule-2);border-radius:3px;padding:1px 5px;
+    font-size:.9em;white-space:nowrap;color:var(--cyan)}
   ol.prose{padding-left:0;counter-reset:s;list-style:none;margin:6px 0}
-  ol.prose li{counter-increment:s;padding:9px 0 9px 46px;position:relative;
-    border-bottom:1px dotted var(--rule);max-width:76ch}
+  ol.prose li{counter-increment:s;padding:9px 0 9px 42px;position:relative;
+    border-bottom:1px dotted var(--rule);max-width:78ch;font-size:12.5px;font-weight:300;color:var(--ink-soft)}
   ol.prose li:last-child{border-bottom:0}
   ol.prose li::before{content:counter(s,decimal-leading-zero);position:absolute;left:0;top:9px;
-    font-family:"Fragment Mono",monospace;font-size:12px;color:var(--signal)}
-  ol.prose b{font-weight:500;color:var(--ink)}
+    font-size:11px;color:var(--amber);font-weight:600}
+  ol.prose b{font-weight:600;color:var(--ink)}
 
-  /* ---------- Progress board (Part II) ---------- */
+  /* ---------- Progress board ---------- */
   .board{margin-top:6px}
-  .prow{display:grid;grid-template-columns:130px 1fr 64px;gap:16px;align-items:center;
-    padding:14px 0;border-bottom:1px dotted var(--rule)}
+  .prow{display:grid;grid-template-columns:150px 1fr 60px;gap:16px;align-items:center;
+    padding:13px 0;border-bottom:1px dotted var(--rule)}
   .prow:last-child{border-bottom:0}
-  .prow .plabel{font-family:"Fragment Mono",monospace;font-size:12px;letter-spacing:.1em;
-    text-transform:uppercase;color:var(--ink-soft)}
-  .bar{height:12px;background:var(--panel);border:1px solid var(--rule);border-radius:2px;overflow:hidden;position:relative}
+  .prow .plabel{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-soft)}
+  .bar{height:11px;background:var(--bg-2);border:1px solid var(--rule-2);border-radius:2px;overflow:hidden}
   .bar>i{display:block;height:100%;width:0;background:
-    repeating-linear-gradient(45deg,var(--s-done) 0 7px,#5cae68 7px 14px);transition:width .6s cubic-bezier(.2,.7,.2,1)}
-  .prow .pct{font-family:"Fragment Mono",monospace;font-size:14px;text-align:right;color:var(--signal)}
-  .nowbar{display:flex;gap:12px;align-items:center;padding:16px 20px;margin:18px 0 4px;
-    background:var(--panel);border-left:3px solid var(--signal);font-family:"Fragment Mono",monospace;font-size:13px}
-  .nowbar b{color:var(--ink);font-weight:400} .nowbar .lbl{color:var(--signal);letter-spacing:.14em;text-transform:uppercase;font-size:10.5px}
+    repeating-linear-gradient(45deg,var(--green) 0 7px,#5da377 7px 14px);
+    box-shadow:0 0 8px rgba(111,191,138,.35);transition:width .6s cubic-bezier(.2,.7,.2,1)}
+  .prow .pct{font-size:13px;font-weight:600;text-align:right;color:var(--amber)}
+  .nowbar{display:flex;gap:12px;align-items:center;padding:14px 18px;margin:16px 0 4px;
+    background:var(--bg-2);border-left:2px solid var(--amber);font-size:12px}
+  .nowbar b{color:var(--ink);font-weight:600}
+  .nowbar .lbl{color:var(--amber);letter-spacing:.16em;text-transform:uppercase;font-size:9.5px}
+
+  /* ---------- Wireframe ---------- */
+  .wire{border:1px dashed var(--rule-2);border-radius:4px;padding:18px 20px 14px;background:var(--bg-2);margin:8px 0 16px}
+  .w-cap{font-size:9.5px;letter-spacing:.22em;text-transform:uppercase;color:var(--faint);margin-bottom:14px}
+  .w-row{display:flex;gap:14px;align-items:flex-start;padding:12px 2px;border-bottom:1px dotted var(--rule)}
+  .w-row:last-of-type{border-bottom:0}
+  .w-kind{font-size:8.5px;letter-spacing:.14em;text-transform:uppercase;
+    padding:3px 7px;border:1px solid currentColor;border-radius:2px;white-space:nowrap;margin-top:3px;color:var(--cyan)}
+  .w-body{flex:1;min-width:0}
+  .w-line1{font-size:13px;line-height:1.5;color:var(--ink)}
+  .w-meta{font-size:10.5px;color:var(--faint);margin-top:4px;font-weight:300}
+  .w-note{font-size:10.5px;color:var(--faint);margin-top:12px;padding-top:10px;
+    border-top:1px dashed var(--rule);font-weight:300}
+  .w-note b{color:var(--ink-soft)}
 
   .journal{list-style:none;padding:0;margin:0}
   .journal li{display:grid;grid-template-columns:auto auto 1fr;gap:14px;align-items:baseline;
-    padding:11px 0;border-bottom:1px dotted var(--rule);font-family:"Fragment Mono",monospace;font-size:13px;color:var(--ink-soft)}
+    padding:11px 0;border-bottom:1px dotted var(--rule);font-size:11.5px;color:var(--ink-soft);font-weight:300}
   .journal li:last-child{border-bottom:0}
-  .journal .date{color:var(--signal);white-space:nowrap}
-  .journal .badge{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}
+  .journal .date{color:var(--amber);font-weight:600;white-space:nowrap}
+  .journal .badge{font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint)}
 
-  table.bench{width:100%;border-collapse:collapse;font-family:"Fragment Mono",monospace;font-size:12.5px;margin-top:6px}
-  table.bench th{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);
-    text-align:right;padding:8px 10px;border-bottom:1px solid var(--rule)}
-  table.bench th:first-child{text-align:left}
-  table.bench td{padding:9px 10px;border-bottom:1px dotted var(--rule);text-align:right;color:var(--ink-soft)}
-  table.bench td:first-child{text-align:left;color:var(--ink);font-family:"Instrument Serif",serif;font-size:16px}
-  table.bench tr:last-child td{border-bottom:0}
-  table.bench .ctl td{color:var(--faint);font-style:italic}
-  table.bench .ctl td:first-child{color:var(--faint)}
-  table.bench td.target{color:var(--signal)}
-  table.bench td.after{color:var(--phosphor)}
-  table.bench td.empty{color:var(--faint)}
-
-  footer{padding:36px 0 62px;font-family:"Fragment Mono",monospace;font-size:11px;
-    color:var(--faint);letter-spacing:.08em;text-align:center}
-  footer b{color:var(--signal);font-weight:400}
+  footer{padding:34px 0 60px;font-size:10px;color:var(--faint);letter-spacing:.1em;text-align:center}
+  footer b{color:var(--amber)}
 
   @keyframes rise{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
   header{animation:rise .7s cubic-bezier(.2,.7,.2,1) both}
   .part,section{animation:rise .7s cubic-bezier(.2,.7,.2,1) both;animation-delay:.12s}
-  section:nth-of-type(2){animation-delay:.18s}
   @media (prefers-reduced-motion:reduce){*{animation:none!important}}
 </style>
 </head>
@@ -202,15 +200,15 @@
 
 <header>
   <div class="wrap">
-    <div class="eyebrow"><span>Plan · TDD · Thermo-nuclear gates</span><span>Progress Ledger №004</span></div>
-    <h1>Glance DB-query perf — <em>site-open + dashboard</em></h1>
-    <p class="bias">“Fewer round trips, identical semantics — access gates before side effects, read-your-write intact.”</p>
+    <div class="eyebrow"><span>Plan · TDD · Thermo-nuclear gates</span><span>Progress Console · site-summary</span></div>
+    <h1>Summarize Button — <em>thin, cached, gated</em></h1>
+    <p class="bias">&ldquo;Thin v1 that mirrors the repo's own idioms — one migration, two pure libs, one route, one sheet. A fresh POST costs zero AI calls, and nothing ships past a red gate.&rdquo;</p>
     <div class="ledger-line">
-      <div class="stat"><div class="n">4+F</div><div class="l">Phases</div></div>
-      <div class="stat"><div class="n">14</div><div class="l">Steps</div></div>
-      <div class="stat"><div class="n">5</div><div class="l">Gates</div></div>
-      <div class="stat"><div class="n">52</div><div class="l">Test cases</div></div>
-      <div class="stat"><div class="n accent"><span id="done-count">0</span>/<span id="total-count">19</span></div><div class="l">Landed</div></div>
+      <div class="stat"><div class="n">4</div><div class="l">Phases</div></div>
+      <div class="stat"><div class="n">11</div><div class="l">Steps</div></div>
+      <div class="stat"><div class="n">35</div><div class="l">Test cases</div></div>
+      <div class="stat"><div class="n">4</div><div class="l">Seams</div></div>
+      <div class="stat"><div class="n accent"><span id="done-count">0</span>/<span id="total-count">16</span></div><div class="l">Landed</div></div>
     </div>
   </div>
 </header>
@@ -218,437 +216,371 @@
 <main class="wrap">
 
   <!-- ==================================================================== -->
-  <!-- ===========================  PART I · PLAN  ========================= -->
+  <!-- =========================  PART I · PROGRESS  ======================= -->
   <!-- ==================================================================== -->
-  <div class="part"><span class="roman">I</span><h2>Plan</h2><span class="tag-line">static · phase order · deps · gates</span></div>
+  <div class="part"><span class="roman">I</span><h2>Progress</h2><span class="tag-line">live · same items · redeployed each tick</span></div>
 
-  <!-- 01 · Steps -->
+  <!-- 01 · Status board -->
   <section>
-    <div class="sec-head"><span class="sec-num">01</span><h3>Steps</h3><span class="sec-note">deps &amp; gates enforced</span></div>
-
-    <blockquote><b>Ground rules (bind every step):</b> every statement in a shared <code>db.batch</code> must be a
-      non-failing SELECT (absent row → empty result, never throw) or 404/403/410 precedence dies with the batch ·
-      metric is <b>“D1 requests”</b> (1 batch = 1 request; loose statements counted separately) — never wall-clock ·
-      existing suites are the regression net, never re-authored · <b>Excluded by decision:</b> F7 requireAuth
-      KV-trust (parked), voice/Whisper deferral, F6 access-decision cache (rejected — composes to zero after S1,
-      violates the content-worker revocation promise). Shared tab: <b>pop-in when resolved</b> (user-decided).</blockquote>
-
-    <div class="phase-h">Phase 1 — Content serve path <span class="lat">target: doc+asset −280ms, warm asset −300ms</span></div>
-    <ul class="items">
-      <li class="item" data-status="done" data-phase="1"><span class="stamp">done</span>
-        <div><div class="name"><span class="k">S0</span><span class="t">Harness seams: cache mock, R2 byte-fidelity + per-kind counters, D1 request counters + timeline, 100-bind cap adapter</span></div>
-          <div class="meta">unlocks every counter/cache/range case · <span class="r-low">low risk</span> · zero prod code</div></div></li>
-      <li class="item" data-status="done" data-phase="1"><span class="stamp">done</span>
-        <div><div class="name"><span class="k">S1</span><span class="t">accessFactsBySlugs primitive (site⨝space, user, membership, shares — one batch) + serve() rewrite; dir-listing fallback stays OUT of the batch</span></div>
-          <div class="meta">audit F1 · <span class="r-high">high risk</span> · <span class="dep">dep:S0</span> · status branches preserved: 404 no-store / untokened 403 / deleted-user 403 / archived 410-except-superadmin · consumers: content now, comments S9a + data.ts later</div></div></li>
-      <li class="item" data-status="done" data-phase="1"><span class="stamp">done</span>
-        <div><div class="name"><span class="k">S2+S3</span><span class="t">Storage serving: single ranged R2 GET (null-size fallback, 416+etag probe, If-None-Match precedence) + Cache API on immutable storageKey (full-200 only, Range bypasses, tee'd put via waitUntil, encoded keys)</span></div>
-          <div class="meta">audit F8 + F6-replacement · <span class="r-med">med-high risk</span> · <span class="dep">dep:S0 (not S1)</span> · auth-before-cache always · client keeps private,no-cache</div></div></li>
-      <li class="item gate" data-status="done" data-phase="1"><span class="stamp">done</span>
-        <div><div class="name"><span class="k">G1</span><span class="t">Gate P1 — thermo-nuclear</span></div>
-          <div class="meta">/thermo-nuclear-code-quality-review on Phase-1 diff → findings → suite green → commit "Phase 1: …"</div></div></li>
-    </ul>
-
-    <div class="phase-h">Phase 2 — Dashboard + API feeds <span class="lat">target: /shared 4→2, /mine //team 2→1, spaces 5→3</span></div>
-    <ul class="items">
-      <li class="item" data-status="done" data-phase="2"><span class="stamp">done</span>
-        <div><div class="name"><span class="k">S4</span><span class="t">allAudioSiteIds: multi-chunk via db.batch (single request)</span></div>
-          <div class="meta">consult find · <span class="r-low">low risk</span> · no-op ≤90 ids — correctness for big feeds</div></div></li>
-      <li class="item" data-status="done" data-phase="2"><span class="stamp">done</span>
-        <div><div class="name"><span class="k">S5</span><span class="t">GET /sites/shared: sharedSiteRoles (direct role overrides group 'viewer') + audio on candidate ids concurrent with site rows — 4→2</span></div>
-          <div class="meta">audit F2 (trimmed) · <span class="r-med">med risk</span> · sharedSiteIds untouched for search/spaces callers</div></div></li>
-      <li class="item" data-status="done" data-phase="2"><span class="stamp">done</span>
-        <div><div class="name"><span class="k">S5b</span><span class="t">Fold audio badge into /sites/mine + /team select (JOIN/EXISTS, no row explosion, LIMIT intact) — 2→1</span></div>
-          <div class="meta">audit rank 9 · <span class="r-low">low-med risk</span></div></div></li>
-      <li class="item" data-status="done" data-phase="2"><span class="stamp">done</span>
-        <div><div class="name"><span class="k">S6</span><span class="t">Spaces: /spaces/:slug/sites 5→3 layers; /spaces/:slug count∥membership parallel</span></div>
-          <div class="meta">audit F5 · <span class="r-low">low-med risk</span> · <span class="dep">dep:S4</span></div></div></li>
-      <li class="item" data-status="done" data-phase="2"><span class="stamp">done</span>
-        <div><div class="name"><span class="k">S7</span><span class="t">Viewer meta: single role-aware share resolve (kills duplicate siteUserShares scan) — cleanup, no RT claim</span></div>
-          <div class="meta">demoted by review · <span class="r-low">low risk</span> · canReplace must NOT gain group-editor</div></div></li>
-      <li class="item gate" data-status="done" data-phase="2"><span class="stamp">done</span>
-        <div><div class="name"><span class="k">G2</span><span class="t">Gate P2 — thermo-nuclear</span></div>
-          <div class="meta">/thermo-nuclear-code-quality-review on Phase-2 diff → findings → suite green → commit "Phase 2: …"</div></div></li>
-    </ul>
-
-    <div class="phase-h">Phase 3 — Comments path <span class="lat">target: list 5→2 (auth floor stays), mutations pre-write 1 batch</span></div>
-    <ul class="items">
-      <li class="item" data-status="done" data-phase="3"><span class="stamp">done</span>
-        <div><div class="name"><span class="k">S8</span><span class="t">Comments list: composable statement builders + pure assembler; listThreads/listSiteThreads = one db.batch of 2 JOINed statements</span></div>
-          <div class="meta">audit F4 · <span class="r-med">med risk</span> · rowid tiebreak qualified · kills IN() bind-limit risk</div></div></li>
-      <li class="item" data-status="done" data-phase="3"><span class="stamp">done</span>
-        <div><div class="name"><span class="k">S9a</span><span class="t">Comments routes adopt accessFactsBySlugs (2 auth layers → 1)</span></div>
-          <div class="meta"><span class="r-med">med-high risk</span> · <span class="dep">dep:S1</span> · requireAuth floor remains (F7 parked)</div></div></li>
-      <li class="item" data-status="done" data-phase="3"><span class="stamp">done</span>
-        <div><div class="name"><span class="k">S9b</span><span class="t">GET list: fuse access batch + S8 statements into ONE batch; gate evaluated before results used</span></div>
-          <div class="meta"><span class="r-med">med risk</span> · <span class="dep">dep:S8,S9a</span></div></div></li>
-      <li class="item" data-status="done" data-phase="3"><span class="stamp">done</span>
-        <div><div class="name"><span class="k">S9c</span><span class="t">Mutations: access + target reads (thread/comment) in one pre-write batch; voice-audio GET batched pre-R2</span></div>
-          <div class="meta"><span class="r-med">med risk</span> · <span class="dep">dep:S9a</span> · relationship checks (commentInSite) preserved</div></div></li>
-      <li class="item gate" data-status="done" data-phase="3"><span class="stamp">done</span>
-        <div><div class="name"><span class="k">G3</span><span class="t">Gate P3 — thermo-nuclear</span></div>
-          <div class="meta">/thermo-nuclear-code-quality-review on Phase-3 diff → findings → suite green → commit "Phase 3: …"</div></div></li>
-    </ul>
-
-    <div class="phase-h">Phase 4 — Web SPA <span class="lat">target: tabs paint on /mine; rail lands with the page</span></div>
-    <ul class="items">
-      <li class="item" data-status="done" data-phase="4"><span class="stamp">done</span>
-        <div><div class="name"><span class="k">S10</span><span class="t">Dashboard: per-feed rendering via pure deriveFeedState — Your-sites on /mine resolve; Shared tab pops in when resolved; failed /team contained</span></div>
-          <div class="meta">consult find · <span class="r-low">low-med risk</span> · acknowledged resilience change · 401 → login redirect · gate needs browser assertions</div></div></li>
-      <li class="item" data-status="done" data-phase="4"><span class="stamp">done</span>
-        <div><div class="name"><span class="k">S11</span><span class="t">Viewer: loader returns {site, commentsPromise} (unawaited); resolveEntryPath helper; generation-guarded arbitration; audio applies sans ready; splat-nav reset</span></div>
-          <div class="meta">audit F3 · <span class="r-med">med risk</span> · prefetch provisional until matching glance:ready · indexPath '' → no prefetch</div></div></li>
-      <li class="item gate" data-status="done" data-phase="4"><span class="stamp">done</span>
-        <div><div class="name"><span class="k">G4</span><span class="t">Gate P4 — thermo-nuclear + browser smoke</span></div>
-          <div class="meta">review on Phase-4 diff → findings → suite green → agent-browser smoke (tabs progressive paint, team-500 containment, pop-in no tab steal, viewer prefetch races) → commit "Phase 4: …"</div></div></li>
-    </ul>
-
-    <div class="phase-h">Final — whole-change review + benchmark</div>
-    <ul class="items">
-      <li class="item gate" data-status="done" data-phase="final"><span class="stamp">done</span>
-        <div><div class="name"><span class="k">GF</span><span class="t">Final Gate — thermo-nuclear over the ENTIRE change + remote before/after benchmark</span></div>
-          <div class="meta">full-diff review → findings → full suite green → REMOTE preview/canary bench (bench/bench.ts) vs committed baseline → fill the §07 After columns — local timings don't validate the 140ms model → commit → final glance deploy. Tracker not done until this passes.</div></div></li>
-    </ul>
-
-    <blockquote><b>Phase-exit gate (every phase):</b> after a phase's steps land, run
-      <span class="mono">/thermo-nuclear-code-quality-review</span> scoped to that phase's diff. Triage findings — fix the
-      legit ones, note any deferred with rationale. Re-run the full suite; <b>all tests must pass and no unaddressed
-      finding may remain before the phase is done</b> and the next starts. Then commit the phase.
-      <br><br><b>Final gate (once, at the end):</b> run it once more over the <b>entire</b> change —
-      cross-phase interactions and whole-feature complexity that per-phase, single-diff gates can miss — plus the
-      remote latency benchmark. The tracker is done only when this passes.</blockquote>
-  </section>
-
-  <!-- 02 · Test seams -->
-  <section>
-    <div class="sec-head"><span class="sec-num">02</span><h3>Test seams</h3><span class="sec-note">all land inside S0 · zero prod code</span></div>
-    <ul class="items">
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="k">S-A</span><span class="t">makeR2: true byte-model (Uint8Array/UTF-8), per-kind op counters (full/ranged/head/onlyIf), head(), etag-rotates-on-put</span></div>
-          <div class="meta">unlocks T0.1 · T2.1–2.6 · T3.1–3.2</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="k">S-B</span><span class="t">makeCaches: clone-on-put, twice-readable match, match/put counters, failable on demand</span></div>
-          <div class="meta">unlocks T0.2 · T3.1–3.6 · T1.3 zero-cache asserts</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="k">S-C</span><span class="t">D1 request counters: batch/loose/write-kind counts + ordered D1∕R2∕cache timeline + resetCounters()</span></div>
-          <div class="meta">unlocks every red-now RT case (T1.1 · T5.2–5.3 · T6.2 · T8.1 · T9.3–9.5)</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="k">S-D</span><span class="t">Bind-cap adapter: reject any statement binding &gt;100 values (mirrors D1; bun-sqlite won't)</span></div>
-          <div class="meta">unlocks T8.2 (makes it genuinely red)</div></div></li>
-    </ul>
-  </section>
-
-  <!-- 03 · Test cases -->
-  <section>
-    <div class="sec-head"><span class="sec-num">03</span><h3>Test cases</h3>
-      <span class="sec-note">red-now · characterization · property · new-module-spec</span></div>
-
-    <div class="phase-h">Phase 1 · S0 harness</div>
-    <ul class="items">
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T0.1 R2 mock byte fidelity: [0,127,128,255] range(2,2)→[128,255]; UTF-8 byte lengths; re-put rotates etag; head; onlyIf both ways</span></div>
-          <div class="meta">P0 · new-module-spec · writable today</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T0.2 cache mock: put stores clone (client body readable after; match twice-readable); counters; failable</span></div>
-          <div class="meta">P0 · new-module-spec · writable today</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T0.3 D1 counters: batch([a,b]) = 1 batch + 2 stmts; write kinds; reset excludes seeds; ordered timeline</span></div>
-          <div class="meta">P0 · new-module-spec · writable today</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T0.4 bind-cap adapter rejects &gt;100 bound values</span></div>
-          <div class="meta">P0 · new-module-spec · writable today</div></div></li>
-    </ul>
-
-    <div class="phase-h">Phase 1 · S1 access facts + serve</div>
-    <ul class="items">
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T1.1 happy-path non-HTML asset = ONE D1 request (1 batch, exact arity, 0 loose) before first R2 op — timeline-checked</span></div>
-          <div class="meta">P0 · red-now-bug (3 today) · gated by S-C</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T1.2 index exists → dir-listing stmt NOT in batch (arity); no-index dir may take 2nd request + still lists</span></div>
-          <div class="meta">P0 · red-now guard · gated by S-C</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T1.3 denial matrix (isolated fixtures): outsider-private 403 · archived-owner 410 · archived-superadmin 200 · untokened 403 · deleted-user 403 · missing-site 404 no-store — each denial: zero R2 AND zero cache ops</span></div>
-          <div class="meta">P0 · characterization · gated by S-A/B/C</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T1.4 live transitions, SAME token: 200→revoke share→403 · 200→remove membership→403 · 200→delete user→403 · 200→archive→410; zero R2 on denied hit</span></div>
-          <div class="meta">P0 · red-now (revocation promise through the batch) · writable after S1 lands</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T1.5 cross-space slug confusion: same site slug + file path in two spaces → each token serves ITS bytes; membership/share on A never authorizes B; A-token on B's URL → 403, zero D1</span></div>
-          <div class="meta">P0 · red-now guard vs slug-keyed joins · writable today</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T1.6 accessFactsBySlugs asserts ASSEMBLED FACTS vs hand-seeded expectations (revoked/removed/deleted/missing) — never vs authorizeViewerById (shared oracle)</span></div>
-          <div class="meta">P1 · new-module-spec · with S1</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T1.7 fault-injection: absent rows → empty results, batch never throws; raw=1/annotate/markdown identical request-count (no re-query per branch)</span></div>
-          <div class="meta">P1 · characterization · with S1</div></div></li>
-    </ul>
-
-    <div class="phase-h">Phase 1 · S2+S3 storage serving</div>
-    <ul class="items">
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T2.1 Range + non-null size: exactly ONE ranged R2 op (0 full), 206 slice + etag correct</span></div>
-          <div class="meta">P0 · red-now-bug (full+ranged today) · gated by S-A</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T2.2 416 past-end: etag + Content-Range bytes */N; 1 probe op, 0 ranged; zero-byte object (size===0) handled</span></div>
-          <div class="meta">P0 · red-now (post-design) · gated by S-A</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T2.3 null-size row: 206 via full-get fallback (ops documented); non-null path pins fullGets===0 forever</span></div>
-          <div class="meta">P1 · characterization + op-constraint · gated by S-A</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T2.4 conditionals w/ op-counts: INM+Range→304 (0 body ops, 0 cache reads) · stale If-Range→full 200 · matching If-Range→single ranged 206 · multi-range→full 200</span></div>
-          <div class="meta">P1 · characterization strengthened · gated by S-A</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T2.5 rangeable pins: .pdf/.css/.png 206 · .HTML (uppercase) not · markdown + ?raw=1 return BEFORE range handling</span></div>
-          <div class="meta">P1 · characterization · writable today</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T2.6 cold cache + D1 row + missing R2 → 404; site REPLACE mints new storageKeys → old cache entry unreachable</span></div>
-          <div class="meta">P0 · characterization + read-your-write · gated by S-A/B</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T3.1 cross-user cache share: A warms (tee'd put, client body intact) → B (different token) re-authed via D1, body FROM cache, 0 R2</span></div>
-          <div class="meta">P0 · new-module-spec · gated by S-A/B</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T3.2 WARM cache + Range: 0 cache reads, 1 ranged R2; 206/304 never cache.put</span></div>
-          <div class="meta">P0 · new-module-spec · gated by S-A/B</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T3.3 stored entry cacheable headers; client keeps private,no-cache; put-reject → client 200; match-throw → R2 fallback</span></div>
-          <div class="meta">P1 · new-module-spec · gated by S-B</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T3.4 collision-prone storageKeys ('a#b/x' vs 'a%23b/x', unicode, '?') as REAL rows through the route → distinct bodies + keys</span></div>
-          <div class="meta">P1 · new-module-spec · gated by S-B</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T3.5 warm-then-revoke: same token → 403, ZERO cache reads + zero R2 (auth-before-cache); 410 + deleted-user variants</span></div>
-          <div class="meta">P0 · red-now guard · gated by S-B</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T3.6 per-transform R2-vs-cache byte-identical (markdown / annotate / link-rewrite); raw=1 never warms + no view; cached HTML = exactly one view</span></div>
-          <div class="meta">P1 · property · gated by S-B</div></div></li>
-    </ul>
-
-    <div class="phase-h">Phase 2 · feeds</div>
-    <ul class="items">
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T4.1 91 ids → 1 batch / 90 → 1 loose stmt; hand-coded expected sets (.MP3 true, foo.mp3.bak false, zero-file false, mixed) straddling boundary; dup ids deduped</span></div>
-          <div class="meta">P0 · red-now-bug (serial chunks today) · gated by S-C</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T5.1 /shared roles NOT covered today: group-only→viewer · direct-editor+group→editor · two group shares→one row · drop direct, keep group→viewer · owned excluded · empty feed→zero site/audio queries</span></div>
-          <div class="meta">P0 · red-now + characterization · writable today</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T5.2 /shared post-auth D1 requests ≤ 2 (4 today)</span></div>
-          <div class="meta">P0 · red-now-bug · gated by S-C</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T5.3 /mine + /team post-auth D1 requests == 1 (audio folded)</span></div>
-          <div class="meta">P0 · red-now-bug · gated by S-C</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T5.4 JOIN explosion guards: multi-file audio site → ONE row; /team 51 sites, newest has 30 files → 50 DISTINCT newest (LIMIT uneaten); audio any-file semantics; hand-coded payloads</span></div>
-          <div class="meta">P0 · red-now guard vs S5b · writable today</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T5.5 pins: archived-mine still present (current behavior, don't fix silently); sharedSiteIds Set API smoke for search + spaces callers</span></div>
-          <div class="meta">P1 · characterization · writable today</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T5.6 91 shared candidates: roles + global newest-first across chunk boundary, editor grant on #91, no dupes</span></div>
-          <div class="meta">P1 · red-now boundary · dep S4</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T6.1 space visibility explicit: outsider = team + shared-private only · member = members-tier · group-share grants exact site · superadmin sees archived · missing space 404 under fault-injection</span></div>
-          <div class="meta">P0 · characterization · writable today</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T6.2 /spaces/:slug/sites ≤ 3 requests (5 today); /spaces/:slug ≤ 2 + first route test of memberCount/isMember values</span></div>
-          <div class="meta">P0 · red-now-bug · gated by S-C</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T7.1 viewer-meta via PUBLIC contract: group-only → 200, NO role, canReplace false, no manifest · direct viewer → role, no replace · direct editor+group → editor + replace + manifest · none → 403 · superadmin unchanged</span></div>
-          <div class="meta">P1 · characterization (replaces invalid isShared/canComment draft) · writable today</div></div></li>
-    </ul>
-
-    <div class="phase-h">Phase 3 · comments</div>
-    <ul class="items">
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T8.1 listThreads AND listSiteThreads: 1 batch, 0 loose (3 serial today); empty site also 1 batch → []</span></div>
-          <div class="meta">P0 · red-now-bug · gated by S-C</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T8.2 101 threads × 101 authors: old IN() rejected by cap adapter, new JOIN passes; (filePath,createdAt,rowid) order preserved post-join with equal createdAt</span></div>
-          <div class="meta">P0 · red-now-bug · gated by S-D</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T8.3 ACTUAL user deletion (ON DELETE SET NULL): author/creator/resolver independently → null-name views; two sites same filePath no bleed; empty thread beside populated</span></div>
-          <div class="meta">P1 · characterization (strengthens existing) · writable today</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T8.4 golden vectors: deterministic fixtures, expectations frozen as literals (no old-impl oracle) — soft-deletes/resolved/open/missing users → exact ThreadView[]</span></div>
-          <div class="meta">P1 · property · with S8</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T9.1 exact statuses: unauthed 401 · outsider-private 403 (no thread fields in body) · missing 404 · archived 410 · inaccessible+invalid filePath → access error; accessible+invalid → 400</span></div>
-          <div class="meta">P0 · characterization · writable today</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T9.2 read-your-write per mutation, focused: create/reply/resolve/reopen/edit/delete each followed by GET showing the change</span></div>
-          <div class="meta">P0 · characterization (guards fused reordering) · writable today</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T9.3 GET list = 1 requireAuth read + 1 fused batch; forbidden request → batched list results NEVER reach response (fault-injection)</span></div>
-          <div class="meta">P0 · red-now-bug · gated by S-C</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T9.4 relationship denials, zero writes/R2/AI each: other-site thread reply 404 · threadId≠comment.threadId 404 · foreign comment 404 · non-owner resolve · non-author edit · denied voice POST</span></div>
-          <div class="meta">P0 · red-now guard · gated by S-C</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T9.5 mutations pre-write = 1 batch; voice-audio GET pre-R2 ≤ 2 + denial matrix (foreign/mismatch/deleted/text/denied → zero R2)</span></div>
-          <div class="meta">P1 · red-now · gated by S-C</div></div></li>
-    </ul>
-
-    <div class="phase-h">Phase 4 · web</div>
-    <ul class="items">
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T10.1 deriveFeedState: mine resolved / others pending → Your-sites renderable, Shared ABSENT (pop-in)</span></div>
-          <div class="meta">P0 · new-module-spec · writable with helper</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T10.2 shared resolves &gt;0 → tab + count; ==0 → stays absent</span></div>
-          <div class="meta">P0 · new-module-spec</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T10.3 team rejected → contained error state; other tabs intact; 401 → login-redirect signal</span></div>
-          <div class="meta">P0 · new-module-spec</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T10.4 spaces resolve → count + ?new=space steering fires exactly once</span></div>
-          <div class="meta">P1 · new-module-spec</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T10.5 TEMPORAL: re-derive with new promise identities + same data → stable tab identity + active tab (incl. pop-in while user on Team)</span></div>
-          <div class="meta">P1 · new-module-spec · NOTE: helper tests can't fail the Promise.all bug — G4 browser smoke is the real net</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T11.1 resolveEntryPath: root+index → index.html · lone recording.webm → itself · indexPath '' → NO-PREFETCH sentinel · docs/ → docs/index.html · dot/traversal mirrors server</span></div>
-          <div class="meta">P0 · new-module-spec · helper must BE the wired prefetch key</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T11.2 generation arbitration: older same-path prefetch resolving after newer refresh → discarded; stale REJECTION never clears newer success</span></div>
-          <div class="meta">P0 · red-now vs naive path-key · new-module-spec</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T11.3 provisional rules: HTML applies only on matching glance:ready · mismatch → discard + fetch · no ready (dir listing) → never applied · AUDIO applies immediately sans ready · dup ready → no refetch</span></div>
-          <div class="meta">P0 · new-module-spec · kills the break-audio trap</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T11.4 splat-nav reset: loaded overlay returns; resolvedFilePath/threads/count/composing/generation reset; stale ready from OLD iframe src ignored</span></div>
-          <div class="meta">P1 · new-module-spec</div></div></li>
-      <li class="item" data-status="done"><span class="stamp">done</span>
-        <div><div class="name"><span class="t">T11.5 loader contract: resolves while commentsPromise pending; meta 401 → toLogin; 403/404/410 → no prefetch; prefetch rejection never rejects loader or blanks iframe</span></div>
-          <div class="meta">P1 · characterization + spec · writable with loader change</div></div></li>
-    </ul>
-  </section>
-
-  <!-- 04 · Strategy -->
-  <section>
-    <div class="sec-head"><span class="sec-num">04</span><h3>Strategy</h3></div>
-    <ol class="prose">
-      <li><b>S0 first, alone.</b> Every red-now case reads the counters; without them the RT claims are vibes.</li>
-      <li>Then <b>per step: red → fix → green</b>, one case at a time (vertical slices). Never batch reds.</li>
-      <li><b>Genuinely-new pins before the refactor they guard</b> (T1.3–1.5, T2.5–2.6, T5.1, T6.1, T7.1, T8.3, T9.1–9.2); existing suites are the regression net and are never re-authored.</li>
-      <li><b>No shared oracles:</b> facts vs hand-seeded expectations, golden vectors frozen as literals, hand-coded payloads — an equivalence test that calls the code-under-test's own helper proves nothing.</li>
-      <li><b>Batch statements never throw</b> — absent rows return empty; fault-injection cases (T1.7, T6.1, T9.3) pin status precedence.</li>
-      <li><b>End of each phase: thermo-nuclear gate</b> → fix findings → full suite green → commit before the next phase.</li>
-    </ol>
-  </section>
-
-  <!-- 05 · Authoring order -->
-  <section>
-    <div class="sec-head"><span class="sec-num">05</span><h3>Authoring order</h3></div>
-    <ol class="prose">
-      <li>S0 seams (T0.1–T0.4) — unlock all counter/cache/range/bind-cap cases</li>
-      <li>Writable-today pins: T1.5 · T2.5 · T5.1 · T5.4 · T6.1 · T7.1 · T8.3 · T9.1–9.2</li>
-      <li>Phase 1 red-nows with implementation: T1.1–1.4 → S1 · T2.1–2.4, T2.6, T3.1–3.5 → S2+S3</li>
-      <li>Phase 2: T4.1 → S4 · T5.2, T5.6 → S5 · T5.3 → S5b · T6.2 → S6 · T7.1 green through S7</li>
-      <li>Phase 3: T8.1–8.2 → S8 · T9.3 → S9a/S9b · T9.4–9.5 → S9c</li>
-      <li>Phase 4: T10.* → S10 · T11.* → S11 · browser smoke at G4</li>
-      <li>Property/golden pins last: T1.6 · T3.6 · T8.4</li>
-    </ol>
-  </section>
-
-  <!-- ==================================================================== -->
-  <!-- =========================  PART II · PROGRESS  ====================== -->
-  <!-- ==================================================================== -->
-  <div class="part"><span class="roman">II</span><h2>Progress</h2><span class="tag-line">live · same items · redeployed each tick</span></div>
-
-  <!-- 06 · Status board -->
-  <section>
-    <div class="sec-head"><span class="sec-num">06</span><h3>Status board</h3><span class="sec-note">per-phase completion</span></div>
+    <div class="sec-head"><span class="sec-num">01</span><h3>Status board</h3><span class="sec-note">per-phase completion</span></div>
     <div class="nowbar"><span class="lbl">In flight</span><b id="now-slice">—</b></div>
     <div class="board" id="board"><!-- rows injected from data-phase step items --></div>
   </section>
 
-  <!-- 07 · Benchmark -->
+  <!-- 02 · Target wireframe -->
   <section>
-    <div class="sec-head"><span class="sec-num">07</span><h3>Benchmark — before / after</h3>
-      <span class="sec-note">p50 in ms · workers.dev origin · n=30 · fixture perf-bench</span></div>
-    <table class="bench">
-      <thead><tr>
-        <th>Journey</th><th>Baseline p50</th><th>p90</th><th>CloudFront p50</th>
-        <th>Plan (layers)</th><th>Expected Δ</th><th>After p50</th><th>Actual Δ</th>
-      </tr></thead>
-      <tbody>
-        <tr class="ctl"><td>/api/auth/me — floor (control)</td><td>212</td><td>223</td><td>224</td><td>—</td><td>0</td><td class="after">182</td><td class="after">0</td></tr>
-        <tr class="ctl"><td>viewer meta (control — S7 cleanup only)</td><td>395</td><td>474</td><td>413</td><td>—</td><td>~0</td><td class="after">327</td><td class="after">−38</td></tr>
-        <tr><td>site-open doc (annotate path)</td><td>723</td><td>820</td><td>848</td><td>3 → 1</td><td class="target">−~280</td><td class="after">186</td><td class="after">−507</td></tr>
-        <tr><td>site-open asset (cold)</td><td>716</td><td>808</td><td>791</td><td>3 → 1</td><td class="target">−~280</td><td class="after">188</td><td class="after">−501</td></tr>
-        <tr><td>site-open asset (warm cache)</td><td>716</td><td>808</td><td>791</td><td>3 → 1 + R2 skipped</td><td class="target">−~580</td><td class="after">185</td><td class="after">−504 (floor)</td></tr>
-        <tr><td>/api/sites/shared</td><td>877</td><td>989</td><td>899</td><td>4 → 2</td><td class="target">−~280</td><td class="after">466</td><td class="after">−381</td></tr>
-        <tr><td>/api/sites/mine</td><td>551</td><td>662</td><td>574</td><td>2 → 1</td><td class="target">−~140</td><td class="after">327</td><td class="after">−194</td></tr>
-        <tr><td>/api/sites/team</td><td>554</td><td>614</td><td>569</td><td>2 → 1</td><td class="target">−~140</td><td class="after">331</td><td class="after">−193</td></tr>
-        <tr><td>/api/spaces/:slug/sites</td><td>1043</td><td>1142</td><td>1054</td><td>5 → 3</td><td class="target">−~280</td><td class="after">333</td><td class="after">−680</td></tr>
-        <tr><td>comments list</td><td>1040</td><td>1111</td><td>1055</td><td>5 → 2</td><td class="target">−~420</td><td class="after">332</td><td class="after">−678</td></tr>
-      </tbody>
-    </table>
-    <blockquote><b>Filling the After columns (GF gate):</b> <code>wrangler versions upload</code> → run
-      <code>bun bench/bench.ts preview &lt;preview-url&gt; &lt;content-preview-url&gt;</code> → compare with
-      <code>bun bench/compare.ts bench/workersdev-2026-07-10-16-42.json bench/preview-*.json</code> and paste the
-      floor-adjusted p50s + deltas here. Baseline files are committed under <code>bench/</code>; the "warm cache" row
-      needs a second consecutive asset hit (the bench script's sequential iterations provide it after S3 lands —
-      compare iteration 1 vs 2+ in the raw samples). Expected Δ assumes ~140ms per D1 round trip; judge against the
-      floor-adjusted delta, not raw. Controls must move ~0 — if they drift, the network changed, trust the adjusted column.</blockquote>
+    <div class="sec-head"><span class="sec-num">02</span><h3>Target wireframe</h3><span class="sec-note">the thing being built</span></div>
+    <div class="wire">
+      <div class="w-cap">SummarySheet — one controlled component · viewer top bar &amp; dashboard row</div>
+      <div class="w-row">
+        <span class="w-kind">fresh</span>
+        <div class="w-body">
+          <div class="w-line1">Summary &nbsp;·&nbsp; [AI · v12] &nbsp;—&nbsp; key points list &nbsp;·&nbsp; quiet &ldquo;Regenerate anyway&rdquo; in footer</div>
+          <div class="w-meta">GET on open; fresh POST returns cache, zero AI. Pill shows forVersion. &ldquo;Entry page only&rdquo; scope note.</div>
+        </div>
+      </div>
+      <div class="w-row">
+        <span class="w-kind">stale</span>
+        <div class="w-body">
+          <div class="w-line1">⚠ Written for v11 — site is v12 &nbsp;·&nbsp; old text dimmed, never shown as current &nbsp;·&nbsp; [↻ Update summary]</div>
+          <div class="w-meta">stale = contentVersion OR promptVersion mismatch, computed server-side; response carries currentVersion.</div>
+        </div>
+      </div>
+      <div class="w-row">
+        <span class="w-kind">failed</span>
+        <div class="w-body">
+          <div class="w-line1">Generation failed &nbsp;·&nbsp; previous summary stays visible &nbsp;·&nbsp; [↻ Try again]</div>
+          <div class="w-meta">502 {retryable:true} never clobbers a stored row; cold failure leaves NO row (GET → none).</div>
+        </div>
+      </div>
+      <div class="w-row">
+        <span class="w-kind">empty / unavail</span>
+        <div class="w-body">
+          <div class="w-line1">&ldquo;No summary yet · ✦ Summarize&rdquo; &nbsp;|&nbsp; &ldquo;AI is not configured on this instance&rdquo; (honest empty state)</div>
+          <div class="w-meta">audio-only / no-entry / unsupported-entry site → 422 &ldquo;nothing to summarize&rdquo;, zero AI calls.</div>
+        </div>
+      </div>
+      <div class="w-row">
+        <span class="w-kind">dashboard</span>
+        <div class="w-body">
+          <div class="w-line1">row: &nbsp;perf-audit-q3 ✦ &nbsp;·&nbsp; sparkle only when hasSummary; otherwise &ldquo;Summarize&rdquo; lives in the ⋯ kebab</div>
+          <div class="w-meta">controlled open (ShareDialog pattern, Radix mount sensor); sparkle appears without reload after generation.</div>
+        </div>
+      </div>
+      <div class="w-note"><b>Contract:</b> GET/POST <code>/api/sites/:space/:site/summary</code> →
+        <code>{status:'none'|'ready'|'unavailable', stale, currentVersion, summary?, meta?{provider, model, forVersion, generatedAt, truncated}}</code>.
+        POST body <code>{force?:true}</code>. Fresh POST ≡ cache read (zero AI/R2/limiter). Limiter key = user id, generation attempts only.
+        Errors: 401 unauthorized · 403 forbidden · 404 not found · 410 archived · 422 nothing-to-summarize · 429 limited · 502 retryable.</div>
+    </div>
   </section>
 
-  <!-- 08 · Journal -->
+  <!-- 03 · Journal -->
   <section>
-    <div class="sec-head"><span class="sec-num">08</span><h3>Journal</h3><span class="sec-note">newest last · absolute dates</span></div>
+    <div class="sec-head"><span class="sec-num">03</span><h3>Journal</h3><span class="sec-note">newest last · absolute date + time</span></div>
     <ul class="journal">
-      <li><span class="date">2026-07-10</span><span class="badge">created</span>
-        <span>Ledger drawn up from the 64-agent DB-query audit + codex/cursor consult (plan v2, cases v2 both consensus-hardened). Worktree perf/db-query-hot-paths off origin/main, baseline 417+91 tests green. 0 landed.</span></li>
-      <li><span class="date">2026-07-10</span><span class="badge">baseline</span>
-        <span>Prod latency baselines captured pre-fix (bench/bench.ts, n=30, fixture samuel-lawerence/perf-bench): workers.dev floor 212ms · doc 723 · asset 716 · shared 877 · mine 551 · team 554 · spaceSites 1043 · comments 1040 (p50). CloudFront pass saved alongside. GF compares a wrangler-versions preview against bench/workersdev-2026-07-10-16-42.json via bench/compare.ts.</span></li>
-      <li><span class="date">2026-07-10</span><span class="badge">S0 · seams</span>
-        <span>Harness seams LANDED (S-A/B/C/D + T0.1–0.4, 13 new specs, TDD red→green). Shared <span class="mono">makeRecorder()</span> timeline across D1/R2/cache; <span class="mono">makeR2</span> rewritten byte-true (Uint8Array bodies, UTF-8 sizes, per-kind ops full/ranged/head/onlyIf, rotating httpEtag, head(), onlyIf → body-less object on stale etag); new <span class="mono">makeCaches</span> (clone-on-put, twice-readable match, failable, hit/miss counters); <span class="mono">makeDb</span> counts batches/loose/batchStmts/write-kinds at the statement seam + always-on 100-bind D1 cap (T0.4). One existing test adapted: data.test.ts seedDocs bulk-insert chunk 400→12 rows — its 3200-bind seed was illegal on real D1. Zero prod code. api 430 + web 91 green, typecheck + lint clean.</span></li>
-      <li><span class="date">2026-07-10</span><span class="badge">S1 · access batch</span>
-        <span>Serve-path access collapsed 3→1 D1 request (T1.1 red→green). New slug-keyed primitive in <span class="mono">lib/site-access.ts</span>: <span class="mono">accessFactsStatements</span> (5 non-failing SELECTs, all keyed sites⨝spaces on BOTH slugs) + pure <span class="mono">assembleAccessFacts</span> + <span class="mono">accessFactsBySlugs</span> wrapper + <span class="mono">isSharedFromFacts</span>; <span class="mono">checkAccess</span> stays the single gate. content.ts serve() fuses the file-row statement → ONE 6-stmt batch (2 anonymous); dir-listing fallback stays a loose on-miss select; 404→anon-403→deleted-user-403→checkAccess(403/410) precedence pinned post-batch. 26 new tests (T1.1–1.7: cross-space slug pins, denial matrix zero-R2, live revoke/unmember/delete/archive on same token, fact assembly vs hand seeds, fault-injection). NB T1.4 was already green pre-fix (live re-auth held); kept as guard. api 456 + web 91, typecheck + lint clean. Simplify pass: clean.</span></li>
-      <li><span class="date">2026-07-10</span><span class="badge">S2+S3 · storage</span>
-        <span>Storage tail SHIPPED (T2.1 red→green + 30 more). Range + known D1 size → ONE ranged R2 GET (was full+ranged); 416/INM resolved via head() probe (zero body bytes, INM-probe etag reused by the 416 branch); stale If-Range → full 200; legacy null-size rows keep today's double-get verbatim. Full-200 reads now ride the workers Cache API keyed by percent-encoded immutable storageKey: auth-before-cache always, Range bypasses entirely, tee'd waitUntil warm with own catch, stored entry cacheable / client keeps private,no-cache; match-throw → R2 fallback, put-reject → still 200. Transform byte-identity R2-vs-cache pinned (markdown/annotate/link-rewrite); raw=1 never warms, no view; cached HTML = exactly one view. api 487 + web 91, typecheck + lint clean.</span></li>
-      <li><span class="date">2026-07-11</span><span class="badge">Phase 1 · G1 · DONE</span>
-        <span>Thermo-nuclear gate PASSED with should-fixes, all applied: (A) <span class="mono">fetchAccessFacts</span> now owns the batch ceremony — variadic extras, tuple cast + index math deleted from serve(), <span class="mono">assembleAccessFacts</span>/<span class="mono">accessFactsStatements</span> un-exported; (B) cache layer extracted to <span class="mono">lib/object-read.ts</span> (zero Hono coupling, ready for S9c voice audio) + serve() tail decomposed into <span class="mono">serveStoredObject</span>; (C) shared <span class="mono">test/content-fixtures.ts</span> (setup/teamSite/mintToken deduped across both new suites); (D) stale doc fixed; (E) FullRead.text dropped. Suite re-verified green after each fix. Committed <span class="mono">88a5fc8</span> "Phase 1: content serve path — one D1 batch + single ranged R2 GET + edge cache". Phase 1 complete: doc+asset serve = 1 D1 request + cache-fronted R2.</span></li>
-      <li><span class="date">2026-07-11</span><span class="badge">S4 · audio chunks</span>
-        <span>allAudioSiteIds multi-chunk → ONE db.batch (T4.1 red→green, done inline in the main thread): input ids deduped, 91 ids = 1 batch of 2 chunk statements (was 2 serial loose), lone chunk skips the batch wrapper. Hand-coded boundary sets pinned (.MP3 true, foo.mp3.bak false, mixed false, zero-file false, 2nd-chunk audio true). api 490 + web 91 green.</span></li>
-      <li><span class="date">2026-07-11</span><span class="badge">S5 · /shared 4→2</span>
-        <span>GET /sites/shared collapsed to 2 post-auth D1 requests — RED showed today is actually FIVE (sharedSiteIds is 2 concurrent loose + rows + roles + audio). New <span class="mono">sharedSiteRoles</span> (repo.ts): both share branches in one batch, joined on userId (no IN(), no bind-cap exposure), direct role overrides group viewer; layer 2 fuses site-row chunks + audio GROUP-BY chunks into ONE batch (beat the accepted Promise.all shape). 8 new tests: T5.1 role-semantics pins (group-only viewer, direct-editor wins, dedupe, owned/archived excluded, empty short-circuit), T5.2 ≤2 red→green, T5.6 91-candidate boundary. Simplify: sharedSiteIds now DERIVES from sharedSiteRoles (reach can never drift; its own cost 2→1 request) + chunk/D1_MAX_IN deduped into site-audio. api 498 + web 91 green.</span></li>
-      <li><span class="date">2026-07-11</span><span class="badge">S5b · mine/team 2→1</span>
-        <span>/mine + /team audio badge folded into the site select as a correlated EXISTS pair (<span class="mono">pureAudioSql</span>: has-a-file AND no-non-audio-file) — row explosion and LIMIT starvation impossible by construction; T5.3 red (2 requests) → green (exactly 1). Pins landed first: 30-file audio site = ONE row, /team 51-sites newest-has-30-files → 50 DISTINCT newest (LIMIT applies to sites), audio truth table, /mine archived-still-present, sharedSiteIds smoke via search + spaces. api 506 + web 91 green.</span></li>
-      <li><span class="date">2026-07-11</span><span class="badge">S6 · spaces 5→1</span>
-        <span>Spaces feeds BEAT the ≤3 target: /spaces/:slug/sites 5→<b>1</b> post-auth request (space row ∥ both share branches ∥ slug-joined membership ∥ site rows with pureAudioSql folded — all in one 5-stmt batch; every stmt slug-keyed + non-failing, 404 decided post-batch) and /spaces/:slug 3→<b>1</b> (space ∥ memberCount ∥ membership). repo gains sharedSiteRoleStmts/foldSharedSiteRoles (sharedSiteRoles delegates). T6.1 visibility pins landed first (outsider team+shared-only, member tier, group-share exact-site, superadmin archived, garbage-slug 404 fault-injection); T6.2 red 5/3 → green + first-ever memberCount/isMember value assertions. api 513 + web 91 green.</span></li>
-      <li><span class="date">2026-07-11</span><span class="badge">S7 · meta cleanup</span>
-        <span>Viewer-meta single role-aware resolve: new <span class="mono">resolveShareAccess</span> → {isShared, directRole} (both share branches one batch); <span class="mono">resolveIsShared</span> now derives from it; checkAccess consumes isShared while role/canReplace consume directRole ONLY — group-editor can never leak into canReplace (pinned). T7.1 contract pins landed first via the public endpoint (group-only no-role/no-manifest, direct viewer/editor, 403, superadmin). resolveShareRole stays the standalone edit oracle for /exists + upload. api 519 + web 91 green.</span></li>
-      <li><span class="date">2026-07-11</span><span class="badge">Phase 2 · G2 · DONE</span>
-        <span>Thermo-nuclear gate PASSED with should-fixes, all applied. The big judo: <span class="mono">pureAudioSql</span> made the whole GROUP-BY audio mechanism dead — /shared's row chunks now carry the scalar (90 ids + 8 ext binds = 98 &lt; 100), and <span class="mono">allAudioSiteIds</span>/<span class="mono">audioAggStmts</span>/<span class="mono">foldAudioAgg</span> were DELETED (predicate coverage preserved as a pureAudioSql truth table; S4/T4.1's chunk-batching subject superseded at this gate — recorded honestly, the tracker items stay done as landed-then-superseded). Also: one definition per share-reach branch (5 copies → 2 builders), new <span class="mono">lib/d1.ts</span> (chunk/D1_MAX_IN/batchAll owning the tuple cast, adopted at 6 sites), shared <span class="mono">route-fixtures.ts</span> (makeRouteApp/mintUser/postAuthRequests/at deduped across 3 suites). Budgets unchanged: /shared ≤2 · /mine //team ==1 · spaces ==1. api 517 + web 91, tsc + lint clean. Committed <span class="mono">4b4db5d</span>.</span></li>
-      <li><span class="date">2026-07-11</span><span class="badge">S8 · comments list</span>
-        <span>Comments list path 3→1 D1 request per list (T8.1 red: {loose:3} → green {batches:1, batchStmts:2}). db/comments.ts now exposes <span class="mono">threadsWithUsersStmt</span> (LEFT JOIN users ×2 creator/resolver) + <span class="mono">commentsWithAuthorsStmt</span> (scope through the thread join — IN(threadIds/userIds) GONE) + pure <span class="mono">assembleThreadViews</span>; wrappers keep signatures. T8.2: 101×101 threw the bind cap on old code, JOIN passes; qualified rowid tiebreaks pinned with equal-createdAt rows. T8.3 deletion pins + T8.4 frozen golden vectors. api 529 + web 91 green.</span></li>
-      <li><span class="date">2026-07-11</span><span class="badge">S9a+S9b · comments gate</span>
-        <span>Pins first (T9.1 statuses/bodies incl. access-beats-invalid-filePath precedence + T9.2 resolve/reopen/edit read-your-write — create/reply/delete readbacks already existed; 9 new, green pre-change). <b>S9a</b>: <span class="mono">siteOrError</span> → <span class="mono">accessFactsBySlugs</span> ONE 5-stmt batch (was resolveSite + isSpaceMember + share batch = 3 round trips) with pure <span class="mono">siteFromFacts</span> gate; every comments route drops 2 D1 requests; requireAuth loose read stays (F7 parked — floor is 2). <b>S9b</b>: GET list fuses facts + slug-keyed S8 statements (new <span class="mono">threadsWithUsersBySlugsStmt</span>/<span class="mono">commentsWithAuthorsBySlugsStmt</span>, sites⨝spaces on BOTH slugs like fileStmt) into ONE 7-stmt batch via <span class="mono">fetchAccessFacts</span> extras; T9.3 red (allowed batches:2 · forbidden batchStmts:5) → green (loose:1 + batch:1 of 7; 403 body bare while the batch provably ran). GET list 5→2 total requests — Phase-3 list target hit. comments-access.test.ts (+11); route-fixtures now mounts comments. api 540 + web 91, tsc + lint clean.</span></li>
-      <li><span class="date">2026-07-11</span><span class="badge">S9c · mutations</span>
-        <span>Mutations pre-write = ONE batch (T9.5 red per-route loose 2-3 → green): reply/resolve/reopen fuse the URL-id thread row (batch of 6), edit/delete fuse comment + thread (7), voice-audio GET pre-R2 = 2 total requests with the thread reached via comment_threads⨝comments inside the statement. Relationship checks byte-identical, pinned green-first with zero-write/zero-R2/zero-AI assertions (T9.4 ×12: foreign thread/comment 404, threadId mismatch 404, non-owner resolve, non-author edit, outsider voice POST). Writes strictly post-gate; read-your-write pins hold. api 552 + web 91 green.</span></li>
-      <li><span class="date">2026-07-11</span><span class="badge">Phase 3 · G3 · DONE</span>
-        <span>Thermo-nuclear gate PASSED with should-fixes, all applied: (1) dead siteId-keyed list API DELETED (listThreads/listSiteThreads/threadsWithUsersStmt/commentsWithAuthorsStmt/threadScope/getThread/getComment — routes fused past them); goldens + T8.1 pins retargeted at the SHIPPED slug-keyed statements, expected literals byte-identical, expect() count 17525→17525; (2) <span class="mono">fetchAccessFacts</span> extras now generically typed (BatchResponse tuple) — all six call-site downcasts gone, a reshaped select is now a compile error; (3) single <span class="mono">gated(c, ...extras)</span> helper owns the fused-gate choreography (siteOrError + accessFactsBySlugs deleted). api 552 + web 91, tsc + lint clean. Committed <span class="mono">f591261</span>. Phase 3 complete: list 5→2 total requests, mutations pre-write = 1 batch.</span></li>
-      <li><span class="date">2026-07-11</span><span class="badge">S10 · dashboard</span>
-        <span>Per-feed dashboard rendering: the loader already streamed, but ONE <span class="mono">Await(Promise.all)</span> gated every tab on the slowest feed — replaced by <span class="mono">useFeedSlot</span> (stale-while-revalidate slots, superseded-settlement drop) + pure <span class="mono">deriveFeedState</span> (lib/feedState.ts): Your-sites paints on /mine resolve; Shared tab pops in only with &gt;0 rows and never steals the active tab; failed /team contained to its tab; any-feed 401 → login redirect; ?new=space steering fires exactly once. 10 helper tests (T10.1–10.5 incl. temporal identity stability). Sanctioned resilience deltas journaled (shared non-401 reject → tab absent; per-feed count badges). Real-browser progressive-paint proof deferred to G4 smoke as planned. api 552 + web 101, build:web + tsc + lint green.</span></li>
-      <li><span class="date">2026-07-11</span><span class="badge">S11 · viewer</span>
-        <span>Viewer comments prefetch + arbitration: loader now returns {site, entryPath, commentsPromise} — <span class="mono">comments.list(entryPath)</span> fired UNAWAITED post-meta (403/404/410 structurally never prefetch; rejection caught at creation → sentinel). Pure <span class="mono">resolveEntryPath</span> (hand-kept normalizePath mirror, NO_PREFETCH sentinel on indexPath '') IS the wired prefetch key; pure <span class="mono">prefetchArbiter</span> reducer owns generations + provisional rules (HTML applies only on matching glance:ready, mismatch → discard+refetch, no-ready never applies, AUDIO applies sans ready, dup ready no refetch, stale rejection never clears newer success) + splat-nav reset w/ stale-ready hint. Bonus fixes: pre-existing no-generation clobber + missing nav reset. 36 new tests (T11.1–11.5). api 552 + web 137, build + tsc + lint green. Real-iframe races → G4 smoke.</span></li>
-      <li><span class="date">2026-07-11</span><span class="badge">Phase 4 · G4 · DONE</span>
-        <span>Gate PASSED: thermo review (4 should-fixes + 3 notes applied — steer-once ungated from feed resolve, duplicate-ready recordVisit dedupe, floating rejects await, dead spacesCount deleted, NO_PREFETCH → string|null, shared errorMessage helper) THEN the browser smoke (local stack, agent-browser, network interception): progressive paint PASS, team-failure containment PASS, shared pop-in without tab steal PASS live via same-route revalidation, HTML viewer + splat nav PASS, lone-audio viewer PASS, console clean. <b>The smoke caught a prod-severity bug the whole 552-test suite missed:</b> drizzle's D1 <b>batch</b> mapping collapses duplicate result column names — /api/sites/shared selected two "slug" columns and returned [] on real D1 (harness maps positionally, stayed green). Fixed the CLASS: 4 statements aliased (/shared spaceSlug, comments creator/resolver, pureAudioSql .as('audio'), spaces count(*)), harness now THROWS on batched duplicate/unaliased-expression result names (guard caught exactly those 4, 78 red), fix proven on real workerd at route level. Commits <span class="mono">acbf56a</span> (fix) + <span class="mono">9660b79</span> (Phase 4). api 557 + web 137.</span></li>
-      <li><span class="date">2026-07-11</span><span class="badge">GF · benchmark</span>
-        <span>Remote before/after LANDED (wrangler versions upload previews of both workers → bench/bench.ts n=30 vs committed workersdev baseline; floors 212→182ms, 'me' control floor-adjusted Δ=0 so the network is comparable — all deltas below floor-adjusted): doc <b>−507ms</b> (723→186, ~at floor; target −280) · asset <b>−501</b> cold / warm serves AT the floor (185 vs 182 — the −580 warm target was mathematically below the floor; cache provably serving, an uncached R2 GET would cost ~+300) · /shared <b>−381</b> (877→466; target −280) · /mine <b>−194</b> · /team <b>−193</b> (targets −140) · spaces sites <b>−680</b> (1043→333; target −280, we shipped 5→1 not 5→3) · comments <b>−678</b> (1040→332; target −420, shipped 5→2) · meta control −38 (S7's batch cleanup, not drift). Every target met or beaten. §07 After columns filled; preview JSON saved bench/preview-2026-07-10-21-47.json.</span></li>
-      <li><span class="date">2026-07-11</span><span class="badge">GF · DONE — tracker complete</span>
-        <span><b>All 19 tracked items done.</b> Final whole-branch thermo review PASSED with should-fixes, applied: batch invariants documented at their home (<span class="mono">lib/d1.ts batchAll</span>), share-reach mirror comments both directions, dashboard loader observes feed rejections at creation (viewerLoader parity), route-fixtures gained CONTENT_URL/CONTENT_TOKEN_SECRET + the sites-viewer twin retired. Committed <span class="mono">ed3646b</span>. Branch <span class="mono">perf/db-query-hot-paths</span>: 6 commits, api 417→557 + web 91→137 tests, every latency target met or beaten (doc/asset at the network floor, spaces −680ms, comments −678ms), plus one prod-severity bug class (D1 batch name-collapse) found by the G4 smoke, fixed, and permanently guarded in the harness. Ready for PR to main.</span></li>
+      <li><span class="date">2026-07-11 21:55</span><span class="badge">created</span>
+        <span>Console drawn up. Plan consensus-reviewed (self + codex gpt-5.6 xhigh + cursor grok-4.5), user signed off; 35 TDD cases survived the adversarial consult. Two plan amendments vs the proposal: generator simplified to <b>summarizeSite()</b> (round-5 answerFromSite shape dropped by user ruling) and rate limiting via a <b>SUMMARY_LIMITER</b> binding (upload.ts idiom) instead of row-timestamp cooldown. 0 landed.</span></li>
+      <li><span class="date">2026-07-11 22:37</span><span class="badge">S1 + S-4</span>
+        <span>Migration 0013 <b>site_summaries</b> landed (codex xhigh, TDD red-first): 11 columns, siteId unique FK cascade, generatedBy SET NULL, no status column; drizzle journal idx 13. SEAM-4 FK pragma ON in makeDb exposed 7 existing tests seeding dangling FK refs — fixtures repaired preserving each premise (dangling-author now via real user deletion; golden vectors updated for the now-real creator). C15 all 4 legs green. Verified fresh in main loop: api 647/647, web green, typecheck + lint clean.</span></li>
+      <li><span class="date">2026-07-11 22:48</span><span class="badge">S2 + S-1</span>
+        <span><b>lib/extract.ts</b> landed (codex xhigh, C1–C7 red-first): resolveIndexPath moved from routes/sites.ts (verbatim + doc comment, existing viewer indexPath pin guards it), pickEntry null-mime-safe, two-pass HTMLRewriter strip (script/style/noscript removed then text-only collection — attrs structurally can't leak), markdown by path, TEXT_CAP 40k with surrogate-safe cut, .txt pinned unsupported. Verified fresh: api 654/654, web 156/156, typecheck + lint clean.</span></li>
+      <li><span class="date">2026-07-11 23:26</span><span class="badge">S3 + S-2</span>
+        <span><b>lib/summarize.ts</b> landed (codex xhigh, C8–C14): resolveProvider 3-non-blank-secrets table, hardened system prompt with page text ONLY in user message, Azure chat completions pinned api-version 2024-10-21 + api-key header + one retry on 429/5xx only + per-attempt AbortController, Workers <code>llama-3.3-70b-instruct-fp8-fast</code> reading {response}, no failover (pinned), never throws; Bindings + .dev.vars.example extended. Codex hung ~34m on a stray <code>npm pack</code> doc-check AFTER finishing the code — cancelled, work certified as-is. Verified fresh: api 661/661, web green, typecheck + lint clean. Phase-1 steps complete → G1 gate.</span></li>
+      <li><span class="date">2026-07-11 23:42</span><span class="badge">Gate G1</span>
+        <span>Gate workflow (simplify → suite → thermo) over the Phase-1 diff. Simplify applied 3 cleanups (pickEntry derives from resolveIndexPath, HTMLRewriter handler dedupe, shared readAzure guard); thermo returned 11 findings (3M/5L/3nit). 9 fixed via codex: schema.ts layout + invariants comment + updatedAt $onUpdate, journal 0013 when made monotonic + newline, summarize.ts scoped catches + single provider dispatch + optional-chain narrows, two-pass HTMLRewriter rationale, FK-pragma comment, honest test rename. 1 deferred: &ldquo;resolveIndexPath belongs in a site-entry module not extract.ts&rdquo; — contradicts the plan&rsquo;s S-1 ruling (extract.ts pinned at sign-off); revisit at Final Gate. Suite fresh: 661/661 + typecheck + lint. Committed &ldquo;Phase 1&rdquo;.</span></li>
     </ul>
+  </section>
+
+  <!-- ==================================================================== -->
+  <!-- ===========================  PART II · PLAN  ========================= -->
+  <!-- ==================================================================== -->
+  <div class="part"><span class="roman">II</span><h2>Plan</h2><span class="tag-line">static · phase order · deps · gates</span></div>
+
+  <!-- 04 · Steps -->
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><h3>Steps</h3><span class="sec-note">deps &amp; gates enforced</span></div>
+
+    <div class="phase-h">Phase 1 — Data + pure logic</div>
+    <ul class="items">
+      <li class="item" data-status="done" data-phase="1"><span class="stamp">done</span>
+        <div><div class="name"><span class="k">S1</span><span class="t">Migration 0013 site_summaries (drizzle-kit generate): siteId unique FK cascade · summary · contentVersion · promptVersion · provider · model · generatedBy nullable FK SET NULL · truncated · createdAt · updatedAt. NO status column. schema.ts export + harness MIGRATIONS append + SEAM-4 (FK pragma).</span></div>
+          <div class="meta">cases C15 · <span class="r-low">low risk</span></div></div></li>
+      <li class="item" data-status="done" data-phase="1"><span class="stamp">done</span>
+        <div><div class="name"><span class="k">S2</span><span class="t">lib/extract.ts — SEAM-1 (resolveIndexPath moves here, sites.ts re-imports); pickEntry({path,mimeType}[]) null-mime-safe; type matrix: html → HTMLRewriter via new Response(html) (chunked-text-safe, workerd-parity shape), markdown by PATH /\.(md|markdown)$/i → raw text, else unsupported; exact TEXT_CAP + truncated; empty-after-strip → unsupported.</span></div>
+          <div class="meta">cases C1–C7 · <span class="r-med">med risk</span></div></div></li>
+      <li class="item" data-status="done" data-phase="1"><span class="stamp">done</span>
+        <div><div class="name"><span class="k">S3</span><span class="t">lib/summarize.ts — SEAM-2 (injected {ai, azure, fetchImpl, timeout}); resolveProvider: azure (3 non-blank secrets) | workers (AI) | null, per attempt, no failover; summarizeSite(): hardened system prompt + page text ONLY in user message, PROMPT_VERSION const (bump = invalidation lever, incl. provider/model swaps), Azure chat completions (pinned api-version, api-key header, max_tokens, one retry on 429/5xx only, bounded abort), Workers 70B reads {response} not {text}; never throws. + types.ts Bindings (AZURE_OPENAI_* · SUMMARY_LIMITER) + .dev.vars.example.</span></div>
+          <div class="meta">cases C8–C14 · <span class="r-med">med risk</span></div></div></li>
+      <li class="item gate" data-status="done" data-phase="1"><span class="stamp">done</span>
+        <div><div class="name"><span class="k">G1</span><span class="t">Gate P1 — thermo-nuclear</span></div>
+          <div class="meta">/thermo-nuclear-code-quality-review on Phase-1 diff → findings → suite green → commit &ldquo;Phase 1: …&rdquo;</div></div></li>
+    </ul>
+
+    <div class="phase-h">Phase 2 — API route + feeds</div>
+    <ul class="items">
+      <li class="item" data-status="todo" data-phase="2"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S4</span><span class="t">routes/summary.ts — own Hono router mounted at /api/sites (comments-style isolation), requireAuth on '*', resolveSiteForAccess gate. GET: cache state only, server-computed stale, currentVersion in response, never generates. POST {force?}: fresh hit → cached zero-AI/R2/limiter → SUMMARY_LIMITER.limit({key:user.id}) → files rows → pickEntry → 422 unsupported → readFullObject(storageKey) → extract → summarizeSite → upsert (last-write-wins; stamps the version READ). No provider → 'unavailable'. Failure → 502 {error,retryable:true}, row untouched; cold failure leaves no row. wrangler.jsonc SUMMARY_LIMITER binding (+ sync skip-worktree local copy).</span></div>
+          <div class="meta">cases C16–C29 · <span class="r-high">high risk</span> · <span class="dep">dep:S1,S2,S3</span></div></div></li>
+      <li class="item" data-status="todo" data-phase="2"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S5</span><span class="t">hasSummary — ONE shared aliased EXISTS/LEFT-JOIN fragment folded into the existing single-batch feed queries (/mine · /shared · /team · /api/spaces/:slug/sites), .as() alias (name-collapse guard), cardinality + request budgets unchanged; web SiteSummary type gains hasSummary.</span></div>
+          <div class="meta">cases C30–C32 · <span class="r-low">low risk</span> · <span class="dep">dep:S1</span></div></div></li>
+      <li class="item gate" data-status="todo" data-phase="2"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">G2</span><span class="t">Gate P2 — thermo-nuclear</span></div>
+          <div class="meta">/thermo-nuclear-code-quality-review on Phase-2 diff → findings → suite green → commit &ldquo;Phase 2: …&rdquo;</div></div></li>
+    </ul>
+
+    <div class="phase-h">Phase 3 — Web UI</div>
+    <ul class="items">
+      <li class="item" data-status="todo" data-phase="3"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S6</span><span class="t">web lib/summary.ts reducer (state machine: empty · generating · fresh · stale · failed-keeps-prior · unavailable; late-GET arbitration) + api-helper wire fns (never useFetcher for /api/*) + SummarySheet controlled component (ui/sheet, ShareDialog open pattern + Radix mount sensor), stale banner from response currentVersion, no artificial client timeout (70B is slow), &ldquo;entry page only&rdquo; note.</span></div>
+          <div class="meta">cases C33–C34 · <span class="r-med">med risk</span> · <span class="dep">dep:S4</span></div></div></li>
+      <li class="item" data-status="todo" data-phase="3"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S7</span><span class="t">ViewerTopBar &ldquo;TL;DR&rdquo; button → opens the sheet (both review and non-review render branches).</span></div>
+          <div class="meta">case C35 (smoke) · <span class="r-low">low risk</span> · <span class="dep">dep:S6</span></div></div></li>
+      <li class="item" data-status="todo" data-phase="3"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S8</span><span class="t">Dashboard row: sparkle in shared siteColumns when hasSummary, &ldquo;Summarize&rdquo; in row kebab otherwise; same sheet, controlled open; sparkle appears post-generation without reload (revalidate/local bump).</span></div>
+          <div class="meta">case C35 (smoke) · <span class="r-low">low risk</span> · <span class="dep">dep:S5,S6</span></div></div></li>
+      <li class="item gate" data-status="todo" data-phase="3"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">G3</span><span class="t">Gate P3 — thermo-nuclear</span></div>
+          <div class="meta">/thermo-nuclear-code-quality-review on Phase-3 diff → findings → suite green → commit &ldquo;Phase 3: …&rdquo;</div></div></li>
+    </ul>
+
+    <div class="phase-h">Phase 4 — Ship</div>
+    <ul class="items">
+      <li class="item" data-status="todo" data-phase="4"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S9</span><span class="t">Provider ops: confirm Azure deployment region/retention approved (secrets presence = opt-in), wrangler secret put ×3, bake-off gpt-4.1-mini vs 70B on 2–3 real Glance pages before final commit. Note: 4.1-mini retires 2026-10-14 → deployment swap + PROMPT_VERSION bump; Workers-AI data path already accepted in prod (Whisper precedent).</span></div>
+          <div class="meta"><span class="r-med">med risk</span> · <span class="dep">dep:S4</span></div></div></li>
+      <li class="item" data-status="todo" data-phase="4"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S10</span><span class="t">What&rsquo;s New entry: notes/*.md + bun run build:whatsnew (packages/api) + re-check catalog-coupled MID-watermark unread pins in routes/whats-new.test.ts.</span></div>
+          <div class="meta"><span class="r-low">low risk</span> · <span class="dep">dep:S6,S7,S8</span></div></div></li>
+      <li class="item" data-status="todo" data-phase="4"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S11</span><span class="t">Full-stack local browser smoke (C35: both entry points, all sheet states, sparkle refresh, extraction on REAL workerd via wrangler dev — the Bun↔workerd HTMLRewriter parity check), PR screenshots (UI repo), PR to main.</span></div>
+          <div class="meta"><span class="r-low">low risk</span> · <span class="dep">dep:all</span></div></div></li>
+      <li class="item gate" data-status="todo" data-phase="4"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">G4</span><span class="t">Gate P4 — thermo-nuclear</span></div>
+          <div class="meta">/thermo-nuclear-code-quality-review on Phase-4 diff → findings → suite green → commit &ldquo;Phase 4: …&rdquo;</div></div></li>
+    </ul>
+
+    <div class="phase-h">Final — whole-change review</div>
+    <ul class="items">
+      <li class="item gate" data-status="todo" data-phase="final"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">GF</span><span class="t">Final Gate — thermo-nuclear over the ENTIRE change</span></div>
+          <div class="meta">/thermo-nuclear-code-quality-review on the full diff (all phases) + /codex:adversarial-review → findings → full suite green → commit → final glance deploy. Tracker not done until this passes.</div></div></li>
+    </ul>
+
+    <blockquote><b>Phase-exit gate (every phase):</b> after a phase&rsquo;s steps land, run
+      <code>/thermo-nuclear-code-quality-review</code> scoped to that phase&rsquo;s diff (the codex plugin&rsquo;s
+      <code>/codex:review</code> is a fine second opinion on the same diff). Triage findings — fix the legit ones, note any
+      deferred with rationale. Re-run the full suite; <b>all tests must pass and no unaddressed finding may remain before
+      the phase is done</b>. Then commit the phase — one commit per phase, message &ldquo;Phase N: &lt;summary&gt;&rdquo;.
+      <br /><br /><b>Final gate (once):</b> the same review over the <b>entire</b> change — cross-phase interactions and
+      whole-feature complexity that single-diff gates miss. Done only when this passes.</blockquote>
+  </section>
+
+  <!-- 05 · Decided rulings -->
+  <section>
+    <div class="sec-head"><span class="sec-num">05</span><h3>Decided rulings</h3><span class="sec-note">do not re-litigate</span></div>
+    <ol class="prose">
+      <li><b>On-demand only, synchronous POST, no Queues.</b> One R2 get + one AI call; the 30s concern applied to the rejected on-upload path.</li>
+      <li><b>Fresh POST returns cache server-side — zero AI calls.</b> <code>force:true</code> is the quiet escape. Stale = contentVersion OR promptVersion mismatch. A failed run is retryable and never overwrites a stored summary.</li>
+      <li><b>Azure gpt-4.1-mini primary, Workers AI 70B fallback</b> (keyless forks get Summarize free via the committed <code>ai</code> binding). Provider resolved per attempt; an Azure error is a retryable failure, never a silent downgrade. Whisper stays on Workers AI.</li>
+      <li><b>Cold-race double-generation accepted for v1</b> (last-write-wins upsert, both write the same content) — lease machinery rejected at team scale. Pinned by C23.</li>
+      <li><b>Ask AI deferred</b> (round 5). Amendment at plan sign-off: generator ships as plain <code>summarizeSite()</code> — the round-5 <code>answerFromSite</code> shape was dropped by user ruling; do NOT reintroduce it.</li>
+      <li><b>Rate limit = SUMMARY_LIMITER binding</b> (upload.ts pre-write idiom), key = user id, generation attempts only — cache hits are free. Chosen over row-timestamp cooldown at plan sign-off.</li>
+      <li><b>API worker only.</b> The content worker stays thin; nothing heavy may enter the schema.ts import chain (content-worker bundle trap).</li>
+    </ol>
+  </section>
+
+  <!-- 06 · Test seams -->
+  <section>
+    <div class="sec-head"><span class="sec-num">06</span><h3>Test seams</h3><span class="sec-note">land before gated cases</span></div>
+    <ul class="items">
+      <li class="item" data-status="done"><span class="stamp">done</span>
+        <div><div class="name"><span class="k">S-1</span><span class="t">resolveIndexPath moves to lib/extract.ts, exported; routes/sites.ts re-imports (behavior-preserving; existing sites-viewer.test.ts:108 indexPath pin guards it).</span></div>
+          <div class="meta">unlocks C1, C2 · part of S2</div></div></li>
+      <li class="item" data-status="done"><span class="stamp">done</span>
+        <div><div class="name"><span class="k">S-2</span><span class="t">summarizeSite takes injected deps {ai, azure, fetchImpl (default globalThis.fetch), timeoutMs} — mirrors transcribeVoice(ai,…); no global stubbing in tests.</span></div>
+          <div class="meta">unlocks C8–C14 · part of S3</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="k">S-3</span><span class="t">(exists) per-request env injection: AI stub {run} (comments.test.ts idiom), harness R2 op spies, SUMMARY_LIMITER stub {limit:async({key})→{success}}.</span></div>
+          <div class="meta">unlocks C16–C29 · no code change</div></div></li>
+      <li class="item" data-status="done"><span class="stamp">done</span>
+        <div><div class="name"><span class="k">S-4</span><span class="t">harness makeDb enables PRAGMA foreign_keys=ON (bun:sqlite defaults OFF — cascade/SET-NULL tests are fiction without it; prod D1 enforces FKs). Full existing suite must stay green with it on.</span></div>
+          <div class="meta">unlocks C15 (cascade + SET NULL legs) · part of S1</div></div></li>
+    </ul>
+  </section>
+
+  <!-- 07 · Test cases -->
+  <section>
+    <div class="sec-head"><span class="sec-num">07</span><h3>Test cases</h3>
+      <span class="sec-note">survived adversarial consult (codex + cursor) · new-module-spec unless noted</span></div>
+
+    <div class="phase-h">Phase 1 · lib/extract.ts</div>
+    <ul class="items">
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C1 — pickEntry: root index.html beats nested docs/index.html; lone file returned whatever its type; multi-file w/o root index → null</span></div>
+          <div class="meta">P0 · writable with S-1</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C2 — property-equivalence: pickEntry(files)?.path ≡ resolveIndexPath(paths) across fixture lists (null ↔ '')</span></div>
+          <div class="meta">P1 · property-equivalence · guards extract↔viewer root drift</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C3 — LEAK fixture: &lt;script&gt;/&lt;style&gt; bodies + onclick/onerror attr values NEVER in output; visible A-then-B order preserved (chunked-text-safe)</span></div>
+          <div class="meta">P0 · the extraction correctness pin</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C4 — exact TEXT_CAP boundary: len==CAP → not truncated; CAP+1 → truncated + len≤CAP + no surrogate-pair split</span></div>
+          <div class="meta">P1 · boundary</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C5 — markdown by PATH: .md + text/markdown AND .md + null mime → raw capped text; .txt policy pinned; null mimeType never crashes pickEntry/extract</span></div>
+          <div class="meta">P0 · mime.ts has no md entry; upload stores null mime</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C6 — unsupported matrix: app.js · style.css · data.json · audio/webm · image/png → {unsupported, reason}</span></div>
+          <div class="meta">P1</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C7 — html stripping to empty/whitespace → unsupported (nothing reaches AI)</span></div>
+          <div class="meta">P1</div></div></li>
+    </ul>
+
+    <div class="phase-h">Phase 1 · lib/summarize.ts</div>
+    <ul class="items">
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C8 — resolveProvider table: 3 secrets → azure; undefined/''/whitespace any-secret × AI bound → workers; neither → null</span></div>
+          <div class="meta">P0 · empty-string secret = plausible wrangler misconfig</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C9 — Azure wire pin: URL ==== endpoint/openai/deployments/{dep}/chat/completions?api-version=&lt;pinned&gt; · api-key header (not Authorization) · max_tokens capped · system+user separation, page text ONLY in user message (injection sentinel &ldquo;ignore previous instructions&rdquo; stays put)</span></div>
+          <div class="meta">P0 · via injected fetchImpl (S-2)</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C10 — Azure failure table: 429 → exactly one retry then ok; two failures → ok:false; 400 NOT retried; network reject / malformed JSON / choices:[] → ok:false; never throws</span></div>
+          <div class="meta">P0 · call-count asserted on fetchImpl</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C11 — empty/blank message content → ok:false (both providers)</span></div>
+          <div class="meta">P1</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C12 — Workers path: reads {response} NOT {text} (transcribeVoice copy-paste trap); trims; blank/{}/rejection → ok:false; 70B model const + max_tokens pinned</span></div>
+          <div class="meta">P0 · codex catch, verified vs CF model docs</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C13 — NO failover: azure configured + failing → ok:false, AI.run never invoked</span></div>
+          <div class="meta">P0 · round-4 ruling pin</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C14 — bounded timeout: hung fetch aborted at timeoutMs → ok:false</span></div>
+          <div class="meta">P2 · gated by S-2 timeout injection</div></div></li>
+    </ul>
+
+    <div class="phase-h">Phase 1 · schema</div>
+    <ul class="items">
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C15 — four legs: PRAGMA table_info(site_summaries) columns; second upsert same siteId replaces EVERY freshness field in ONE row; site delete cascades row; user delete → row survives, generatedBy IS NULL</span></div>
+          <div class="meta">P0 · requires S-4 (FKs ON) or legs 3–4 pass vacuously</div></div></li>
+    </ul>
+
+    <div class="phase-h">Phase 2 · routes/summary.ts</div>
+    <ul class="items">
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C16 — GET table: {row present/absent} × {provider present/absent} → exact bodies (none / ready+stale bool / unavailable / ready-served-without-provider); currentVersion always present</span></div>
+          <div class="meta">P0 · kills the none-vs-unavailable ambiguity</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C17 — cold POST: sentinel HTML → ONLY visible text reaches AI.run; exact response shape; persisted row carries contentVersion, promptVersion, provider, model, generatedBy, truncated</span></div>
+          <div class="meta">P0 · tracer bullet after R1; extraction meets persistence</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C18 — fresh POST cache hit: cached 200, ZERO AI + ZERO R2 + limiter NOT called + zero D1 writes</span></div>
+          <div class="meta">P0 · THE economic invariant</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C19 — POST {force:true} on fresh: regenerates (AI once), row updated (updatedAt/summary)</span></div>
+          <div class="meta">P1</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C20 — contentVersion bumped (direct db update, no upload mount): GET → stale:true + old text; POST regenerates, meta.forVersion == new version</span></div>
+          <div class="meta">P0</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C21 — promptVersion mismatch (seeded old) → GET stale:true; POST stamps current PROMPT_VERSION</span></div>
+          <div class="meta">P1 · prompt-upgrade lever</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C22 — mid-generation redeploy: AI stub pauses, contentVersion bumps before upsert → row stamps the version READ; GET reports stale, never falsely fresh</span></div>
+          <div class="meta">P1 · version-stamp race (codex)</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C23 — two concurrent cold POSTs → COUNT(*)==1, coherent winner (last-write-wins pin, accepted double-spend)</span></div>
+          <div class="meta">P2 · characterization of ruling 4</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C24 — access matrix table: member / team-tier user / direct-share viewer / group-share viewer / superadmin ALLOWED; private-outsider 403 {error:'forbidden'} · missing 404 · archived 410 (superadmin passes) · unauth 401 — every denial with ZERO AI/R2/limiter/D1-writes; same-slug-other-space isolation</span></div>
+          <div class="meta">P0 · positive legs stop accidental owner-only gating</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C25 — cross-origin POST → 403 (requireSameOrigin CSRF, comments.test.ts:91 idiom)</span></div>
+          <div class="meta">P1</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C26 — 422 matrix: zero files / multi-file-no-index / unsupported entry / missing R2 object — exact R2 call counts, zero AI each</span></div>
+          <div class="meta">P0 · check ORDER: cheap denials never touch R2/AI</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C27 — no provider: POST → 200 {status:'unavailable'}, zero R2 (provider resolved before read); ready row + no provider → GET still serves cached</span></div>
+          <div class="meta">P1</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C28 — failure semantics: fresh good row + force + AI fail → exact 502 {error, retryable:true}, stored row byte-identical; cold fail → NO row, GET → none</span></div>
+          <div class="meta">P0 · never clobber, never half-write</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C29 — limiter contract: limit({key}) receives user.id; success:false on cold POST → 429 + zero AI/R2/writes; cache-hit POST never calls limiter</span></div>
+          <div class="meta">P0 · pins key ≠ IP (upload idiom differs)</div></div></li>
+    </ul>
+
+    <div class="phase-h">Phase 2 · feeds</div>
+    <ul class="items">
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C30 — /mine: summary-backed site hasSummary:true, sibling false (per-ID); 30-file summary-backed site still returns EXACTLY ONE row</span></div>
+          <div class="meta">P0 · join-duplication guard (sites-feeds idiom)</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C31 — characterization: existing feed columns keep exact values + post-auth request budgets unchanged with the aliased fragment present</span></div>
+          <div class="meta">P0 · characterization · D1 name-collapse guard</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C32 — /shared · /team · /api/spaces/:slug/sites all carry hasSummary; /team distinct-sites cap intact</span></div>
+          <div class="meta">P1</div></div></li>
+    </ul>
+
+    <div class="phase-h">Phase 3 · web</div>
+    <ul class="items">
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C33 — reducer sequences (pure, bun): open→empty; generating; fresh; stale (banner derives from response currentVersion); POST failure keeps prior text; force-failure restores prior fresh; unavailable; late-GET after POST success ignored</span></div>
+          <div class="meta">P0 · feedState.test.ts discipline</div></div></li>
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C34 — wire: exact GET/POST paths via api helper, body {} vs {force:true}, credentials included, ApiError(502) propagation (whatsNew.test.ts stubFetch idiom)</span></div>
+          <div class="meta">P1</div></div></li>
+    </ul>
+
+    <div class="phase-h">Phase 4 · browser smoke (not unit)</div>
+    <ul class="items">
+      <li class="item" data-status="todo"><span class="stamp">todo</span>
+        <div><div class="name"><span class="t">C35 — full-stack smoke on wrangler dev (real workerd): sheet from TopBar (both render branches) + dashboard kebab; all six sheet states walked; sparkle appears post-generation without reload; extraction parity on a real page (Bun↔workerd HTMLRewriter)</span></div>
+          <div class="meta">P0 · owns everything unit tests can&rsquo;t honestly claim</div></div></li>
+    </ul>
+  </section>
+
+  <!-- 08 · Strategy -->
+  <section>
+    <div class="sec-head"><span class="sec-num">08</span><h3>Strategy</h3></div>
+    <ol class="prose">
+      <li><b>All feature cases are new-module-spec</b> — the modules don&rsquo;t exist yet; each case is written red first and drives its slice of the module into existence. No horizontal slicing: one case → minimal impl → green → next.</li>
+      <li><b>Seam tests land with their seam</b>: S-4 (FK pragma) lands inside S1 and must keep the whole existing suite green before C15&rsquo;s cascade legs count.</li>
+      <li><b>Characterization pins before the refactor they guard</b>: C31 (feed columns + budgets) is written against current feeds BEFORE the hasSummary fragment lands; the existing sites-viewer indexPath pin guards S-1&rsquo;s move.</li>
+      <li><b>Economic + security invariants first within each step</b>: C18 (zero-AI cache hit) and C24 (access matrix) are authored immediately after their tracer bullets — they are the two invariants the feature cannot ship without.</li>
+      <li><b>End of each phase: thermo-nuclear gate</b> → fix findings → full suite green → one phase commit. Never start phase N+1 on an uncommitted phase N.</li>
+    </ol>
+  </section>
+
+  <!-- 09 · Authoring order -->
+  <section>
+    <div class="sec-head"><span class="sec-num">09</span><h3>Authoring order</h3></div>
+    <ol class="prose">
+      <li>S1 + S-4: migration red (C15 leg 1) → schema → harness FKs ON → suite green → C15 legs 2–4</li>
+      <li>S2 + S-1: C1 → C2 (equivalence) → C3 (LEAK) → C4 → C5 → C6 → C7</li>
+      <li>S3 + S-2: C8 → C9 → C10 → C12 → C13 → C11 → C14 · <b>Gate G1</b></li>
+      <li>S4: C16 (tracer table) → C17 → C18 → C24 → C26 → C28 → C29 → C20 → C21 → C19 → C25 → C27 → C22 → C23</li>
+      <li>S5: C31 (pin FIRST, against current feeds) → C30 → C32 · <b>Gate G2</b></li>
+      <li>S6: C33 → C34; S7, S8 land against the sheet · <b>Gate G3</b></li>
+      <li>S9 → S10 → S11 (C35 smoke + screenshots + PR) · <b>Gate G4</b> → <b>Final Gate</b></li>
+    </ol>
   </section>
 
 </main>
 
-<footer class="wrap">One page · Plan + Progress · edited in place &amp; redeployed each iteration via <b>glance deploy PROGRESS.html --name glance-perf-progress</b></footer>
+<footer class="wrap">One page · Plan + Progress · edited in place &amp; redeployed each tick via <b>glance deploy PROGRESS.html --name site-summary-progress</b></footer>
 
 <script>
-  // Single source of truth: the Plan's data-status items drive every count + the Part II board.
+  // Single source of truth: the Plan's data-status items drive every count + the Part I board.
   (function(){
     var steps = Array.prototype.slice.call(document.querySelectorAll('li.item[data-phase]'));
     var done = steps.filter(function(li){return li.getAttribute('data-status')==='done'}).length;

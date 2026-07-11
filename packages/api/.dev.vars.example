@@ -25,6 +25,12 @@ CONTENT_TOKEN_SECRET=""
 # Leave empty to keep the /api/_data surface inert (feature disabled). Generate: openssl rand -hex 32
 DATA_TOKEN_SECRET=""
 
+# Optional Azure OpenAI summary provider. All three values are required to enable it;
+# otherwise summaries fall back to the Workers AI binding when available.
+AZURE_OPENAI_ENDPOINT=""
+AZURE_OPENAI_API_KEY=""
+AZURE_OPENAI_DEPLOYMENT=""
+
 # Public base URLs (no trailing slash). Dev defaults shown.
 APP_URL="http://localhost:8787"
 CONTENT_URL="http://localhost:8788"

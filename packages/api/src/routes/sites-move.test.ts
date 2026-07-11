@@ -71,6 +71,7 @@ describe('POST /api/sites/:space/:site/move', () => {
     await mintUser(db, kv, 'u1')
     const from = await seedSpace(db, { createdBy: 'u1', slug: 'mine' })
     await seedMember(db, from, 'u1')
+    await seedUser(db, { id: 'u9' })
     await seedSpace(db, { createdBy: 'u9', slug: 'theirs' }) // u1 not a member
     await seedSite(db, { spaceId: from, ownerId: 'u1', slug: 'doc' })
 
@@ -122,6 +123,7 @@ describe('superadmin moderation of owner-only site endpoints', () => {
     const { db, kv, app, env } = await setup()
     await mintUser(db, kv, 'admin', 'superadmin')
     await mintUser(db, kv, 'rando') // authed, but neither owner nor a member
+    await seedUser(db, { id: 'u1' })
     const sp = await seedSpace(db, { createdBy: 'u1', slug: 'mine' })
     await seedSite(db, { spaceId: sp, ownerId: 'u1', slug: 'doc', visibility: 'team' })
     return { db, kv, app, env }

@@ -194,13 +194,14 @@ describe('T8.2 — no IN() bind cap; ordering survives the join', () => {
 })
 
 describe('T8.4 — golden vectors (expectations frozen as literals)', () => {
-  /** Deterministic fixture: fixed ids + timestamps; mixes soft-delete, resolved/open, a missing
-   *  (never-inserted) creator, a null-name user, a voice comment, legacy anchor JSON on a text
+  /** Deterministic fixture: fixed ids + timestamps; mixes soft-delete, resolved/open, a named
+   *  creator, a null-name user, a voice comment, legacy anchor JSON on a text
    *  thread, and an empty element thread. */
   async function goldenSite() {
     const { db, sp, siteId } = await bareSite()
     await seedUser(db, { id: 'u-ada', name: 'Ada Lovelace', email: 'ada@example.com' })
     await seedUser(db, { id: 'u-noname', name: null, email: 'noname@example.com' })
+    await seedUser(db, { id: 'u-ghost', name: 'Ghost Creator', email: 'ghost@example.com' })
 
     await seedThread(db, {
       id: 'th-open',
@@ -235,7 +236,7 @@ describe('T8.4 — golden vectors (expectations frozen as literals)', () => {
       siteId,
       filePath: 'b.html',
       anchorType: 'page',
-      createdBy: 'u-ghost', // never inserted → createdByName null (FK-off harness keeps the id)
+      createdBy: 'u-ghost',
       status: 'resolved',
       resolvedBy: 'u-noname',
       resolvedAt: '2026-03-03T00:00:00.000Z',
@@ -316,7 +317,7 @@ describe('T8.4 — golden vectors (expectations frozen as literals)', () => {
     resolvedByName: 'noname@example.com',
     resolvedAt: '2026-03-03T00:00:00.000Z',
     createdBy: 'u-ghost',
-    createdByName: null, // user row missing
+    createdByName: 'Ghost Creator',
     createdAt: '2026-03-02T00:00:00.000Z',
     updatedAt: '2026-03-03T00:00:00.000Z',
     comments: [

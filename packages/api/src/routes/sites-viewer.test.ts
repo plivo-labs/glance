@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { Hono } from 'hono'
-import { seedFile, seedGroupShare, seedMember, seedSite, seedSpace, seedUserShare } from '../test/harness'
+import { seedFile, seedGroupShare, seedMember, seedSite, seedSpace, seedUser, seedUserShare } from '../test/harness'
 import { makeRouteApp, mintUser as mintFixtureUser } from '../test/route-fixtures'
 import type { AppEnv } from '../types'
 
@@ -42,6 +42,7 @@ describe('GET /api/sites/:space/:site (viewer metadata)', () => {
 
   test('no auth → 401 (every tier requires a viewer)', async () => {
     const { db, app, env } = await setup()
+    await seedUser(db, { id: 'u1' })
     const space = await seedSpace(db, { createdBy: 'u1', slug: 'docs' })
     await seedSite(db, { spaceId: space, ownerId: 'u1', slug: 'report' })
 

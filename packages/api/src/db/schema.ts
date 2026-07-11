@@ -248,6 +248,26 @@ export const notifications = sqliteTable(
   (t) => [index('notifications_recipient_read_created').on(t.recipientId, t.readAt, t.createdAt)],
 )
 
+// One row per site (`siteId` unique): site deletion cascades, while `generatedBy` is SET NULL so
+// summaries survive author deletion. Server-computed `contentVersion` + `promptVersion` together
+// determine staleness.
+export const siteSummaries = sqliteTable('site_summaries', {
+  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  siteId: text('siteId').notNull().unique().references(() => sites.id, { onDelete: 'cascade' }),
+  summary: text('summary').notNull(),
+  contentVersion: integer('contentVersion').notNull(),
+  promptVersion: integer('promptVersion').notNull(),
+  provider: text('provider').notNull(),
+  model: text('model').notNull(),
+  generatedBy: text('generatedBy').references(() => users.id, { onDelete: 'set null' }),
+  truncated: integer('truncated', { mode: 'boolean' }).notNull().default(false),
+  createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text('updatedAt')
+    .notNull()
+    .$defaultFn(() => new Date().toISOString())
+    .$onUpdate(() => new Date().toISOString()),
+})
+
 export type User = typeof users.$inferSelect
 export type NewUser = typeof users.$inferInsert
 export type Space = typeof spaces.$inferSelect
@@ -272,6 +292,7 @@ export type EventType = Event['type']
 export type Notification = typeof notifications.$inferSelect
 export type NewNotification = typeof notifications.$inferInsert
 export type NotificationType = Notification['type']
+export type SiteSummary = typeof siteSummaries.$inferSelect
 
 export type Visibility = Site['visibility']
 export type SpaceType = Space['type']

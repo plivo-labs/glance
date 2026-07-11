@@ -15,6 +15,7 @@ import type { Visibility } from '../db/schema'
 import { files as filesTable, sites as sitesTable, spaces, users } from '../db/schema'
 import { canReplace, checkAccess } from '../lib/access'
 import { batchAll, chunk, D1_MAX_IN } from '../lib/d1'
+import { resolveIndexPath } from '../lib/extract'
 import { pureAudioSql } from '../lib/site-audio'
 import { readSessionOrBearer } from '../lib/session'
 import { resolveSite } from '../lib/site-access'
@@ -427,16 +428,6 @@ sites.get('/:spaceSlug/:siteSlug', async (c) => {
     ...(replaceable ? { files: siteFiles.map((f) => f.path), contentVersion: site.contentVersion } : {}),
   })
 })
-
-// The file the root URL ('' splat) actually serves, mirroring the content worker's root
-// resolution (content.ts): an explicit index.html wins, else a lone uploaded file is served at
-// the root, else '' (a multi-file site with no index shows the directory listing). The viewer
-// reads this so a single-file audio site picks the native player at its root URL — not just at
-// the explicit `/…/recording.webm` path — and anchors comments to the same resolved path either way.
-function resolveIndexPath(paths: string[]): string {
-  if (paths.includes('index.html')) return 'index.html'
-  return paths.length === 1 ? paths[0] : ''
-}
 
 // Normalize a PUT /shares body into role-aware user grants + view-only group ids. Pure (no DB), so
 // it's unit-testable and keeps every cast out of the request path. Accepts the new `users:[{id,role}]`
