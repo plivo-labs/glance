@@ -4,6 +4,13 @@ import type { Release } from './bake'
 
 export const RELEASES: Release[] = [
   {
+    "slug": "comments-tab",
+    "title": "All your comments, one feed",
+    "date": "2026-07-11T12:00:00.000Z",
+    "featured": true,
+    "bodyHtml": "<p>The dashboard has a new <strong>Comments</strong> tab: every <strong>mention of you</strong> and every <strong>comment you wrote</strong>, across all your sites, in one newest-first feed.</p>\n<ul>\n<li>Click any row to jump straight to that thread on the page, with the review rail already open</li>\n<li>Rows show where the conversation lives and whether it&#39;s still open or already resolved</li>\n<li>Mentions stay actionable here even after you&#39;ve read them in the bell</li>\n</ul>\n"
+  },
+  {
     "slug": "voice-comments",
     "title": "Comment with your voice",
     "date": "2026-07-01T15:00:00.000Z",
@@ -19,4 +26,4 @@ export const RELEASES: Release[] = [
   }
 ]
 
-export const NEWEST_RELEASE_DATE: string | null = "2026-07-01T15:00:00.000Z"
+export const NEWEST_RELEASE_DATE: string | null = "2026-07-11T12:00:00.000Z"

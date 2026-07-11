@@ -65,7 +65,7 @@ describe('C7 route.get.exactJSON — exact ordered items, unreadCount, throughDa
     // Whole-response deep-equal, not key-presence: a dropped item field or an extra top-level key fails.
     expect(await res.json()).toEqual({
       items: JSON.parse(JSON.stringify(RELEASES)),
-      unreadCount: 1,
+      unreadCount: 2,
       throughDate: NEWEST_RELEASE_DATE,
     })
   })
@@ -140,6 +140,6 @@ describe('B3 relogin.noReset — the existing-user branch must not clear an exis
     await findOrCreateUser(db, { SUPERADMIN_EMAIL: 'boss@example.com' } as never, { sub: 'g1', name: 'A2' } as never, 'a@example.com')
     expect(await getWatermark(db, first.id)).toBe(before as string)
     const res = await app.request('/api/whats-new', { headers: await mintBearer(kv, first.id) }, env)
-    expect(((await res.json()) as { unreadCount: number }).unreadCount).toBe(1)
+    expect(((await res.json()) as { unreadCount: number }).unreadCount).toBe(2)
   })
 })
