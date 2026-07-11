@@ -1,5 +1,5 @@
 // The dashboard's per-feed render brain. The route used to gate every tab on one Promise.all of
-// all four feeds; now the component holds one slot per feed (pending/resolved/rejected) and this
+// all five feeds; now the component holds one slot per feed (pending/resolved/rejected) and this
 // pure function derives the whole tab model from them, so each tab paints as its OWN feed settles.
 // Everything decision-shaped lives here, unit-tested: which tabs exist (Shared pops in only once
 // its feed resolves with rows), per-tab content (rows / skeleton / contained error), 401 → login
@@ -7,7 +7,7 @@
 // derive an identical model, so revalidation can't churn tabs or steal the active one).
 
 import { ApiError } from './api'
-import type { SiteSummary, SpaceSummary, TeamUpload } from './types'
+import type { CommentFeedItem, SiteSummary, SpaceSummary, TeamUpload } from './types'
 
 export type FeedSlot<T> =
   | { status: 'pending' }
@@ -19,9 +19,10 @@ export interface FeedSlots {
   shared: FeedSlot<SiteSummary[]>
   spaces: FeedSlot<SpaceSummary[]>
   team: FeedSlot<TeamUpload[]>
+  comments: FeedSlot<CommentFeedItem[]>
 }
 
-export type TabId = 'sites' | 'shared' | 'spaces' | 'team'
+export type TabId = 'sites' | 'shared' | 'spaces' | 'team' | 'comments'
 
 export type TabContent<T> =
   | { kind: 'loading' }
@@ -34,6 +35,7 @@ export type DashboardTab =
   | { id: 'shared'; label: 'Shared with me'; count: number; content: TabContent<SiteSummary[]> }
   | { id: 'spaces'; label: 'Your spaces'; count: number | null; content: TabContent<SpaceSummary[]> }
   | { id: 'team'; label: 'Team activity'; count: null; content: TabContent<TeamUpload[]> }
+  | { id: 'comments'; label: 'Comments'; count: null; content: TabContent<CommentFeedItem[]> }
 
 export interface FeedState {
   tabs: DashboardTab[]
@@ -75,7 +77,7 @@ export function deriveFeedState(
   const groupSpaces =
     slots.spaces.status === 'resolved' ? slots.spaces.data.filter((s) => s.type === 'group') : null
 
-  // Sites, Spaces and Team always exist (a failed feed degrades to a contained error INSIDE its
+  // Sites, Spaces, Team and Comments always exist (a failed feed degrades to a contained error INSIDE its
   // tab). Shared exists only once its feed resolves with rows — no tab for an empty or unknown
   // feed, so it pops in on resolve and disappears if a revalidation empties it.
   const tabs: DashboardTab[] = [
@@ -102,6 +104,7 @@ export function deriveFeedState(
       content: groupSpaces === null ? contentOf(slots.spaces) : { kind: 'rows', rows: groupSpaces },
     },
     { id: 'team', label: 'Team activity', count: null, content: contentOf(slots.team) },
+    { id: 'comments', label: 'Comments', count: null, content: contentOf(slots.comments) },
   ]
 
   const activeTab = tabs.some((t) => t.id === view.requestedTab) ? view.requestedTab : 'sites'
