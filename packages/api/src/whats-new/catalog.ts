@@ -4,6 +4,13 @@ import type { Release } from './bake'
 
 export const RELEASES: Release[] = [
   {
+    "slug": "tldr-summaries",
+    "title": "TL;DR any site",
+    "date": "2026-07-12T12:00:00.000Z",
+    "featured": true,
+    "bodyHtml": "<p>Every site now has an AI summary one click away: hit <strong>TL;DR</strong> in the viewer top bar, or <strong>Summarize</strong> from a site&#39;s row menu on the dashboard.</p>\n<ul>\n<li>Summaries are cached — reopening one is instant and free until the site&#39;s content changes</li>\n<li>When content changes, the sheet shows what version the summary was written for and offers a one-click update</li>\n<li>Sites with a summary show a sparkle next to their name on the dashboard</li>\n</ul>\n"
+  },
+  {
     "slug": "comments-tab",
     "title": "All your comments, one feed",
     "date": "2026-07-11T12:00:00.000Z",
@@ -26,4 +33,4 @@ export const RELEASES: Release[] = [
   }
 ]
 
-export const NEWEST_RELEASE_DATE: string | null = "2026-07-11T12:00:00.000Z"
+export const NEWEST_RELEASE_DATE: string | null = "2026-07-12T12:00:00.000Z"
