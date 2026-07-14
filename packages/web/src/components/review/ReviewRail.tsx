@@ -5,21 +5,28 @@ import { timestampPrefix } from '@/lib/audio'
 import type { Me, ViewerSite } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { Segmented } from '@/components/ui/segmented'
 import { AnchorChip } from '@/components/review/AnchorChip'
 import { Composer } from '@/components/review/Composer'
 import { ThreadCard } from '@/components/review/ThreadCard'
 
-// Read·Annotate lives on the ViewerTopBar; the type is shared from here (the rail owns the review
-// vocabulary).
 export type ReviewMode = 'read' | 'annotate'
+
+const MODES = [
+  { value: 'read', label: 'Read', title: 'Browse the page' },
+  { value: 'annotate', label: 'Annotate', title: 'Click an element to comment' },
+] as const satisfies readonly { value: ReviewMode; label: string; title: string }[]
 
 const byUpdatedDesc = (a: Thread, b: Thread) => b.updatedAt.localeCompare(a.updatedAt)
 
-// Persistent right-rail for review mode: filter (open/resolved), an anchor-prefilled composer on
-// select/pinpoint, and the thread list. Mode toggle + Done live in the ViewerTopBar.
+// Persistent right-rail for review mode: the Read·Annotate toggle in its header, filter
+// (open/resolved), an anchor-prefilled composer on select/pinpoint, and the thread list.
+// Done (exit review) lives in the ViewerTopBar.
 export function ReviewRail({
   site,
   me,
+  mode,
+  onMode,
   threads,
   composing,
   onCancelComposer,
@@ -33,6 +40,10 @@ export function ReviewRail({
 }: {
   site: ViewerSite
   me: Me | null
+  // Read·Annotate toggle in the rail header. Unset for content with no DOM to annotate (the
+  // audio view), which hides the toggle.
+  mode?: ReviewMode
+  onMode?: (mode: ReviewMode) => void
   threads: Thread[]
   composing: PendingAnchor | null
   onCancelComposer: () => void
@@ -75,6 +86,7 @@ export function ReviewRail({
     <aside className="flex max-h-[55vh] w-full shrink-0 flex-col border-t bg-background md:max-h-none md:h-full md:w-[360px] md:border-t-0 md:border-l">
       <header className="flex items-center justify-between gap-2 border-b px-4 py-3">
         <h2 className="font-semibold text-sm">Comments</h2>
+        {mode && onMode && <Segmented value={mode} options={MODES} onChange={onMode} />}
       </header>
 
       {composing ? (
