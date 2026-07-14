@@ -17,6 +17,9 @@ export interface Bindings {
   AZURE_OPENAI_ENDPOINT?: string
   AZURE_OPENAI_API_KEY?: string
   AZURE_OPENAI_DEPLOYMENT?: string
+  // Pins the summary provider ('workers' | 'azure'). Unset → Azure when fully configured,
+  // else Workers AI. A pinned-but-unusable value disables summaries rather than falling back.
+  SUMMARY_PROVIDER?: string
   // Optional: when unset, Google OAuth routes are inert (404) and login is bootstrap-only.
   GOOGLE_CLIENT_ID?: string
   GOOGLE_CLIENT_SECRET?: string

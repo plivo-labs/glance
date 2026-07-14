@@ -14,7 +14,8 @@
     "APP_URL": "https://glance.YOUR-SUBDOMAIN.workers.dev", // EDIT: replace with your own (see README)
     "CONTENT_URL": "https://glance-content.YOUR-SUBDOMAIN.workers.dev", // EDIT: replace with your own (see README)
     "ALLOWED_HD": "yourcompany.com", // EDIT: replace with your own (see README)
-    "SUPERADMIN_EMAIL": "you@yourcompany.com" // EDIT: replace with your own (see README)
+    "SUPERADMIN_EMAIL": "you@yourcompany.com", // EDIT: replace with your own (see README)
+    "SUMMARY_PROVIDER": "workers" // pins summaries to Workers AI; flip to "azure" to promote Azure
   },
   // Main worker serves the React SPA as static assets. run_worker_first forces
   // /api/* to Hono BEFORE the asset layer (otherwise SPA fallback returns index.html

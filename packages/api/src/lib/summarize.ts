@@ -18,12 +18,16 @@ type ResolvedAzureConfig = {
 export type SummarizeDeps = {
   ai?: Ai
   azure?: AzureConfig
+  preferred?: string
   fetchImpl?: typeof fetch
   timeoutMs?: number
 }
 
 export function summarizeDeps(
-  env: Pick<Bindings, 'AI' | 'AZURE_OPENAI_ENDPOINT' | 'AZURE_OPENAI_API_KEY' | 'AZURE_OPENAI_DEPLOYMENT'>,
+  env: Pick<
+    Bindings,
+    'AI' | 'AZURE_OPENAI_ENDPOINT' | 'AZURE_OPENAI_API_KEY' | 'AZURE_OPENAI_DEPLOYMENT' | 'SUMMARY_PROVIDER'
+  >,
 ): SummarizeDeps {
   return {
     ai: env.AI,
@@ -32,6 +36,7 @@ export function summarizeDeps(
       apiKey: env.AZURE_OPENAI_API_KEY,
       deployment: env.AZURE_OPENAI_DEPLOYMENT,
     },
+    preferred: env.SUMMARY_PROVIDER,
   }
 }
 
@@ -59,7 +64,16 @@ const readAzure = (azure: AzureConfig | undefined): ResolvedAzureConfig | null =
       }
     : null
 
-export function resolveProvider(deps: Pick<SummarizeDeps, 'ai' | 'azure'>): ProviderKind | null {
+// SUMMARY_PROVIDER pins the provider: a pinned-but-unusable (or unrecognized) value resolves to
+// null rather than silently running the other provider. Unset/blank keeps the auto order:
+// Azure when fully configured, else Workers AI.
+export function resolveProvider(
+  deps: Pick<SummarizeDeps, 'ai' | 'azure' | 'preferred'>,
+): ProviderKind | null {
+  const preferred = deps.preferred?.trim()
+  if (preferred === 'workers') return deps.ai ? 'workers' : null
+  if (preferred === 'azure') return readAzure(deps.azure) ? 'azure' : null
+  if (preferred) return null
   if (readAzure(deps.azure)) return 'azure'
   return deps.ai ? 'workers' : null
 }
