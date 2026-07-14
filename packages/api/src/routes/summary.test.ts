@@ -663,6 +663,12 @@ describe('site summary routes', () => {
     release()
     const generated = await pending
     expect(generated.status).toBe(200)
+    // The POST's own response already reports the post-generation truth: the row it stored is
+    // v4 but the site moved to v5 mid-flight, so the response must not suppress the stale banner.
+    const generatedBody = (await generated.json()) as { stale: boolean; currentVersion: number; meta: { forVersion: number } }
+    expect(generatedBody.stale).toBe(true)
+    expect(generatedBody.currentVersion).toBe(5)
+    expect(generatedBody.meta.forVersion).toBe(4)
     const [stored] = await route.db.select().from(siteSummaries).where(eq(siteSummaries.siteId, siteId))
     expect(stored.contentVersion).toBe(4)
     const followUp = await route.app.request(url, { headers: auth(poster) }, requestEnv)
@@ -670,6 +676,56 @@ describe('site summary routes', () => {
     expect(followUpBody.stale).toBe(true)
     expect(followUpBody.currentVersion).toBe(5)
     expect(followUpBody.meta.forVersion).toBe(4)
+  })
+
+  test('C23b a slow stale generation never overwrites a newer fresh summary and returns the survivor', async () => {
+    const route = await seedApp('slow-poster')
+    const { user: poster, siteId } = route
+    await route.db.update(sites).set({ contentVersion: 4 }).where(eq(sites.id, siteId))
+    await seedFile(route.db, route.r2, siteId, { path: 'index.html', text: '<p>old source</p>' })
+    let release!: () => void
+    let entered!: () => void
+    const paused = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const aiEntered = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const requestEnv = bindings(route.env, {
+      AI: {
+        run: async () => {
+          entered()
+          await paused
+          return { response: 'Slow stale v4 summary' }
+        },
+      },
+      SUMMARY_LIMITER: okLimiter,
+    })
+
+    const pending = route.app.request(url, { method: 'POST', headers: auth(poster), body: '{}' }, requestEnv)
+    await aiEntered
+    // While the v4 generation is stuck in the provider, the site publishes v5 AND a fresh v5
+    // summary lands (another worker finished first).
+    await route.db.update(sites).set({ contentVersion: 5 }).where(eq(sites.id, siteId))
+    await seedSummary(route.db, siteId, { summary: 'Fresh v5 summary', contentVersion: 5, generatedBy: poster })
+    release()
+
+    const response = await pending
+    expect(response.status).toBe(200)
+    const [stored] = await route.db.select().from(siteSummaries).where(eq(siteSummaries.siteId, siteId))
+    expect(stored.summary).toBe('Fresh v5 summary')
+    expect(stored.contentVersion).toBe(5)
+    // The response reports the surviving row, not the discarded stale result.
+    const body = (await response.json()) as {
+      summary: string
+      stale: boolean
+      currentVersion: number
+      meta: { forVersion: number }
+    }
+    expect(body.summary).toBe('Fresh v5 summary')
+    expect(body.stale).toBe(false)
+    expect(body.currentVersion).toBe(5)
+    expect(body.meta.forVersion).toBe(5)
   })
 
   test('C23 concurrent cold POSTs converge on one coherent last-write-wins row', async () => {

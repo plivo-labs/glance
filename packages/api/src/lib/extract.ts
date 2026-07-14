@@ -44,8 +44,9 @@ export async function extractText(entry: EntryFile, body: string): Promise<Extra
   }
 
   // HTMLRewriter handlers observe the input stream, so a collector on the stripping rewriter
-  // would still receive removed script/style/noscript text; pass 1 strips, then pass 2 collects.
-  const stripped = ['script', 'style', 'noscript']
+  // would still receive removed text; pass 1 strips, then pass 2 collects. Hidden containers are
+  // stripped too — invisible text must not crowd the visible content out of the TEXT_CAP.
+  const stripped = ['script', 'style', 'noscript', 'template', '*[hidden]', '*[aria-hidden="true"]']
     .reduce(
       (rewriter, tag) =>
         rewriter.on(tag, {

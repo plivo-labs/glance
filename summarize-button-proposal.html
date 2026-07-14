@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Summarize Button — Consult Synthesis</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,900&family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #f7f3ea;
+    --paper-2: #efe9dc;
+    --ink: #1c1712;
+    --ink-soft: #5c534a;
+    --line: #d8d0c0;
+    --accent: #d94f1e;
+    --accent-soft: #f7dccd;
+    --teal: #1f6e63;
+    --teal-soft: #d9eae6;
+    --gold: #a3742a;
+    --codex: #4a5aa8;
+    --cursor: #8a3d8f;
+    --arbiter: #d94f1e;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'Archivo', sans-serif;
+    font-size: 15.5px;
+    line-height: 1.55;
+    background-image: radial-gradient(circle at 1px 1px, rgba(28,23,18,.05) 1px, transparent 0);
+    background-size: 26px 26px;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 28px 90px; }
+  code, .mono { font-family: 'IBM Plex Mono', monospace; font-size: .86em; }
+  code { background: var(--paper-2); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; white-space: nowrap; }
+
+  @keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+  .r { animation: rise .6s cubic-bezier(.2,.7,.2,1) both; }
+  .d1 { animation-delay: .05s } .d2 { animation-delay: .15s } .d3 { animation-delay: .25s } .d4 { animation-delay: .35s }
+
+  /* ---------- masthead ---------- */
+  header { padding: 54px 0 34px; border-bottom: 3px solid var(--ink); margin-bottom: 44px; }
+  .kicker { font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: .18em; text-transform: uppercase; color: var(--accent); font-weight: 600; margin-bottom: 18px; }
+  .kicker span { color: var(--ink-soft); }
+  .kicker .status { background: var(--ink); color: var(--paper); padding: 3px 10px; border-radius: 3px; letter-spacing: .14em; }
+  .journal { list-style: none; padding-left: 0; }
+  .journal li { position: relative; padding: 0 0 18px 26px; border-left: 2px solid var(--line); margin-left: 6px; font-size: 14px; max-width: 78ch; }
+  .journal li:last-child { padding-bottom: 4px; }
+  .journal li::before { content: ""; position: absolute; left: -6px; top: 4px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); border: 2px solid var(--paper); }
+  .journal .when { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--ink-soft); display: block; margin-bottom: 2px; }
+  h1 { font-family: 'Fraunces', serif; font-weight: 900; font-size: clamp(34px, 5.4vw, 54px); line-height: 1.04; letter-spacing: -.015em; max-width: 20ch; }
+  h1 em { font-style: normal; color: var(--accent); }
+  .sub { max-width: 62ch; margin-top: 18px; color: var(--ink-soft); font-size: 16.5px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
+  .chip { border: 1.5px solid var(--ink); background: #fff; border-radius: 999px; padding: 7px 15px; font-size: 13px; font-weight: 600; box-shadow: 3px 3px 0 var(--ink); }
+  .chip b { font-family: 'IBM Plex Mono', monospace; color: var(--accent); margin-right: 4px; }
+  .chip.ok b { color: var(--teal); }
+
+  /* ---------- sections ---------- */
+  section { margin-bottom: 58px; }
+  h2 { font-family: 'Fraunces', serif; font-weight: 600; font-size: 27px; margin-bottom: 6px; display: flex; align-items: baseline; gap: 12px; }
+  h2 .no { font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: var(--accent); font-weight: 600; }
+  .lede { color: var(--ink-soft); margin-bottom: 22px; max-width: 68ch; }
+
+  /* verdict */
+  .verdict { border: 2px solid var(--ink); background: #fff; box-shadow: 6px 6px 0 var(--accent-soft), 6px 6px 0 1px var(--ink); padding: 26px 28px; }
+  .verdict p { max-width: 70ch; }
+  .verdict .tag { display: inline-block; background: var(--ink); color: var(--paper); font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase; padding: 4px 10px; border-radius: 3px; margin-bottom: 14px; }
+  .verdict .caveat { margin-top: 14px; padding: 12px 16px; background: var(--paper-2); border-left: 3px solid var(--gold); font-size: 14px; color: var(--ink-soft); }
+
+  /* voices */
+  .voices { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 20px; }
+  .voice { background: #fff; border: 1.5px solid var(--line); border-top: 4px solid; border-radius: 6px; padding: 14px 16px; font-size: 13.5px; }
+  .voice h4 { font-family: 'IBM Plex Mono', monospace; font-size: 12px; text-transform: uppercase; letter-spacing: .1em; margin-bottom: 6px; }
+  .voice.v-codex { border-top-color: var(--codex); } .voice.v-codex h4 { color: var(--codex); }
+  .voice.v-cursor { border-top-color: var(--cursor); } .voice.v-cursor h4 { color: var(--cursor); }
+  .voice.v-arb { border-top-color: var(--arbiter); } .voice.v-arb h4 { color: var(--arbiter); }
+  .voice p { color: var(--ink-soft); }
+
+  /* consensus grid */
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .card { background: #fff; border: 1.5px solid var(--line); border-radius: 6px; padding: 16px 18px; }
+  .card h3 { font-size: 15px; font-weight: 700; margin-bottom: 5px; display: flex; gap: 8px; align-items: baseline; }
+  .card h3::before { content: "✓"; color: var(--teal); font-weight: 900; }
+  .card p { font-size: 13.5px; color: var(--ink-soft); }
+
+  /* disagreements */
+  .dis { background: #fff; border: 1.5px solid var(--line); border-radius: 6px; margin-bottom: 14px; overflow: hidden; }
+  .dis-head { padding: 13px 18px; font-weight: 700; font-size: 15px; border-bottom: 1px dashed var(--line); background: var(--paper-2); }
+  .dis-body { display: grid; grid-template-columns: 1fr 1fr 1.2fr; }
+  .dis-cell { padding: 14px 18px; font-size: 13.5px; color: var(--ink-soft); }
+  .dis-cell + .dis-cell { border-left: 1px dashed var(--line); }
+  .dis-cell b.who { display: block; font-family: 'IBM Plex Mono', monospace; font-size: 11px; text-transform: uppercase; letter-spacing: .1em; margin-bottom: 5px; }
+  .dis-cell.c-codex b.who { color: var(--codex); } .dis-cell.c-cursor b.who { color: var(--cursor); }
+  .dis-cell.c-arb { background: var(--accent-soft); color: var(--ink); }
+  .dis-cell.c-arb b.who { color: var(--accent); }
+
+  /* ---------- architecture flow ---------- */
+  .flow { background: var(--ink); border-radius: 10px; padding: 30px 26px; color: var(--paper); overflow-x: auto; }
+  .flow-rail { display: flex; align-items: stretch; gap: 0; min-width: 820px; }
+  .fnode { background: #2a231c; border: 1px solid #4a4036; border-radius: 8px; padding: 12px 14px; flex: 1; min-width: 118px; }
+  .fnode h5 { font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: #f0a47e; margin-bottom: 5px; font-weight: 600; }
+  .fnode p { font-size: 11.5px; color: #b8ac9d; line-height: 1.45; }
+  .fnode.hot { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .farrow { display: flex; align-items: center; padding: 0 8px; color: #7d7163; flex-direction: column; justify-content: center; gap: 3px; }
+  .farrow .lbl { font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: .05em; color: #9a8d7c; white-space: nowrap; }
+  .farrow .ar { font-size: 16px; color: var(--accent); }
+  .flow-note { margin-top: 18px; padding-top: 14px; border-top: 1px dashed #4a4036; font-size: 12.5px; color: #b8ac9d; display: flex; gap: 26px; flex-wrap: wrap; }
+  .flow-note b { color: #f0a47e; font-weight: 600; }
+  .flow-note code { background: #2a231c; border-color: #4a4036; color: #e8ddcd; }
+
+  /* ---------- wireframes ---------- */
+  .wire { border: 2px solid var(--ink); border-radius: 10px; background: #fff; box-shadow: 6px 6px 0 var(--teal-soft), 6px 6px 0 1px var(--ink); overflow: hidden; margin-bottom: 26px; }
+  .wire-label { font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; background: var(--ink); color: var(--paper); padding: 7px 14px; }
+  .wire-label span { color: #f0a47e; }
+
+  /* mock viewer */
+  .mock-top { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-bottom: 1.5px solid var(--line); font-size: 12px; background: var(--paper); }
+  .mock-dot { width: 9px; height: 9px; border-radius: 2px; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+  .mock-brand { font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 12.5px; }
+  .mock-crumb { color: var(--ink-soft); }
+  .mock-actions { margin-left: auto; display: flex; gap: 7px; align-items: center; }
+  .mbtn { border: 1px solid var(--line); border-radius: 5px; padding: 4px 10px; font-size: 11.5px; color: var(--ink-soft); background: #fff; white-space: nowrap; }
+  .mbtn.primary { border: 1.5px solid var(--accent); color: var(--accent); font-weight: 700; background: var(--accent-soft); }
+  .mock-body { display: grid; grid-template-columns: 1fr 300px; min-height: 240px; }
+  .mock-canvas { background: repeating-linear-gradient(-45deg, var(--paper-2), var(--paper-2) 1px, transparent 1px, transparent 9px); display: flex; align-items: center; justify-content: center; color: var(--ink-soft); font-size: 12px; font-family: 'IBM Plex Mono', monospace; }
+  .sheet { border-left: 2px solid var(--ink); padding: 16px; background: #fff; }
+  .sheet-h { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .sheet-h b { font-family: 'Fraunces', serif; font-size: 16px; }
+  .pill { font-family: 'IBM Plex Mono', monospace; font-size: 10px; padding: 3px 8px; border-radius: 999px; border: 1px solid; }
+  .pill.ai { color: var(--teal); border-color: var(--teal); background: var(--teal-soft); }
+  .sheet p { font-size: 12.5px; color: var(--ink-soft); margin-bottom: 8px; }
+  .sheet ul { font-size: 12.5px; color: var(--ink-soft); padding-left: 18px; margin-bottom: 12px; }
+  .sheet ul li { margin-bottom: 4px; }
+  .sheet-foot { display: flex; justify-content: space-between; align-items: center; border-top: 1px dashed var(--line); padding-top: 10px; font-size: 11px; color: var(--ink-soft); }
+
+  /* state cards */
+  .states { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 26px; }
+  .state { border: 1.5px solid var(--line); border-radius: 8px; background: #fff; overflow: hidden; }
+  .state-tag { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; padding: 6px 12px; border-bottom: 1px solid var(--line); background: var(--paper-2); color: var(--ink-soft); }
+  .state-body { padding: 14px; font-size: 12px; color: var(--ink-soft); min-height: 128px; }
+  .state-body .big { font-size: 12.5px; color: var(--ink); font-weight: 600; margin-bottom: 6px; }
+  .sbtn { display: inline-block; margin-top: 10px; border: 1.5px solid var(--accent); color: var(--accent); background: var(--accent-soft); border-radius: 5px; padding: 4px 10px; font-size: 11.5px; font-weight: 700; }
+  .sbtn.ghost { border-color: var(--line); color: var(--ink-soft); background: #fff; font-weight: 500; }
+  .stale-band { background: #fdf3e0; border: 1px solid var(--gold); color: var(--gold); border-radius: 4px; padding: 5px 8px; font-size: 11px; margin-bottom: 8px; }
+  .dim { opacity: .45; }
+  .spin { display: inline-block; width: 11px; height: 11px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: whirl 1s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  @keyframes whirl { to { transform: rotate(360deg); } }
+
+  /* dashboard mock */
+  .mock-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .mock-table th { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-soft); text-align: left; padding: 9px 14px; border-bottom: 1.5px solid var(--line); font-weight: 500; }
+  .mock-table td { padding: 10px 14px; border-bottom: 1px solid var(--paper-2); }
+  .mock-table tr.hi { background: var(--accent-soft); }
+  .spark { color: var(--accent); font-weight: 700; cursor: default; }
+  .vis-badge { font-family: 'IBM Plex Mono', monospace; font-size: 10px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; color: var(--ink-soft); }
+  .callout-line { font-size: 12px; color: var(--accent); font-family: 'IBM Plex Mono', monospace; padding: 8px 14px; background: var(--accent-soft); border-top: 1px dashed var(--accent); }
+
+  /* ---------- plan ---------- */
+  .plan { width: 100%; border-collapse: collapse; background: #fff; border: 1.5px solid var(--line); border-radius: 8px; overflow: hidden; font-size: 13.5px; }
+  .plan th { font-family: 'IBM Plex Mono', monospace; font-size: 11px; text-transform: uppercase; letter-spacing: .09em; text-align: left; padding: 11px 16px; background: var(--ink); color: var(--paper); font-weight: 500; }
+  .plan td { padding: 12px 16px; border-bottom: 1px solid var(--paper-2); vertical-align: top; }
+  .plan td:first-child { font-family: 'IBM Plex Mono', monospace; color: var(--accent); font-weight: 600; white-space: nowrap; }
+  .plan .why { color: var(--ink-soft); font-size: 12.5px; }
+
+  /* gotchas */
+  .gotchas li { margin-bottom: 10px; max-width: 75ch; }
+  .gotchas { padding-left: 20px; }
+  .gotchas li::marker { color: var(--accent); }
+  .gotchas b { font-weight: 700; }
+
+  footer { border-top: 3px solid var(--ink); padding-top: 18px; font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: var(--ink-soft); display: flex; flex-wrap: wrap; gap: 8px 24px; }
+
+  @media (max-width: 820px) {
+    .voices, .grid, .states { grid-template-columns: 1fr; }
+    .dis-body { grid-template-columns: 1fr; }
+    .dis-cell + .dis-cell { border-left: 0; border-top: 1px dashed var(--line); }
+    .mock-body { grid-template-columns: 1fr; }
+    .sheet { border-left: 0; border-top: 2px solid var(--ink); }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="r">
+  <div class="kicker">Proposal <span>· glance · updated 2026-07-11 · round 5 · codex + cursor + arbiter ·</span> <span class="status">decided</span></div>
+  <h1>Ship the Summarize button — <em>thin, on-demand, cached by version</em>.</h1>
+  <p class="sub">Three independent reviews of the "AI summary per hosted site" idea converged on the same core architecture. Build it as a lazy button, not an upload hook. The disagreements were about plumbing — adjudicated below.</p>
+  <div class="chips">
+    <div class="chip ok"><b>3/3</b> voices say build it</div>
+    <div class="chip ok"><b>6</b> unanimous design points</div>
+    <div class="chip"><b>6</b> decisions ruled</div>
+    <div class="chip"><b>5</b> rounds</div>
+    <div class="chip"><b>4.1-mini</b> primary · 70B fallback</div>
+    <div class="chip ok"><b>0</b> new infra (AI already bound)</div>
+  </div>
+</header>
+
+<section class="r d1">
+  <h2><span class="no">01</span>Verdict</h2>
+  <div class="verdict">
+    <span class="tag">Build — with a narrow scope</span>
+    <p>Worth building as an <b>on-demand feature</b>: a button that summarizes the site's HTML via Azure OpenAI when configured (Workers AI fallback for keyless forks), stores the result against the site's <code>contentVersion</code>, and regenerates only when the content — or the summarization prompt — actually changes (a quiet forced escape exists; see the round-2 ruling). Workers AI is already live in prod (voice-comment transcription), so this is one migration, two pure helpers, one route, and one sheet component — no new infrastructure.</p>
+    <div class="caveat"><b>Honest caveat (both external voices raised it):</b> value is narrower than it sounds. Chart/JS-heavy dashboards extract poorly server-side (JS never renders) and audio sites have nothing to summarize. It shines for text-heavy explainers — still a large slice of what Glance hosts. Cost is a non-issue when cached.</div>
+  </div>
+  <div class="voices">
+    <div class="voice v-codex"><h4>codex · gpt-5.6 xhigh</h4><p>"Narrow but real value — helps reviewers triage before opening. Viable only if strictly on-demand." Priced it: ~102 neurons per summary on a 3B model.</p></div>
+    <div class="voice v-cursor"><h4>cursor · grok-4.5</h4><p>"Weak product fit as auto-summarize; a thin on-demand, cache-by-contentVersion experiment is fine. A confident wrong summary is worse than none."</p></div>
+    <div class="voice v-arb"><h4>arbiter · claude</h4><p>Build the thin version. The AI binding, the invalidation key, and the access gate all already exist — the feature is mostly wiring, so the narrow value is worth the small cost.</p></div>
+  </div>
+</section>
+
+<section class="r d2">
+  <h2><span class="no">02</span>Unanimous — all three voices</h2>
+  <p class="lede">Where all three reviews landed independently. Treat these as settled.</p>
+  <div class="grid">
+    <div class="card"><h3>API worker only</h3><p>Never the content worker — it is a deliberately thin, cookie-less serve path with no AI binding.</p></div>
+    <div class="card"><h3>On-demand, never on-upload</h3><p>Agents redeploy constantly; eager generation burns neurons on versions nobody reads. No <code>waitUntil</code>, no upload-path coupling.</p></div>
+    <div class="card"><h3><code>contentVersion</code> is the cache key</h3><p>Already bumped on every replace and CAS-protected (<code>upload.ts</code>); rename/visibility PATCH doesn't touch it. Stored ≠ current → stale, never silently served as fresh.</p></div>
+    <div class="card"><h3>HTMLRewriter extraction</h3><p>Drop <code>script/style</code>, collect text, hard-cap ~8–16k chars. Reuse <code>resolveIndexPath</code> for the entry file; pure-audio sites short-circuit with zero AI calls.</p></div>
+    <div class="card"><h3>Auth = <code>checkAccess</code></h3><p>Same gate as viewing the site (<code>lib/access.ts</code>, the single source of truth). Version derived server-side, never trusted from the client.</p></div>
+    <div class="card"><h3>Mirror <code>transcribeVoice</code></h3><p>Pure <code>lib/summarize.ts</code>, never throws, degrades to "unavailable" without the binding — the established Workers-AI pattern in this repo.</p></div>
+  </div>
+</section>
+
+<section class="r d2">
+  <h2><span class="no">03</span>Splits — and the calls</h2>
+  <p class="lede">Four genuine disagreements between codex and cursor. The highlighted column is the arbiter ruling.</p>
+
+  <div class="dis">
+    <div class="dis-head">Generation: Queues vs synchronous request</div>
+    <div class="dis-body">
+      <div class="dis-cell c-codex"><b class="who">codex</b>Queue-backed jobs with claim/lease semantics; waitUntil only guarantees 30s.</div>
+      <div class="dis-cell c-cursor"><b class="who">cursor</b>Single blocking POST; repo has no queue infra, don't invent one for v1.</div>
+      <div class="dis-cell c-arb"><b class="who">ruling → synchronous</b>One R2 get + one AI call is a few seconds. Queues means a new binding, a consumer, and polling UX with no payoff. The 30s concern only applies to the on-upload path everyone already rejected.</div>
+    </div>
+  </div>
+
+  <div class="dis">
+    <div class="dis-head">Storage: columns on <code>sites</code> vs new table</div>
+    <div class="dis-body">
+      <div class="dis-cell c-cursor"><b class="who">cursor</b>Nullable <code>summaryText</code> / <code>summaryForVersion</code> columns on <code>sites</code> — joins with feeds.</div>
+      <div class="dis-cell c-codex"><b class="who">codex</b>Dedicated <code>site_summaries</code> table with status, model, coverage metadata.</div>
+      <div class="dis-cell c-arb"><b class="who">ruling → new table</b><code>site_summaries</code> (siteId unique, summary, contentVersion, model, generatedBy, truncated, createdAt). Keeps the hot <code>sites</code> row lean; feeds don't want summary text anyway.</div>
+    </div>
+  </div>
+
+  <div class="dis">
+    <div class="dis-head">Dashboard entry point: yes or viewer-only</div>
+    <div class="dis-body">
+      <div class="dis-cell c-cursor"><b class="who">cursor</b>Viewer-only; dashboard rows are too dense for AI blurbs.</div>
+      <div class="dis-cell c-codex"><b class="who">codex</b>One reusable sheet, opened from a dashboard row action and the viewer top bar.</div>
+      <div class="dis-cell c-arb"><b class="who">ruling → both, one sheet</b>The ask was per-site. A small sparkle row action opens the same sheet the viewer uses — density solved, no second surface built.</div>
+    </div>
+  </div>
+
+  <div class="dis">
+    <div class="dis-head">Who can regenerate</div>
+    <div class="dis-body">
+      <div class="dis-cell c-codex"><b class="who">codex</b>First summary: any viewer. Force-regen: <code>canReplace</code> users only (quota griefing).</div>
+      <div class="dis-cell c-cursor"><b class="who">cursor</b>View-gate everything, add a rate limit; internal team.</div>
+      <div class="dis-cell c-arb"><b class="who">ruling → any viewer + rate limit</b>Internal team, no griefing surface. The canReplace gate would also require plumbing a capability the viewer payload doesn't expose today.</div>
+    </div>
+  </div>
+
+  <div class="dis">
+    <div class="dis-head">Round 2 · Regenerate while fresh? — "one summary per deployment"</div>
+    <div class="dis-body">
+      <div class="dis-cell c-cursor"><b class="who">cursor</b>Always allow — POST always regenerates; staleness is a signal, not a gate. A trapped garbage summary must not need a fake redeploy to fix.</div>
+      <div class="dis-cell c-codex"><b class="who">codex</b>Fresh POST returns cached; explicit <code>force:true</code> regenerates. Model/prompt version joins the freshness check; generation lease for races.</div>
+      <div class="dis-cell c-arb"><b class="who">ruling → one per deploy by default, quiet escape</b>Server-enforced: a fresh POST returns the cache with zero AI calls — idempotent and race-safe by construction. <code>force:true</code> hides behind a quiet "Regenerate anyway". Stale = <code>contentVersion</code> OR <code>promptVersion</code> mismatch, so a prompt fix surfaces "Update" everywhere without redeploys. A failed run is retryable and never overwrites a good summary. Codex's lease machinery rejected — overkill at team scale.</div>
+    </div>
+  </div>
+
+  <div class="dis">
+    <div class="dis-head">Round 4 · Azure OpenAI (company key) vs Workers AI</div>
+    <div class="dis-body">
+      <div class="dis-cell c-cursor"><b class="who">cursor</b>Azure-only, gated Google-style (<code>isSummaryEnabled</code>); forks without a key simply lack the feature. Dual provider = two prompt/eval matrices, not worth it in v1.</div>
+      <div class="dis-cell c-codex"><b class="who">codex</b>Conditional fallback: Azure gpt-4.1-mini when the three secrets exist, else Workers AI llama-70B, else unavailable. Never fail over mid-request. Matches the repo's optional-binding idiom.</div>
+      <div class="dis-cell c-arb"><b class="who">ruling → Azure primary, Workers AI fallback</b>All voices: Azure wins on quality and isolates quota from Whisper; Whisper stays put. Fallback kept (2–1): the prompt is identical text-in/text-out, the fallback model is what we'd have shipped anyway, and the self-hostable template gets Summarize at zero config via the already-committed AI binding. Provider resolved per attempt — an Azure error is a retryable failure, never a silent downgrade. Provider + model stamped on the row; freshness stays version + promptVersion.</div>
+    </div>
+  </div>
+
+  <div class="dis">
+    <div class="dis-head">Round 5 · "Ask AI" free-form questions — instead of, or with, the summary?</div>
+    <div class="dis-body">
+      <div class="dis-cell c-cursor"><b class="who">cursor</b>Summary-only v1. Triage is the scarce need; Ask is ChatPDF-on-a-page-you're-reading, breaks the cache economics, and the ~12k entry-file extract can't honestly answer "where is X" on multi-file sites. Injection worse (question + content both untrusted).</div>
+      <div class="dis-cell c-codex"><b class="who">codex</b>Summary-only v1 — reviewer-question demand is a hypothesis with no evidence in the review loop. But design the generator as <code>answerFromSite(task, context)</code> so Summary IS the fixed-prompt case; instrument usage; add Ask later if demand shows.</div>
+      <div class="dis-cell c-arb"><b class="who">ruling → summary v1, Ask designed-for but deferred</b>Both externals converge; arbiter's initial "both now" lean conceded. The generator ships as fixed-prompt Q&A internally, so Ask later = one ephemeral rate-limited route + a textarea in the same sheet (summary pinned top, no history, no answer cache, explicit "entry page only" scope). Trigger to build it: reviewers repeatedly asking the same questions a summary doesn't answer.</div>
+    </div>
+  </div>
+</section>
+
+<section class="r d3">
+  <h2><span class="no">04</span>Architecture — one request, cached forever per version</h2>
+  <p class="lede">POST <code>/api/sites/:space/:site/summary</code> on the main API worker. GET returns cache state without generating.</p>
+  <div class="flow">
+    <div class="flow-rail">
+      <div class="fnode"><h5>Button</h5><p>Viewer top bar or dashboard row → opens Summary sheet</p></div>
+      <div class="farrow"><span class="ar">→</span><span class="lbl">POST /summary</span></div>
+      <div class="fnode"><h5>checkAccess</h5><p>lib/access.ts — same gate as viewing; 403 = zero AI calls</p></div>
+      <div class="farrow"><span class="ar">→</span><span class="lbl">D1</span></div>
+      <div class="fnode hot"><h5>cache check</h5><p>contentVersion + promptVersion match → return cached, zero AI (force:true bypasses)</p></div>
+      <div class="farrow"><span class="ar">→</span><span class="lbl">miss · R2 get</span></div>
+      <div class="fnode"><h5>extract</h5><p>entry file via resolveIndexPath → HTMLRewriter strips to text, cap ~12k chars</p></div>
+      <div class="farrow"><span class="ar">→</span><span class="lbl">env.AI.run</span></div>
+      <div class="fnode"><h5>summarize provider</h5><p>Azure gpt-4.1-mini when secrets set → Workers AI llama-70B fallback; hardened prompt, never throws</p></div>
+      <div class="farrow"><span class="ar">→</span><span class="lbl">upsert</span></div>
+      <div class="fnode"><h5>store + return</h5><p>upsert keyed on siteId, stamped with the version it summarized</p></div>
+    </div>
+    <div class="flow-note">
+      <span><b>Invalidation:</b> implicit — version or promptVersion mismatch ⇒ stale + Update</span>
+      <span><b>Failure:</b> retryable, never overwrites a good summary</span>
+      <span><b>Audio-only site:</b> 422 "nothing to summarize", no AI call</span>
+      <span><b>No binding:</b> <code>{status:'unavailable'}</code>, honest empty state</span>
+    </div>
+  </div>
+</section>
+
+<section class="r d3">
+  <h2><span class="no">05</span>Wireframes</h2>
+  <p class="lede">One SummarySheet component, two entry points. Mocks below mirror the real viewer chrome.</p>
+
+  <div class="wire">
+    <div class="wire-label">Viewer · <span>TL;DR button in the top bar → right sheet</span></div>
+    <div class="mock-top">
+      <div class="mock-dot"></div><span class="mock-brand">glance</span>
+      <span class="mock-crumb">› eng / perf-audit-q3</span>
+      <div class="mock-actions">
+        <span class="mbtn">⌘K</span><span class="mbtn">Full · Wide · Read</span>
+        <span class="mbtn primary">✦ TL;DR</span>
+        <span class="mbtn">💬 Comments 3</span><span class="mbtn">Share</span>
+      </div>
+    </div>
+    <div class="mock-body">
+      <div class="mock-canvas">site iframe</div>
+      <div class="sheet">
+        <div class="sheet-h"><b>Summary</b><span class="pill ai">AI · v12</span></div>
+        <p>This dashboard audits Q3 API latency across the CX stack.</p>
+        <ul>
+          <li>p99 regressed 40% after the June D1 migration</li>
+          <li>R2 reads are serial on the dashboard loader</li>
+          <li>Proposes batching + moving blocking loaders off FCP</li>
+        </ul>
+        <div class="sheet-foot"><span>Generated 2h ago</span><span class="sbtn ghost">Regenerate anyway</span></div>
+        <div class="dim" style="margin-top:10px; border:1px dashed var(--line); border-radius:5px; padding:6px 9px; font-size:11px;">v2 · Ask about this page… (deferred — round 5)</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="states">
+    <div class="state">
+      <div class="state-tag">1 · no summary</div>
+      <div class="state-body">
+        <div class="big">No summary yet.</div>
+        Reads the page and pulls out the key points.
+        <br><span class="sbtn">✦ Summarize</span>
+      </div>
+    </div>
+    <div class="state">
+      <div class="state-tag">2 · generating</div>
+      <div class="state-body">
+        <div class="big"><span class="spin"></span>Summarizing…</div>
+        Single blocking request, a few seconds. Spinner, no fake streaming.
+      </div>
+    </div>
+    <div class="state">
+      <div class="state-tag">3 · ready (fresh)</div>
+      <div class="state-body">
+        <div class="big">Key points + label</div>
+        "AI-generated · v12" pill. Fresh POST returns cache — one summary per deploy by default.
+        <br><span class="sbtn ghost">Regenerate anyway</span>
+      </div>
+    </div>
+    <div class="state">
+      <div class="state-tag">4 · stale</div>
+      <div class="state-body">
+        <div class="stale-band">⚠ Written for v11 — site is v12</div>
+        <span class="dim">Redeploy or prompt upgrade. Old text dimmed, never as current.</span>
+        <br><span class="sbtn">↻ Update summary</span>
+      </div>
+    </div>
+    <div class="state">
+      <div class="state-tag">5 · failed</div>
+      <div class="state-body">
+        <div class="big">Generation failed.</div>
+        <span class="dim">Previous summary stays — a bad run never overwrites a good one.</span>
+        <br><span class="sbtn">↻ Try again</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="wire">
+    <div class="wire-label">Dashboard · <span>sparkle row action opens the same sheet</span></div>
+    <table class="mock-table">
+      <thead><tr><th>Name</th><th>URL</th><th>Visibility</th><th>Created</th><th></th></tr></thead>
+      <tbody>
+        <tr class="hi">
+          <td>perf-audit-q3 <span class="spark">✦</span></td>
+          <td class="mono">glance.plivo.com/eng/perf-audit-q3</td>
+          <td><span class="vis-badge">team</span></td>
+          <td>2d ago</td>
+          <td><span class="mbtn">Open</span> <span class="mbtn">⋯</span></td>
+        </tr>
+        <tr>
+          <td>voice-comments-demo</td>
+          <td class="mono">glance.plivo.com/eng/voice-demo</td>
+          <td><span class="vis-badge">private</span></td>
+          <td>5d ago</td>
+          <td><span class="mbtn">Open</span> <span class="mbtn">⋯</span></td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="callout-line">✦ shown when a cached summary exists; otherwise "Summarize" lives in the ⋯ kebab — rows stay dense-free</div>
+  </div>
+</section>
+
+<section class="r d4">
+  <h2><span class="no">06</span>Implementation plan</h2>
+  <table class="plan">
+    <thead><tr><th>Step</th><th>What</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Migration: <code>site_summaries</code></td><td class="why">siteId unique · summary · contentVersion · promptVersion · model · status · generatedBy · truncated · createdAt. Append to the harness <code>MIGRATIONS</code> array (S-MIGRATE seam).</td></tr>
+      <tr><td>2</td><td><code>lib/extract.ts</code> + <code>lib/summarize.ts</code></td><td class="why">HTMLRewriter text extraction (capped) and the generator — designed as fixed-prompt Q&A (<code>answerFromSite(task, context)</code>) so a future Ask is a bolt-on, not a rewrite. Both pure, never throw, unit-tested in plain bun.</td></tr>
+      <tr><td>3</td><td><code>GET/POST /api/sites/:space/:site/summary</code></td><td class="why">Gated by <code>checkAccess</code>. Fresh POST → cached, zero AI calls (assert with harness AI/R2 spies); <code>force:true</code> regenerates; failed rows retryable, never clobber a good summary.</td></tr>
+      <tr><td>4</td><td><code>SummarySheet</code> component</td><td class="why">Wired into ViewerTopBar + dashboard row action; four states above; uses the <code>api</code> helper (never <code>useFetcher</code> for /api/*).</td></tr>
+      <tr><td>5</td><td>Local dev + model const</td><td class="why">Provider seam in <code>lib/summarize.ts</code>: Azure OpenAI (<code>AZURE_OPENAI_ENDPOINT/KEY/DEPLOYMENT</code> via <code>wrangler secret put</code>, gpt-4.1-mini deployment, bounded timeout + one 429/5xx retry) when configured, else Workers AI <code>@cf/meta/llama-3.3-70b-instruct-fp8-fast</code> (~142 neurons, ~70/day free). Sync the stale skip-worktree wrangler.jsonc (<code>ai</code> binding) + <code>cf-typegen</code>. <code>PROMPT_VERSION</code> const; provider+model stamped per row.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="r d4">
+  <h2><span class="no">07</span>Decision journal</h2>
+  <ul class="journal">
+    <li><span class="when">2026-07-11 · round 1</span>Idea consulted (codex + cursor). Verdict: build thin and on-demand. Four splits ruled: synchronous over Queues, dedicated <code>site_summaries</code> table, one sheet serving both dashboard and viewer, any-viewer regen with rate limit. Wireframes drawn; page published.</li>
+    <li><span class="when">2026-07-11 · round 2</span>Regen policy questioned: should Regenerate appear only after a redeploy (one summary per deployment)? All three voices rejected a hard lock (garbage-summary trap, prompt-upgrade freeze). Ruled: fresh POST returns cache server-side — one-per-deploy as the enforced default — with a quiet <code>force:true</code> escape, <code>promptVersion</code> in the freshness check, and retryable failures that never overwrite a good summary. Failed state added to the wireframes.</li>
+    <li><span class="when">2026-07-11 · round 3</span>Model pinned: <code>@cf/meta/llama-3.3-70b-instruct-fp8-fast</code>. Caching makes volume tiny, so quality outranks cost — a confident wrong summary is worse than none, and 70B extracts faithfully and resists injection far better than the 8B class. ~142 neurons/summary ≈ 70/day free alongside Whisper; scout-17B (131k ctx) and gpt-oss-20b noted as one-line swaps.</li>
+    <li><span class="when">2026-07-11 · round 4</span>Company Azure OpenAI key surfaced. Consulted: all voices prefer Azure for quality + quota isolation from Whisper; split on fallback (cursor: Azure-only feature gate; codex + arbiter: conditional fallback). Ruled 2–1: Azure gpt-4.1-mini primary, Workers AI 70B fallback for keyless forks, provider resolved per attempt (no mid-request failover), provider+model stamped per row. Whisper stays on Workers AI. Round-3 model pin demoted to fallback.</li>
+    <li><span class="when">2026-07-11 · round 5</span>"Ask AI" direction consulted: instead of, or with, the summary? Both externals ruled summary-only for v1 (no evidence of reviewer-question demand; per-question cost breaks the cache economics; the entry-file extract can't honestly answer multi-file questions; injection surface doubles). Arbiter conceded its "both now" lean. Generator designed as fixed-prompt Q&A so Ask bolts on later: same sheet, ephemeral answers, own rate limit, explicit scope label. Build trigger: repeated reviewer questions a summary doesn't answer.</li>
+    <li><span class="when">2026-07-11 · decided</span>All questions closed — status flipped to decided. Implementation worktree created: branch <code>site-summary</code> at <code>glance-site-summary/</code>, bootstrapped (bun install, cf-typegen, 643 api + 156 web tests green). Two stale-local skip-worktree drifts fixed during bootstrap: the <code>ai</code> binding and the <code>media-src</code> CSP directive synced into the local configs.</li>
+    <li><span class="when">2026-07-11 · plan + tracker</span>Implementation planned via /write-plan-progress: plan consensus-reviewed by three voices (codex gpt-5.6 xhigh, cursor grok-4.5, arbiter), 35 TDD cases survived a second adversarial consult. Two amendments at sign-off: the generator ships as a plain <code>summarizeSite()</code> — r5's <code>answerFromSite</code> internal shape was dropped by user ruling — and rate limiting uses a <code>SUMMARY_LIMITER</code> Workers binding (the upload.ts idiom) rather than a row-timestamp cooldown. Live tracker: <a href="https://glance.plivo.com/samuel-lawerence/site-summary-progress">site-summary-progress</a>.</li>
+  </ul>
+</section>
+
+<section class="r d4">
+  <h2><span class="no">08</span>Gotchas carried out of the consult</h2>
+  <ul class="gotchas">
+    <li><b>The committed wrangler.jsonc already binds AI</b> (<code>"ai": { "binding": "AI", "remote": true }</code>) — both external agents false-flagged it missing because the local skip-worktree copy is stale. Verified against git HEAD.</li>
+    <li><b>Prompt injection (codex):</b> uploaded HTML is untrusted prompt input. Low blast radius (no tools), mitigated with a hardened system prompt + a visible "AI-generated" label.</li>
+    <li><b>Neuron pool is shared with Whisper</b> voice transcription — caching by version is what keeps this free-tier viable (~142 neurons per summary on the 70B model, ~70/day headroom).</li>
+    <li><b>Server never renders JS</b> — extraction sees uploaded source only. Chart-heavy pages summarize thin; audio-only sites must short-circuit.</li>
+    <li><b>Keep the content worker out of it</b> — anything imported into <code>schema.ts</code> ships in the content-worker bundle; the new table is fine, heavy imports are not.</li>
+    <li><b>Azure is a new content processor</b> for internal HTML (codex) — confirm the deployment's data region/retention is company-approved before setting the secrets; presence of the secrets is the opt-in. Validate 4.1-mini vs 70B on real Glance pages during implementation before final commit.</li>
+  </ul>
+</section>
+
+<footer class="r d4">
+  <span>consult: codex gpt-5.6 xhigh · cursor grok-4.5 · arbiter claude</span>
+  <span>raw: /tmp/consult-glance-summarize/</span>
+  <span>repo: plivo-labs/glance @ main</span>
+  <span>key files: upload.ts · schema.ts · access.ts · transcribe.ts · ViewerTopBar.tsx</span>
+</footer>
+
+</div>
+</body>
+</html>

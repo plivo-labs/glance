@@ -91,6 +91,28 @@ const readWorkersSummary = (value: unknown): string => {
 
 type ChatRequest = { messages: Array<{ role: string; content: string }>; max_tokens: number }
 
+const DEFAULT_TIMEOUT_MS = 30_000
+
+class HttpStatusError extends Error {
+  constructor(readonly status: number) {
+    super(`http ${status}`)
+  }
+}
+
+/** Race `work` against a deadline. The loser's eventual rejection is swallowed so an abort after
+ *  the race settles can never surface as an unhandled rejection. */
+function withDeadline<T>(work: Promise<T>, ms: number, onTimeout?: () => void): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>
+  const timedOut = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      onTimeout?.()
+      reject(new Error('deadline exceeded'))
+    }, ms)
+  })
+  work.catch(() => {})
+  return Promise.race([work, timedOut]).finally(() => clearTimeout(timer))
+}
+
 async function summarizeViaAzure(
   azure: ResolvedAzureConfig,
   request: ChatRequest,
@@ -107,26 +129,25 @@ async function summarizeViaAzure(
   }
 
   for (let attempt = 0; ; attempt++) {
+    // One deadline per attempt covering the WHOLE exchange — a response that streams headers and
+    // then stalls its body must time out just like one that never sends headers. The controller
+    // additionally cancels the network work when the deadline fires.
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), deps.timeoutMs ?? 30_000)
-    let response: Response
-    try {
-      response = await (deps.fetchImpl ?? globalThis.fetch)(url, { ...init, signal: controller.signal })
-    } catch {
-      return { ok: false }
-    } finally {
-      clearTimeout(timeout)
-    }
-    if (!response.ok) {
-      const retryable = response.status === 429 || (response.status >= 500 && response.status < 600)
-      if (attempt === 0 && retryable) continue
-      return { ok: false }
-    }
-
     let value: unknown
     try {
-      value = await response.json()
-    } catch {
+      value = await withDeadline(
+        (async () => {
+          const response = await (deps.fetchImpl ?? globalThis.fetch)(url, { ...init, signal: controller.signal })
+          if (!response.ok) throw new HttpStatusError(response.status)
+          return (await response.json()) as unknown
+        })(),
+        deps.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        () => controller.abort(),
+      )
+    } catch (error) {
+      const retryable =
+        error instanceof HttpStatusError && (error.status === 429 || (error.status >= 500 && error.status < 600))
+      if (attempt === 0 && retryable) continue
       return { ok: false }
     }
     const summary = readAzureSummary(value)
@@ -158,7 +179,7 @@ export async function summarizeSite(
 
   let value: unknown
   try {
-    value = await deps.ai!.run(WORKERS_MODEL, request)
+    value = await withDeadline(Promise.resolve(deps.ai!.run(WORKERS_MODEL, request)), deps.timeoutMs ?? DEFAULT_TIMEOUT_MS)
   } catch {
     return { ok: false }
   }

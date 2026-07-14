@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 import { files, siteSummaries, sites, spaces, type SiteSummary } from '../db/schema'
 import { extractText, isSupportedEntry, pickEntry } from '../lib/extract'
@@ -52,21 +52,39 @@ const SUMMARY_COLUMNS = {
   updatedAt: siteSummaries.updatedAt,
 }
 
-async function gated(c: Context<AppEnv>): Promise<{ site: ResolvedSite; row: SiteSummary | undefined } | Response> {
+type EntryFileRow = { path: string; mimeType: string | null; storageKey: string }
+
+async function gated(
+  c: Context<AppEnv>,
+  { withFiles = false } = {},
+): Promise<{ site: ResolvedSite; row: SiteSummary | undefined; fileRows: EntryFileRow[] } | Response> {
   const db = c.get('db')
   const { space, site: siteSlug } = c.req.param()
+  const bySlugs = and(eq(spaces.slug, space), eq(sites.slug, siteSlug))
   const summaryStmt = db
     .select(SUMMARY_COLUMNS)
     .from(siteSummaries)
     .innerJoin(sites, eq(siteSummaries.siteId, sites.id))
     .innerJoin(spaces, eq(sites.spaceId, spaces.id))
-    .where(and(eq(spaces.slug, space), eq(sites.slug, siteSlug)))
+    .where(bySlugs)
     .limit(1)
-  const { facts, extras } = await fetchAccessFacts(db, space, siteSlug, c.get('user').id, summaryStmt)
+  // The generation path reads the file rows INSIDE the same batch as the access facts and the
+  // version snapshot: storage keys are minted per upload, so an atomic row read pins the exact
+  // bytes belonging to the snapshotted contentVersion (a mid-request publish can't mix versions).
+  const filesStmt = db
+    .select({ path: files.path, mimeType: files.mimeType, storageKey: files.storageKey })
+    .from(files)
+    .innerJoin(sites, eq(files.siteId, sites.id))
+    .innerJoin(spaces, eq(sites.spaceId, spaces.id))
+    .where(bySlugs)
+  const { facts, extras } = withFiles
+    ? await fetchAccessFacts(db, space, siteSlug, c.get('user').id, summaryStmt, filesStmt)
+    : await fetchAccessFacts(db, space, siteSlug, c.get('user').id, summaryStmt)
   const { site, access } = siteAccessFromFacts(facts, c.get('user'))
   if (!site) return c.json({ error: 'not found' }, 404)
   if (!access.ok) return c.json({ error: 'forbidden' }, access.status)
-  return { site, row: extras[0][0] }
+  const [summaryRows, fileRows] = extras as [SiteSummary[], EntryFileRow[] | undefined]
+  return { site, row: summaryRows[0], fileRows: fileRows ?? [] }
 }
 
 summary.use('*', requireAuth)
@@ -84,9 +102,9 @@ summary.get('/:space/:site/summary', async (c) => {
 summary.post('/:space/:site/summary', async (c) => {
   const db = c.get('db')
   const user = c.get('user')
-  const gate = await gated(c)
+  const gate = await gated(c, { withFiles: true })
   if (gate instanceof Response) return gate
-  const { site, row: existing } = gate
+  const { site, row: existing, fileRows } = gate
   const force = ((await c.req.json().catch(() => null)) as { force?: unknown } | null)?.force === true
   const fresh = existing && !isStale(existing, site.contentVersion)
   if (fresh && !force) return c.json(readyBody(existing, site.contentVersion))
@@ -101,10 +119,6 @@ summary.post('/:space/:site/summary', async (c) => {
     if (!success) return c.json({ error: 'rate limited' }, 429)
   }
 
-  const fileRows = await db
-    .select({ path: files.path, mimeType: files.mimeType, storageKey: files.storageKey })
-    .from(files)
-    .where(eq(files.siteId, site.id))
   const entry = pickEntry(fileRows)
   let extracted = null
   if (entry && isSupportedEntry(entry)) {
@@ -128,9 +142,21 @@ summary.post('/:space/:site/summary', async (c) => {
     truncated: extracted.truncated,
     updatedAt: new Date().toISOString(),
   }
-  await db
-    .insert(siteSummaries)
-    .values({ siteId: site.id, ...fields })
-    .onConflictDoUpdate({ target: siteSummaries.siteId, set: fields })
-  return c.json(readyBody(fields, site.contentVersion))
+  // One transactional batch: the guarded upsert (a slow stale generation must never overwrite a
+  // row for a NEWER contentVersion) plus a read-back of the surviving row and the live version,
+  // so the response reports what is actually stored — not what this request happened to compute.
+  const [, survivorRows, versionRows] = await db.batch([
+    db
+      .insert(siteSummaries)
+      .values({ siteId: site.id, ...fields })
+      .onConflictDoUpdate({
+        target: siteSummaries.siteId,
+        set: fields,
+        setWhere: sql`${siteSummaries.contentVersion} <= ${fields.contentVersion}`,
+      }),
+    db.select(SUMMARY_COLUMNS).from(siteSummaries).where(eq(siteSummaries.siteId, site.id)).limit(1),
+    db.select({ contentVersion: sites.contentVersion }).from(sites).where(eq(sites.id, site.id)).limit(1),
+  ])
+  const survivor = survivorRows[0] ?? { ...fields, id: '', siteId: site.id, createdAt: fields.updatedAt }
+  return c.json(readyBody(survivor, versionRows[0]?.contentVersion ?? site.contentVersion))
 })

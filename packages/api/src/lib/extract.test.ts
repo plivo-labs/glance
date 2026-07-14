@@ -79,6 +79,28 @@ describe('extractText', () => {
     expect(result.text.split(sentinel)).toHaveLength(2)
   })
 
+  test('strips hidden, aria-hidden, and template content so it cannot crowd visible text out of the cap', async () => {
+    // A hidden flood longer than TEXT_CAP: if it leaked into extraction, the cap would discard
+    // the real visible content and the summary would be generated from invisible text only.
+    const hiddenFlood = 'HIDDEN_FLOOD '.repeat(4_000)
+    expect(hiddenFlood.length).toBeGreaterThan(TEXT_CAP)
+    const body = `<!doctype html><html><body>
+      <div hidden>${hiddenFlood}</div>
+      <span aria-hidden="true">ARIA_LEAK</span>
+      <template>TEMPLATE_LEAK</template>
+      <p>Visible signal survives</p>
+    </body></html>`
+
+    const result = await extractText({ path: 'index.html', mimeType: 'text/html' }, body)
+    if (!result.ok) throw new Error(result.reason)
+
+    for (const leak of ['HIDDEN_FLOOD', 'ARIA_LEAK', 'TEMPLATE_LEAK']) {
+      expect(result.text).not.toContain(leak)
+    }
+    expect(result.text).toContain('Visible signal survives')
+    expect(result.truncated).toBeFalse()
+  })
+
   test('caps markdown at the exact boundary without splitting surrogate pairs', async () => {
     const entry = { path: 'readme.md', mimeType: 'text/markdown' }
 

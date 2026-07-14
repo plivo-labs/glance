@@ -1,5 +1,5 @@
 import { Sparkles } from 'lucide-react'
-import { useCallback, useReducer, useRef } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Spinner } from '@/components/states'
 import { Button } from '@/components/ui/button'
@@ -131,15 +131,17 @@ function SummaryFooter({ state, generate }: { state: SummaryState; generate: (fo
 }
 
 export function SummarySheet({ spaceSlug, siteSlug, open, onOpenChange, onGenerated }: Props) {
-  const [state, dispatch] = useReducer(summaryReducer, SUMMARY_INITIAL_STATE)
+  // The ref is the source of truth, reduced exactly once per event; useState only mirrors it for
+  // rendering. Async callbacks need the post-event state synchronously (toast decisions below),
+  // which useReducer/setState(fn) can't hand back.
+  const [state, setState] = useState(SUMMARY_INITIAL_STATE)
   const stateRef = useRef(state)
-  stateRef.current = state
   const nextRequestToken = useRef(0)
   const reduceAndDispatch = useCallback((event: SummaryEvent) => {
     const previous = stateRef.current
     const next = summaryReducer(previous, event)
     stateRef.current = next
-    dispatch(event)
+    setState(next)
     return { changed: next !== previous, next }
   }, [])
 

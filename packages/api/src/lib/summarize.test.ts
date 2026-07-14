@@ -238,6 +238,41 @@ describe('site summary generation', () => {
   })
 
   test(
+    'C14b: a stalled Azure response BODY is also bounded by the timeout',
+    async () => {
+      // Headers arrive promptly, then the JSON body never completes — the deadline must cover
+      // the whole attempt, not just the time-to-headers.
+      const fetchImpl = async () =>
+        new Response(new ReadableStream({ start() {} }), { headers: { 'content-type': 'application/json' } })
+      const startedAt = Date.now()
+
+      expect(
+        await summarizeSite(
+          {
+            azure: { endpoint: 'https://x.example.com', apiKey: 'key', deployment: 'dep1' },
+            fetchImpl,
+            timeoutMs: 20,
+          },
+          'page text',
+        ),
+      ).toEqual({ ok: false })
+      expect(Date.now() - startedAt).toBeLessThan(500)
+    },
+    1_000,
+  )
+
+  test(
+    'C12b: a hung Workers AI call is bounded by the same timeout',
+    async () => {
+      const ai = stubAi(() => new Promise(() => {}))
+      const startedAt = Date.now()
+      expect(await summarizeSite({ ai, timeoutMs: 20 }, 'page text')).toEqual({ ok: false })
+      expect(Date.now() - startedAt).toBeLessThan(500)
+    },
+    1_000,
+  )
+
+  test(
     'C14: an Azure attempt is aborted at the injected timeout',
     async () => {
       const fetchImpl = (_url: RequestInfo | URL, init?: RequestInit) =>
