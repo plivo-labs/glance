@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { useRevalidator } from 'react-router'
-import { Copy, FolderInput, MoreVertical, Pencil, Share2, Trash2 } from 'lucide-react'
+import { Copy, FolderInput, GitFork, MoreVertical, Pencil, Share2, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { ShareDialog } from '@/components/ShareDialog'
@@ -34,6 +34,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useForkSite } from '@/hooks/useForkSite'
 import { api } from '@/lib/api'
 import type { SiteSummary, SpaceSummary, Visibility } from '@/lib/types'
 
@@ -89,10 +90,12 @@ function OwnerVisibilityCell({ site }: { site: SiteSummary }) {
 
 type RowDialog = 'rename' | 'move' | 'share' | 'delete' | null
 
-// Open + a kebab that collapses Rename / Move / Share / Copy link / Delete.
+// Open + a kebab that collapses Rename / Move / Share / Copy link / Fork / Delete.
 function OwnerActions({ site }: { site: SiteSummary }) {
   const revalidator = useRevalidator()
   const [dialog, setDialog] = useState<RowDialog>(null)
+  // Fork needs no dialog: it POSTs an empty body and the API picks the destination + free slug.
+  const { fork, forking } = useForkSite(site)
   const refresh = () => revalidator.revalidate()
   const close = () => setDialog(null)
 
@@ -130,6 +133,10 @@ function OwnerActions({ site }: { site: SiteSummary }) {
           <DropdownMenuItem onSelect={() => void copyLink()}>
             <Copy />
             Copy link
+          </DropdownMenuItem>
+          <DropdownMenuItem disabled={forking} onSelect={() => void fork()}>
+            <GitFork />
+            Fork
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem variant="destructive" onSelect={() => setDialog('delete')}>

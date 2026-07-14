@@ -12,8 +12,11 @@ import { findOrCreateUser } from './auth'
 import { whatsNew } from './whats-new'
 
 const APP_URL = 'https://glance.example.com'
-// A watermark strictly between the two seeded releases (2026-06-20 links, 2026-07-01 voice), so
-// exactly the newest one is unread.
+// A watermark inside the real catalog's range: older than 2026-07-01 (voice) but newer than
+// 2026-06-20 (links). Everything published after it counts as unread.
+// CATALOG-COUPLED: the unreadCount literals below (`3`) = the number of releases dated after MID.
+// Adding a release note NEWER than MID bumps them — rebuild with `bun run build:whatsnew`, then
+// bump these. (links 06-20 | MID | voice 07-01, comments-tab 07-11, fork 07-14 → 3 unread.)
 const MID = '2026-06-25T00:00:00.000Z'
 
 function setup() {
@@ -56,7 +59,7 @@ describe('C6 route.auth.401 — unauthenticated GET and POST both 401, watermark
 })
 
 describe('C7 route.get.exactJSON — exact ordered items, unreadCount, throughDate', () => {
-  test('mid watermark → exact slugs/dates/bodies + unreadCount 1 + throughDate===newest', async () => {
+  test('mid watermark → exact slugs/dates/bodies + unreadCount 3 + throughDate===newest', async () => {
     const { app, db, kv, env } = setup()
     const id = await seedUser(db, { id: 'u1' })
     await db.update(users).set({ lastSeenReleaseAt: MID }).where(eq(users.id, id))
@@ -65,7 +68,7 @@ describe('C7 route.get.exactJSON — exact ordered items, unreadCount, throughDa
     // Whole-response deep-equal, not key-presence: a dropped item field or an extra top-level key fails.
     expect(await res.json()).toEqual({
       items: JSON.parse(JSON.stringify(RELEASES)),
-      unreadCount: 2,
+      unreadCount: 3,
       throughDate: NEWEST_RELEASE_DATE,
     })
   })
@@ -140,6 +143,6 @@ describe('B3 relogin.noReset — the existing-user branch must not clear an exis
     await findOrCreateUser(db, { SUPERADMIN_EMAIL: 'boss@example.com' } as never, { sub: 'g1', name: 'A2' } as never, 'a@example.com')
     expect(await getWatermark(db, first.id)).toBe(before as string)
     const res = await app.request('/api/whats-new', { headers: await mintBearer(kv, first.id) }, env)
-    expect(((await res.json()) as { unreadCount: number }).unreadCount).toBe(2)
+    expect(((await res.json()) as { unreadCount: number }).unreadCount).toBe(3)
   })
 })

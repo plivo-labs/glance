@@ -43,6 +43,7 @@ const MIGRATIONS = [
   'drizzle/0010_notifications.sql',
   'drizzle/0011_whats_new_watermark.sql',
   'drizzle/0012_comments_author_index.sql',
+  'drizzle/0013_fork_site.sql',
 ]
 
 // --- S0 recorder: one shared, ordered timeline across D1/R2/cache mocks so perf specs can

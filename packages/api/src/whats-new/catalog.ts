@@ -4,6 +4,13 @@ import type { Release } from './bake'
 
 export const RELEASES: Release[] = [
   {
+    "slug": "fork-a-site",
+    "title": "Make it your own — fork any site",
+    "date": "2026-07-14T12:00:00.000Z",
+    "featured": true,
+    "bodyHtml": "<p>Found a site you want to build on? <strong>Fork</strong> it. You get your own copy in your own space — edit it, redeploy it, break it, without touching the original.</p>\n<ul>\n<li>Fork from the <strong>⋯ menu</strong> on the dashboard, or straight from the <strong>top bar</strong> of any site you&#39;re viewing</li>\n<li>Anyone who can open a site can fork it, so a page someone shared with you is yours to riff on</li>\n<li>The copy is completely independent: your own files, your own comments, your own sharing</li>\n<li>Handy before a risky redeploy — fork first, and you&#39;ve got a snapshot to fall back on</li>\n</ul>\n"
+  },
+  {
     "slug": "comments-tab",
     "title": "All your comments, one feed",
     "date": "2026-07-11T12:00:00.000Z",
@@ -26,4 +33,4 @@ export const RELEASES: Release[] = [
   }
 ]
 
-export const NEWEST_RELEASE_DATE: string | null = "2026-07-11T12:00:00.000Z"
+export const NEWEST_RELEASE_DATE: string | null = "2026-07-14T12:00:00.000Z"

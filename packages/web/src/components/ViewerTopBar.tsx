@@ -1,10 +1,12 @@
-import { Check, ChevronRight, Command, History, MessageSquare } from 'lucide-react'
+import { Check, ChevronRight, Command, GitFork, History, MessageSquare } from 'lucide-react'
 import { Link } from 'react-router'
+import { useForkSite } from '@/hooks/useForkSite'
 import type { ViewerSite } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Segmented } from '@/components/ui/segmented'
 import { ShareDialog } from '@/components/ShareDialog'
+import { Spinner } from '@/components/states'
 import type { ReviewMode } from '@/components/review/ReviewRail'
 
 // Canvas width for the preview iframe: full-bleed, a wide column, or a narrow reading measure
@@ -22,8 +24,28 @@ const MODES = [
   { value: 'annotate', label: 'Annotate', title: 'Click an element to comment' },
 ] as const satisfies readonly { value: ReviewMode; label: string; title: string }[]
 
+// Copy this site into a space of your own. Deliberately NOT gated on site.isOwner (unlike Share):
+// anyone who can read a site can fork it, so a plain viewer gets this button too.
+function ForkButton({ site }: { site: ViewerSite }) {
+  const { fork, forking } = useForkSite(site)
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      className="gap-1.5"
+      disabled={forking}
+      onClick={() => void fork()}
+      title="Copy this site into your own space"
+    >
+      {forking ? <Spinner className="size-3.5" /> : <GitFork className="size-3.5" />}
+      Fork
+    </Button>
+  )
+}
+
 // The persistent top chrome for the viewer: brand (→ dashboard) + a breadcrumb, then the actions.
-// Outside review: Comments (with an open count) + Share. In review: Read·Annotate, width, Share, Done.
+// Outside review: Comments (with an open count) + Fork + Share. In review: Read·Annotate, width,
+// Share, Done — review is a focused annotate mode, so Fork stays out of it.
 // Replaces the old floating PreviewToolbar dock.
 export function ViewerTopBar({
   site,
@@ -117,6 +139,7 @@ export function ViewerTopBar({
                 </span>
               )}
             </Button>
+            <ForkButton site={site} />
             {site.isOwner && <ShareDialog spaceSlug={site.spaceSlug} siteSlug={site.siteSlug} title={site.title} compact />}
           </>
         )}
