@@ -8,7 +8,7 @@ export const RELEASES: Release[] = [
     "title": "TL;DR any site",
     "date": "2026-07-14T18:00:00.000Z",
     "featured": true,
-    "bodyHtml": "<p>Every site now has an AI summary one click away: hit <strong>Summarize</strong> in the viewer top bar, or <strong>Summary</strong> from a site&#39;s row menu on the dashboard.</p>\n<ul>\n<li>Summaries are cached — reopening one is instant and free until the site&#39;s content changes</li>\n<li>When content changes, the sheet shows what version the summary was written for and offers a one-click update</li>\n<li>Sites with a summary show a sparkle next to their name on the dashboard</li>\n</ul>\n"
+    "bodyHtml": "<p>Every site now has an AI summary one click away: hit <strong>TL;DR</strong> in the viewer top bar, or <strong>Summary</strong> from a site&#39;s row menu on the dashboard.</p>\n<ul>\n<li>Summaries are cached — reopening one is instant and free until the site&#39;s content changes</li>\n<li>When content changes, the sheet shows what version the summary was written for and offers a one-click update</li>\n<li>Sites with a summary show a sparkle next to their name on the dashboard</li>\n</ul>\n"
   },
   {
     "slug": "fork-a-site",
