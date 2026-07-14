@@ -73,7 +73,7 @@ function Viewer() {
   const [review, setReview] = useState(false)
   // Within review, Read = normal browsing + text-select-to-comment; Annotate = also hover/click an
   // element to pinpoint it. Default annotate on entering review so element commenting works.
-  const [reviewMode, setReviewMode] = useState<ReviewMode>('annotate')
+  const [reviewMode, setReviewMode] = useState<ReviewMode>('read')
   const [width, setWidth] = useState<CanvasWidth>('full')
   const [loaded, setLoaded] = useState(false)
   const [me, setMe] = useState<Me | null>(null)
@@ -372,8 +372,6 @@ function Viewer() {
         site={site}
         sitePath={sitePath}
         review={review}
-        mode={reviewMode}
-        onMode={setReviewMode}
         width={width}
         onWidth={setWidth}
         commentCount={openCount}
@@ -430,6 +428,8 @@ function Viewer() {
           <ReviewRail
             site={site}
             me={me}
+            mode={isAudio ? undefined : reviewMode}
+            onMode={isAudio ? undefined : setReviewMode}
             threads={threads}
             composing={composing}
             onCancelComposer={() => setComposing(null)}
