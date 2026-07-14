@@ -44,6 +44,7 @@ const MIGRATIONS = [
   'drizzle/0011_whats_new_watermark.sql',
   'drizzle/0012_comments_author_index.sql',
   'drizzle/0013_fork_site.sql',
+  'drizzle/0014_site_summaries.sql',
 ]
 
 // --- S0 recorder: one shared, ordered timeline across D1/R2/cache mocks so perf specs can
@@ -200,6 +201,8 @@ function bindCount(args: unknown[]): number {
  *  counted — call `db.resetCounters()` after seeding to exclude them. */
 export function makeDb(recorder?: Recorder): HarnessDb {
   const sqlite = new Database(':memory:')
+  // Mirror D1, which enforces foreign keys, so dangling-id fixture seeds fail loudly.
+  sqlite.run('PRAGMA foreign_keys = ON')
   for (const file of MIGRATIONS) {
     const sql = readFileSync(join(import.meta.dir, '../..', file), 'utf8')
     for (const stmt of sql.split('--> statement-breakpoint')) {

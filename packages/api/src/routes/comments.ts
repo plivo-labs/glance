@@ -20,10 +20,9 @@ import { createNotifications } from '../db/notifications'
 import type { Comment, CommentThread } from '../db/schema'
 import { listMentionableUsers } from '../db/repo'
 import { fireAndForget } from '../lib/events'
-import { checkAccess } from '../lib/access'
 import { EXT_MIME, audioExtFromPart, contentType } from '../lib/mime'
 import type { AccessFacts, ResolvedSite } from '../lib/site-access'
-import { fetchAccessFacts, isSharedFromFacts } from '../lib/site-access'
+import { fetchAccessFacts, siteAccessFromFacts } from '../lib/site-access'
 import { decideRange } from '../lib/range'
 import { deleteKeys } from '../lib/storage'
 import { transcribeVoice } from '../lib/transcribe'
@@ -82,10 +81,10 @@ const canModerate = (site: ResolvedSite, user: SessionUser): boolean =>
  *  batch resolves — a route that fuses extra statements into that batch (S9b) must return this
  *  denial WITHOUT touching their rows. Returns the site or a Response to return as-is. */
 function siteFromFacts(c: Context<AppEnv>, facts: AccessFacts): ResolvedSite | Response {
-  if (!facts.site) return c.json({ error: 'not found' }, 404)
-  const access = checkAccess(facts.site, c.get('user'), facts.isMember, isSharedFromFacts(facts))
-  if (!canComment(facts.site, access)) return c.json({ error: 'forbidden' }, access.ok ? 403 : access.status)
-  return facts.site
+  const { site, access } = siteAccessFromFacts(facts, c.get('user'))
+  if (!site) return c.json({ error: 'not found' }, 404)
+  if (!canComment(site, access)) return c.json({ error: 'forbidden' }, access.ok ? 403 : access.status)
+  return site
 }
 
 /** THE route-level gate: params → the access facts (S9a: one slug-keyed db.batch where the old

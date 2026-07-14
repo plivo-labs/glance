@@ -16,7 +16,8 @@ import type { Visibility } from '../db/schema'
 import { files as filesTable, sites as sitesTable, spaces, users } from '../db/schema'
 import { canReplace, checkAccess } from '../lib/access'
 import { batchAll, chunk, D1_MAX_IN } from '../lib/d1'
-import { pureAudioSql } from '../lib/site-audio'
+import { resolveIndexPath } from '../lib/extract'
+import { siteFeedColumns, toFeedRow } from '../lib/site-feed'
 import { readSessionOrBearer } from '../lib/session'
 import { resolveSite, resolveSiteForAccess } from '../lib/site-access'
 import { isValidSlug } from '../lib/slug'
@@ -202,33 +203,14 @@ sites.get('/mine', requireAuth, async (c) => {
   const user = c.get('user')
   const db = c.get('db')
   const rows = await db
-    .select({
-      id: sitesTable.id,
-      spaceSlug: spaces.slug,
-      slug: sitesTable.slug,
-      title: sitesTable.title,
-      visibility: sitesTable.visibility,
-      status: sitesTable.status,
-      createdAt: sitesTable.createdAt,
-      audio: pureAudioSql(sitesTable.id),
-    })
+    .select(siteFeedColumns())
     .from(sitesTable)
     .innerJoin(spaces, eq(sitesTable.spaceId, spaces.id))
     .where(eq(sitesTable.ownerId, user.id))
     .orderBy(desc(sitesTable.createdAt))
 
   return c.json(
-    rows.map((r) => ({
-      id: r.id,
-      spaceSlug: r.spaceSlug,
-      siteSlug: r.slug,
-      title: r.title,
-      visibility: r.visibility,
-      status: r.status,
-      audio: r.audio === 1,
-      url: `${c.env.APP_URL}/${r.spaceSlug}/${r.slug}`,
-      createdAt: r.createdAt,
-    })),
+    rows.map((r) => toFeedRow(r, c.env.APP_URL)),
   )
 })
 
@@ -253,15 +235,8 @@ sites.get('/shared', requireAuth, async (c) => {
   const rowStmts = chunk(ids, D1_MAX_IN).map((batch) =>
     db
       .select({
-        id: sitesTable.id,
-        spaceSlug: sql<string>`${spaces.slug}`.as('spaceSlug'),
-        slug: sitesTable.slug,
-        title: sitesTable.title,
-        visibility: sitesTable.visibility,
-        status: sitesTable.status,
+        ...siteFeedColumns(),
         ownerId: sitesTable.ownerId,
-        createdAt: sitesTable.createdAt,
-        audio: pureAudioSql(sitesTable.id),
       })
       .from(sitesTable)
       .innerJoin(spaces, eq(sitesTable.spaceId, spaces.id))
@@ -272,16 +247,8 @@ sites.get('/shared', requireAuth, async (c) => {
   const visible = rows.filter((r) => r.status === 'active' && r.ownerId !== user.id)
   return c.json(
     visible.map((r) => ({
-      id: r.id,
-      spaceSlug: r.spaceSlug,
-      siteSlug: r.slug,
-      title: r.title,
-      visibility: r.visibility,
-      status: r.status,
-      audio: r.audio === 1,
+      ...toFeedRow(r, c.env.APP_URL),
       role: roles.get(r.id) ?? 'viewer',
-      url: `${c.env.APP_URL}/${r.spaceSlug}/${r.slug}`,
-      createdAt: r.createdAt,
     })),
   )
 })
@@ -293,16 +260,9 @@ sites.get('/team', requireAuth, async (c) => {
   const db = c.get('db')
   const rows = await db
     .select({
-      id: sitesTable.id,
-      spaceSlug: spaces.slug,
-      slug: sitesTable.slug,
-      title: sitesTable.title,
-      visibility: sitesTable.visibility,
-      status: sitesTable.status,
-      createdAt: sitesTable.createdAt,
+      ...siteFeedColumns(),
       uploaderName: users.name,
       uploaderEmail: users.email,
-      audio: pureAudioSql(sitesTable.id),
     })
     .from(sitesTable)
     .innerJoin(spaces, eq(sitesTable.spaceId, spaces.id))
@@ -312,15 +272,7 @@ sites.get('/team', requireAuth, async (c) => {
     .limit(50)
   return c.json(
     rows.map((r) => ({
-      id: r.id,
-      spaceSlug: r.spaceSlug,
-      siteSlug: r.slug,
-      title: r.title,
-      visibility: r.visibility,
-      status: r.status,
-      audio: r.audio === 1,
-      url: `${c.env.APP_URL}/${r.spaceSlug}/${r.slug}`,
-      createdAt: r.createdAt,
+      ...toFeedRow(r, c.env.APP_URL),
       uploaderName: r.uploaderName,
       uploaderEmail: r.uploaderEmail,
     })),
@@ -428,16 +380,6 @@ sites.get('/:spaceSlug/:siteSlug', async (c) => {
     ...(replaceable ? { files: siteFiles.map((f) => f.path), contentVersion: site.contentVersion } : {}),
   })
 })
-
-// The file the root URL ('' splat) actually serves, mirroring the content worker's root
-// resolution (content.ts): an explicit index.html wins, else a lone uploaded file is served at
-// the root, else '' (a multi-file site with no index shows the directory listing). The viewer
-// reads this so a single-file audio site picks the native player at its root URL — not just at
-// the explicit `/…/recording.webm` path — and anchors comments to the same resolved path either way.
-function resolveIndexPath(paths: string[]): string {
-  if (paths.includes('index.html')) return 'index.html'
-  return paths.length === 1 ? paths[0] : ''
-}
 
 // Normalize a PUT /shares body into role-aware user grants + view-only group ids. Pure (no DB), so
 // it's unit-testable and keeps every cast out of the request path. Accepts the new `users:[{id,role}]`

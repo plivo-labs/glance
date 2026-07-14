@@ -12,6 +12,7 @@ import { admin } from './routes/admin'
 import { auth } from './routes/auth'
 import { commentFeed } from './routes/comment-feed'
 import { comments } from './routes/comments'
+import { summary } from './routes/summary'
 import { dataApi, dataToken } from './routes/data'
 import { notifications } from './routes/notifications'
 import { whatsNew } from './routes/whats-new'
@@ -97,6 +98,8 @@ app.route('/api/sites', sites)
 // Comments live under /api/sites/:space/:site/comments — three segments, so no collision with
 // the two-segment site routes above. Mounted separately to keep the comments surface isolated.
 app.route('/api/sites', comments)
+// Summaries share the same three-segment isolation as comments and cannot shadow site routes.
+app.route('/api/sites', summary)
 app.route('/api/comments', commentFeed)
 app.route('/api/upload', upload)
 // Session-authenticated mint for shared-backend data tokens (owner → read+write, viewer → read).

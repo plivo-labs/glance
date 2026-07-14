@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { batchAll } from '../lib/d1'
 import { makeDb, makeR2, seedComment, seedFile, seedSite, seedSpace, seedThread, seedUser } from '../test/harness'
-import { commentThreads } from './schema'
+import { commentThreads, users } from './schema'
 import {
   addComment,
   assembleThreadViews,
@@ -288,11 +288,12 @@ describe('author legibility — display name resolution', () => {
     expect(thread.comments[0].author).toBeNull()
   })
 
-  test('author-null-when-user-missing: dangling authorId resolves to null without throwing', async () => {
+  test('author-null-after-user-deleted: deleting the author nulls authorId and listThreads resolves author to null', async () => {
     const { db, sp, siteId } = await bareSite()
     const threadId = await seedThread(db, { siteId, filePath: 'index.html', anchorType: 'page' })
-    // FK-off harness lets us reference a user that was never inserted.
-    await seedComment(db, { threadId, body: 'ghost author', authorId: 'u-does-not-exist' })
+    const authorId = await seedUser(db, { id: 'u-does-not-exist' })
+    await seedComment(db, { threadId, body: 'ghost author', authorId })
+    await db.delete(users).where(eq(users.id, authorId))
     const [thread] = await listThreads(db, sp, siteId, 'index.html')
     expect(thread.comments[0].author).toBeNull()
   })

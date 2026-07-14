@@ -2,7 +2,7 @@
 title: Make it your own — fork any site
 slug: fork-a-site
 date: 2026-07-14T12:00:00.000Z
-featured: true
+featured: false
 ---
 Found a site you want to build on? **Fork** it. You get your own copy in your own space — edit it, redeploy it, break it, without touching the original.
 

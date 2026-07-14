@@ -4,24 +4,31 @@ import type { Release } from './bake'
 
 export const RELEASES: Release[] = [
   {
+    "slug": "tldr-summaries",
+    "title": "TL;DR any site",
+    "date": "2026-07-14T18:00:00.000Z",
+    "featured": true,
+    "bodyHtml": "<p>Every site now has an AI summary one click away: hit <strong>Summarize</strong> in the viewer top bar, or <strong>Summary</strong> from a site&#39;s row menu on the dashboard.</p>\n<ul>\n<li>Summaries are cached — reopening one is instant and free until the site&#39;s content changes</li>\n<li>When content changes, the sheet shows what version the summary was written for and offers a one-click update</li>\n<li>Sites with a summary show a sparkle next to their name on the dashboard</li>\n</ul>\n"
+  },
+  {
     "slug": "fork-a-site",
     "title": "Make it your own — fork any site",
     "date": "2026-07-14T12:00:00.000Z",
-    "featured": true,
+    "featured": false,
     "bodyHtml": "<p>Found a site you want to build on? <strong>Fork</strong> it. You get your own copy in your own space — edit it, redeploy it, break it, without touching the original.</p>\n<ul>\n<li>Fork from the <strong>⋯ menu</strong> on the dashboard, or straight from the <strong>top bar</strong> of any site you&#39;re viewing</li>\n<li>Anyone who can open a site can fork it, so a page someone shared with you is yours to riff on</li>\n<li>The copy is completely independent: your own files, your own comments, your own sharing</li>\n<li>Handy before a risky redeploy — fork first, and you&#39;ve got a snapshot to fall back on</li>\n</ul>\n"
   },
   {
     "slug": "comments-tab",
     "title": "All your comments, one feed",
     "date": "2026-07-11T12:00:00.000Z",
-    "featured": true,
+    "featured": false,
     "bodyHtml": "<p>The dashboard has a new <strong>Comments</strong> tab: every <strong>mention of you</strong> and every <strong>comment you wrote</strong>, across all your sites, in one newest-first feed.</p>\n<ul>\n<li>Click any row to jump straight to that thread on the page, with the review rail already open</li>\n<li>Rows show where the conversation lives and whether it&#39;s still open or already resolved</li>\n<li>Mentions stay actionable here even after you&#39;ve read them in the bell</li>\n</ul>\n"
   },
   {
     "slug": "voice-comments",
     "title": "Comment with your voice",
     "date": "2026-07-01T15:00:00.000Z",
-    "featured": true,
+    "featured": false,
     "bodyHtml": "<p>Some feedback is faster said than typed. You can now <strong>record a voice comment</strong> right on a site — pin it to the exact spot you&#39;re talking about, and your teammates can play it back inline.</p>\n<ul>\n<li>Record straight from the comment composer</li>\n<li>Voice notes are transcribed automatically, so the thread stays searchable</li>\n<li>Play, pause, and scrub without leaving the page</li>\n</ul>\n"
   },
   {
@@ -33,4 +40,4 @@ export const RELEASES: Release[] = [
   }
 ]
 
-export const NEWEST_RELEASE_DATE: string | null = "2026-07-14T12:00:00.000Z"
+export const NEWEST_RELEASE_DATE: string | null = "2026-07-14T18:00:00.000Z"

@@ -1,4 +1,5 @@
-import { Check, ChevronRight, Command, GitFork, History, MessageSquare } from 'lucide-react'
+import { Check, ChevronRight, Command, GitFork, History, MessageSquare, Sparkles } from 'lucide-react'
+import { useState } from 'react'
 import { Link } from 'react-router'
 import { useForkSite } from '@/hooks/useForkSite'
 import type { ViewerSite } from '@/lib/types'
@@ -6,6 +7,7 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Segmented } from '@/components/ui/segmented'
 import { ShareDialog } from '@/components/ShareDialog'
+import { SummarySheet } from '@/components/SummarySheet'
 import { Spinner } from '@/components/states'
 import type { ReviewMode } from '@/components/review/ReviewRail'
 
@@ -44,9 +46,9 @@ function ForkButton({ site }: { site: ViewerSite }) {
 }
 
 // The persistent top chrome for the viewer: brand (→ dashboard) + a breadcrumb, then the actions.
-// Outside review: Comments (with an open count) + Fork + Share. In review: Read·Annotate, width,
-// Share, Done — review is a focused annotate mode, so Fork stays out of it.
-// Replaces the old floating PreviewToolbar dock.
+// Outside review: Comments (with an open count) + Fork. Summarize and Share are always available.
+// In review: Read·Annotate, width, Summarize, Share, Done — review is a focused annotate mode, so
+// Fork stays out of it. Replaces the old floating PreviewToolbar dock.
 export function ViewerTopBar({
   site,
   sitePath,
@@ -74,6 +76,7 @@ export function ViewerTopBar({
   onToggleSidebar: () => void
   onSearch: () => void
 }) {
+  const [summaryOpen, setSummaryOpen] = useState(false)
   return (
     <header className="flex h-12 shrink-0 items-center gap-3 border-b bg-background px-3">
       <Link to="/dashboard" className="flex shrink-0 items-center gap-2 font-mono font-semibold text-sm tracking-tight">
@@ -114,14 +117,7 @@ export function ViewerTopBar({
         </Button>
         <Segmented value={width} options={WIDTHS} onChange={onWidth} />
         {review ? (
-          <>
-            <Segmented value={mode} options={MODES} onChange={onMode} />
-            {site.isOwner && <ShareDialog spaceSlug={site.spaceSlug} siteSlug={site.siteSlug} title={site.title} compact />}
-            <Button size="sm" variant="secondary" onClick={onExit}>
-              <Check className="size-3.5" />
-              Done
-            </Button>
-          </>
+          <Segmented value={mode} options={MODES} onChange={onMode} />
         ) : (
           <>
             <Button
@@ -140,10 +136,22 @@ export function ViewerTopBar({
               )}
             </Button>
             <ForkButton site={site} />
-            {site.isOwner && <ShareDialog spaceSlug={site.spaceSlug} siteSlug={site.siteSlug} title={site.title} compact />}
           </>
         )}
+        <Button size="sm" variant="ghost" className="gap-1.5" title="AI summary" onClick={() => setSummaryOpen(true)}>
+          <Sparkles className="size-3.5" />
+          Summarize
+        </Button>
+        {site.isOwner && <ShareDialog spaceSlug={site.spaceSlug} siteSlug={site.siteSlug} title={site.title} compact />}
+        {review && (
+          <Button size="sm" variant="secondary" onClick={onExit}>
+            <Check className="size-3.5" />
+            Done
+          </Button>
+        )}
       </div>
+      {/* Sheet renders through a portal, so it can live inside the header without affecting layout. */}
+      <SummarySheet spaceSlug={site.spaceSlug} siteSlug={site.siteSlug} open={summaryOpen} onOpenChange={setSummaryOpen} />
     </header>
   )
 }
