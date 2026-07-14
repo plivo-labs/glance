@@ -1,4 +1,4 @@
-import { index, integer, primaryKey, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core'
+import { type AnySQLiteColumn, index, integer, primaryKey, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core'
 
 // Column names mirror the spec's SQL exactly (camelCase) so raw `wrangler d1 execute`
 // queries in the runbook keep working. IDs are app-generated UUIDs; timestamps are ISO-8601.
@@ -53,6 +53,11 @@ export const sites = sqliteTable(
     // last swapped the bytes (owner id or an editor's user id) — read-only provenance today.
     contentVersion: integer('contentVersion').notNull().default(0),
     lastReplacedBy: text('lastReplacedBy'),
+    // Provenance for a forked ("remixed") site: the site it was copied from. Null = deployed
+    // directly. SET NULL (never cascade) — a fork's R2 objects are its OWN (fork COPIES the bytes
+    // to a fresh prefix; an object is referenced by exactly one file row, ever), so deleting the
+    // source may only drop the link, never the content.
+    forkedFrom: text('forkedFrom').references((): AnySQLiteColumn => sites.id, { onDelete: 'set null' }),
     createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
   },
   (t) => [unique('sites_space_slug_unq').on(t.spaceId, t.slug), index('sites_owner').on(t.ownerId)],

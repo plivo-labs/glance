@@ -53,7 +53,7 @@ func dispatch(cmd string, rest []string) error {
 			base, token = cfg.ApiUrl, cfg.Token
 		}
 		return newClient(base, token, os.Stdout).logout()
-	case "deploy", "list", "delete", "move", "comments", "read", "reply":
+	case "deploy", "list", "delete", "move", "fork", "comments", "read", "reply":
 		// Authed commands resolve the instance from the STORED config (not the env override) - the
 		// per-command requireAuth() inside each handler produces the clean "Not logged in" message.
 		cfg := readConfig()
@@ -71,6 +71,8 @@ func dispatch(cmd string, rest []string) error {
 			return c.del(rest)
 		case "move":
 			return c.move(rest)
+		case "fork":
+			return c.fork(rest)
 		case "comments":
 			return c.comments(rest)
 		case "read":
@@ -95,6 +97,7 @@ func printHelp() {
 	fmt.Println("  glance list")
 	fmt.Println("  glance delete <space/slug>")
 	fmt.Println("  glance move <space/slug> <new-space>")
+	fmt.Println("  glance fork <space/slug> [--space <slug>] [--name <slug>]")
 	fmt.Println("  glance comments <space/slug> [--file <path>] [--open] [--json]")
 	fmt.Println("  glance reply <space/slug> <threadId> [message] [--tag <label> | --no-tag]")
 	fmt.Println("  glance read <space/slug> [--file <path>] [--pull <dir>]")
