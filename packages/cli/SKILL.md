@@ -1,6 +1,6 @@
 ---
 name: glance-cli
-description: Use the `glance` CLI to build a self-contained HTML explainer/dashboard for a codebase or system and publish it — "explain with html", "make an html dashboard", "visualize this architecture", "a simple HTML summary for my boss" — or to deploy any file/folder to a Glance instance and get a URL, manage sites (list, delete, move), and close the review loop from the terminal (pull a site's review comments, reply to a thread, then redeploy).
+description: Use the `glance` CLI to build a self-contained HTML explainer/dashboard for a codebase or system and publish it — "explain with html", "make an html dashboard", "visualize this architecture", "a simple HTML summary for my boss" — or to deploy any file/folder to a Glance instance and get a URL, manage sites (list, delete, move, fork), and close the review loop from the terminal (pull a site's review comments, reply to a thread, then redeploy).
 ---
 
 # Glance CLI
@@ -34,6 +34,7 @@ Put it in your shell profile to make it permanent. Token + URL are saved to `~/.
 | `glance list` | lists your sites — `space/slug  visibility  url` |
 | `glance delete <space/slug>` | confirms (y/N), then deletes |
 | `glance move <space/slug> <new-space>` | moves a site to another space you belong to (keeps its files, comments, shares) |
+| `glance fork <space/slug> [--space <slug>] [--name <slug>]` | copies a site you can open into your own space — your copy, to edit freely |
 | `glance comments <space/slug> [--file <path>] [--open] [--json]` | prints a site's review comments as a markdown digest (or raw JSON) |
 | `glance reply <space/slug> <threadId> [message] [--tag <label>\|--no-tag]` | posts a reply to a comment thread (get the `threadId` from `glance comments`) |
 | `glance read <space/slug> [--file <path>] [--pull <dir>]` | prints a file to stdout, or `--pull` downloads the whole site's source into a folder to edit + redeploy |
@@ -78,6 +79,21 @@ Argument must be `space/slug` (with the slash), e.g. `glance delete docs/api-ref
 
 ### move
 Move an existing site into another space you belong to: `glance move <space/slug> <new-space>`, e.g. `glance move my-handle/api-reference docs`. The site keeps its files, comments and shares — only its URL changes to `/<new-space>/<slug>`. Owner-only. Fails if a site with the same slug already exists in the target space.
+
+### fork
+Make your own copy of a site you can open: `glance fork <space/slug>`, e.g. `glance fork alice/roadmap`. Anyone who can *view* a site can fork it.
+
+- The copy lands in your **personal space** as `<slug>-copy` (then `-copy-2`, `-copy-3`… if that's taken). Prints `✓ Forked → <url>`.
+- `--space <slug>` forks into a team/group space you belong to instead.
+- `--name <slug>` names the new site (same meaning as `deploy --name` — it's the new site's slug).
+- The fork is **yours and independent**: you own it, it starts with the source's files, and it carries none of the original's comments or shares. Editing it never touches the original.
+
+```bash
+glance fork alice/roadmap                                  # → /<you>/roadmap-copy
+glance fork docs/api-reference --space team --name api-v2  # → /team/api-v2
+```
+
+Use it when you want to riff on someone's page instead of commenting on it — fork, `glance read --pull` your copy, edit, redeploy.
 
 ### comments
 Pulls the review comments (threads) on a deployed site so an agent can read them from the terminal.

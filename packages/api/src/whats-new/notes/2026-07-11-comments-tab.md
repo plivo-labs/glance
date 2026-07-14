@@ -2,7 +2,7 @@
 title: All your comments, one feed
 slug: comments-tab
 date: 2026-07-11T12:00:00.000Z
-featured: true
+featured: false
 ---
 The dashboard has a new **Comments** tab: every **mention of you** and every **comment you wrote**, across all your sites, in one newest-first feed.
 

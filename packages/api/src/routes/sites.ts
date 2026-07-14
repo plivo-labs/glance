@@ -1,4 +1,5 @@
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
+import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { Hono } from 'hono'
 import {
   type ShareUser,
@@ -18,9 +19,9 @@ import { batchAll, chunk, D1_MAX_IN } from '../lib/d1'
 import { resolveIndexPath } from '../lib/extract'
 import { siteFeedColumns, toFeedRow } from '../lib/site-feed'
 import { readSessionOrBearer } from '../lib/session'
-import { resolveSite } from '../lib/site-access'
+import { resolveSite, resolveSiteForAccess } from '../lib/site-access'
 import { isValidSlug } from '../lib/slug'
-import { deleteSiteObjects } from '../lib/storage'
+import { copyObjects, deleteKeys, deleteSiteObjects } from '../lib/storage'
 import { signToken } from '../lib/token'
 import { isVisibility, normalizeVisibility } from '../lib/visibility'
 import { requireAuth } from '../middleware/auth'
@@ -527,6 +528,119 @@ sites.post('/:spaceSlug/:siteSlug/move', requireAuth, async (c) => {
 
   await db.update(sitesTable).set({ spaceId: dest.id }).where(eq(sitesTable.id, site.id))
   return c.json({ ok: true, spaceSlug: dest.slug, siteSlug: site.slug, url: `${c.env.APP_URL}/${dest.slug}/${site.slug}` })
+})
+
+// A forked slug: `doc` → `doc-copy`, then `doc-copy-2`, `-3`… on collision. Bounded so a pathological
+// space can't spin here; past the cap the caller must name the fork explicitly.
+const FORK_SLUG_TRIES = 50
+
+async function freeForkSlug(db: DrizzleD1Database, spaceId: string, base: string): Promise<string | null> {
+  const taken = new Set(
+    (await db.select({ slug: sitesTable.slug }).from(sitesTable).where(eq(sitesTable.spaceId, spaceId))).map(
+      (r) => r.slug,
+    ),
+  )
+  for (let n = 1; n <= FORK_SLUG_TRIES; n++) {
+    const slug = n === 1 ? `${base}-copy` : `${base}-copy-${n}`
+    if (!taken.has(slug) && isValidSlug(slug)) return slug
+  }
+  return null
+}
+
+// POST /api/sites/:spaceSlug/:siteSlug/fork — copy a site you can READ into a space you belong to
+// (default: your personal space). The fork is INDEPENDENT: new id, new owner, its own R2 objects,
+// no shares, no comments, version 0. Read access is the whole gate — if you can open it, you can
+// fork it (you could already download the bytes and redeploy them by hand).
+sites.post('/:spaceSlug/:siteSlug/fork', requireAuth, async (c) => {
+  const user = c.get('user')
+  const db = c.get('db')
+  const { spaceSlug, siteSlug } = c.req.param()
+
+  const { site, access } = await resolveSiteForAccess(db, spaceSlug, siteSlug, user)
+  if (!site) return c.json({ error: 'not found' }, 404)
+  if (!access.ok) return c.json({ error: 'forbidden' }, access.status)
+
+  const body = (await c.req.json().catch(() => null)) as { space?: unknown; slug?: unknown; title?: unknown } | null
+  const wantSpace = body?.space
+  const wantSlug = body?.slug
+  if (wantSpace !== undefined && typeof wantSpace !== 'string') return c.json({ error: 'invalid space' }, 400)
+  if (wantSlug !== undefined && typeof wantSlug !== 'string') return c.json({ error: 'invalid slug' }, 400)
+  if (typeof wantSlug === 'string' && !isValidSlug(wantSlug)) return c.json({ error: 'invalid slug' }, 400)
+
+  // Destination: an explicitly named space, else the caller's personal space. A user with neither
+  // gets a 400 — never a silent fork into somewhere they didn't ask for.
+  const dest = (
+    await db
+      .select({ id: spaces.id, slug: spaces.slug })
+      .from(spaces)
+      .where(
+        typeof wantSpace === 'string'
+          ? eq(spaces.slug, wantSpace)
+          : and(eq(spaces.type, 'personal'), eq(spaces.createdBy, user.id)),
+      )
+      .limit(1)
+  )[0]
+  if (!dest) {
+    return typeof wantSpace === 'string'
+      ? c.json({ error: 'space not found' }, 404)
+      : c.json({ error: 'no personal space — name a destination space' }, 400)
+  }
+  // Same rule as `move`: you can't drop a site into a space you're not in.
+  if (user.role !== 'superadmin' && !(await isSpaceMember(db, dest.id, user.id))) {
+    return c.json({ error: 'forbidden' }, 403)
+  }
+
+  const slug = typeof wantSlug === 'string' ? wantSlug : await freeForkSlug(db, dest.id, site.slug)
+  if (!slug) return c.json({ error: 'could not derive a free slug — name the fork explicitly' }, 409)
+
+  const sourceFiles = await db
+    .select({
+      path: filesTable.path,
+      storageKey: filesTable.storageKey,
+      mimeType: filesTable.mimeType,
+      size: filesTable.size,
+    })
+    .from(filesTable)
+    .where(eq(filesTable.siteId, site.id))
+
+  // Copy the bytes BEFORE any D1 write: a failed/missing object aborts with nothing committed and
+  // every copied key reclaimed, so a fork can never exist pointing at absent bytes.
+  const copied = await copyObjects(c.env.GLANCE_FILES, sourceFiles, crypto.randomUUID())
+  const newKeys = copied.map((f) => f.storageKey)
+
+  const id = crypto.randomUUID()
+  const title = typeof body?.title === 'string' && body.title.trim() ? body.title.trim().slice(0, 200) : site.title
+  try {
+    await db.batch([
+      db.insert(sitesTable).values({
+        id,
+        spaceId: dest.id,
+        slug,
+        title,
+        // Inherit the source's tier: a fork of a private site is private, not silently widened.
+        visibility: site.visibility,
+        ownerId: user.id,
+        forkedFrom: site.id,
+      }),
+      ...copied.map((f) => db.insert(filesTable).values({ id: crypto.randomUUID(), siteId: id, ...f })),
+    ])
+  } catch (err) {
+    // Don't orphan the objects we just wrote (e.g. a concurrent fork won the (spaceId, slug) unique).
+    await deleteKeys(c.env.GLANCE_FILES, newKeys)
+    if (isUniqueConstraintError(err)) {
+      return c.json({ error: 'a site with this slug already exists in that space', conflict: true }, 409)
+    }
+    throw err
+  }
+
+  return c.json({
+    id,
+    spaceSlug: dest.slug,
+    siteSlug: slug,
+    fileCount: copied.length,
+    forkedFrom: `${spaceSlug}/${siteSlug}`,
+    url: `${c.env.APP_URL}/${dest.slug}/${slug}`,
+  })
 })
 
 // DELETE /api/sites/:spaceSlug/:siteSlug — hard delete (owner or superadmin). Purges R2 first.

@@ -1,12 +1,14 @@
-import { Check, ChevronRight, Command, History, MessageSquare, Sparkles } from 'lucide-react'
+import { Check, ChevronRight, Command, GitFork, History, MessageSquare, Sparkles } from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router'
+import { useForkSite } from '@/hooks/useForkSite'
 import type { ViewerSite } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Segmented } from '@/components/ui/segmented'
 import { ShareDialog } from '@/components/ShareDialog'
 import { SummarySheet } from '@/components/SummarySheet'
+import { Spinner } from '@/components/states'
 import type { ReviewMode } from '@/components/review/ReviewRail'
 
 // Canvas width for the preview iframe: full-bleed, a wide column, or a narrow reading measure
@@ -24,9 +26,29 @@ const MODES = [
   { value: 'annotate', label: 'Annotate', title: 'Click an element to comment' },
 ] as const satisfies readonly { value: ReviewMode; label: string; title: string }[]
 
+// Copy this site into a space of your own. Deliberately NOT gated on site.isOwner (unlike Share):
+// anyone who can read a site can fork it, so a plain viewer gets this button too.
+function ForkButton({ site }: { site: ViewerSite }) {
+  const { fork, forking } = useForkSite(site)
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      className="gap-1.5"
+      disabled={forking}
+      onClick={() => void fork()}
+      title="Copy this site into your own space"
+    >
+      {forking ? <Spinner className="size-3.5" /> : <GitFork className="size-3.5" />}
+      Fork
+    </Button>
+  )
+}
+
 // The persistent top chrome for the viewer: brand (→ dashboard) + a breadcrumb, then the actions.
-// Outside review: Comments (with an open count) + Share. In review: Read·Annotate, width, Share, Done.
-// Replaces the old floating PreviewToolbar dock.
+// Outside review: Comments (with an open count) + Fork. TL;DR and Share are always available.
+// In review: Read·Annotate, width, TL;DR, Share, Done — review is a focused annotate mode, so
+// Fork stays out of it. Replaces the old floating PreviewToolbar dock.
 export function ViewerTopBar({
   site,
   sitePath,
@@ -97,21 +119,24 @@ export function ViewerTopBar({
         {review ? (
           <Segmented value={mode} options={MODES} onChange={onMode} />
         ) : (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={onReview}
-            className={cn('gap-1.5', commentCount > 0 && 'text-primary')}
-            title={commentCount > 0 ? `${commentCount} open comment${commentCount === 1 ? '' : 's'}` : 'Comments'}
-          >
-            <MessageSquare className="size-3.5" />
-            Comments
-            {commentCount > 0 && (
-              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 font-semibold text-[10px] text-primary-foreground leading-none tabular-nums">
-                {commentCount > 9 ? '9+' : commentCount}
-              </span>
-            )}
-          </Button>
+          <>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={onReview}
+              className={cn('gap-1.5', commentCount > 0 && 'text-primary')}
+              title={commentCount > 0 ? `${commentCount} open comment${commentCount === 1 ? '' : 's'}` : 'Comments'}
+            >
+              <MessageSquare className="size-3.5" />
+              Comments
+              {commentCount > 0 && (
+                <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 font-semibold text-[10px] text-primary-foreground leading-none tabular-nums">
+                  {commentCount > 9 ? '9+' : commentCount}
+                </span>
+              )}
+            </Button>
+            <ForkButton site={site} />
+          </>
         )}
         <Button size="sm" variant="ghost" className="gap-1.5" title="AI summary" onClick={() => setSummaryOpen(true)}>
           <Sparkles className="size-3.5" />
