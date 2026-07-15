@@ -396,7 +396,14 @@ function Viewer() {
             ) : (
               <iframe
                 ref={iframeRef}
-                className="size-full border-0 bg-background"
+                // Hosted HTML is rendered on a stable WHITE canvas (the browser's default page
+                // background that every uploaded document assumes), NOT the theme-aware
+                // `bg-background` — which is dark in dark mode, so a doc with hardcoded dark text
+                // and no background of its own showed dark-on-dark (invisible). A doc that designs
+                // itself dark still paints over this white with its own background. colorScheme:light
+                // keeps native controls/scrollbars consistent with the light canvas.
+                className="size-full border-0 bg-white"
+                style={{ colorScheme: 'light' }}
                 src={src}
                 title={site.title ?? site.siteSlug}
                 onLoad={() => setLoaded(true)}
