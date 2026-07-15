@@ -29,7 +29,7 @@ function ForkButton({ site }: { site: ViewerSite }) {
 }
 
 // The persistent top chrome for the viewer: brand (→ dashboard) + a breadcrumb, then one action
-// row that stays put across modes — Comments (with an open count, outside review), Fork, TL;DR,
+// row that stays put across modes — Fork, TL;DR, Comments (with an open count, outside review),
 // Share, and Done while reviewing. The Read·Annotate toggle lives in the ReviewRail header, next
 // to the comments it drives. Replaces the old floating PreviewToolbar dock.
 export function ViewerTopBar({
@@ -90,6 +90,11 @@ export function ViewerTopBar({
             ⌘K
           </kbd>
         </Button>
+        <ForkButton site={site} />
+        <Button size="sm" variant="ghost" className="gap-1.5" title="AI summary" onClick={() => setSummaryOpen(true)}>
+          <Sparkles className="size-3.5" />
+          TL;DR
+        </Button>
         {!review && (
           <Button
             size="sm"
@@ -107,11 +112,6 @@ export function ViewerTopBar({
             )}
           </Button>
         )}
-        <ForkButton site={site} />
-        <Button size="sm" variant="ghost" className="gap-1.5" title="AI summary" onClick={() => setSummaryOpen(true)}>
-          <Sparkles className="size-3.5" />
-          TL;DR
-        </Button>
         {site.isOwner && <ShareDialog spaceSlug={site.spaceSlug} siteSlug={site.siteSlug} title={site.title} compact />}
         {review && (
           <Button size="sm" variant="secondary" onClick={onExit}>
