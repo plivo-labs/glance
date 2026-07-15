@@ -4,7 +4,6 @@ import { toast } from 'sonner'
 import { api, ApiError } from '@/lib/api'
 import { isAudioFile } from '@/lib/audio'
 import { attachDbBroker } from '@/lib/dbBroker'
-import { cn } from '@/lib/utils'
 import { comments, type PendingAnchor, pendingToInput, type Thread } from '@/lib/comments'
 import { type Intent, parseIntent } from '@/lib/parseIntent'
 import { encodePathSegments } from '@/lib/paths'
@@ -15,7 +14,7 @@ import { loadViewer, PREFETCH_FAILED, type PrefetchResult, type ViewerLoaderData
 import { AudioView } from '@/components/AudioView'
 import { Spinner } from '@/components/states'
 import { CommandPalette } from '@/components/CommandPalette'
-import { type CanvasWidth, ViewerTopBar } from '@/components/ViewerTopBar'
+import { ViewerTopBar } from '@/components/ViewerTopBar'
 import { ReviewRail, type ReviewMode } from '@/components/review/ReviewRail'
 import { ViewerSidebar } from '@/components/ViewerSidebar'
 
@@ -74,7 +73,6 @@ function Viewer() {
   // Within review, Read = normal browsing + text-select-to-comment; Annotate = also hover/click an
   // element to pinpoint it. Default annotate on entering review so element commenting works.
   const [reviewMode, setReviewMode] = useState<ReviewMode>('read')
-  const [width, setWidth] = useState<CanvasWidth>('full')
   const [loaded, setLoaded] = useState(false)
   const [me, setMe] = useState<Me | null>(null)
   // The HTML iframe only learns its file path from the annotate client's 'ready' postMessage
@@ -372,8 +370,6 @@ function Viewer() {
         site={site}
         sitePath={sitePath}
         review={review}
-        width={width}
-        onWidth={setWidth}
         commentCount={openCount}
         onReview={() => setReview(true)}
         onExit={exitReview}
@@ -392,11 +388,9 @@ function Viewer() {
       />
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-        {/* Letterbox canvas: the iframe is constrained to the chosen width and centered; the
-            surrounding muted area is the letterbox. The loading overlay lives inside the constrained
-            wrapper so its coords still match the iframe viewport. */}
+        {/* The loading overlay lives inside this wrapper so its coords match the iframe viewport. */}
         <div className="relative flex min-h-0 min-w-0 flex-1 justify-center bg-muted/20">
-          <div className={cn('relative h-full w-full', WIDTH_CLASS[width])}>
+          <div className="relative h-full w-full">
             {isAudio ? (
               <AudioView src={audioSrc} fileName={(entryPath ?? '').split('/').pop() ?? ''} audioRef={audioRef} />
             ) : (
@@ -446,9 +440,6 @@ function Viewer() {
     </div>
   )
 }
-
-// Tailwind max-width per canvas width (letterboxing the rest). `full` = no constraint.
-const WIDTH_CLASS: Record<CanvasWidth, string> = { full: 'max-w-none', wide: 'max-w-5xl', reading: 'max-w-3xl' }
 
 function withAnnotate(u: string): string {
   const url = new URL(u)
