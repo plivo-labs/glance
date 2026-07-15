@@ -59,7 +59,7 @@ export function ThreadCard({
         {thread.comments.map((c) => (
           <li key={c.id} className="group text-sm">
             <div className="flex items-center gap-2 text-muted-foreground text-xs">
-              <span className="font-medium text-foreground">{c.authorId === me?.id ? 'You' : 'Reviewer'}</span>
+              <span className="font-medium text-foreground">{c.authorId === me?.id ? 'You' : (c.author ?? 'Reviewer')}</span>
               <span>{fmt(c.createdAt)}</span>
               {c.hasAudio && !c.deleted && (
                 <Badge variant="secondary" className="gap-1 px-1.5 py-0 font-medium">
