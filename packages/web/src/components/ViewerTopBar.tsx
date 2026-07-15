@@ -5,20 +5,9 @@ import { useForkSite } from '@/hooks/useForkSite'
 import type { ViewerSite } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
-import { Segmented } from '@/components/ui/segmented'
 import { ShareDialog } from '@/components/ShareDialog'
 import { SummarySheet } from '@/components/SummarySheet'
 import { Spinner } from '@/components/states'
-
-// Canvas width for the preview iframe: full-bleed, a wide column, or a narrow reading measure
-// (the wrapper letterboxes the rest).
-export type CanvasWidth = 'full' | 'wide' | 'reading'
-
-const WIDTHS = [
-  { value: 'full', label: 'Full', title: 'Full width' },
-  { value: 'wide', label: 'Wide', title: 'Wide column' },
-  { value: 'reading', label: 'Read', title: 'Reading width' },
-] as const satisfies readonly { value: CanvasWidth; label: string; title: string }[]
 
 // Copy this site into a space of your own. Deliberately NOT gated on site.isOwner (unlike Share):
 // anyone who can read a site can fork it, so a plain viewer gets this button too.
@@ -47,8 +36,6 @@ export function ViewerTopBar({
   site,
   sitePath,
   review,
-  width,
-  onWidth,
   commentCount,
   onReview,
   onExit,
@@ -58,8 +45,6 @@ export function ViewerTopBar({
   site: ViewerSite
   sitePath: string
   review: boolean
-  width: CanvasWidth
-  onWidth: (width: CanvasWidth) => void
   commentCount: number
   onReview: () => void
   onExit: () => void
@@ -105,7 +90,6 @@ export function ViewerTopBar({
             ⌘K
           </kbd>
         </Button>
-        <Segmented value={width} options={WIDTHS} onChange={onWidth} />
         {!review && (
           <Button
             size="sm"
