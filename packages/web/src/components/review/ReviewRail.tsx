@@ -19,6 +19,11 @@ const MODES = [
 
 const byUpdatedDesc = (a: Thread, b: Thread) => b.updatedAt.localeCompare(a.updatedAt)
 
+// Resize bounds: never narrower than the classic default, never wider than half the screen.
+export const RAIL_MIN_WIDTH = 360
+export const clampRailWidth = (width: number, viewportWidth: number): number =>
+  Math.min(Math.max(width, RAIL_MIN_WIDTH), Math.max(RAIL_MIN_WIDTH, Math.floor(viewportWidth / 2)))
+
 // Persistent right-rail for review mode: the Read·Annotate toggle in its header, filter
 // (open/resolved), an anchor-prefilled composer on select/pinpoint, and the thread list.
 // Done (exit review) lives in the ViewerTopBar.
@@ -64,6 +69,27 @@ export function ReviewRail({
 }) {
   const [filter, setFilter] = useState<ThreadStatus>('open')
 
+  // Desktop rail width, drag-resizable via the left-edge handle: starts at the classic 360px and
+  // clamps to [360, half the viewport]. Applied through a CSS var consumed only at md+ so the
+  // mobile bottom-sheet layout (w-full) is untouched. Pointer capture keeps the drag alive over
+  // the content iframe (which otherwise swallows pointermove and freezes the resize).
+  const [railWidth, setRailWidth] = useState(RAIL_MIN_WIDTH)
+  const onResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.currentTarget.setPointerCapture(e.pointerId)
+    const startX = e.clientX
+    const startWidth = railWidth
+    const onMove = (ev: PointerEvent) =>
+      setRailWidth(clampRailWidth(startWidth + (startX - ev.clientX), window.innerWidth))
+    const target = e.currentTarget
+    target.addEventListener('pointermove', onMove)
+    target.addEventListener(
+      'pointerup',
+      () => target.removeEventListener('pointermove', onMove),
+      { once: true },
+    )
+  }
+
   const active = useMemo(() => threads.filter((t) => t.status === filter).sort(byUpdatedDesc), [threads, filter])
 
   // Deep-link reveal: when a notification's target thread arrives, switch to its status tab (so a
@@ -83,7 +109,29 @@ export function ReviewRail({
   }, [focusThreadId, threads])
 
   return (
-    <aside className="flex max-h-[55vh] w-full shrink-0 flex-col border-t bg-background md:max-h-none md:h-full md:w-[360px] md:border-t-0 md:border-l">
+    <aside
+      className="relative flex max-h-[55vh] w-full shrink-0 flex-col border-t bg-background md:max-h-none md:h-full md:w-[var(--rail-w)] md:border-t-0 md:border-l"
+      style={{ '--rail-w': `${railWidth}px` } as React.CSSProperties}
+    >
+      {/* Left-edge drag handle (desktop only): straddles the border so it's easy to grab.
+          Keyboard: arrow keys nudge the width (WAI-ARIA window-splitter pattern). */}
+      {/* biome-ignore lint/a11y/useSemanticElements: an <hr> can't be an interactive resizer. */}
+      <div
+        role="separator"
+        tabIndex={0}
+        aria-orientation="vertical"
+        aria-label="Resize comments rail"
+        aria-valuenow={railWidth}
+        aria-valuemin={RAIL_MIN_WIDTH}
+        onPointerDown={onResizeStart}
+        onKeyDown={(e) => {
+          if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+          e.preventDefault()
+          const delta = e.key === 'ArrowLeft' ? 24 : -24
+          setRailWidth((w) => clampRailWidth(w + delta, window.innerWidth))
+        }}
+        className="absolute inset-y-0 -left-1 z-10 hidden w-2 cursor-col-resize touch-none hover:bg-primary/30 focus-visible:bg-primary/40 active:bg-primary/40 md:block"
+      />
       <header className="flex items-center justify-between gap-2 border-b px-4 py-3">
         <h2 className="font-semibold text-sm">Comments</h2>
         {mode && onMode && <Segmented value={mode} options={MODES} onChange={onMode} />}
