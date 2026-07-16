@@ -62,6 +62,16 @@ glance deploy <path>  # file or folder → publishes to your personal space
 
 The installer bakes in your instance URL and installs the agent skill so coding agents can drive the CLI. Any agent that can run a shell command drives Glance by calling the `glance` CLI directly — it's harness-agnostic.
 
+### Any agent, any harness
+
+The bundled skill teaches your agent to drive Glance. Install it into **any** harness — Claude Code, Cursor, Codex, OpenCode, Amp, and more — with the [skills.sh](https://skills.sh) installer:
+
+```bash
+npx skills add plivo-labs/glance   # installs the glance-cli skill universally (Codex, Cursor, OpenCode, Claude Code …)
+```
+
+The `curl … /api/install | sh` line above already installs the skill for Claude Code alongside the binary. The skill only wraps the `glance` CLI, so any shell-capable agent works with or without it.
+
 | command | what it does |
 |---|---|
 | `login` | device-code flow, saves token to `~/.glance/config.json` |
