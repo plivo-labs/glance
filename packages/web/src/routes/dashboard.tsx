@@ -395,10 +395,14 @@ function CommentsFeed({ comments }: { comments: CommentFeedItem[] }) {
           filePath: item.filePath,
           threadId: item.threadId,
         })
-        const v =
-          item.kind === 'mention'
-            ? { author: item.actorName ?? 'Someone', verb: ' mentioned you', editedSuffix: false }
-            : { author: 'You', verb: '', editedSuffix: !!item.editedAt }
+        const v = (
+          {
+            mention: { author: item.actorName ?? 'Someone', verb: ' mentioned you' },
+            owned: { author: item.actorName ?? 'Someone', verb: ' commented' },
+            authored: { author: 'You', verb: '' },
+          } as const
+        )[item.kind]
+        const editedSuffix = item.kind !== 'mention' && !!item.editedAt
         return (
           <li key={`${item.kind}:${item.id}`}>
             <Link
@@ -432,7 +436,7 @@ function CommentsFeed({ comments }: { comments: CommentFeedItem[] }) {
                   )}
                   {' · '}
                   {timeAgo(item.createdAt)}
-                  {v.editedSuffix && ' · edited'}
+                  {editedSuffix && ' · edited'}
                 </p>
               </div>
               {item.threadStatus === 'open' ? (

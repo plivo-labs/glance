@@ -21,7 +21,7 @@ const ALLOW: AccessResult = { ok: true }
  */
 export function checkAccess(
   site: Pick<Site, 'visibility' | 'status' | 'ownerId'>,
-  user: SessionUser | null,
+  user: Pick<SessionUser, 'id' | 'role'> | null,
   isMember: boolean,
   isShared = false,
 ): AccessResult {

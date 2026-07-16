@@ -75,7 +75,8 @@ function kindIds(items: unknown): Array<{ kind: string; id: string }> {
 }
 
 function expectRequestBudget(db: RouteApp['db']) {
-  expect(db.counters).toEqual({ loose: 1, batches: 1, batchStmts: 5, insert: 0, update: 0, delete: 0 })
+  // 6 batch stmts: authored, mentions, owned, memberSpaces, shares(direct+viaGroup)
+  expect(db.counters).toEqual({ loose: 1, batches: 1, batchStmts: 6, insert: 0, update: 0, delete: 0 })
 }
 
 describe('comment feed route — C4.1 auth', () => {
@@ -158,10 +159,64 @@ describe('comment feed route — C4.2 golden contract', () => {
       },
     ])
   })
+
+  test("another user's comment on a site the caller owns appears as owned", async () => {
+    const { app, env, db, kv } = makeRouteApp()
+    const ownerId = await mintUser(db, kv, 'owned-owner')
+    const authorId = await mintUser(db, kv, 'owned-author', { email: 'commenter@example.com' })
+    const spaceId = await seedSpace(db, {
+      id: 'space-owned-route',
+      createdBy: ownerId,
+      slug: 'owned-space',
+      name: 'Owned Space',
+    })
+    const siteId = await seedSite(db, {
+      id: 'site-owned-route',
+      spaceId,
+      ownerId,
+      slug: 'owned-site',
+      title: 'Owned Site',
+      visibility: 'private',
+    })
+    const threadId = await seedThread(db, {
+      id: 'thread-owned-route',
+      siteId,
+      filePath: 'docs/owned.html',
+      status: 'open',
+      createdBy: authorId,
+    })
+    await seedComment(db, {
+      id: 'comment-owned-route',
+      threadId,
+      authorId,
+      body: 'A comment for the owner',
+      createdAt: at(5),
+    })
+
+    const res = await app.request(FEED_URL, { headers: auth(ownerId) }, env)
+
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual([
+      {
+        kind: 'owned',
+        id: 'comment-owned-route',
+        snippet: 'A comment for the owner',
+        actorName: 'commenter@example.com',
+        spaceSlug: 'owned-space',
+        siteSlug: 'owned-site',
+        siteTitle: 'Owned Site',
+        filePath: 'docs/owned.html',
+        threadId: 'thread-owned-route',
+        threadStatus: 'open',
+        createdAt: '2026-01-01T00:00:05.000Z',
+        editedAt: null,
+      },
+    ])
+  })
 })
 
 describe('comment feed route — C4.4 request budget', () => {
-  test('a populated feed uses one auth read and one five-statement batch with no writes', async () => {
+  test('a populated feed uses one auth read and one six-statement batch with no writes', async () => {
     const { app, env, db, kv } = makeRouteApp()
     const userId = await seedGoldenFeed(db, kv)
     db.resetCounters()
@@ -377,7 +432,7 @@ describe('comment feed route — C4.5 moved site', () => {
 })
 
 describe('comment feed route — C4.7 caller isolation', () => {
-  test("returns only the caller's authored comments and mention notifications", async () => {
+  test("returns the caller's authored, mention, and owned rows — never another caller's mentions", async () => {
     const { app, env, db, kv } = makeRouteApp()
     const userId = await mintUser(db, kv, 'isolation-me')
     const otherUserId = await mintUser(db, kv, 'isolation-other')
@@ -450,6 +505,7 @@ describe('comment feed route — C4.7 caller isolation', () => {
 
     expect(res.status).toBe(200)
     expect(kindIds(await res.json())).toEqual([
+      { kind: 'owned', id: 'comment-isolation-other-authored' },
       { kind: 'mention', id: 'notification-isolation-my-mention' },
       { kind: 'authored', id: 'comment-isolation-my-authored' },
     ])

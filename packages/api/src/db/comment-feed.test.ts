@@ -17,9 +17,10 @@ import {
 import {
   assembleCommentFeed,
   authoredCandidatesStmt,
-  type AuthoredCandidateRow,
+  type CommentCandidateRow,
   mentionCandidatesStmt,
   type MentionCandidateRow,
+  ownedCandidatesStmt,
 } from './comment-feed'
 import { foldSharedSiteRoles } from './repo'
 
@@ -85,7 +86,7 @@ describe('comments feed candidate statements', () => {
 
     const [authored] = await db.batch([authoredCandidatesStmt(db, userId)])
 
-    expect(authored.map((row) => row.id)).toEqual([liveId])
+    expect(authored.map((row) => row.commentId)).toEqual([liveId])
   })
 
   test('C2.3 mention candidates preserve named, email-only, and deleted actor states', async () => {
@@ -190,9 +191,9 @@ describe('comments feed candidate statements', () => {
     const [authoredRows] = await db.batch([authoredCandidatesStmt(db, userId)])
     expect(authoredRows.length).toBe(200)
     for (let n = 0; n < 5; n++) {
-      expect(authoredRows.some((row) => row.id === authoredByN.get(n))).toBe(false)
+      expect(authoredRows.some((row) => row.commentId === authoredByN.get(n))).toBe(false)
     }
-    expect(authoredRows.map((row) => row.id)).toEqual(expectedIds(authoredSeeded))
+    expect(authoredRows.map((row) => row.commentId)).toEqual(expectedIds(authoredSeeded))
 
     const mentionByN = new Map<number, string>()
     const mentionSeeded: Seeded[] = []
@@ -229,13 +230,15 @@ function makeUser(overrides: Partial<SessionUser> = {}): SessionUser {
   }
 }
 
-function authoredRow(overrides: Partial<AuthoredCandidateRow> = {}): AuthoredCandidateRow {
+function authoredRow(overrides: Partial<CommentCandidateRow> = {}): CommentCandidateRow {
   return {
-    id: 'authored-1',
+    commentId: 'authored-1',
     body: 'Authored comment',
     createdAt: '2026-07-11T10:00:00.000Z',
     editedAt: null,
     rowid: 1,
+    actorName: null,
+    actorEmail: null,
     threadId: 'thread-1',
     threadStatus: 'open',
     filePath: 'index.html',
@@ -254,6 +257,7 @@ function authoredRow(overrides: Partial<AuthoredCandidateRow> = {}): AuthoredCan
 function mentionRow(overrides: Partial<MentionCandidateRow> = {}): MentionCandidateRow {
   return {
     id: 'mention-1',
+    commentId: null,
     snippet: 'Mention snapshot',
     createdAt: '2026-07-11T10:00:00.000Z',
     rowid: 1,
@@ -274,19 +278,281 @@ function mentionRow(overrides: Partial<MentionCandidateRow> = {}): MentionCandid
   }
 }
 
+function ownedRow(overrides: Partial<CommentCandidateRow> = {}): CommentCandidateRow {
+  return {
+    commentId: 'owned-1',
+    body: 'Owned comment',
+    createdAt: '2026-07-11T10:00:00.000Z',
+    editedAt: null,
+    rowid: 1,
+    actorName: 'Commenter',
+    actorEmail: 'commenter@example.com',
+    threadId: 'thread-1',
+    threadStatus: 'open',
+    filePath: 'index.html',
+    siteId: 'site-1',
+    siteSlug: 'site',
+    siteTitle: 'Site',
+    visibility: 'private',
+    siteStatus: 'active',
+    ownerId: 'user-1',
+    spaceId: 'space-1',
+    spaceSlug: 'space',
+    ...overrides,
+  }
+}
+
+describe('owned comment feed', () => {
+  test('F1 another user comment on an owned site keeps its feed context', async () => {
+    const db = makeDb()
+    const ownerId = await seedUser(db, { id: 'owner', email: 'owner@example.com' })
+    const authorId = await seedUser(db, {
+      id: 'author',
+      email: 'author@example.com',
+      name: 'Other Author',
+    })
+    const spaceId = await seedSpace(db, {
+      id: 'owned-space-id',
+      createdBy: ownerId,
+      slug: 'owned-space',
+    })
+    const siteId = await seedSite(db, {
+      id: 'owned-site-id',
+      spaceId,
+      ownerId,
+      slug: 'owned-site',
+      title: 'Owned Site',
+      visibility: 'private',
+    })
+    const threadId = await seedThread(db, {
+      id: 'owned-thread',
+      siteId,
+      filePath: 'docs/owned.html',
+    })
+    const commentId = await seedComment(db, {
+      id: 'owned-comment',
+      threadId,
+      authorId,
+      body: 'A comment for the owner',
+      createdAt: '2026-07-12T10:00:00.000Z',
+    })
+
+    const [owned] = await db.batch([ownedCandidatesStmt(db, ownerId)])
+    const result = assembleCommentFeed({
+      authored: [],
+      mentions: [],
+      owned,
+      user: makeUser({ id: ownerId }),
+      memberSpaceIds: new Set(),
+      sharedSiteRoles: new Map(),
+    })
+
+    expect(result).toEqual([
+      {
+        kind: 'owned',
+        id: commentId,
+        snippet: 'A comment for the owner',
+        actorName: 'Other Author',
+        spaceSlug: 'owned-space',
+        siteSlug: 'owned-site',
+        siteTitle: 'Owned Site',
+        filePath: 'docs/owned.html',
+        threadId: 'owned-thread',
+        threadStatus: 'open',
+        createdAt: '2026-07-12T10:00:00.000Z',
+        editedAt: null,
+      },
+    ])
+  })
+
+  test('F2 a mention on an owned site wins dedupe by comment id', async () => {
+    const db = makeDb()
+    const ownerId = await seedUser(db, { id: 'owner-f2', email: 'owner-f2@example.com' })
+    const authorId = await seedUser(db, { id: 'author-f2', email: 'author-f2@example.com' })
+    const spaceId = await seedSpace(db, { createdBy: ownerId })
+    const siteId = await seedSite(db, { spaceId, ownerId, visibility: 'private' })
+    const threadId = await seedThread(db, { siteId, filePath: 'dedupe.html' })
+    const commentId = await seedComment(db, {
+      threadId,
+      authorId,
+      body: 'The live comment body',
+      createdAt: '2026-07-12T11:00:00.000Z',
+    })
+    const notificationId = await seedNotification(db, {
+      recipientId: ownerId,
+      actorId: authorId,
+      siteId,
+      threadId,
+      commentId,
+      snippet: 'The mention snapshot',
+      createdAt: '2026-07-12T11:00:00.000Z',
+    })
+
+    const [owned, mentions] = await db.batch([
+      ownedCandidatesStmt(db, ownerId),
+      mentionCandidatesStmt(db, ownerId),
+    ])
+    const result = assembleCommentFeed({
+      authored: [],
+      mentions,
+      owned,
+      user: makeUser({ id: ownerId }),
+      memberSpaceIds: new Set(),
+      sharedSiteRoles: new Map(),
+    })
+
+    expect(mentions[0]?.commentId).toBe(commentId)
+    expect(result).toHaveLength(1)
+    expect(result[0]).toMatchObject({
+      kind: 'mention',
+      id: notificationId,
+      snippet: 'The mention snapshot',
+    })
+  })
+
+  test('F3 own comments stay out while null-author comments retain a null actor', async () => {
+    const db = makeDb()
+    const ownerId = await seedUser(db, { id: 'owner-f3', email: 'owner-f3@example.com' })
+    const spaceId = await seedSpace(db, { createdBy: ownerId })
+    const siteId = await seedSite(db, { spaceId, ownerId, visibility: 'private' })
+    const threadId = await seedThread(db, { siteId, filePath: 'authors.html' })
+    const ownCommentId = await seedComment(db, {
+      threadId,
+      authorId: ownerId,
+      body: 'Owner comment',
+    })
+    const nullAuthorCommentId = await seedComment(db, {
+      threadId,
+      authorId: null,
+      body: 'Deleted-user comment',
+    })
+
+    const [owned] = await db.batch([ownedCandidatesStmt(db, ownerId)])
+    const result = assembleCommentFeed({
+      authored: [],
+      mentions: [],
+      owned,
+      user: makeUser({ id: ownerId }),
+      memberSpaceIds: new Set(),
+      sharedSiteRoles: new Map(),
+    })
+
+    expect(owned.some((row) => row.commentId === ownCommentId)).toBe(false)
+    expect(result).toHaveLength(1)
+    expect(result[0]).toMatchObject({
+      kind: 'owned',
+      id: nullAuthorCommentId,
+      actorName: null,
+    })
+  })
+
+  test('F4 soft-deleted owned comments stay out and another arm cannot crowd out an older owned item', async () => {
+    const db = makeDb()
+    const ownerId = await seedUser(db, { id: 'owner-f4', email: 'owner-f4@example.com' })
+    const otherId = await seedUser(db, { id: 'other-f4', email: 'other-f4@example.com' })
+    const ownedSpaceId = await seedSpace(db, { createdBy: ownerId })
+    const ownedSiteId = await seedSite(db, {
+      spaceId: ownedSpaceId,
+      ownerId,
+      visibility: 'private',
+    })
+    const ownedThreadId = await seedThread(db, { siteId: ownedSiteId, filePath: 'owned-window.html' })
+    const olderOwnedId = await seedComment(db, {
+      threadId: ownedThreadId,
+      authorId: otherId,
+      body: 'Older accessible owned comment',
+      createdAt: '2026-01-01T00:00:00.000Z',
+    })
+    await seedComment(db, {
+      threadId: ownedThreadId,
+      authorId: otherId,
+      body: 'Deleted owned comment',
+      createdAt: '2026-01-01T00:04:00.000Z',
+      deletedAt: '2026-01-01T00:05:00.000Z',
+    })
+
+    const inaccessibleSpaceId = await seedSpace(db, { createdBy: otherId })
+    const inaccessibleSiteId = await seedSite(db, {
+      spaceId: inaccessibleSpaceId,
+      ownerId: otherId,
+      visibility: 'private',
+    })
+    const inaccessibleThreadId = await seedThread(db, {
+      siteId: inaccessibleSiteId,
+      filePath: 'inaccessible-window.html',
+    })
+    for (let i = 0; i < 200; i++) {
+      await seedComment(db, {
+        threadId: inaccessibleThreadId,
+        authorId: ownerId,
+        body: `Inaccessible authored comment ${i}`,
+        createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, i + 1)).toISOString(),
+      })
+    }
+
+    const [authored, owned] = await db.batch([
+      authoredCandidatesStmt(db, ownerId),
+      ownedCandidatesStmt(db, ownerId),
+    ])
+    const result = assembleCommentFeed({
+      authored,
+      mentions: [],
+      owned,
+      user: makeUser({ id: ownerId }),
+      memberSpaceIds: new Set(),
+      sharedSiteRoles: new Map(),
+    })
+
+    expect(authored).toHaveLength(200)
+    expect(owned.map((row) => row.commentId)).toEqual([olderOwnedId])
+    expect(result.map((row) => row.id)).toEqual([olderOwnedId])
+  })
+
+  test('F5 equal timestamps rank mention then authored then owned with rowid ties inside each kind', () => {
+    const createdAt = '2026-07-12T12:00:00.000Z'
+    const result = assembleCommentFeed({
+      mentions: [
+        mentionRow({ id: 'mention-low', createdAt, rowid: 1 }),
+        mentionRow({ id: 'mention-high', createdAt, rowid: 6 }),
+      ],
+      authored: [
+        authoredRow({ commentId: 'authored-low', createdAt, rowid: 2 }),
+        authoredRow({ commentId: 'authored-high', createdAt, rowid: 7 }),
+      ],
+      owned: [
+        ownedRow({ commentId: 'owned-low', createdAt, rowid: 3 }),
+        ownedRow({ commentId: 'owned-high', createdAt, rowid: 8 }),
+      ],
+      user: makeUser(),
+      memberSpaceIds: new Set(),
+      sharedSiteRoles: new Map(),
+    })
+
+    expect(result.map((row) => row.id)).toEqual([
+      'mention-high',
+      'mention-low',
+      'authored-high',
+      'authored-low',
+      'owned-high',
+      'owned-low',
+    ])
+  })
+})
+
 describe('assembleCommentFeed', () => {
   test('C3.1 merges candidates by timestamp, kind rank, then same-kind rowid', () => {
     const result = assembleCommentFeed({
       authored: [
-        authoredRow({ id: 'authored-tie-low', createdAt: '2026-07-11T11:00:00.000Z', rowid: 3 }),
-        authoredRow({ id: 'authored-kind-tie', createdAt: '2026-07-11T12:00:00.000Z', rowid: 99 }),
-        authoredRow({ id: 'authored-oldest', createdAt: '2026-07-11T10:00:00.000Z', rowid: 100 }),
-        authoredRow({ id: 'authored-tie-high', createdAt: '2026-07-11T11:00:00.000Z', rowid: 8 }),
+        authoredRow({ commentId: 'authored-tie-low', createdAt: '2026-07-11T11:00:00.000Z', rowid: 3 }),
+        authoredRow({ commentId: 'authored-kind-tie', createdAt: '2026-07-11T12:00:00.000Z', rowid: 99 }),
+        authoredRow({ commentId: 'authored-oldest', createdAt: '2026-07-11T10:00:00.000Z', rowid: 100 }),
+        authoredRow({ commentId: 'authored-tie-high', createdAt: '2026-07-11T11:00:00.000Z', rowid: 8 }),
       ],
       mentions: [
         mentionRow({ id: 'mention-newest', createdAt: '2026-07-11T13:00:00.000Z', rowid: 1 }),
         mentionRow({ id: 'mention-kind-tie', createdAt: '2026-07-11T12:00:00.000Z', rowid: 1 }),
       ],
+      owned: [],
       user: makeUser(),
       memberSpaceIds: new Set(),
       sharedSiteRoles: new Map(),
@@ -314,20 +580,20 @@ describe('assembleCommentFeed', () => {
     const plainUserResult = assembleCommentFeed({
       authored: [
         authoredRow({
-          id: 'members-member',
+          commentId: 'members-member',
           siteId: 'site-members-keep',
           spaceId: 'space-member',
           visibility: 'members',
           ownerId: 'someone-else',
         }),
         authoredRow({
-          id: 'private-group',
+          commentId: 'private-group',
           siteId: 'site-private-group',
           visibility: 'private',
           ownerId: 'someone-else',
         }),
         authoredRow({
-          id: 'private-no-grant',
+          commentId: 'private-no-grant',
           siteId: 'site-private-none',
           visibility: 'private',
           ownerId: 'someone-else',
@@ -355,6 +621,7 @@ describe('assembleCommentFeed', () => {
           ownerId: 'someone-else',
         }),
       ],
+      owned: [],
       user: makeUser(),
       memberSpaceIds: new Set(['space-member']),
       sharedSiteRoles: new Map([...groupRoles, ...directRoles]),
@@ -362,7 +629,7 @@ describe('assembleCommentFeed', () => {
     const superadminResult = assembleCommentFeed({
       authored: [
         authoredRow({
-          id: 'archived-superadmin',
+          commentId: 'archived-superadmin',
           siteId: 'site-archived-superadmin',
           visibility: 'private',
           siteStatus: 'archived',
@@ -370,6 +637,7 @@ describe('assembleCommentFeed', () => {
         }),
       ],
       mentions: [],
+      owned: [],
       user: makeUser({ role: 'superadmin' }),
       memberSpaceIds: new Set(),
       sharedSiteRoles: new Map(),
@@ -387,7 +655,7 @@ describe('assembleCommentFeed', () => {
     const shuffledRanks = Array.from({ length: 60 }, (_, index) => ((index * 17) % 60) + 1)
     const distinctRows = shuffledRanks.map((rank) =>
       authoredRow({
-        id: `authored-${String(rank).padStart(2, '0')}`,
+        commentId: `authored-${String(rank).padStart(2, '0')}`,
         createdAt: `2026-07-11T10:${String(rank - 1).padStart(2, '0')}:00.000Z`,
         rowid: rank,
       }),
@@ -400,6 +668,7 @@ describe('assembleCommentFeed', () => {
     const distinctResult = assembleCommentFeed({
       authored: distinctRows,
       mentions: [],
+      owned: [],
       user: makeUser(),
       memberSpaceIds: new Set(),
       sharedSiteRoles: new Map(),
@@ -408,11 +677,11 @@ describe('assembleCommentFeed', () => {
     expect(distinctResult.map((row) => row.id)).toEqual(expectedNewest)
 
     const boundaryRows = distinctRows.map((row) => {
-      if (row.id === 'authored-10') {
-        return { ...row, id: 'boundary-high', createdAt: '2026-07-11T10:10:00.000Z', rowid: 900 }
+      if (row.commentId === 'authored-10') {
+        return { ...row, commentId: 'boundary-high', createdAt: '2026-07-11T10:10:00.000Z', rowid: 900 }
       }
-      if (row.id === 'authored-11') {
-        return { ...row, id: 'boundary-low', createdAt: '2026-07-11T10:10:00.000Z', rowid: 100 }
+      if (row.commentId === 'authored-11') {
+        return { ...row, commentId: 'boundary-low', createdAt: '2026-07-11T10:10:00.000Z', rowid: 100 }
       }
       return row
     })
@@ -422,6 +691,7 @@ describe('assembleCommentFeed', () => {
     const boundaryResult = assembleCommentFeed({
       authored: boundaryRows,
       mentions: [],
+      owned: [],
       user: makeUser(),
       memberSpaceIds: new Set(),
       sharedSiteRoles: new Map(),
@@ -435,7 +705,7 @@ describe('assembleCommentFeed', () => {
     const [authored] = assembleCommentFeed({
       authored: [
         authoredRow({
-          id: 'authored-payload',
+          commentId: 'authored-payload',
           body: authoredBody,
           createdAt: '2026-07-11T14:00:00.000Z',
           editedAt: '2026-07-11T14:05:00.000Z',
@@ -451,6 +721,7 @@ describe('assembleCommentFeed', () => {
         }),
       ],
       mentions: [],
+      owned: [],
       user: makeUser(),
       memberSpaceIds: new Set(),
       sharedSiteRoles: new Map(),
@@ -475,6 +746,7 @@ describe('assembleCommentFeed', () => {
       const [item] = assembleCommentFeed({
         authored: [authoredRow({ body })],
         mentions: [],
+        owned: [],
         user: makeUser(),
         memberSpaceIds: new Set(),
         sharedSiteRoles: new Map(),
@@ -486,6 +758,7 @@ describe('assembleCommentFeed', () => {
     const [surrogateItem] = assembleCommentFeed({
       authored: [authoredRow({ body: surrogateBody })],
       mentions: [],
+      owned: [],
       user: makeUser(),
       memberSpaceIds: new Set(),
       sharedSiteRoles: new Map(),
@@ -515,6 +788,7 @@ describe('assembleCommentFeed', () => {
           rowid: 88,
         }),
       ],
+      owned: [],
       user: makeUser(),
       memberSpaceIds: new Set(),
       sharedSiteRoles: new Map(),

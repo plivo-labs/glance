@@ -431,6 +431,7 @@ export async function seedNotification(
     siteId: o.siteId ?? null,
     siteLabel: o.siteLabel ?? null,
     threadId: o.threadId ?? null,
+    commentId: o.commentId ?? null,
     filePath: o.filePath ?? null,
     snippet: o.snippet ?? null,
     readAt: o.readAt ?? null,
