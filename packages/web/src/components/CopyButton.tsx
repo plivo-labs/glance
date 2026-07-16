@@ -27,6 +27,8 @@ export function CopyButton({
       variant={variant}
       size={size}
       className={className}
+      aria-label={label || 'Copy'}
+      title={label || 'Copy'}
       onClick={async () => {
         try {
           await navigator.clipboard.writeText(text)

@@ -12,6 +12,7 @@ import { ChevronDown, Download, ExternalLink, Mic, Plus, Rocket, Terminal, Uploa
 import { toast } from 'sonner'
 import { CopyButton } from '@/components/CopyButton'
 import { DeployCard } from '@/components/DeployCard'
+import { GettingStarted } from '@/components/GettingStarted'
 import { RecordDialog } from '@/components/record/RecordDialog'
 import {
   actionsColumn,
@@ -220,11 +221,11 @@ function TabBody({ tab }: { tab: DashboardTab }) {
         <TabPanel content={tab.content} what="your sites">
           {(sites) =>
             sites.length === 0 ? (
-              <EmptyState
-                icon={Rocket}
-                title="No sites yet"
-                description="Drop a folder above to ship your first."
-              />
+              <EmptyState icon={Rocket} title="No sites yet" className="mx-auto max-w-lg">
+                <div className="w-full text-left">
+                  <GettingStarted />
+                </div>
+              </EmptyState>
             ) : (
               <SitesTable sites={sites} />
             )
