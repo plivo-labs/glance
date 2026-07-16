@@ -5,6 +5,7 @@ import type { RootData } from '@/lib/notifications'
 import { api } from '@/lib/api'
 import { toggleTheme, useTheme } from '@/components/theme'
 import { CommandPalette } from '@/components/CommandPalette'
+import { HelpButton } from '@/components/HelpButton'
 import { NotificationsBell } from '@/components/NotificationsBell'
 import { WhatsNewButton } from '@/components/WhatsNewButton'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -85,6 +86,7 @@ export function AppShell() {
             <Button variant="ghost" size="icon" onClick={toggleTheme} aria-label="Toggle theme" title="Toggle theme">
               {theme === 'dark' ? <Moon className="size-4" /> : <Sun className="size-4" />}
             </Button>
+            {user && <HelpButton />}
             {user && <WhatsNewButton whatsNew={whatsNew} />}
             {user && <NotificationsBell notifications={notifications} />}
             {user ? (
