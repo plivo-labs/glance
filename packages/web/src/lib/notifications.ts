@@ -23,7 +23,7 @@ export interface Notification {
 export function notificationLabel(n: Pick<Notification, 'type' | 'actorName'>): { actor: string; verb: string } {
   return {
     actor: n.actorName ?? 'Someone',
-    verb: n.type === 'comment' ? 'commented on' : 'mentioned you',
+    verb: n.type === 'comment' ? 'commented' : 'mentioned you',
   }
 }
 

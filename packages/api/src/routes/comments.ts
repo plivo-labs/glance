@@ -158,7 +158,7 @@ function cleanBody(v: unknown): string | null {
  *  mentions are deduped, self-skipped, and intersected against the autocomplete's access set.
  *  The comment audience is the owner + direct shares + (for replies) prior participants, then
  *  re-authorized from targeted membership/group-share facts; mentions win over comment rows.
- *  Every recipient is inserted in one statement. Fully guarded and fire-and-forget: notification
+ *  Every recipient is inserted in one bind-safe batch. Fully guarded and fire-and-forget: notification
  *  reads or writes must NEVER fail or block the comment that already committed. */
 async function notifyForComment(
   c: Context<AppEnv>,
@@ -222,17 +222,19 @@ async function notifyForComment(
 function notifyThreadCreated(
   c: Context<AppEnv>,
   site: ResolvedSite,
-  out: Awaited<ReturnType<typeof createThread>>,
-  filePath: string,
-  snippet: string,
-  rawMentions: unknown = undefined,
+  opts: {
+    out: Pick<Awaited<ReturnType<typeof createThread>>, 'threadId' | 'openingCommentId'>
+    filePath: string
+    snippet: string
+    rawMentions?: unknown
+  },
 ): Promise<void> {
   return notifyForComment(c, site, {
-    rawMentions,
-    threadId: out.threadId,
-    commentId: out.openingCommentId,
-    filePath,
-    snippet,
+    rawMentions: opts.rawMentions,
+    threadId: opts.out.threadId,
+    commentId: opts.out.openingCommentId,
+    filePath: opts.filePath,
+    snippet: opts.snippet,
     isReply: false,
   })
 }
@@ -240,17 +242,19 @@ function notifyThreadCreated(
 function notifyReply(
   c: Context<AppEnv>,
   site: ResolvedSite,
-  thread: Pick<CommentThread, 'id' | 'filePath'>,
-  commentId: string,
-  snippet: string,
-  rawMentions: unknown = undefined,
+  opts: {
+    thread: Pick<CommentThread, 'id' | 'filePath'>
+    commentId: string
+    snippet: string
+    rawMentions?: unknown
+  },
 ): Promise<void> {
   return notifyForComment(c, site, {
-    rawMentions,
-    threadId: thread.id,
-    commentId,
-    filePath: thread.filePath,
-    snippet,
+    rawMentions: opts.rawMentions,
+    threadId: opts.thread.id,
+    commentId: opts.commentId,
+    filePath: opts.thread.filePath,
+    snippet: opts.snippet,
     isReply: true,
   })
 }
@@ -429,7 +433,7 @@ comments.post('/:space/:site/comments', async (c) => {
     quote: fields.quote,
     anchor: fields.anchor,
   })
-  await notifyThreadCreated(c, site, out, fields.filePath, body, raw?.mentions)
+  await notifyThreadCreated(c, site, { out, filePath: fields.filePath, snippet: body, rawMentions: raw?.mentions })
   return c.json(out, 201)
 })
 
@@ -479,7 +483,7 @@ async function createVoiceThread(c: Context<AppEnv>, site: ResolvedSite): Promis
     await deleteKeys(c.env.GLANCE_FILES, [audioKey]) // compensation: don't orphan the R2 object
     throw e
   }
-  await notifyThreadCreated(c, site, out, fields.filePath, body)
+  await notifyThreadCreated(c, site, { out, filePath: fields.filePath, snippet: body })
   return c.json(out, 201)
 }
 
@@ -496,7 +500,7 @@ comments.post('/:space/:site/comments/:threadId/replies', async (c) => {
   const body = cleanBody(raw?.body)
   if (!body) return c.json({ error: 'invalid body' }, 400)
   const id = await addComment(c.get('db'), { threadId: thread.id, authorId: c.get('user').id, body })
-  await notifyReply(c, site, thread, id, body, raw?.mentions)
+  await notifyReply(c, site, { thread, commentId: id, snippet: body, rawMentions: raw?.mentions })
   return c.json({ id }, 201)
 })
 
@@ -515,7 +519,7 @@ async function replyVoiceComment(c: Context<AppEnv>, site: ResolvedSite, thread:
     await deleteKeys(c.env.GLANCE_FILES, [audioKey]) // compensation: don't orphan the R2 object
     throw e
   }
-  await notifyReply(c, site, thread, id, body)
+  await notifyReply(c, site, { thread, commentId: id, snippet: body })
   return c.json({ id }, 201)
 }
 

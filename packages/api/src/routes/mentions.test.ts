@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { and, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { listNotifications } from '../db/notifications'
-import { notifications as notificationsTable, siteUserShares } from '../db/schema'
+import { notifications as notificationsTable, siteUserShares, spaceMembers } from '../db/schema'
 import { requireSameOrigin } from '../middleware/auth'
 import {
   makeDb,
@@ -554,6 +554,61 @@ describe('S2 C12 — revoked private access removes a participant from reply aud
   })
 })
 
+describe('S2 — members visibility re-authorizes reply participants', () => {
+  test('a participant who is still a space member receives a comment row', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, 'owner')
+    const participant = await mintUser(db, kv, 'participant')
+    const { siteId, spaceId } = await seedSiteWithFile(db, r2, owner, 'members')
+    await seedMember(db, spaceId, participant)
+    const threadId = await seedThread(db, { siteId, filePath: 'index.html', createdBy: owner })
+    await seedComment(db, { threadId, authorId: participant, body: 'earlier reply' })
+
+    const reply = await app.request(
+      `${commentsUrl}/${threadId}/replies`,
+      { method: 'POST', headers: auth(owner), body: JSON.stringify({ body: 'new reply' }) },
+      env,
+    )
+
+    expect(reply.status).toBe(201)
+    expect((await listNotifications(db, participant)).items).toEqual([expect.objectContaining({ type: 'comment' })])
+  })
+
+  test('a participant who left the space is dropped from the reply audience', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, 'owner')
+    const participant = await mintUser(db, kv, 'participant')
+    const { siteId, spaceId } = await seedSiteWithFile(db, r2, owner, 'members')
+    await seedMember(db, spaceId, participant)
+    const threadId = await seedThread(db, { siteId, filePath: 'index.html', createdBy: owner })
+    await seedComment(db, { threadId, authorId: participant, body: 'earlier reply' })
+
+    // Control: while membership exists, this same audience path admits the participant through
+    // the member fact. Removing that fact makes this assertion fail, so the leave check below is
+    // not merely observing an unrelated empty audience.
+    const beforeLeaving = await app.request(
+      `${commentsUrl}/${threadId}/replies`,
+      { method: 'POST', headers: auth(owner), body: JSON.stringify({ body: 'before leaving' }) },
+      env,
+    )
+    expect(beforeLeaving.status).toBe(201)
+    expect((await listNotifications(db, participant)).items).toHaveLength(1)
+    await db.delete(notificationsTable).where(eq(notificationsTable.recipientId, participant))
+    await db
+      .delete(spaceMembers)
+      .where(and(eq(spaceMembers.spaceId, spaceId), eq(spaceMembers.userId, participant)))
+
+    const afterLeaving = await app.request(
+      `${commentsUrl}/${threadId}/replies`,
+      { method: 'POST', headers: auth(owner), body: JSON.stringify({ body: 'after leaving' }) },
+      env,
+    )
+
+    expect(afterLeaving.status).toBe(201)
+    expect((await listNotifications(db, participant)).items).toHaveLength(0)
+  })
+})
+
 describe('S2 C13 — comment-audience notification failure is isolated', () => {
   test('a real notifications insert attempt may throw without failing the comment POST', async () => {
     const { app, env, db, r2, kv } = await setup()
@@ -677,8 +732,8 @@ describe('S3 C21 — voice notification failure preserves the committed comment 
   })
 })
 
-describe('S2 C22 — one notification insert statement serves every recipient', () => {
-  test('owner, direct share, and mention rows are written in one insert and carry commentId', async () => {
+describe('S2 C22 — one notification batch serves every recipient', () => {
+  test('owner, direct share, and mention rows are written in one batch and carry commentId', async () => {
     const { app, env, db, r2, kv } = await setup()
     const owner = await mintUser(db, kv, 'owner')
     const shared = await mintUser(db, kv, 'shared')
@@ -690,9 +745,10 @@ describe('S2 C22 — one notification insert statement serves every recipient', 
 
     const res = await app.request(commentsUrl, postThread(commenter, { body: 'ping', mentions: [mentioned] }), env)
     const created = (await res.json()) as { openingCommentId: string }
-    // Insert budget: createThread writes thread + opening comment (2), then notifyForComment
-    // writes every notification row through one multi-values INSERT (1).
-    expect(db.counters.insert).toBe(3)
+    // Observed route budget: two loose createThread inserts, then one notification INSERT inside
+    // the final batch. The write stays batched for one chunk because 10+ rows must split under
+    // D1's 100-bound-parameter cap without adding a round trip.
+    expect(db.counters).toEqual({ batches: 4, loose: 2, batchStmts: 9, insert: 3, update: 0, delete: 0 })
     const rows = [
       ...(await listNotifications(db, owner)).items,
       ...(await listNotifications(db, shared)).items,

@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { checkAccess } from '../lib/access'
-import { batchAll } from '../lib/d1'
+import { batchAll, chunk, D1_MAX_BOUND_PARAMETERS, D1_MAX_IN } from '../lib/d1'
 import {
   comments,
   type NotificationType,
@@ -18,6 +18,11 @@ import {
 // exported so the S-D harness drives it directly.
 
 const now = () => new Date().toISOString()
+
+// Drizzle binds every insert column, including the generated id and createdAt defaults. Keep each
+// multi-values INSERT below D1's 100-parameter cap: floor(100 / 11) = 9 rows per statement.
+const NOTIFICATION_INSERT_COLUMN_COUNT = 11
+const NOTIFICATION_ROWS_PER_INSERT = Math.floor(D1_MAX_BOUND_PARAMETERS / NOTIFICATION_INSERT_COLUMN_COUNT)
 
 /** One row to raise. `type` is required ('mention' | 'comment'); id + createdAt are generated.
  *  All targets are optional so a row survives (via denormalized `siteLabel`) after the site/thread/
@@ -49,22 +54,25 @@ export type NotificationView = {
   createdAt: string
 }
 
-/** Insert a batch of notifications in one statement. Empty batch is a no-op (never touches D1). */
+/** Insert notifications in one D1 batch of bind-safe statements. Empty input never touches D1. */
 export async function createNotifications(db: DrizzleD1Database, rows: NotificationInput[]): Promise<void> {
   if (rows.length === 0) return
-  await db.insert(notifications).values(
-    rows.map((r) => ({
-      recipientId: r.recipientId,
-      type: r.type,
-      actorId: r.actorId ?? null,
-      siteId: r.siteId ?? null,
-      siteLabel: r.siteLabel ?? null,
-      threadId: r.threadId ?? null,
-      commentId: r.commentId ?? null,
-      filePath: r.filePath ?? null,
-      snippet: r.snippet ?? null,
-    })),
+  const inserts = chunk(rows, NOTIFICATION_ROWS_PER_INSERT).map((batch) =>
+    db.insert(notifications).values(
+      batch.map((r) => ({
+        recipientId: r.recipientId,
+        type: r.type,
+        actorId: r.actorId ?? null,
+        siteId: r.siteId ?? null,
+        siteLabel: r.siteLabel ?? null,
+        threadId: r.threadId ?? null,
+        commentId: r.commentId ?? null,
+        filePath: r.filePath ?? null,
+        snippet: r.snippet ?? null,
+      })),
+    ),
   )
+  await batchAll(db, inserts)
 }
 
 /** Resolve the normal comment audience from targeted facts, excluding the actor and any mention
@@ -73,7 +81,7 @@ export async function createNotifications(db: DrizzleD1Database, rows: Notificat
 export async function resolveCommentAudience(
   db: DrizzleD1Database,
   site: Pick<Site, 'id' | 'spaceId' | 'visibility' | 'ownerId' | 'status'>,
-  opts: { threadId: string; isReply: boolean; exclude: Set<string> | string[] },
+  opts: { threadId: string; isReply: boolean; exclude: Set<string> },
 ): Promise<string[]> {
   if (site.status === 'archived') return []
 
@@ -103,29 +111,37 @@ export async function resolveCommentAudience(
     .map((row) => row.authorId)
     .filter((authorId): authorId is string => authorId !== null)
   const audience = new Set<string>([site.ownerId, ...directShares, ...participantIds])
-  const excluded = opts.exclude instanceof Set ? opts.exclude : new Set(opts.exclude)
-  for (const id of excluded) audience.delete(id)
+  for (const id of opts.exclude) audience.delete(id)
   const candidates = [...audience]
   if (candidates.length === 0) return []
+  // Every candidate is an authenticated user id from an FK-backed audience fact. Team visibility
+  // admits all of them, so no access-fact queries are needed.
+  if (site.visibility === 'team') return candidates
 
-  const groupSharesStmt = db
-    .selectDistinct({ userId: spaceMembers.userId })
-    .from(spaceMembers)
-    .innerJoin(siteGroupShares, eq(spaceMembers.spaceId, siteGroupShares.spaceId))
-    .where(and(eq(siteGroupShares.siteId, site.id), inArray(spaceMembers.userId, candidates)))
-  const membersStmt = db
-    .select({ userId: spaceMembers.userId })
-    .from(spaceMembers)
-    .where(and(eq(spaceMembers.spaceId, site.spaceId), inArray(spaceMembers.userId, candidates)))
-  const accessStatements =
-    site.visibility === 'members'
-      ? [groupSharesStmt, membersStmt]
-      : site.visibility === 'private'
-        ? [groupSharesStmt]
-        : []
-  const accessRows = await batchAll(db, accessStatements)
-  const groupRows = accessRows[0] ?? []
-  const memberRows = site.visibility === 'members' ? (accessRows[1] ?? []) : []
+  const accessFactStatements = chunk(candidates, D1_MAX_IN).flatMap((ids) => [
+    {
+      name: 'groupRows' as const,
+      statement: db
+        .selectDistinct({ userId: spaceMembers.userId })
+        .from(spaceMembers)
+        .innerJoin(siteGroupShares, eq(spaceMembers.spaceId, siteGroupShares.spaceId))
+        .where(and(eq(siteGroupShares.siteId, site.id), inArray(spaceMembers.userId, ids))),
+    },
+    {
+      name: 'memberRows' as const,
+      statement: db
+        .select({ userId: spaceMembers.userId })
+        .from(spaceMembers)
+        .where(and(eq(spaceMembers.spaceId, site.spaceId), inArray(spaceMembers.userId, ids))),
+    },
+  ])
+  const accessRowChunks = await batchAll(
+    db,
+    accessFactStatements.map(({ statement }) => statement),
+  )
+  const accessRows = { groupRows: [] as { userId: string }[], memberRows: [] as { userId: string }[] }
+  for (const [index, { name }] of accessFactStatements.entries()) accessRows[name].push(...accessRowChunks[index])
+  const { groupRows, memberRows } = accessRows
   const groupSharedIds = new Set(groupRows.map((row) => row.userId))
   const memberIds = new Set(memberRows.map((row) => row.userId))
 

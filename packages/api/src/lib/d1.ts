@@ -7,6 +7,7 @@ import type { DrizzleD1Database } from 'drizzle-orm/d1'
 // be split into chunks and the per-chunk results unioned — otherwise a large member-space /
 // shared-site list throws. Kept under 100 to leave room for a statement's other bound values
 // (e.g. pureAudioSql's per-audio-extension binds).
+export const D1_MAX_BOUND_PARAMETERS = 100
 export const D1_MAX_IN = 90
 
 /** Split xs into runs of at most `size` (the last run may be shorter). */
@@ -17,9 +18,8 @@ export function chunk<T>(xs: T[], size: number): T[][] {
 }
 
 /** `db.batch` over a statement ARRAY: owns the non-empty tuple cast D1's batch signature
- *  demands, so call sites assembling dynamic statement lists don't each repeat it. Empty input
- *  resolves to `[]` without touching D1 (a zero-statement batch would throw; no current call
- *  site can produce one, so this is a safe no-op rather than a reachable branch).
+ *  demands, so call sites assembling dynamic statement lists don't each repeat it. Empty input is
+ *  handled defensively without touching D1; current callers all guard or construct non-empty lists.
  *
  *  TWO RULES bind every statement placed in a batch (here or via raw `db.batch`):
  *  1. Result column names must be UNIQUE and expression columns must carry `.as(...)` — real

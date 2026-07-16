@@ -251,8 +251,12 @@ export const notifications = sqliteTable(
     readAt: text('readAt'),
     createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
   },
-  // Unread count + list for one recipient in a single index scan, newest-first.
-  (t) => [index('notifications_recipient_read_created').on(t.recipientId, t.readAt, t.createdAt)],
+  (t) => [
+    // Unread count + list for one recipient in a single index scan, newest-first.
+    index('notifications_recipient_read_created').on(t.recipientId, t.readAt, t.createdAt),
+    // Supports comment FK maintenance when a comment is hard-deleted through a site/thread cascade.
+    index('notifications_comment').on(t.commentId),
+  ],
 )
 
 // One row per site (`siteId` unique): site deletion cascades, while `generatedBy` is SET NULL so

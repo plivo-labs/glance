@@ -346,7 +346,7 @@ describe('comments routes — T9.5 mutations fuse target reads into the access b
     expect(db.counters.batchStmts).toBe(batchStmts)
   }
 
-  test('reply = gate + write + notify(reads, 1 insert); denial stops unchanged at the gate', async () => {
+  test('reply = gate + write + notify(reads, batched insert); denial stops unchanged at the gate', async () => {
     const { app, env, db, kv } = makeRouteApp()
     const owner = await mintUser(db, kv, 'owner')
     const commenter = await mintUser(db, kv, 'commenter')
@@ -358,8 +358,10 @@ describe('comments routes — T9.5 mutations fuse target reads into the access b
     db.resetCounters()
     expect((await reply(threadId)).status).toBe(201)
     // The harness drains post-response waitUntil work inline, so the observed reply shape is auth
-    // (1 loose) + gate batch (6) + write batch (2) + notify batch (2) + notification INSERT (loose).
-    shape(db, 2, 3, 10)
+    // (1 loose) + gate batch (6) + write batch (2) + notify-read batch (2) + notification batch (1).
+    // Even one insert chunk is batched so 10+ recipients can split under D1's 100-param cap in the
+    // same round trip.
+    shape(db, 1, 4, 11)
 
     db.resetCounters()
     expect((await reply(foreign.threadId)).status).toBe(404)

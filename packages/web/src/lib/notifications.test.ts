@@ -9,10 +9,10 @@ describe('W1 — notificationLabel: actor + verb for mention/comment', () => {
     })
   })
 
-  test('comment → actor name and "commented on"', () => {
+  test('comment → actor name and "commented"', () => {
     expect(notificationLabel({ type: 'comment', actorName: 'Priya N' })).toEqual({
       actor: 'Priya N',
-      verb: 'commented on',
+      verb: 'commented',
     })
   })
 
