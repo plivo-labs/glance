@@ -221,11 +221,15 @@ function TabBody({ tab }: { tab: DashboardTab }) {
         <TabPanel content={tab.content} what="your sites">
           {(sites) =>
             sites.length === 0 ? (
-              <EmptyState icon={Rocket} title="No sites yet" className="mx-auto max-w-lg">
-                <div className="w-full text-left">
-                  <GettingStarted />
+              <div className="mx-auto max-w-2xl py-10">
+                <div className="mb-6 flex flex-col items-center gap-3 text-center">
+                  <div className="flex size-11 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                    <Rocket className="size-5" />
+                  </div>
+                  <div className="font-medium">No sites yet</div>
                 </div>
-              </EmptyState>
+                <GettingStarted />
+              </div>
             ) : (
               <SitesTable sites={sites} />
             )
