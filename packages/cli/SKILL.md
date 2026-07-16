@@ -38,6 +38,7 @@ Put it in your shell profile to make it permanent. Token + URL are saved to `~/.
 | `glance comments <space/slug> [--file <path>] [--open] [--json]` | prints a site's review comments as a markdown digest (or raw JSON) |
 | `glance reply <space/slug> <threadId> [message] [--tag <label>\|--no-tag]` | posts a reply to a comment thread (get the `threadId` from `glance comments`) |
 | `glance read <space/slug> [--file <path>] [--pull <dir>]` | prints a file to stdout, or `--pull` downloads the whole site's source into a folder to edit + redeploy |
+| `glance notifications [--read] [--json]` | shows your notifications — mentions and comments on your sites (or raw JSON); `--read` marks them all read |
 | `glance logout` | revokes the server session and removes the local token |
 
 ### login
@@ -144,6 +145,24 @@ glance comments docs/api-reference --open                 # find the threadId on
 echo "reworded the intro as requested" | glance reply docs/api-reference k3f9q2
 glance reply docs/api-reference k3f9q2 "typo fixed" --no-tag
 ```
+
+### notifications
+Shows your notifications, newest first — who mentioned you and who commented on your sites — without opening the browser.
+
+```
+$ glance notifications
+2 unread · 3 shown
+● Priya N commented on eng/perf-dashboard (index.html, 2h ago)
+  “The p95 chart hides the cold-start spike, can we…”
+● Dev R mentioned you on design/onboarding-v2 (flows/step-3.html, 1d ago)
+✓ Someone commented on eng/perf-dashboard (index.html, 3d ago)
+```
+
+- The header always shows your **true unread total**, even when there are more notifications than the list window shows.
+- `●` = unread, `✓` = read. A deleted account shows as “Someone”.
+- `--read` marks everything read and prints a confirmation.
+- `--json` prints the raw server response instead — for piping into `jq` or an agent loop.
+- Follow up from the same terminal: `glance comments <space/slug>` to read the full thread, `glance reply <space/slug> <threadId>` to answer.
 
 ### read
 Prints a deployed file's contents to stdout.
