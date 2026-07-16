@@ -6,6 +6,7 @@ import {
   useLocation,
   useNavigate,
   useRevalidator,
+  useRouteLoaderData,
   useSearchParams,
 } from 'react-router'
 import { ChevronDown, Download, ExternalLink, Mic, Plus, Rocket, Terminal, Upload } from 'lucide-react'
@@ -60,6 +61,7 @@ import {
   feedRowPath,
 } from '@/lib/feedState'
 import { notificationHref } from '@/lib/mentions'
+import type { RootData } from '@/lib/notifications'
 import { timeAgo } from '@/lib/time'
 import type { CommentFeedItem, SiteSummary, SpaceSummary, TeamUpload } from '@/lib/types'
 
@@ -467,8 +469,12 @@ function DashboardToolbar({ spaces }: { spaces: SpaceSummary[] }) {
 // Onboarding banner under the hero: the one-liner installs the CLI *and* the agent skill, so a user
 // can hand it to their coding agent (Claude, Codex, Cursor) and start shipping from the terminal.
 // Pointed at THIS deployment's origin (mirrors GET /api/install), same as InstallDialog — no feed
-// needed, so it renders immediately, independent of every feed slot.
+// needed, so it renders immediately, independent of every feed slot. Hidden once the user's CLI
+// has made an authenticated call (me.hasUsedCli) — the install one-liner stays reachable via
+// NewMenu and the header HelpButton.
 function AgentSetup() {
+  const root = useRouteLoaderData('root') as RootData | undefined
+  if (root?.user?.hasUsedCli) return null
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
   const installCmd = `curl -fsSL ${origin}/api/install | sh`
   return (

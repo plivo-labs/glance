@@ -8,6 +8,8 @@ export interface Me {
   email: string
   name: string | null
   role: 'member' | 'superadmin'
+  // True once any Bearer-authenticated CLI call landed an events row — gates the install banner.
+  hasUsedCli: boolean
 }
 
 // GET /api/config — public first-run config driving which login options the page offers.
