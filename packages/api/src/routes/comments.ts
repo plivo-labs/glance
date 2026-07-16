@@ -16,7 +16,7 @@ import {
   threadsWithUsersBySlugsStmt,
 } from '../db/comments'
 import { truncateSnippet } from '../db/comment-feed'
-import { createNotifications } from '../db/notifications'
+import { createNotifications, type NotificationInput, resolveCommentAudience } from '../db/notifications'
 import type { Comment, CommentThread } from '../db/schema'
 import { listMentionableUsers } from '../db/repo'
 import { fireAndForget } from '../lib/events'
@@ -154,48 +154,105 @@ function cleanBody(v: unknown): string | null {
   return body
 }
 
-/** Raise mention notifications for a just-written comment. Explicit selections only (client sends
- *  ids from the autocomplete): dedup, drop self, then INTERSECT against `listMentionableUsers` —
- *  the same access set the autocomplete drew from — so a forged id for someone without access is
- *  dropped server-side. Fire-and-forget and fully guarded: a failure here (or an empty/absent
- *  selection) must NEVER fail or block the comment that already committed. */
-async function notifyMentions(
+/** Raise mention + comment-audience notifications for a just-written comment. Explicit
+ *  mentions are deduped, self-skipped, and intersected against the autocomplete's access set.
+ *  The comment audience is the owner + direct shares + (for replies) prior participants, then
+ *  re-authorized from targeted membership/group-share facts; mentions win over comment rows.
+ *  Every recipient is inserted in one statement. Fully guarded and fire-and-forget: notification
+ *  reads or writes must NEVER fail or block the comment that already committed. */
+async function notifyForComment(
   c: Context<AppEnv>,
   site: ResolvedSite,
-  opts: { rawMentions: unknown; threadId: string; filePath: string; snippet: string },
+  opts: {
+    rawMentions: unknown
+    threadId: string
+    commentId: string
+    filePath: string
+    snippet: string
+    isReply: boolean
+  },
 ): Promise<void> {
-  try {
-    const callerId = c.get('user').id
-    const requested = Array.isArray(opts.rawMentions)
-      ? [...new Set(opts.rawMentions.filter((m): m is string => typeof m === 'string' && m !== callerId))]
-      : []
-    if (requested.length === 0) return
-    const db = c.get('db')
-    const allowed = new Set((await listMentionableUsers(db, site, callerId)).map((u) => u.id))
-    const recipients = requested.filter((id) => allowed.has(id))
-    if (recipients.length === 0) return
-    const { space, site: siteSlug } = c.req.param()
-    const siteLabel = `${space}/${siteSlug}`
-    const snippet = truncateSnippet(opts.snippet)
-    await fireAndForget(
-      c,
-      createNotifications(
-        db,
-        recipients.map((recipientId) => ({
+  const callerId = c.get('user').id
+  const db = c.get('db')
+  const { space, site: siteSlug } = c.req.param()
+  const siteLabel = `${space}/${siteSlug}`
+  await fireAndForget(
+    c,
+    (async () => {
+      try {
+        const requested = Array.isArray(opts.rawMentions)
+          ? [...new Set(opts.rawMentions.filter((m): m is string => typeof m === 'string' && m !== callerId))]
+          : []
+        let mentionRecipients: string[] = []
+        if (requested.length > 0) {
+          const allowed = new Set((await listMentionableUsers(db, site, callerId)).map((u) => u.id))
+          mentionRecipients = requested.filter((id) => allowed.has(id))
+        }
+
+        const commentRecipients = await resolveCommentAudience(db, site, {
+          threadId: opts.threadId,
+          isReply: opts.isReply,
+          exclude: new Set([callerId, ...mentionRecipients]),
+        })
+        if (mentionRecipients.length === 0 && commentRecipients.length === 0) return
+
+        const snippet = truncateSnippet(opts.snippet)
+        const toRow = (recipientId: string, type: NotificationInput['type']): NotificationInput => ({
           recipientId,
-          type: 'mention' as const,
+          type,
           actorId: callerId,
           siteId: site.id,
           siteLabel,
           threadId: opts.threadId,
+          commentId: opts.commentId,
           filePath: opts.filePath,
           snippet,
-        })),
-      ),
-    )
-  } catch {
-    // Notifications are best-effort — never surface to the caller (mirrors recordEvent).
-  }
+        })
+        await createNotifications(db, [
+          ...mentionRecipients.map((id) => toRow(id, 'mention')),
+          ...commentRecipients.map((id) => toRow(id, 'comment')),
+        ])
+      } catch {
+        // Notifications are best-effort — never surface to the caller (mirrors recordEvent).
+      }
+    })(),
+  )
+}
+
+function notifyThreadCreated(
+  c: Context<AppEnv>,
+  site: ResolvedSite,
+  out: Awaited<ReturnType<typeof createThread>>,
+  filePath: string,
+  snippet: string,
+  rawMentions: unknown = undefined,
+): Promise<void> {
+  return notifyForComment(c, site, {
+    rawMentions,
+    threadId: out.threadId,
+    commentId: out.openingCommentId,
+    filePath,
+    snippet,
+    isReply: false,
+  })
+}
+
+function notifyReply(
+  c: Context<AppEnv>,
+  site: ResolvedSite,
+  thread: Pick<CommentThread, 'id' | 'filePath'>,
+  commentId: string,
+  snippet: string,
+  rawMentions: unknown = undefined,
+): Promise<void> {
+  return notifyForComment(c, site, {
+    rawMentions,
+    threadId: thread.id,
+    commentId,
+    filePath: thread.filePath,
+    snippet,
+    isReply: true,
+  })
 }
 
 type ThreadFields = {
@@ -372,7 +429,7 @@ comments.post('/:space/:site/comments', async (c) => {
     quote: fields.quote,
     anchor: fields.anchor,
   })
-  await notifyMentions(c, site, { rawMentions: raw?.mentions, threadId: out.threadId, filePath: fields.filePath, snippet: body })
+  await notifyThreadCreated(c, site, out, fields.filePath, body, raw?.mentions)
   return c.json(out, 201)
 })
 
@@ -405,8 +462,9 @@ async function createVoiceThread(c: Context<AppEnv>, site: ResolvedSite): Promis
   const ingested = await ingestVoiceComment(c, form)
   if (ingested instanceof Response) return ingested
   const { commentId, audioKey, body } = ingested
+  let out: Awaited<ReturnType<typeof createThread>>
   try {
-    const out = await createThread(c.get('db'), {
+    out = await createThread(c.get('db'), {
       siteId: site.id,
       filePath: fields.filePath,
       createdBy: c.get('user').id,
@@ -417,11 +475,12 @@ async function createVoiceThread(c: Context<AppEnv>, site: ResolvedSite): Promis
       commentId,
       audioKey,
     })
-    return c.json(out, 201)
   } catch (e) {
     await deleteKeys(c.env.GLANCE_FILES, [audioKey]) // compensation: don't orphan the R2 object
     throw e
   }
+  await notifyThreadCreated(c, site, out, fields.filePath, body)
+  return c.json(out, 201)
 }
 
 // POST — flat reply to a thread. S9c: the thread read rides the access batch (siteWithUrlThread),
@@ -431,31 +490,33 @@ comments.post('/:space/:site/comments/:threadId/replies', async (c) => {
   if (gate instanceof Response) return gate
   const { site, thread } = gate
   if (!threadInSite(thread, site.id)) return c.json({ error: 'not found' }, 404)
-  if (isMultipart(c)) return replyVoiceComment(c, thread.id)
+  if (isMultipart(c)) return replyVoiceComment(c, site, thread)
 
   const raw = await c.req.json().catch(() => null)
   const body = cleanBody(raw?.body)
   if (!body) return c.json({ error: 'invalid body' }, 400)
   const id = await addComment(c.get('db'), { threadId: thread.id, authorId: c.get('user').id, body })
-  await notifyMentions(c, site, { rawMentions: raw?.mentions, threadId: thread.id, filePath: thread.filePath, snippet: body })
+  await notifyReply(c, site, thread, id, body, raw?.mentions)
   return c.json({ id }, 201)
 })
 
 /** Multipart (voice) reply: ingest the audio (transcript is the whole body — a reply has no anchor
  *  fields), then append the comment, compensating the R2 object if the D1 write fails. */
-async function replyVoiceComment(c: Context<AppEnv>, threadId: string): Promise<Response> {
+async function replyVoiceComment(c: Context<AppEnv>, site: ResolvedSite, thread: CommentThread): Promise<Response> {
   const form = await c.req.formData().catch(() => null)
   if (!form) return c.json({ error: 'invalid form' }, 400)
   const ingested = await ingestVoiceComment(c, form)
   if (ingested instanceof Response) return ingested
   const { commentId, audioKey, body } = ingested
+  let id: string
   try {
-    const id = await addComment(c.get('db'), { threadId, authorId: c.get('user').id, body, commentId, audioKey })
-    return c.json({ id }, 201)
+    id = await addComment(c.get('db'), { threadId: thread.id, authorId: c.get('user').id, body, commentId, audioKey })
   } catch (e) {
     await deleteKeys(c.env.GLANCE_FILES, [audioKey]) // compensation: don't orphan the R2 object
     throw e
   }
+  await notifyReply(c, site, thread, id, body)
+  return c.json({ id }, 201)
 }
 
 // PATCH — resolve / reopen a thread (owner or superadmin only). S9c fused pre-write batch; the

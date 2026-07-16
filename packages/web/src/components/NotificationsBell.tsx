@@ -8,7 +8,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
 import { notificationHref } from '@/lib/mentions'
-import { type Notification, type NotificationList, notifications } from '@/lib/notifications'
+import { type Notification, type NotificationList, notificationLabel, notifications } from '@/lib/notifications'
 import { timeAgo } from '@/lib/time'
 import { cn } from '@/lib/utils'
 
@@ -83,29 +83,32 @@ function BellMenu({ initial }: { initial: NotificationList }) {
           <p className="px-3 py-6 text-center text-muted-foreground text-sm">You're all caught up.</p>
         ) : (
           <ul className="max-h-96 overflow-y-auto py-1">
-            {data.items.map((n) => (
-              <li key={n.id}>
-                <button
-                  type="button"
-                  onClick={() => openItem(n)}
-                  className={cn(
-                    'flex w-full items-start gap-2 px-3 py-2 text-left text-sm hover:bg-accent',
-                    !n.read && 'bg-primary/5',
-                  )}
-                >
-                  <span className={cn('mt-1.5 size-1.5 shrink-0 rounded-full', n.read ? 'bg-transparent' : 'bg-primary')} />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate">
-                      <span className="font-medium">{n.actorName ?? 'Someone'}</span> mentioned you
+            {data.items.map((n) => {
+              const label = notificationLabel(n)
+              return (
+                <li key={n.id}>
+                  <button
+                    type="button"
+                    onClick={() => openItem(n)}
+                    className={cn(
+                      'flex w-full items-start gap-2 px-3 py-2 text-left text-sm hover:bg-accent',
+                      !n.read && 'bg-primary/5',
+                    )}
+                  >
+                    <span className={cn('mt-1.5 size-1.5 shrink-0 rounded-full', n.read ? 'bg-transparent' : 'bg-primary')} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate">
+                        <span className="font-medium">{label.actor}</span> {label.verb}
+                      </span>
+                      {n.snippet && <span className="block truncate text-muted-foreground text-xs">{n.snippet}</span>}
+                      <span className="block text-muted-foreground text-xs">
+                        {n.siteLabel ?? 'a site'} · {timeAgo(n.createdAt)}
+                      </span>
                     </span>
-                    {n.snippet && <span className="block truncate text-muted-foreground text-xs">{n.snippet}</span>}
-                    <span className="block text-muted-foreground text-xs">
-                      {n.siteLabel ?? 'a site'} · {timeAgo(n.createdAt)}
-                    </span>
-                  </span>
-                </button>
-              </li>
-            ))}
+                  </button>
+                </li>
+              )
+            })}
           </ul>
         )}
       </DropdownMenuContent>

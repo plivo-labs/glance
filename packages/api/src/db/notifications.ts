@@ -1,6 +1,17 @@
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
-import { type NotificationType, notifications, users } from './schema'
+import { checkAccess } from '../lib/access'
+import { batchAll } from '../lib/d1'
+import {
+  comments,
+  type NotificationType,
+  notifications,
+  type Site,
+  siteGroupShares,
+  siteUserShares,
+  spaceMembers,
+  users,
+} from './schema'
 
 // Notifications repo: batch create (off the comment path, fire-and-forget), recipient-scoped list
 // (+ unread count), and mark-read. Pure D1 — no R2, no anchor resolution. Every function is
@@ -8,16 +19,17 @@ import { type NotificationType, notifications, users } from './schema'
 
 const now = () => new Date().toISOString()
 
-/** One row to raise. `type` defaults to 'mention'; id + createdAt are generated. All targets are
- *  optional so a row survives (via denormalized `siteLabel`) after the site/thread it points at is
- *  gone — see the SET NULL FKs in schema. */
+/** One row to raise. `type` is required ('mention' | 'comment'); id + createdAt are generated.
+ *  All targets are optional so a row survives (via denormalized `siteLabel`) after the site/thread/
+ *  comment it points at is gone — see the SET NULL FKs in schema. */
 export type NotificationInput = {
   recipientId: string
-  type?: NotificationType
+  type: NotificationType
   actorId?: string | null
   siteId?: string | null
   siteLabel?: string | null
   threadId?: string | null
+  commentId?: string | null
   filePath?: string | null
   snippet?: string | null
 }
@@ -30,6 +42,7 @@ export type NotificationView = {
   siteLabel: string | null
   filePath: string | null
   threadId: string | null
+  commentId: string | null
   snippet: string | null
   read: boolean
   readAt: string | null
@@ -42,15 +55,85 @@ export async function createNotifications(db: DrizzleD1Database, rows: Notificat
   await db.insert(notifications).values(
     rows.map((r) => ({
       recipientId: r.recipientId,
-      type: r.type ?? 'mention',
+      type: r.type,
       actorId: r.actorId ?? null,
       siteId: r.siteId ?? null,
       siteLabel: r.siteLabel ?? null,
       threadId: r.threadId ?? null,
+      commentId: r.commentId ?? null,
       filePath: r.filePath ?? null,
       snippet: r.snippet ?? null,
     })),
   )
+}
+
+/** Resolve the normal comment audience from targeted facts, excluding the actor and any mention
+ *  recipients. Prior participants join the owner and direct shares only for replies; every
+ *  candidate is re-authorized against the site's current tier/share policy before notification. */
+export async function resolveCommentAudience(
+  db: DrizzleD1Database,
+  site: Pick<Site, 'id' | 'spaceId' | 'visibility' | 'ownerId' | 'status'>,
+  opts: { threadId: string; isReply: boolean; exclude: Set<string> | string[] },
+): Promise<string[]> {
+  if (site.status === 'archived') return []
+
+  const directSharesStmt = db
+    .select({ userId: siteUserShares.userId })
+    .from(siteUserShares)
+    .where(eq(siteUserShares.siteId, site.id))
+  const participantsStmt = db
+    .selectDistinct({ authorId: comments.authorId })
+    .from(comments)
+    .where(and(eq(comments.threadId, opts.threadId), isNotNull(comments.authorId)))
+  const audienceFacts = async (): Promise<{
+    directRows: { userId: string }[]
+    participantRows: { authorId: string | null }[]
+  }> => {
+    if (opts.isReply) {
+      const [directRows, participantRows] = await batchAll(db, [directSharesStmt, participantsStmt])
+      return { directRows, participantRows }
+    }
+    const [directRows] = await batchAll(db, [directSharesStmt])
+    return { directRows, participantRows: [] }
+  }
+  const { directRows, participantRows } = await audienceFacts()
+  const directShares = new Set(directRows.map((row) => row.userId))
+  // TS-only narrowing; the SQL isNotNull predicate already excludes null authors.
+  const participantIds = participantRows
+    .map((row) => row.authorId)
+    .filter((authorId): authorId is string => authorId !== null)
+  const audience = new Set<string>([site.ownerId, ...directShares, ...participantIds])
+  const excluded = opts.exclude instanceof Set ? opts.exclude : new Set(opts.exclude)
+  for (const id of excluded) audience.delete(id)
+  const candidates = [...audience]
+  if (candidates.length === 0) return []
+
+  const groupSharesStmt = db
+    .selectDistinct({ userId: spaceMembers.userId })
+    .from(spaceMembers)
+    .innerJoin(siteGroupShares, eq(spaceMembers.spaceId, siteGroupShares.spaceId))
+    .where(and(eq(siteGroupShares.siteId, site.id), inArray(spaceMembers.userId, candidates)))
+  const membersStmt = db
+    .select({ userId: spaceMembers.userId })
+    .from(spaceMembers)
+    .where(and(eq(spaceMembers.spaceId, site.spaceId), inArray(spaceMembers.userId, candidates)))
+  const accessStatements =
+    site.visibility === 'members'
+      ? [groupSharesStmt, membersStmt]
+      : site.visibility === 'private'
+        ? [groupSharesStmt]
+        : []
+  const accessRows = await batchAll(db, accessStatements)
+  const groupRows = accessRows[0] ?? []
+  const memberRows = site.visibility === 'members' ? (accessRows[1] ?? []) : []
+  const groupSharedIds = new Set(groupRows.map((row) => row.userId))
+  const memberIds = new Set(memberRows.map((row) => row.userId))
+
+  return candidates.filter((id) => {
+    // Recipient role is deliberately not consulted — superadmins need normal tier/share access to be notified.
+    const recipient = { id, role: 'member' as const }
+    return checkAccess(site, recipient, memberIds.has(id), directShares.has(id) || groupSharedIds.has(id)).ok
+  })
 }
 
 /** A recipient's notifications, newest-first, plus the FULL unread count (independent of `limit`).
@@ -70,6 +153,7 @@ export async function listNotifications(
       siteLabel: notifications.siteLabel,
       filePath: notifications.filePath,
       threadId: notifications.threadId,
+      commentId: notifications.commentId,
       snippet: notifications.snippet,
       readAt: notifications.readAt,
       createdAt: notifications.createdAt,
@@ -93,6 +177,7 @@ export async function listNotifications(
     siteLabel: r.siteLabel,
     filePath: r.filePath,
     threadId: r.threadId,
+    commentId: r.commentId,
     snippet: r.snippet,
     read: r.readAt !== null,
     readAt: r.readAt,

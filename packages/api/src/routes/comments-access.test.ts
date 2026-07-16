@@ -336,9 +336,9 @@ describe('comments routes — T9.4 relationship denials are side-effect-free', (
 
 // T9.5 (S9c): every mutation's PRE-WRITE reads are exactly requireAuth's 1 loose read + ONE fused
 // db.batch — the 5 access facts plus the URL-id-keyed target rows (thread and/or comment). The
-// write, when reached, is the only further request. Denial paths stop at the fused batch, so
-// their counts ARE the pre-write shape. The voice-audio GET does no writes: its ENTIRE pre-R2 D1
-// bill is 2 requests.
+// write, when reached, is the only further request on the response path; notification work runs
+// post-response through waitUntil. Denial paths stop at the fused batch, so their counts ARE the
+// pre-write shape. The voice-audio GET does no writes: its ENTIRE pre-R2 D1 bill is 2 requests.
 describe('comments routes — T9.5 mutations fuse target reads into the access batch', () => {
   const shape = (db: ReturnType<typeof makeRouteApp>['db'], loose: number, batches: number, batchStmts: number) => {
     expect(db.counters.loose).toBe(loose)
@@ -346,17 +346,20 @@ describe('comments routes — T9.5 mutations fuse target reads into the access b
     expect(db.counters.batchStmts).toBe(batchStmts)
   }
 
-  test('reply: gate batch of 6 (5 facts + thread), then ONLY the write batch of 2; denial stops at the gate', async () => {
+  test('reply = gate + write + notify(reads, 1 insert); denial stops unchanged at the gate', async () => {
     const { app, env, db, kv } = makeRouteApp()
     const owner = await mintUser(db, kv, 'owner')
+    const commenter = await mintUser(db, kv, 'commenter')
     const { threadId } = await seedCommentedSite(db, owner)
     const foreign = await seedForeignSite(db, owner)
     const reply = (tid: string) =>
-      app.request(url('acme', 'doc', `/${tid}/replies`), { method: 'POST', headers: auth(owner), body: JSON.stringify({ body: 'hi' }) }, env)
+      app.request(url('acme', 'doc', `/${tid}/replies`), { method: 'POST', headers: auth(commenter), body: JSON.stringify({ body: 'hi' }) }, env)
 
     db.resetCounters()
     expect((await reply(threadId)).status).toBe(201)
-    shape(db, 1, 2, 8) // 1 auth read; fused gate (6) + addComment's write batch (2)
+    // The harness drains post-response waitUntil work inline, so the observed reply shape is auth
+    // (1 loose) + gate batch (6) + write batch (2) + notify batch (2) + notification INSERT (loose).
+    shape(db, 2, 3, 10)
 
     db.resetCounters()
     expect((await reply(foreign.threadId)).status).toBe(404)

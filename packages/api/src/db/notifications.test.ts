@@ -1,6 +1,16 @@
 import { describe, expect, test } from 'bun:test'
-import { makeDb, seedNotification, seedUser } from '../test/harness'
+import { eq } from 'drizzle-orm'
+import {
+  makeDb,
+  seedComment,
+  seedNotification,
+  seedSite,
+  seedSpace,
+  seedThread,
+  seedUser,
+} from '../test/harness'
 import { createNotifications, listNotifications, markRead } from './notifications'
+import { comments } from './schema'
 
 // Notifications repo over the S-D harness: batch create, recipient-scoped list (+ unread count),
 // and mark-read. Pure D1 — no R2, no external calls.
@@ -11,9 +21,9 @@ describe('C1 — createNotifications inserts N rows; listNotifications returns t
     const me = await seedUser(db, { name: 'Me' })
     const actor = await seedUser(db, { name: 'Ava' })
     await createNotifications(db, [
-      { recipientId: me, actorId: actor, siteLabel: 's/a', createdAt: '2026-01-01T00:00:00.000Z', snippet: 'first' },
-      { recipientId: me, actorId: actor, siteLabel: 's/a', createdAt: '2026-01-02T00:00:00.000Z', snippet: 'second' },
-      { recipientId: me, actorId: actor, siteLabel: 's/a', createdAt: '2026-01-03T00:00:00.000Z', snippet: 'third' },
+      { recipientId: me, type: 'mention', actorId: actor, siteLabel: 's/a', createdAt: '2026-01-01T00:00:00.000Z', snippet: 'first' },
+      { recipientId: me, type: 'mention', actorId: actor, siteLabel: 's/a', createdAt: '2026-01-02T00:00:00.000Z', snippet: 'second' },
+      { recipientId: me, type: 'mention', actorId: actor, siteLabel: 's/a', createdAt: '2026-01-03T00:00:00.000Z', snippet: 'third' },
     ])
     const { items } = await listNotifications(db, me)
     expect(items.map((n) => n.snippet)).toEqual(['third', 'second', 'first'])
@@ -90,5 +100,37 @@ describe('C4 — list/markRead are recipient-scoped', () => {
     await markRead(db, me, [theirs]) // even naming their id must not cross the boundary
     const { unreadCount } = await listNotifications(db, other)
     expect(unreadCount).toBe(1)
+  })
+})
+
+describe('S1 — createNotifications persists type comment + commentId; comment delete nulls commentId', () => {
+  test('S1 — createNotifications persists type comment + commentId; comment delete nulls commentId', async () => {
+    const db = makeDb()
+    const me = await seedUser(db, { name: 'Me' })
+    const actor = await seedUser(db, { name: 'Ava' })
+    const spaceId = await seedSpace(db, { createdBy: actor })
+    const siteId = await seedSite(db, { spaceId, ownerId: actor })
+    const threadId = await seedThread(db, { siteId, filePath: 'index.html', createdBy: actor })
+    const commentId = await seedComment(db, { threadId, authorId: actor, body: 'hey' })
+    await createNotifications(db, [
+      {
+        recipientId: me,
+        type: 'comment',
+        actorId: actor,
+        siteId,
+        siteLabel: 'sp/site',
+        threadId,
+        commentId,
+        snippet: 'hey',
+      },
+    ])
+    const { items } = await listNotifications(db, me)
+    expect(items[0].type).toBe('comment')
+    expect(items[0].commentId).toBe(commentId)
+
+    await db.delete(comments).where(eq(comments.id, commentId))
+    const after = await listNotifications(db, me)
+    expect(after.items.length).toBe(1)
+    expect(after.items[0].commentId).toBeNull()
   })
 })

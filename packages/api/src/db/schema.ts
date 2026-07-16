@@ -225,9 +225,10 @@ export const events = sqliteTable(
   ],
 )
 
-// Homepage notifications. v1 carries a single `type` ('mention') raised when a user is @-tagged in
-// a review comment. FK durability mirrors `events`/`comments`: the RECIPIENT cascades (a deleted
-// user's notifications are meaningless), but actor/site/thread are SET NULL so the row survives the
+// Homepage notifications. Notifications carry type 'mention' (@-tag) or 'comment' (activity on your
+// sites / threads you participate in); `commentId` identifies the triggering comment for feed
+// dedupe. FK durability mirrors `events`/`comments`: the RECIPIENT cascades (a deleted user's
+// notifications are meaningless), but actor/site/thread/comment are SET NULL so the row survives the
 // deletion of what it points at — `siteLabel` denormalizes "space/slug" (captured from route params
 // at insert time; the site row only has slug+spaceId, not the space slug) so the deep-link stays
 // readable. Inserts are fire-and-forget off the comment path, so a write here never blocks/faults a
@@ -237,12 +238,13 @@ export const notifications = sqliteTable(
   {
     id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
     recipientId: text('recipientId').notNull().references(() => users.id, { onDelete: 'cascade' }),
-    type: text('type', { enum: ['mention'] }).notNull(),
+    type: text('type', { enum: ['mention', 'comment'] }).notNull(),
     actorId: text('actorId').references(() => users.id, { onDelete: 'set null' }),
     siteId: text('siteId').references(() => sites.id, { onDelete: 'set null' }),
     // Denormalized "space/slug" from the route params at insert — survives a site delete.
     siteLabel: text('siteLabel'),
     threadId: text('threadId').references(() => commentThreads.id, { onDelete: 'set null' }),
+    commentId: text('commentId').references(() => comments.id, { onDelete: 'set null' }),
     filePath: text('filePath'),
     snippet: text('snippet'),
     // Null = unread; set to an ISO timestamp when marked read.
