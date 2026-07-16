@@ -2,7 +2,7 @@
   "name": "glance",
   "private": true,
   "type": "module",
-  "description": "Drop a folder of static files, get a URL. Self-hostable static hosting on Cloudflare Workers.",
+  "description": "An open-source alternative to Claude Artifacts for every coding agent — self-hosted on Cloudflare.",
   "author": "Plivo Inc.",
   "license": "MIT",
   "repository": {

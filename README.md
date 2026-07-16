@@ -1,8 +1,8 @@
 # Glance
 
-**The human-in-the-loop review layer for coding agents.** Your agent builds something, deploys it to a URL with one command — you review it in the browser and drop comments like a Google Doc — and the agent reads your comments and fixes it.
+**Artifacts for every agent — open-source and self-hosted.** Your agent builds a self-contained page, dashboard, or app and ships it to a live URL with one command — from Claude Code, Cursor, Codex, Cline, Aider, or any harness that runs a shell command. Then you review it in the browser and drop comments like a Google Doc, and the agent reads your comments and fixes it.
 
-No more screenshotting your agent's output and pasting it back into the chat.
+An open-source alternative to Claude Artifacts — except you host it, you own it, and any agent can drive it. No more screenshotting your agent's output and pasting it back into the chat.
 
 <p align="center">
   <img src="https://github.com/plivo-labs/glance/releases/download/assets-readme/glance-demo.gif" alt="Glance demo: an agent deploys a folder to a URL, you leave review comments in the browser, and the agent reads the comments and fixes it" width="900">
@@ -14,7 +14,7 @@ No more screenshotting your agent's output and pasting it back into the chat.
   reads comments, fixes  ←  you comment in the browser
 ```
 
-Self-hosted on **Cloudflare's free tier** — $0/month, you own the whole loop. Ships with a CLI and an AI-agent skill, so agents drive deploy → pull comments → reply → redeploy with no human in the copy-paste path.
+Self-hosted on **Cloudflare's free tier** — $0/month, you own the whole loop. Ships with a CLI and an agent skill, so any agent — Claude Code, Cursor, Codex, Cline, Aider — drives deploy → pull comments → reply → redeploy with no human in the copy-paste path.
 
 Stack: Cloudflare Workers + Hono · React Router v7 · D1 · R2 · KV.
 
@@ -60,7 +60,7 @@ glance login          # device-code flow, opens browser
 glance deploy <path>  # file or folder → publishes to your personal space
 ```
 
-The installer bakes in your instance URL and installs the AI-agent skill so coding agents can drive the CLI.
+The installer bakes in your instance URL and installs the agent skill so coding agents can drive the CLI. Any agent that can run a shell command drives Glance by calling the `glance` CLI directly — it's harness-agnostic.
 
 | command | what it does |
 |---|---|

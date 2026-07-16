@@ -135,18 +135,19 @@ export function Component() {
               className="bp-rise mt-5 font-mono text-5xl font-semibold leading-[1.04] tracking-tight [text-shadow:0_2px_30px_rgba(7,11,22,0.85)] sm:text-6xl"
               style={{ animationDelay: '120ms' }}
             >
-              Ship static
+              Artifacts
               <br />
-              sites instantly.
+              for every
               <br />
-              <span className="text-primary">No build step.</span>
+              <span className="text-primary">agent.</span>
             </h1>
             <p
               className="bp-rise mt-6 max-w-md text-base leading-relaxed text-muted-foreground"
               style={{ animationDelay: '200ms' }}
             >
-              Glance is a self-hosted static host. Drop a folder of HTML, markdown, or assets — get a
-              live URL in seconds. No bundler, no Docker, no deploy pipeline to babysit.
+              An open-source alternative to Claude Artifacts. Any agent ships a self-contained page
+              or app to a live URL — then you review it in the browser and it fixes itself. No
+              bundler, no Docker, no deploy pipeline to babysit.
             </p>
 
             <ul
