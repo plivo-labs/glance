@@ -1,8 +1,8 @@
 import { decodeIdToken, generateCodeVerifier, generateState } from 'arctic'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { deleteCookie, getSignedCookie, setSignedCookie } from 'hono/cookie'
-import { users } from '../db/schema'
+import { events, users } from '../db/schema'
 import { bootstrapSuperadminByEmail, createPersonalSpace, superadminStatus, toSessionUser } from '../db/repo'
 import { NEWEST_RELEASE_DATE } from '../whats-new/catalog'
 import { requireAuth } from '../middleware/auth'
@@ -94,7 +94,19 @@ auth.post('/logout', async (c) => {
   return c.json({ ok: true })
 })
 
-auth.get('/me', requireAuth, (c) => c.json(c.get('user')))
+// `hasUsedCli` rides along so the dashboard can hide the CLI-install banner for anyone whose CLI
+// has already made an authenticated call (an events row exists — see middleware/analytics.ts).
+// limit(1) is the EXISTS check; the events_user_created index serves it.
+auth.get('/me', requireAuth, async (c) => {
+  const user = c.get('user')
+  const used = await c
+    .get('db')
+    .select({ id: events.id })
+    .from(events)
+    .where(and(eq(events.type, 'cli'), eq(events.userId, user.id)))
+    .limit(1)
+  return c.json({ ...user, hasUsedCli: used.length > 0 })
+})
 
 // DEV ONLY: skip Google OAuth for local browser testing. Hard-gated to a localhost
 // APP_URL — in prod APP_URL is https://…workers.dev, so this 404s and can never run.
