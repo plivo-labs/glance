@@ -53,7 +53,7 @@ export interface TeamUpload extends SiteSummary {
 
 // Mirrors the API's CommentFeedItem (packages/api/src/db/comment-feed.ts) field-for-field — keep in sync.
 export interface CommentFeedItem {
-  kind: 'mention' | 'authored'
+  kind: 'mention' | 'authored' | 'owned'
   id: string
   snippet: string | null
   actorName: string | null

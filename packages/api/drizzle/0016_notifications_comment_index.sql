@@ -1,0 +1,1 @@
+CREATE INDEX `notifications_comment` ON `notifications` (`commentId`);

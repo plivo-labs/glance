@@ -1,6 +1,17 @@
 import { describe, expect, test } from 'bun:test'
-import { makeDb, seedNotification, seedUser } from '../test/harness'
-import { createNotifications, listNotifications, markRead } from './notifications'
+import { eq } from 'drizzle-orm'
+import {
+  makeDb,
+  seedComment,
+  seedMember,
+  seedNotification,
+  seedSite,
+  seedSpace,
+  seedThread,
+  seedUser,
+} from '../test/harness'
+import { createNotifications, listNotifications, markRead, resolveCommentAudience } from './notifications'
+import { comments } from './schema'
 
 // Notifications repo over the S-D harness: batch create, recipient-scoped list (+ unread count),
 // and mark-read. Pure D1 — no R2, no external calls.
@@ -11,11 +22,14 @@ describe('C1 — createNotifications inserts N rows; listNotifications returns t
     const me = await seedUser(db, { name: 'Me' })
     const actor = await seedUser(db, { name: 'Ava' })
     await createNotifications(db, [
-      { recipientId: me, actorId: actor, siteLabel: 's/a', createdAt: '2026-01-01T00:00:00.000Z', snippet: 'first' },
-      { recipientId: me, actorId: actor, siteLabel: 's/a', createdAt: '2026-01-02T00:00:00.000Z', snippet: 'second' },
-      { recipientId: me, actorId: actor, siteLabel: 's/a', createdAt: '2026-01-03T00:00:00.000Z', snippet: 'third' },
+      { recipientId: me, type: 'mention', actorId: actor, siteLabel: 's/a', snippet: 'first' },
+      { recipientId: me, type: 'mention', actorId: actor, siteLabel: 's/a', snippet: 'second' },
+      { recipientId: me, type: 'mention', actorId: actor, siteLabel: 's/a', snippet: 'third' },
     ])
+    // The single multi-values insert gives these rows the same millisecond timestamp; newest-first
+    // is therefore made deterministic by listNotifications' rowid-desc tiebreaker.
     const { items } = await listNotifications(db, me)
+    expect(new Set(items.map((n) => n.createdAt)).size).toBe(1)
     expect(items.map((n) => n.snippet)).toEqual(['third', 'second', 'first'])
     expect(items[0].type).toBe('mention')
     expect(items[0].actorName).toBe('Ava')
@@ -29,6 +43,22 @@ describe('C1 — createNotifications inserts N rows; listNotifications returns t
     const { items, unreadCount } = await listNotifications(db, me)
     expect(items).toEqual([])
     expect(unreadCount).toBe(0)
+  })
+
+  test('ten recipients stay under D1 bind limits via two inserts in one batch', async () => {
+    const db = makeDb()
+    const recipients: string[] = []
+    for (let i = 0; i < 10; i++) recipients.push(await seedUser(db))
+    db.resetCounters()
+
+    await createNotifications(
+      db,
+      recipients.map((recipientId) => ({ recipientId, type: 'comment' })),
+    )
+
+    expect(db.counters).toEqual({ batches: 1, loose: 0, batchStmts: 2, insert: 2, update: 0, delete: 0 })
+    const listed = await Promise.all(recipients.map((recipientId) => listNotifications(db, recipientId)))
+    expect(listed.every(({ items }) => items.length === 1)).toBe(true)
   })
 })
 
@@ -90,5 +120,62 @@ describe('C4 — list/markRead are recipient-scoped', () => {
     await markRead(db, me, [theirs]) // even naming their id must not cross the boundary
     const { unreadCount } = await listNotifications(db, other)
     expect(unreadCount).toBe(1)
+  })
+})
+
+describe('comment audience stays within D1 bind limits', () => {
+  test('resolves one hundred member participants in bounded access-fact statements', async () => {
+    const db = makeDb()
+    const ownerId = await seedUser(db)
+    const spaceId = await seedSpace(db, { createdBy: ownerId })
+    const siteId = await seedSite(db, { spaceId, ownerId, visibility: 'members' })
+    const threadId = await seedThread(db, { siteId, filePath: 'index.html', createdBy: ownerId })
+    const participants: string[] = []
+    for (let i = 0; i < 100; i++) {
+      const participant = await seedUser(db)
+      participants.push(participant)
+      await seedMember(db, spaceId, participant)
+      await seedComment(db, { threadId, authorId: participant })
+    }
+
+    const audience = await resolveCommentAudience(
+      db,
+      { id: siteId, spaceId, ownerId, visibility: 'members', status: 'active' },
+      { threadId, isReply: true, exclude: new Set([ownerId]) },
+    )
+
+    expect(new Set(audience)).toEqual(new Set(participants))
+  })
+})
+
+describe('S1 — createNotifications persists type comment + commentId; comment delete nulls commentId', () => {
+  test('S1 — createNotifications persists type comment + commentId; comment delete nulls commentId', async () => {
+    const db = makeDb()
+    const me = await seedUser(db, { name: 'Me' })
+    const actor = await seedUser(db, { name: 'Ava' })
+    const spaceId = await seedSpace(db, { createdBy: actor })
+    const siteId = await seedSite(db, { spaceId, ownerId: actor })
+    const threadId = await seedThread(db, { siteId, filePath: 'index.html', createdBy: actor })
+    const commentId = await seedComment(db, { threadId, authorId: actor, body: 'hey' })
+    await createNotifications(db, [
+      {
+        recipientId: me,
+        type: 'comment',
+        actorId: actor,
+        siteId,
+        siteLabel: 'sp/site',
+        threadId,
+        commentId,
+        snippet: 'hey',
+      },
+    ])
+    const { items } = await listNotifications(db, me)
+    expect(items[0].type).toBe('comment')
+    expect(items[0].commentId).toBe(commentId)
+
+    await db.delete(comments).where(eq(comments.id, commentId))
+    const after = await listNotifications(db, me)
+    expect(after.items.length).toBe(1)
+    expect(after.items[0].commentId).toBeNull()
   })
 })
