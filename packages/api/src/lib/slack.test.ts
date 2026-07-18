@@ -100,39 +100,45 @@ describe('formatSlackMessage', () => {
     threadId: 't1',
   } as const
 
-  test('V1: reason=owner says "your site"; reason=share does not', () => {
+  test('V1: owner verb + bold hyperlinked site; share omits "your site"', () => {
     const owner = formatSlackMessage({ ...base, reason: 'owner', snippet: 'hi' }, appUrl)
-    expect(owner).toContain('commented on your site design/q3-dashboard')
+    expect(owner).toContain('commented on your site *<') // verb + bold link opener
+    expect(owner).toContain('|design/q3-dashboard>*') // site label is the bold hyperlink text
     const share = formatSlackMessage({ ...base, reason: 'share', snippet: 'hi' }, appUrl)
-    expect(share).toContain('commented on design/q3-dashboard')
+    expect(share).toContain('commented on *<')
     expect(share).not.toContain('your site')
   })
 
-  test('V2: participant verb + thread= in link; mention verb', () => {
+  test('V2: participant verb + thread= in the site link; mention verb', () => {
     const p = formatSlackMessage({ ...base, reason: 'participant', snippet: 'hi' }, appUrl)
     expect(p).toContain('replied in a thread you commented on')
-    expect(p).toContain('thread=t1')
+    expect(p).toContain('thread=t1') // rides the hyperlink URL
     const m = formatSlackMessage({ ...base, reason: 'mention', snippet: 'hi' }, appUrl)
     expect(m).toContain('mentioned you in a comment on')
   })
 
-  test('S7: null actorName → email fallback; snippet escapes &/</>; empty/null snippet stays non-empty', () => {
+  test('S7: null actorName → bold email fallback; snippet is italic + escaped; empty/null snippet stays non-empty', () => {
     const withEmail = formatSlackMessage({ ...base, actorName: null, reason: 'share', snippet: 'a & b < c > d' }, appUrl)
-    expect(withEmail).toContain('ravi@plivo.com')
-    expect(withEmail).toContain('a &amp; b &lt; c &gt; d')
+    expect(withEmail).toContain('*ravi@plivo.com*') // bold actor from the email fallback
+    expect(withEmail).toContain('> _a &amp; b &lt; c &gt; d_') // block-quoted, italic, escaped
 
     const empty = formatSlackMessage({ ...base, reason: 'share', snippet: '' }, appUrl)
     expect(empty.trim().length).toBeGreaterThan(0)
     expect(empty).toContain('commented on')
+    expect(empty).not.toContain('\n>') // no quote line when the snippet is blank
 
     const nullSnippet = formatSlackMessage({ ...base, reason: 'share', snippet: null }, appUrl)
     expect(nullSnippet.trim().length).toBeGreaterThan(0)
   })
 
-  test('actor name preferred over email; message carries the absolute deep link', () => {
+  test('actor is bold; the site label hyperlinks to the absolute deep link, with no trailing raw URL', () => {
     const msg = formatSlackMessage({ ...base, reason: 'mention', snippet: 'hey' }, appUrl)
-    expect(msg).toContain('Ravi Anand')
-    expect(msg).toContain('https://glance.example.com/design/q3-dashboard/q3.html?thread=t1&review=1')
+    expect(msg).toContain('*Ravi Anand*')
+    // the deep link rides the site label as a bold hyperlink (& entity-escaped per Slack)
+    expect(msg).toContain(
+      '*<https://glance.example.com/design/q3-dashboard/q3.html?thread=t1&amp;review=1|design/q3-dashboard>*',
+    )
+    expect(msg.split('\n')).toHaveLength(2) // verb line + quote; no separate URL line
   })
 })
 
@@ -180,9 +186,10 @@ describe('deliverSlack', () => {
     expect(posts[0].url).toContain('chat.postMessage')
     const body = postBody(posts[0].init)
     expect(body.channel).toBe('Uowner')
-    expect(body.text).toContain('commented on your site design/q3-dashboard')
-    expect(body.text).toContain('take a look')
-    expect(body.text).toContain('https://glance.example.com/design/q3-dashboard/q3.html?thread=t1&review=1')
+    expect(body.text).toContain('commented on your site *<')
+    expect(body.text).toContain('|design/q3-dashboard>*')
+    expect(body.text).toContain('> _take a look_')
+    expect(body.text).toContain('thread=t1&amp;review=1')
   })
 
   test('cap 15, mention-first regardless of array order (10 mention + 10 comment, comment-first)', async () => {

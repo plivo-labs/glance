@@ -79,10 +79,11 @@ describe('W — comment route fans out to Slack', () => {
     expect(lookupCalls).toHaveLength(0) // owner was cached
     expect(posts).toHaveLength(1)
     expect(posts[0].channel).toBe('Uowner')
-    expect(posts[0].text).toContain('commented on your site acme/doc')
-    expect(posts[0].text).toContain('hello world')
+    expect(posts[0].text).toContain('commented on your site *<') // bold hyperlinked site
+    expect(posts[0].text).toContain('|acme/doc>*')
+    expect(posts[0].text).toContain('> _hello world_') // italic quoted comment
     expect(posts[0].text).toContain(`${APP_URL}/acme/doc/index.html?thread=`)
-    expect(posts[0].text).toContain('review=1')
+    expect(posts[0].text).toContain('&amp;review=1')
   })
 
   test('W2: 1 mention + 1 comment recipient → 2 posts, mention body first', async () => {
