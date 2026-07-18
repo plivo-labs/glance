@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { checkAccess } from '../lib/access'
 import { batchAll, chunk, D1_MAX_BOUND_PARAMETERS, D1_MAX_IN } from '../lib/d1'
+import type { SlackReason } from '../lib/slack'
 import {
   comments,
   type NotificationType,
@@ -75,14 +76,24 @@ export async function createNotifications(db: DrizzleD1Database, rows: Notificat
   await batchAll(db, inserts)
 }
 
+/** Why a comment recipient is in the audience — drives the Slack verb (the in-app D1 row stays
+ *  `type='comment'`, no migration). Precedence owner > participant > share. Derived from SlackReason
+ *  minus 'mention' so the "SlackReason ⊇ CommentAudienceReason" invariant (relied on by the audience
+ *  spread in comments.ts) is compiler-guaranteed, not comment-synced. Type-only import — erased at
+ *  runtime, and db→lib is the existing dependency direction (cf. lib/access). */
+export type CommentAudienceReason = Exclude<SlackReason, 'mention'>
+export type CommentRecipient = { id: string; reason: CommentAudienceReason }
+
 /** Resolve the normal comment audience from targeted facts, excluding the actor and any mention
- *  recipients. Prior participants join the owner and direct shares only for replies; every
- *  candidate is re-authorized against the site's current tier/share policy before notification. */
+ *  recipients. Prior participants join the owner and direct shares only for replies; every candidate
+ *  is re-authorized against the site's current tier/share policy before notification. Each surviving
+ *  recipient is tagged with its reason by precedence owner > participant > share (owner id first,
+ *  then a prior thread author, else a direct share) — a single reason per recipient. */
 export async function resolveCommentAudience(
   db: DrizzleD1Database,
   site: Pick<Site, 'id' | 'spaceId' | 'visibility' | 'ownerId' | 'status'>,
   opts: { threadId: string; isReply: boolean; exclude: Set<string> },
-): Promise<string[]> {
+): Promise<CommentRecipient[]> {
   if (site.status === 'archived') return []
 
   const directSharesStmt = db
@@ -110,13 +121,19 @@ export async function resolveCommentAudience(
   const participantIds = participantRows
     .map((row) => row.authorId)
     .filter((authorId): authorId is string => authorId !== null)
+  const participantSet = new Set(participantIds)
+  // Precedence owner > participant > share: owner id wins, else a prior thread author, else a direct
+  // share (every candidate is in exactly one of the three source sets after this ordering).
+  const reasonOf = (id: string): CommentAudienceReason =>
+    id === site.ownerId ? 'owner' : participantSet.has(id) ? 'participant' : 'share'
+
   const audience = new Set<string>([site.ownerId, ...directShares, ...participantIds])
   for (const id of opts.exclude) audience.delete(id)
   const candidates = [...audience]
   if (candidates.length === 0) return []
   // Every candidate is an authenticated user id from an FK-backed audience fact. Team visibility
   // admits all of them, so no access-fact queries are needed.
-  if (site.visibility === 'team') return candidates
+  if (site.visibility === 'team') return candidates.map((id) => ({ id, reason: reasonOf(id) }))
 
   const accessFactStatements = chunk(candidates, D1_MAX_IN).flatMap((ids) => [
     {
@@ -145,11 +162,27 @@ export async function resolveCommentAudience(
   const groupSharedIds = new Set(groupRows.map((row) => row.userId))
   const memberIds = new Set(memberRows.map((row) => row.userId))
 
-  return candidates.filter((id) => {
-    // Recipient role is deliberately not consulted — superadmins need normal tier/share access to be notified.
-    const recipient = { id, role: 'member' as const }
-    return checkAccess(site, recipient, memberIds.has(id), directShares.has(id) || groupSharedIds.has(id)).ok
-  })
+  return candidates
+    .filter((id) => {
+      // Recipient role is deliberately not consulted — superadmins need normal tier/share access to be notified.
+      const recipient = { id, role: 'member' as const }
+      return checkAccess(site, recipient, memberIds.has(id), directShares.has(id) || groupSharedIds.has(id)).ok
+    })
+    .map((id) => ({ id, reason: reasonOf(id) }))
+}
+
+/** Resolve `{id → email}` for a set of user ids in bind-safe IN chunks (D1_MAX_IN). Used to hydrate
+ *  the Slack-delivery recipient list off the ids the audience/mention resolve already produced — no
+ *  re-resolve. Empty input never touches D1. */
+export async function usersEmailsByIds(db: DrizzleD1Database, ids: string[]): Promise<Map<string, string>> {
+  if (ids.length === 0) return new Map()
+  const stmts = chunk(ids, D1_MAX_IN).map((idChunk) =>
+    db.select({ id: users.id, email: users.email }).from(users).where(inArray(users.id, idChunk)),
+  )
+  const chunks = await batchAll(db, stmts)
+  const out = new Map<string, string>()
+  for (const rows of chunks) for (const row of rows) out.set(row.id, row.email)
+  return out
 }
 
 /** A recipient's notifications, newest-first, plus the FULL unread count (independent of `limit`).

@@ -16,7 +16,13 @@ import {
   threadsWithUsersBySlugsStmt,
 } from '../db/comments'
 import { truncateSnippet } from '../db/comment-feed'
-import { createNotifications, type NotificationInput, resolveCommentAudience } from '../db/notifications'
+import {
+  createNotifications,
+  type NotificationInput,
+  resolveCommentAudience,
+  usersEmailsByIds,
+} from '../db/notifications'
+import { deliverSlack, type SlackReason, type SlackRecipient, slackDepsFromEnv, slackEnabled } from '../lib/slack'
 import type { Comment, CommentThread } from '../db/schema'
 import { listMentionableUsers } from '../db/repo'
 import { fireAndForget } from '../lib/events'
@@ -196,6 +202,14 @@ async function notifyForComment(
         })
         if (mentionRecipients.length === 0 && commentRecipients.length === 0) return
 
+        // ONE reason-tagged audience (mentions first) drives BOTH the in-app rows and the Slack
+        // fan-out — resolved once, never re-combined. SlackReason ⊇ CommentAudienceReason, so the
+        // comment recipients spread in unchanged.
+        const audience: Array<{ id: string; reason: SlackReason }> = [
+          ...mentionRecipients.map((id) => ({ id, reason: 'mention' as const })),
+          ...commentRecipients,
+        ]
+
         const snippet = truncateSnippet(opts.snippet)
         const toRow = (recipientId: string, type: NotificationInput['type']): NotificationInput => ({
           recipientId,
@@ -208,15 +222,48 @@ async function notifyForComment(
           filePath: opts.filePath,
           snippet,
         })
-        await createNotifications(db, [
-          ...mentionRecipients.map((id) => toRow(id, 'mention')),
-          ...commentRecipients.map((id) => toRow(id, 'comment')),
-        ])
+        // The D1 row type is only 'mention' | 'comment'; the finer owner/participant/share reason
+        // rides the Slack recipient list only (no migration).
+        await createNotifications(
+          db,
+          audience.map((a) => toRow(a.id, a.reason === 'mention' ? 'mention' : 'comment')),
+        )
+
+        await deliverSlackForComment(c, audience, {
+          siteLabel,
+          filePath: opts.filePath,
+          threadId: opts.threadId,
+          snippet,
+        })
       } catch {
         // Notifications are best-effort — never surface to the caller (mirrors recordEvent).
       }
     })(),
   )
+}
+
+/** Best-effort Slack DM fan-out for a just-notified comment, over the SAME reason-tagged audience
+ *  the in-app rows used (no re-resolve). Gated on the token kill-switch — when Slack is off it does
+ *  ZERO extra D1/HTTP (deliverSlack's line-one no-op is the backstop). Owns its try/catch so a Slack
+ *  fault stays isolated from the notification write that already committed; never throws. */
+async function deliverSlackForComment(
+  c: Context<AppEnv>,
+  audience: Array<{ id: string; reason: SlackReason }>,
+  event: { siteLabel: string; filePath: string; threadId: string; snippet: string },
+): Promise<void> {
+  if (!slackEnabled(c.env.SLACK_BOT_TOKEN)) return
+  try {
+    const db = c.get('db')
+    const actor = c.get('user')
+    // One uniform chunked hydration over every recipient id. listMentionableUsers already fetched
+    // emails for the mention subset, but a single lookup over the whole audience is simpler than
+    // merging two email sources — a deliberate simplicity trade for a handful of avoidable reads.
+    const emails = await usersEmailsByIds(db, [...new Set(audience.map((a) => a.id))])
+    const recipients: SlackRecipient[] = audience.map((a) => ({ ...a, email: emails.get(a.id) ?? null }))
+    await deliverSlack(slackDepsFromEnv(c.env), { actorName: actor.name, actorEmail: actor.email, ...event }, recipients)
+  } catch {
+    // Slack delivery is best-effort and isolated — a fault here never fails the comment.
+  }
 }
 
 function notifyThreadCreated(

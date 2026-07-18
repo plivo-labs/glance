@@ -462,6 +462,41 @@ export function makeKv() {
   }
 }
 
+/** Wrap a KV mock (default a fresh `makeKv()`) to COUNT get/put/delete ops — `makeKv` exposes
+ *  store/ttls but no counters, and specs like "token absent → zero KV ops" or "cache hit → no
+ *  put" need the count. `failNextPut(err)` makes exactly the next put reject (the op is still
+ *  counted — it was issued, it just failed), proving a KV put failure doesn't abort delivery.
+ *  Re-exposes the inner `store`/`ttls` so ttl assertions keep working. */
+export function countingKv(inner = makeKv()) {
+  const ops = { get: 0, put: 0, delete: 0 }
+  let nextPutError: unknown = null
+  return {
+    get: (key: string) => {
+      ops.get++
+      return inner.get(key)
+    },
+    put: (key: string, value: string, options?: { expirationTtl?: number }) => {
+      ops.put++
+      if (nextPutError != null) {
+        const err = nextPutError
+        nextPutError = null
+        return Promise.reject(err)
+      }
+      return inner.put(key, value, options)
+    },
+    delete: (key: string) => {
+      ops.delete++
+      return inner.delete(key)
+    },
+    store: inner.store,
+    ttls: inner.ttls,
+    ops: () => ({ ...ops }),
+    failNextPut(err: unknown) {
+      nextPutError = err
+    },
+  }
+}
+
 /** R2's 3 range shapes (`{offset, length?}` / `{offset?, length}` / `{suffix}`), sliced on
  *  BYTES. `size` on the returned object is always the FULL object size — matching real R2
  *  (`R2Object.size` is unaffected by the requested range) — so callers must slice the body,
