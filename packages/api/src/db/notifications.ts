@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { checkAccess } from '../lib/access'
 import { batchAll, chunk, D1_MAX_BOUND_PARAMETERS, D1_MAX_IN } from '../lib/d1'
+import type { SlackReason } from '../lib/slack'
 import {
   comments,
   type NotificationType,
@@ -76,8 +77,11 @@ export async function createNotifications(db: DrizzleD1Database, rows: Notificat
 }
 
 /** Why a comment recipient is in the audience — drives the Slack verb (the in-app D1 row stays
- *  `type='comment'`, no migration). Precedence owner > participant > share. */
-export type CommentAudienceReason = 'owner' | 'participant' | 'share'
+ *  `type='comment'`, no migration). Precedence owner > participant > share. Derived from SlackReason
+ *  minus 'mention' so the "SlackReason ⊇ CommentAudienceReason" invariant (relied on by the audience
+ *  spread in comments.ts) is compiler-guaranteed, not comment-synced. Type-only import — erased at
+ *  runtime, and db→lib is the existing dependency direction (cf. lib/access). */
+export type CommentAudienceReason = Exclude<SlackReason, 'mention'>
 export type CommentRecipient = { id: string; reason: CommentAudienceReason }
 
 /** Resolve the normal comment audience from targeted facts, excluding the actor and any mention

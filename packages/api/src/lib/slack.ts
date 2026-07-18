@@ -120,8 +120,10 @@ export function formatSlackMessage(input: SlackMessageInput, appUrl: string): st
 }
 
 const POST_URL = 'https://slack.com/api/chat.postMessage'
-// Slack DMs per comment event, mentions first. Bounds the blast radius of a wide @-everyone or a
-// large shared audience — the same cap the in-app fan-out already lives under.
+// Cap on Slack DMs per comment event, mentions first — bounds the blast radius of a wide @-everyone
+// or a large shared audience. Slack-ONLY: the in-app fan-out (createNotifications) is intentionally
+// uncapped, so an audience >15 gets in-app bells for everyone but Slack DMs for the first 15
+// (mentions prioritized).
 const MAX_DMS_PER_EVENT = 15
 
 /** A resolved delivery target: the D1 recipient id, their email (for the Slack lookup — null when

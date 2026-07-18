@@ -58,6 +58,16 @@ echo "$(openssl rand -hex 32)" | wrangler secret put BOOTSTRAP_TOKEN
   tokens; keep distinct from `CONTENT_TOKEN_SECRET`. While unset, `/api/_data` and the token mint
   return 404 — the feature is opt-in per deploy. Enable with:
   `echo "$(openssl rand -hex 32)" | wrangler secret put DATA_TOKEN_SECRET`
+- `SLACK_BOT_TOKEN` (optional, main worker only) — Slack bot token (`xoxb-…`) that mirrors in-app
+  comment notifications as Slack DMs. **Kill-switch: while unset, no Slack DMs are ever sent and the
+  comment path does zero extra work** — removing the secret disables the feature instantly. Set with:
+  `wrangler secret put SLACK_BOT_TOKEN`. Requires a Slack app (install to your workspace) with bot
+  scopes **`chat:write` · `users:read` · `users:read.email`** — `users:read.email` resolves a Glance
+  user's email to a Slack id (cached in KV ~30d; not-found ~1h), and `chat:write` DMs that id directly
+  (the user id doubles as the DM channel). The DM carries the actor, the comment reason (mention /
+  your-site / participant / share), the snippet, and a deep link back to the review thread. Slack DMs
+  are capped at **15 per comment event, mentions first** (bounds blast radius); the in-app bell fan-out
+  is uncapped, so an audience over 15 gets in-app notifications for everyone but Slack DMs for the top 15.
 
 ## 3. Ship
 
