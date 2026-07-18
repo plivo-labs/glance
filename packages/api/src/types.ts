@@ -25,6 +25,9 @@ export interface Bindings {
   GOOGLE_CLIENT_SECRET?: string
   // Optional one-shot secret gating first-superadmin bootstrap. Unset → bootstrap inert (404).
   BOOTSTRAP_TOKEN?: string
+  // Optional Slack bot token (xoxb-…). Unset = kill-switch: comment notifications never fan out to
+  // Slack (deliverSlack no-ops on line one). Set via `wrangler secret put SLACK_BOT_TOKEN`.
+  SLACK_BOT_TOKEN?: string
   SESSION_SECRET: string
   CONTENT_TOKEN_SECRET: string
   // Optional: separate HMAC secret for the shared-backend data-plane tokens (glance.db SDK).
