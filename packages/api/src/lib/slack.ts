@@ -101,21 +101,24 @@ const VERB: Record<SlackReason, (siteLabel: string) => string> = {
   share: (s) => `commented on ${s}`,
 }
 
-/** Build the Slack DM text: `{actor} {verb clause}`, an optional quoted snippet line, then the
- *  absolute deep link. Actor falls back name → email → "Someone"; the snippet is HTML-escaped and a
- *  null/blank snippet simply drops the quote line so the message is never empty (Slack rejects an
- *  empty `text` with no_text). */
+/** Build the Slack DM text: `*{actor}* {verb clause}` where the site label is a BOLD hyperlink
+ *  (`<url|label>`) to the review thread, then an optional italic block-quoted snippet. Actor falls
+ *  back name → email → "Someone"; snippet is HTML-escaped and a null/blank snippet drops the quote
+ *  line so the message is never empty (Slack rejects an empty `text` with no_text). The deep link
+ *  rides the site label — no trailing raw URL. */
 export function formatSlackMessage(input: SlackMessageInput, appUrl: string): string {
-  const actor = escapeSlack(input.actorName ?? input.actorEmail ?? 'Someone')
-  const link = notificationLink(appUrl, {
+  const actor = `*${escapeSlack(input.actorName ?? input.actorEmail ?? 'Someone')}*`
+  const url = notificationLink(appUrl, {
     siteLabel: input.siteLabel,
     filePath: input.filePath,
     threadId: input.threadId,
   })
-  const lines = [`${actor} ${VERB[input.reason](escapeSlack(input.siteLabel))}`]
+  // Site label as a bold Slack hyperlink. Slack link syntax is <url|text>; the & in the query string
+  // must be entity-escaped even inside the URL (Slack's mrkdwn escaping rule).
+  const site = `*<${url.replace(/&/g, '&amp;')}|${escapeSlack(input.siteLabel)}>*`
+  const lines = [`${actor} ${VERB[input.reason](site)}`]
   const snippet = input.snippet ? escapeSlack(input.snippet).trim() : ''
-  if (snippet) lines.push(`> ${snippet}`)
-  lines.push(link)
+  if (snippet) lines.push(`> _${snippet}_`) // block-quoted + italic
   return lines.join('\n')
 }
 
