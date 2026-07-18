@@ -2,6 +2,7 @@
 // unit-testable and nothing here touches global fetch or KV directly. Layered onto the existing
 // comment-notification seam as a DELIVERY channel — no new recipient logic, no schema change.
 
+import type { Bindings } from '../types'
 import { notificationLink } from './notification-link'
 
 /** Why a recipient is being notified — drives the message verb. Precedence (owner > participant >
@@ -15,6 +16,11 @@ export type SlackHttpDeps = {
   token?: string
   fetchImpl?: typeof fetch
 }
+
+/** The Slack kill-switch predicate: a present, non-blank bot token. Shared by deliverSlack's
+ *  line-one no-op and the route's zero-work gate so "off" means the same at both boundaries (a
+ *  whitespace-only token is OFF everywhere, never doing wasted D1/HTTP work). */
+export const slackEnabled = (token?: string): boolean => !!token && token.trim() !== ''
 
 const LOOKUP_URL = 'https://slack.com/api/users.lookupByEmail'
 const CACHE_PREFIX = 'slackuid:'
@@ -125,6 +131,18 @@ export type SlackRecipient = { id: string; email: string | null; reason: SlackRe
 /** deliverSlack's deps: the HTTP/KV handles plus the absolute-link base. */
 export type SlackDeps = SlackHttpDeps & { appUrl: string }
 
+/** Build deliverSlack's deps from the worker env: the sessions KV, the bot token, the app origin,
+ *  and the injected fetch (SLACK_FETCH is the test seam — unset in prod → deliverSlack's global-fetch
+ *  fallback). */
+export const slackDepsFromEnv = (
+  env: Pick<Bindings, 'GLANCE_SESSIONS' | 'SLACK_BOT_TOKEN' | 'APP_URL' | 'SLACK_FETCH'>,
+): SlackDeps => ({
+  kv: env.GLANCE_SESSIONS,
+  token: env.SLACK_BOT_TOKEN,
+  appUrl: env.APP_URL,
+  fetchImpl: env.SLACK_FETCH,
+})
+
 /** Mentions first (priority, NOT array order), de-duplicated by recipient id (mention wins the tie),
  *  then truncated to the per-event cap. */
 function capMentionFirst(recipients: SlackRecipient[]): SlackRecipient[] {
@@ -148,7 +166,7 @@ function capMentionFirst(recipients: SlackRecipient[]): SlackRecipient[] {
  *  failure (429/5xx/{ok:false}/network throw) skips just that recipient and never aborts the fan-out
  *  or surfaces to the caller. Never throws. */
 export async function deliverSlack(deps: SlackDeps, event: SlackEvent, recipients: SlackRecipient[]): Promise<void> {
-  if (!deps.token || deps.token.trim() === '') return
+  if (!slackEnabled(deps.token)) return
   const fetchImpl = deps.fetchImpl ?? globalThis.fetch
   for (const r of capMentionFirst(recipients)) {
     try {

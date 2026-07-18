@@ -28,6 +28,10 @@ export interface Bindings {
   // Optional Slack bot token (xoxb-…). Unset = kill-switch: comment notifications never fan out to
   // Slack (deliverSlack no-ops on line one). Set via `wrangler secret put SLACK_BOT_TOKEN`.
   SLACK_BOT_TOKEN?: string
+  // DI seam for Slack HTTP (mirrors summarize's injected fetchImpl): route tests set a fake fetch on
+  // env to capture users.lookupByEmail / chat.postMessage without touching global fetch. Never set in
+  // prod — unset → deliverSlack falls back to globalThis.fetch.
+  SLACK_FETCH?: typeof fetch
   SESSION_SECRET: string
   CONTENT_TOKEN_SECRET: string
   // Optional: separate HMAC secret for the shared-backend data-plane tokens (glance.db SDK).

@@ -9,6 +9,7 @@ import {
   seedSpace,
   seedThread,
   seedUser,
+  seedUserShare,
 } from '../test/harness'
 import { createNotifications, listNotifications, markRead, resolveCommentAudience } from './notifications'
 import { comments } from './schema'
@@ -144,7 +145,67 @@ describe('comment audience stays within D1 bind limits', () => {
       { threadId, isReply: true, exclude: new Set([ownerId]) },
     )
 
-    expect(new Set(audience)).toEqual(new Set(participants))
+    expect(new Set(audience.map((r) => r.id))).toEqual(new Set(participants))
+    expect(audience.every((r) => r.reason === 'participant')).toBe(true)
+  })
+})
+
+describe('resolveCommentAudience tags each recipient with a reason (owner>participant>share)', () => {
+  const teamSite = (siteId: string, spaceId: string, ownerId: string) =>
+    ({ id: siteId, spaceId, ownerId, visibility: 'team' as const, status: 'active' as const })
+
+  test('V3: reply tags owner/participant/share; a new (non-reply) thread emits no participant', async () => {
+    const db = makeDb()
+    const owner = await seedUser(db)
+    const priorAuthor = await seedUser(db)
+    const shareUser = await seedUser(db)
+    const actor = await seedUser(db)
+    const spaceId = await seedSpace(db, { createdBy: owner })
+    const siteId = await seedSite(db, { spaceId, ownerId: owner, visibility: 'team' })
+    const threadId = await seedThread(db, { siteId, filePath: 'index.html', createdBy: owner })
+    await seedComment(db, { threadId, authorId: priorAuthor }) // prior participant
+    await seedUserShare(db, siteId, shareUser) // direct share, never commented
+
+    const reply = await resolveCommentAudience(db, teamSite(siteId, spaceId, owner), {
+      threadId,
+      isReply: true,
+      exclude: new Set([actor]),
+    })
+    const byId = new Map(reply.map((r) => [r.id, r.reason]))
+    expect(byId.get(owner)).toBe('owner')
+    expect(byId.get(priorAuthor)).toBe('participant')
+    expect(byId.get(shareUser)).toBe('share')
+
+    const fresh = await resolveCommentAudience(db, teamSite(siteId, spaceId, owner), {
+      threadId,
+      isReply: false,
+      exclude: new Set([actor]),
+    })
+    expect(fresh.some((r) => r.reason === 'participant')).toBe(false)
+    expect(new Set(fresh.map((r) => r.reason))).toEqual(new Set(['owner', 'share']))
+  })
+
+  test('V4: precedence — owner+participant → owner, owner+share → owner, share+participant → participant', async () => {
+    const db = makeDb()
+    const owner = await seedUser(db)
+    const shareAndParticipant = await seedUser(db)
+    const actor = await seedUser(db)
+    const spaceId = await seedSpace(db, { createdBy: owner })
+    const siteId = await seedSite(db, { spaceId, ownerId: owner, visibility: 'team' })
+    const threadId = await seedThread(db, { siteId, filePath: 'index.html', createdBy: owner })
+    await seedComment(db, { threadId, authorId: owner }) // owner is ALSO a prior participant
+    await seedComment(db, { threadId, authorId: shareAndParticipant })
+    await seedUserShare(db, siteId, shareAndParticipant) // …and a direct share
+    await seedUserShare(db, siteId, owner) // owner is ALSO a direct share
+
+    const audience = await resolveCommentAudience(db, teamSite(siteId, spaceId, owner), {
+      threadId,
+      isReply: true,
+      exclude: new Set([actor]),
+    })
+    const byId = new Map(audience.map((r) => [r.id, r.reason]))
+    expect(byId.get(owner)).toBe('owner') // owner beats participant AND share
+    expect(byId.get(shareAndParticipant)).toBe('participant') // participant beats share
   })
 })
 
