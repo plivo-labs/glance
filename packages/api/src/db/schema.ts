@@ -59,6 +59,10 @@ export const sites = sqliteTable(
     // source may only drop the link, never the content.
     forkedFrom: text('forkedFrom').references((): AnySQLiteColumn => sites.id, { onDelete: 'set null' }),
     createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
+    // Last content-activity timestamp: set on create, re-stamped on every REPLACE (upload.ts), so a
+    // re-deployed site bubbles back to the top of the Team activity feed (createdAt alone froze a busy
+    // site at its creation slot). Renames/moves/visibility changes do NOT bump it — content only.
+    updatedAt: text('updatedAt').notNull().$defaultFn(() => new Date().toISOString()),
   },
   (t) => [unique('sites_space_slug_unq').on(t.spaceId, t.slug), index('sites_owner').on(t.ownerId)],
 )

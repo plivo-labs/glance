@@ -20,6 +20,7 @@ import {
   createdColumn,
   nameColumn,
   OpenLinkButton,
+  updatedColumn,
   urlColumn,
   visibilityBadgeColumn,
 } from '@/components/siteColumns'
@@ -354,7 +355,8 @@ function TabCount({ n }: { n: number }) {
 
 // ─── Team activity ───────────────────────────────────────────────────────────
 
-// Same table shell, with who-shipped + when columns. Defaults to newest-first (a feed).
+// Same table shell, with who-shipped + updated columns. Orders by last content activity (updatedAt)
+// so a re-deployed site resurfaces to the top and the feed stays live.
 const who = (u: TeamUpload) => u.uploaderName ?? u.uploaderEmail
 
 const TEAM_COLUMNS: Column<TeamUpload>[] = [
@@ -368,7 +370,7 @@ const TEAM_COLUMNS: Column<TeamUpload>[] = [
     cellClassName: 'max-w-[12rem]',
     render: (u) => <span className="block truncate text-sm">{who(u)}</span>,
   },
-  createdColumn('when', 'When'),
+  updatedColumn('when', 'Updated'),
   actionsColumn((u) => <OpenLinkButton url={u.url} />),
 ]
 

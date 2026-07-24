@@ -44,6 +44,7 @@ export interface SiteSummary {
   role?: ShareRole
   url: string
   createdAt: string
+  updatedAt: string // last content activity (create or most-recent replace); drives Team activity order
 }
 
 export interface TeamUpload extends SiteSummary {

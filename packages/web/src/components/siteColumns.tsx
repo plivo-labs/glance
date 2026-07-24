@@ -99,3 +99,23 @@ export function createdColumn<T extends SiteSummary>(key = 'created', label = 'C
     ),
   }
 }
+
+// Like createdColumn but on updatedAt (last content activity) — used by the Team activity feed so a
+// re-deployed site sorts to the top. Falls back to createdAt for any legacy row without an updatedAt.
+export function updatedColumn<T extends SiteSummary>(key = 'updated', label = 'Updated'): Column<T> {
+  return {
+    key,
+    label,
+    defaultDir: 'desc',
+    compare: (a, b) => (a.updatedAt ?? a.createdAt).localeCompare(b.updatedAt ?? b.createdAt),
+    cellClassName: 'text-sm text-muted-foreground',
+    render: (s) => {
+      const when = s.updatedAt ?? s.createdAt
+      return (
+        <time dateTime={when} title={new Date(when).toLocaleString()}>
+          {timeAgo(when)}
+        </time>
+      )
+    },
+  }
+}

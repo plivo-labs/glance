@@ -253,9 +253,10 @@ sites.get('/shared', requireAuth, async (c) => {
   )
 })
 
-// GET /api/sites/team — team-wide upload feed: every team site across all spaces,
-// newest first, with who uploaded it. Visible to any signed-in member (the team tier is
-// already visible team-wide). Capped — this is an at-a-glance activity feed, not a full log.
+// GET /api/sites/team — team-wide upload feed: every team site across all spaces, ordered by last
+// content activity (updatedAt = create or most-recent replace) so a re-deployed site resurfaces and
+// the feed stays live. Visible to any signed-in member (the team tier is already visible team-wide).
+// Capped — this is an at-a-glance activity feed, not a full log.
 sites.get('/team', requireAuth, async (c) => {
   const db = c.get('db')
   const rows = await db
@@ -268,7 +269,7 @@ sites.get('/team', requireAuth, async (c) => {
     .innerJoin(spaces, eq(sitesTable.spaceId, spaces.id))
     .innerJoin(users, eq(sitesTable.ownerId, users.id))
     .where(and(eq(sitesTable.status, 'active'), eq(sitesTable.visibility, 'team')))
-    .orderBy(desc(sitesTable.createdAt))
+    .orderBy(desc(sitesTable.updatedAt))
     .limit(50)
   return c.json(
     rows.map((r) => ({
