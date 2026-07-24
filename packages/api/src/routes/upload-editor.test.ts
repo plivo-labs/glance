@@ -125,3 +125,19 @@ describe('upload — editor-share enforcement', () => {
     expect((await siteRow(db)).contentVersion).toBe(1) // owner replace bumps advisorily
   })
 })
+
+describe('upload — editor replace never derives a title', () => {
+  test('null-title site + titled HTML via editor replace: title stays null', async () => {
+    const { db, app, env } = await fx()
+    const fd = new FormData()
+    fd.append('files', new File(['<html><head><title>Hijack</title></head><body>x</body></html>'], 'index.html', { type: 'text/html' }))
+    fd.append('expectedVersion', '0')
+    const res = await app.request(
+      '/api/upload/acme/doc?replace=true',
+      { method: 'POST', headers: { Authorization: 'Bearer ed' }, body: fd },
+      env,
+    )
+    expect(res.status).toBe(200)
+    expect((await siteRow(db)).title).toBeNull()
+  })
+})
