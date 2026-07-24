@@ -214,3 +214,83 @@ describe('upload — optional title on CREATE (W3-4)', () => {
     expect(await titleOf('titled')).toBe('My Recording') // unchanged
   })
 })
+
+describe('upload — derived title from entry HTML', () => {
+  const titled = (t: string) => html(`<html><head><title>${t}</title></head><body>x</body></html>`, 'index.html')
+  async function siteTitle(db: Awaited<ReturnType<typeof setup>>['db'], slug: string) {
+    return (await db.select({ title: sites.title }).from(sites).where(eq(sites.slug, slug)))[0]?.title
+  }
+
+  test('create without a form title derives it from the entry <title>', async () => {
+    const { app, env, db } = await setup()
+    expect((await postUpload(app, env, 'derived', [titled('My Report')])).status).toBe(200)
+    expect(await siteTitle(db, 'derived')).toBe('My Report')
+  })
+
+  test('an explicit form title always wins over the entry <title>', async () => {
+    const { app, env, db } = await setup()
+    expect((await postUpload(app, env, 'explicit', [titled('From HTML')], { title: 'From Form' })).status).toBe(200)
+    expect(await siteTitle(db, 'explicit')).toBe('From Form')
+  })
+
+  test('replace fills a null title but never overwrites an existing one', async () => {
+    const { app, env, db } = await setup()
+    // Entry HTML has no <title> → site title stays null.
+    await postUpload(app, env, 'fillme', [html('<html><body>no title</body></html>', 'index.html')])
+    expect(await siteTitle(db, 'fillme')).toBeNull()
+    // Redeploy with a <title> → the null title is filled.
+    await postUpload(app, env, 'fillme', [titled('Now Titled')], { replace: true })
+    expect(await siteTitle(db, 'fillme')).toBe('Now Titled')
+    // Another redeploy with a different <title> → existing title kept (never silently renamed).
+    await postUpload(app, env, 'fillme', [titled('Renamed?')], { replace: true })
+    expect(await siteTitle(db, 'fillme')).toBe('Now Titled')
+  })
+
+  test('multi-file site with no root index derives nothing', async () => {
+    const { app, env, db } = await setup()
+    const parts = [html('<title>A</title>', 'a.html'), html('<title>B</title>', 'b.html')]
+    expect((await postUpload(app, env, 'noentry', parts)).status).toBe(200)
+    expect(await siteTitle(db, 'noentry')).toBeNull()
+  })
+})
+
+describe('upload — derived title: R2 integrity + COALESCE race', () => {
+  const titled = (t: string) => html(`<html><head><title>${t}</title></head><body>x</body></html>`, 'index.html')
+
+  test('deriving the title does not consume the entry: the R2 object still holds the full HTML', async () => {
+    const { app, env, db, r2 } = await setup()
+    expect((await postUpload(app, env, 'intact', [titled('Intact')])).status).toBe(200)
+    const key = (await db.select({ k: files.storageKey }).from(files))[0].k
+    const obj = await r2.get(key)
+    expect(obj && (await obj.text())).toContain('<title>Intact</title>')
+  })
+
+  test('a title set concurrently during the replace is never clobbered (COALESCE at the write)', async () => {
+    const { app, env, db, r2 } = await setup()
+    // Create with untitled HTML → sites.title is null.
+    await postUpload(app, env, 'raceme', [html('<html><body>v1</body></html>', 'index.html')])
+    // Gate R2 puts: the replace suspends AFTER reading existing.title (null) but BEFORE writing.
+    const origPut = r2.put
+    let releasePut: () => void = () => {}
+    const gate = new Promise<void>((res) => {
+      releasePut = res
+    })
+    let reachedPut: () => void = () => {}
+    const reached = new Promise<void>((res) => {
+      reachedPut = res
+    })
+    r2.put = async (...args: Parameters<typeof origPut>) => {
+      reachedPut()
+      await gate
+      return origPut(...args)
+    }
+    const replace = postUpload(app, env, 'raceme', [titled('Derived Late')], { replace: true })
+    await reached
+    // Owner names the site while the upload is in flight (the PATCH-title race).
+    await db.update(sites).set({ title: 'Manual Name' }).where(eq(sites.slug, 'raceme'))
+    releasePut()
+    expect((await replace).status).toBe(200)
+    const row = (await db.select({ title: sites.title }).from(sites).where(eq(sites.slug, 'raceme')))[0]
+    expect(row.title).toBe('Manual Name')
+  })
+})

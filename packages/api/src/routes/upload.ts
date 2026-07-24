@@ -5,6 +5,7 @@ import type { NewFileRow } from '../db/schema'
 import { files, sites, spaces } from '../db/schema'
 import { canReplace } from '../lib/access'
 import { fireAndForget } from '../lib/events'
+import { capTitle, extractHtmlTitle, pickEntry } from '../lib/extract'
 import { isValidSlug } from '../lib/slug'
 import { deleteKeys, MAX_FILE_BYTES, sanitizePath } from '../lib/storage'
 import { isVisibility, normalizeVisibility } from '../lib/visibility'
@@ -47,10 +48,12 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
   // tier), so the two cases must stay distinguishable — `|| 'team'` alone can't tell them apart.
   const hasVisibility = typeof rawVisibility === 'string' && rawVisibility !== ''
   const visibility = normalizeVisibility(rawVisibility || 'team')
-  // Optional display title, applied on CREATE only (REPLACE keeps whatever the site already has —
-  // a re-upload/record must never silently rename an existing site). Trimmed + capped; empty → null.
+  // Optional display title. CREATE: an explicit form title wins; absent one, the entry HTML's
+  // <title> is derived below. REPLACE never renames a titled site — a re-upload/record must not
+  // silently rename it — but a still-null title may be filled from the new content
+  // (owner/superadmin only). Trimmed + capped; empty → null.
   const rawTitle = form.get('title')
-  const title = typeof rawTitle === 'string' ? rawTitle.trim().slice(0, 200) || null : null
+  const title = typeof rawTitle === 'string' ? capTitle(rawTitle.trim()) || null : null
   // Optimistic-concurrency token for a REPLACE: the contentVersion the caller last pulled. REQUIRED
   // for an editor replace (CAS below), advisory/ignored for an owner. Parsed to a non-negative int or
   // null (absent/blank/non-numeric).
@@ -96,7 +99,13 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
   // contentVersion + status too: the editor CAS + archived guard need them.
   const existing = (
     await db
-      .select({ id: sites.id, ownerId: sites.ownerId, contentVersion: sites.contentVersion, status: sites.status })
+      .select({
+        id: sites.id,
+        ownerId: sites.ownerId,
+        title: sites.title,
+        contentVersion: sites.contentVersion,
+        status: sites.status,
+      })
       .from(sites)
       .where(and(eq(sites.spaceId, space.id), eq(sites.slug, siteSlug)))
       .limit(1)
@@ -164,6 +173,18 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
     }
   }
 
+  // Derive a display title from the entry HTML's <title> when nothing names the site yet: an
+  // explicit form title wins on CREATE, and editors never touch title (content-only role). The
+  // null-title check here is ONLY work-avoidance — the replace UPDATE enforces fill-only-null
+  // atomically via COALESCE, so a title set concurrently (PATCH, racing replace) between this
+  // read and that write is never clobbered. Runs after request validation, before any R2 write.
+  const wantsDerivedTitle = existing ? !actingAsEditor && existing.title === null : title === null
+  let derivedTitle: string | null = null
+  if (wantsDerivedTitle) {
+    const entry = pickEntry(items.map(({ path, file }) => ({ path, file, mimeType: file.type || null })))
+    if (entry) derivedTitle = await extractHtmlTitle(entry, entry.file)
+  }
+
   // Write the objects with bounded concurrency so latency doesn't scale linearly with file count.
   // Track every key we attempt: if ANY put throws mid-flight, delete the ones already written so
   // nothing orphans in R2 (there are no rows yet). Deleting a never-written key is a harmless no-op.
@@ -198,7 +219,7 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
           id: siteId,
           spaceId: space.id,
           slug: siteSlug,
-          title,
+          title: title ?? derivedTitle,
           visibility: isVisibility(visibility) ? visibility : 'team',
           ownerId: user.id,
         }),
@@ -238,6 +259,7 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
             lastReplacedBy: user.id,
             updatedAt: new Date().toISOString(),
             ...(hasVisibility && isVisibility(visibility) ? { visibility } : {}),
+            ...(derivedTitle !== null ? { title: sql`coalesce(${sites.title}, ${derivedTitle})` } : {}),
           })
           .where(eq(sites.id, siteId)),
       ])

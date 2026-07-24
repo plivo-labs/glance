@@ -183,6 +183,17 @@ function Viewer() {
   // Actionable count for the toolbar badge: open threads (mirrors the rail's default "open" list).
   const openCount = useMemo(() => threads.filter((t) => t.status === 'open').length, [threads])
 
+  // Per-site tab title: without this the shell's static <title> ("Glance — …") shows for EVERY
+  // site. site.title is owner-set or deploy-derived from the entry HTML's <title>; fall back to
+  // the slug. Restored on unmount so back-navigation to the dashboard keeps the shell default.
+  useEffect(() => {
+    const prev = document.title
+    document.title = site.title ?? site.siteSlug
+    return () => {
+      document.title = prev
+    }
+  }, [site.title, site.siteSlug])
+
   // glance.db credential broker: the injected SDK in the iframe hands us a MessagePort; we
   // execute its data-plane requests with OUR token so no credential ever enters the untrusted
   // frame (P0-1). Bound to THIS site — the page cannot ask for another site's data.

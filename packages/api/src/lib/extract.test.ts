@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { extractText, isSupportedEntry, pickEntry, resolveIndexPath, TEXT_CAP, type EntryFile } from './extract'
+import { extractHtmlTitle, extractText, isSupportedEntry, pickEntry, resolveIndexPath, TEXT_CAP, type EntryFile } from './extract'
 
 describe('pickEntry', () => {
   test('prefers the root index, returns a lone file, and rejects ambiguous sites', () => {
@@ -158,5 +158,64 @@ describe('extractText', () => {
       '<html><head><script>x()</script></head><body>   </body></html>',
     )
     expect(result).toEqual({ ok: false, reason: 'empty' })
+  })
+})
+
+describe('extractHtmlTitle', () => {
+  const entry = { path: 'index.html', mimeType: 'text/html' }
+
+  test('returns the document title, whitespace-collapsed and trimmed', async () => {
+    const body = '<html><head><title>  CX Team —\n  What They\'re Managing </title></head><body>x</body></html>'
+    expect(await extractHtmlTitle(entry, body)).toBe("CX Team — What They're Managing")
+  })
+
+  test('only the first <title> counts — a later inline svg title is ignored', async () => {
+    const body = '<html><head><title>Real</title></head><body><svg><title>icon label</title></svg></body></html>'
+    expect(await extractHtmlTitle(entry, body)).toBe('Real')
+  })
+
+  test('missing or empty title → null; non-HTML entry → null', async () => {
+    expect(await extractHtmlTitle(entry, '<html><body>no title</body></html>')).toBeNull()
+    expect(await extractHtmlTitle(entry, '<title>   </title>')).toBeNull()
+    expect(await extractHtmlTitle({ path: 'readme.md', mimeType: null }, '# Title')).toBeNull()
+    expect(await extractHtmlTitle({ path: 'clip.webm', mimeType: 'audio/webm' }, 'x')).toBeNull()
+  })
+
+  test('caps at 200 chars', async () => {
+    const long = 'a'.repeat(300)
+    expect(await extractHtmlTitle(entry, `<title>${long}</title>`)).toBe('a'.repeat(200))
+  })
+})
+
+describe('extractHtmlTitle — svg exclusion, implied head, entities, streaming', () => {
+  const entry = { path: 'index.html', mimeType: 'text/html' }
+
+  test('an svg title BEFORE the document title never wins; an svg-only doc yields null', async () => {
+    const before = '<svg><title>icon label</title></svg><title>Real</title>'
+    expect(await extractHtmlTitle(entry, before)).toBe('Real')
+    const svgOnly = '<html><body><svg><title>Download icon</title></svg></body></html>'
+    expect(await extractHtmlTitle(entry, svgOnly)).toBeNull()
+    const tpl = '<template><title>inert</title></template><title>Live</title>'
+    expect(await extractHtmlTitle(entry, tpl)).toBe('Live')
+  })
+
+  test('implied-head fragments (no literal <head>) still resolve their title', async () => {
+    const fragment = '<!doctype html><meta charset="utf-8"><title>Implied Head</title><style>x{}</style><h1>hi</h1>'
+    expect(await extractHtmlTitle(entry, fragment)).toBe('Implied Head')
+  })
+
+  test('decodes numeric and common named entities', async () => {
+    const body = '<title>Mentions &amp; Notifications &#8212; A&nbsp;B &#x2192; C &unknown; &#1114112;</title>'
+    expect(await extractHtmlTitle(entry, body)).toBe('Mentions & Notifications — A B → C &unknown; &#1114112;')
+  })
+
+  test('cap never leaves an unpaired surrogate', async () => {
+    const title = await extractHtmlTitle(entry, `<title>${'a'.repeat(199)}😀</title>`)
+    expect(title).toBe('a'.repeat(199))
+    expect(title).not.toMatch(/[\uD800-\uDBFF]$/)
+  })
+
+  test('accepts a Blob body (the upload path streams the File, never buffering it)', async () => {
+    expect(await extractHtmlTitle(entry, new Blob(['<title>From Blob</title>']))).toBe('From Blob')
   })
 })
