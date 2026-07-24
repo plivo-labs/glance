@@ -53,7 +53,6 @@ Device-code flow. If no browser opener is available (SSH/headless), open the pri
 - `--visibility` defaults to `team`.
 - If the site already exists and you own it, prompts `Replace? (y/N)`. If owned by someone else, it aborts.
 - Prints `✓ Deployed → <url>`.
-- Give every deployed HTML file a real `<title>` (and ideally a `<meta name="description">`): Glance derives the site's display/tab title from the entry HTML's `<title>` at deploy time — an untitled file falls back to the slug.
 
 ```bash
 glance deploy report.html                                  # → /<you>/report in your personal space
