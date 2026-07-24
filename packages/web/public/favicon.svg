@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Glance">
+  <!-- Favicon derived from the Glance brand mark (warm tile + almond eye + screen pupil),
+       simplified and enlarged for 16-32px: fine content lines, glow and catchlight dropped,
+       eye scaled up so it still reads as an eye at 16px. The rim adapts to the browser theme
+       via prefers-color-scheme (dark rim on light chrome, light rim on dark chrome). -->
+  <style>
+    .rim { stroke: rgba(18, 21, 26, 0.16) }
+    @media (prefers-color-scheme: dark) {
+      .rim { stroke: rgba(255, 255, 255, 0.22) }
+    }
+  </style>
+  <defs>
+    <linearGradient id="tile" x1="40" y1="24" x2="472" y2="488" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#e8ab44"/>
+      <stop offset="0.55" stop-color="#e0a13a"/>
+      <stop offset="1" stop-color="#c26248"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="496" height="496" rx="112" fill="url(#tile)"/>
+  <rect x="14" y="14" width="484" height="484" rx="106" fill="none" class="rim" stroke-width="12"/>
+  <path d="M256 132C356 132 442 196 476 256C442 316 356 380 256 380C156 380 70 316 36 256C70 196 156 132 256 132Z" fill="#faf6ec"/>
+  <rect x="184" y="184" width="144" height="144" rx="34" fill="#15181e"/>
+  <rect x="208" y="222" width="92" height="20" rx="10" fill="#e0a13a"/>
+  <circle cx="300" cy="296" r="18" fill="#c26248"/>
+</svg>
