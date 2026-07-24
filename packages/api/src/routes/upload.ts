@@ -215,7 +215,7 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
       // price of leaving files untouched on a stale 409, which a single atomic batch cannot express.)
       const claimed = await db
         .update(sites)
-        .set({ contentVersion: sql`${sites.contentVersion} + 1`, lastReplacedBy: user.id })
+        .set({ contentVersion: sql`${sites.contentVersion} + 1`, lastReplacedBy: user.id, updatedAt: new Date().toISOString() })
         .where(and(eq(sites.id, siteId), eq(sites.contentVersion, expectedVersion as number)))
         .returning({ id: sites.id })
       if (claimed.length === 0) {
@@ -236,6 +236,7 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
           .set({
             contentVersion: sql`${sites.contentVersion} + 1`,
             lastReplacedBy: user.id,
+            updatedAt: new Date().toISOString(),
             ...(hasVisibility && isVisibility(visibility) ? { visibility } : {}),
           })
           .where(eq(sites.id, siteId)),

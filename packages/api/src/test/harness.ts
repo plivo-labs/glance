@@ -47,6 +47,7 @@ const MIGRATIONS = [
   'drizzle/0014_site_summaries.sql',
   'drizzle/0015_notifications_comment_id.sql',
   'drizzle/0016_notifications_comment_index.sql',
+  'drizzle/0017_site_updated_at.sql',
 ]
 
 // --- S0 recorder: one shared, ordered timeline across D1/R2/cache mocks so perf specs can
@@ -314,6 +315,9 @@ export async function seedSite(
     status: o.status ?? 'active',
     // Omitted → schema $defaultFn (now). Passable so ordering specs can pin exact timelines.
     ...(o.createdAt !== undefined && { createdAt: o.createdAt }),
+    // A fresh site's updatedAt == createdAt (no replace yet); default it so createdAt-pinned ordering
+    // specs stay deterministic under the updatedAt sort. Override explicitly to simulate a replace.
+    ...(o.updatedAt !== undefined ? { updatedAt: o.updatedAt } : o.createdAt !== undefined ? { updatedAt: o.createdAt } : {}),
   })
   return id
 }

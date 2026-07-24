@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { Hono } from 'hono'
-import { siteSummaries } from '../db/schema'
+import { eq } from 'drizzle-orm'
+import { sites, siteSummaries } from '../db/schema'
 import { seedFile, seedMember, seedSite, seedSpace, seedUserShare } from '../test/harness'
 import { APP_URL, at, auth, makeRouteApp, mintUser, postAuthRequests, type RouteApp } from '../test/route-fixtures'
 import type { AppEnv } from '../types'
@@ -58,6 +59,7 @@ describe('C31 — site feed characterization before summary badge', () => {
         hasSummary: false,
         url: `${APP_URL}/acme/voice`,
         createdAt: at(7),
+        updatedAt: at(7),
       },
     ])
     expect(postAuthRequests(db)).toBe(1)
@@ -76,6 +78,7 @@ describe('C31 — site feed characterization before summary badge', () => {
         role: 'editor',
         url: `${APP_URL}/acme/voice`,
         createdAt: at(7),
+        updatedAt: at(7),
       },
     ])
     expect(postAuthRequests(db)).toBeLessThanOrEqual(2)
@@ -93,6 +96,7 @@ describe('C31 — site feed characterization before summary badge', () => {
         hasSummary: false,
         url: `${APP_URL}/acme/voice`,
         createdAt: at(7),
+        updatedAt: at(7),
         uploaderName: null,
         uploaderEmail: 'owner@e.com',
       },
@@ -113,6 +117,7 @@ describe('C31 — site feed characterization before summary badge', () => {
         hasSummary: false,
         url: `${APP_URL}/acme/voice`,
         createdAt: at(7),
+        updatedAt: at(7),
       },
     ])
     expect(postAuthRequests(db)).toBe(1)
@@ -168,8 +173,8 @@ describe('feeds — audio badge pins (S5b T5.4)', () => {
 
     // Hand-coded: one row PER SITE (30 files must not explode the feed), newest first.
     expect(await getJson(app, env, '/api/sites/mine', 'owner')).toEqual([
-      { id: 'voice', spaceSlug: 'acme', siteSlug: 'voice', title: null, visibility: 'private', status: 'active', audio: true, hasSummary: true, url: `${APP_URL}/acme/voice`, createdAt: at(2) },
-      { id: 'doc', spaceSlug: 'acme', siteSlug: 'doc', title: null, visibility: 'team', status: 'active', audio: false, hasSummary: false, url: `${APP_URL}/acme/doc`, createdAt: at(1) },
+      { id: 'voice', spaceSlug: 'acme', siteSlug: 'voice', title: null, visibility: 'private', status: 'active', audio: true, hasSummary: true, url: `${APP_URL}/acme/voice`, createdAt: at(2), updatedAt: at(2) },
+      { id: 'doc', spaceSlug: 'acme', siteSlug: 'doc', title: null, visibility: 'team', status: 'active', audio: false, hasSummary: false, url: `${APP_URL}/acme/doc`, createdAt: at(1), updatedAt: at(1) },
     ])
   })
 
@@ -189,7 +194,7 @@ describe('feeds — audio badge pins (S5b T5.4)', () => {
     // The 30-file site is pure audio; the file-less rest are not. Full payload on the head row.
     expect(rows[0]).toEqual({
       id: 's51', spaceSlug: 'acme', siteSlug: 's51', title: null, visibility: 'team', status: 'active',
-      audio: true, hasSummary: false, url: `${APP_URL}/acme/s51`, createdAt: at(51), uploaderName: null, uploaderEmail: 'owner@e.com',
+      audio: true, hasSummary: false, url: `${APP_URL}/acme/s51`, createdAt: at(51), updatedAt: at(51), uploaderName: null, uploaderEmail: 'owner@e.com',
     })
     expect(rows.slice(1).every((r) => r.audio === false)).toBe(true)
     expect(rows.every((r) => r.hasSummary === false)).toBe(true)
@@ -213,6 +218,20 @@ describe('feeds — audio badge pins (S5b T5.4)', () => {
     ]
     expect(flags(await getJson(app, env, '/api/sites/mine', 'owner'))).toEqual(expected)
     expect(flags(await getJson(app, env, '/api/sites/team', 'owner'))).toEqual(expected)
+  })
+
+  test('pin: /team orders by last activity — a re-deployed older site resurfaces above a newer one', async () => {
+    const { app, env, db } = await setup()
+    // 'old' was created before 'new', so by creation order 'new' leads.
+    await seedSite(db, { id: 'old', spaceId: 'acme', ownerId: 'owner', slug: 'old', createdAt: at(1) })
+    await seedSite(db, { id: 'new', spaceId: 'acme', ownerId: 'owner', slug: 'new', createdAt: at(2) })
+
+    const ids = (rows: TeamRow[]) => rows.map((r) => r.id)
+    expect(ids(await getJson(app, env, '/api/sites/team', 'owner'))).toEqual(['new', 'old'])
+
+    // Re-deploy 'old' (a REPLACE stamps updatedAt) — it must jump to the head of the feed.
+    await db.update(sites).set({ updatedAt: at(3) }).where(eq(sites.id, 'old'))
+    expect(ids(await getJson(app, env, '/api/sites/team', 'owner'))).toEqual(['old', 'new'])
   })
 })
 

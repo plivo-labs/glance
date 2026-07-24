@@ -12,6 +12,7 @@ export function siteFeedColumns() {
     visibility: sites.visibility,
     status: sites.status,
     createdAt: sites.createdAt,
+    updatedAt: sites.updatedAt,
     audio: pureAudioSql(sites.id),
     hasSummary: hasSummarySql(sites.id),
   }
@@ -25,6 +26,7 @@ type FeedSourceRow = {
   visibility: Visibility
   status: 'active' | 'archived'
   createdAt: string
+  updatedAt: string
   audio: number
   hasSummary: number
 }
@@ -41,5 +43,6 @@ export function toFeedRow(row: FeedSourceRow, appUrl: string) {
     hasSummary: row.hasSummary === 1,
     url: `${appUrl}/${row.spaceSlug}/${row.slug}`,
     createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
   }
 }
