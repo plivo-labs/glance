@@ -7,8 +7,9 @@ import { notificationLink } from './notification-link'
 
 /** Why a recipient is being notified — drives the message verb. Precedence (owner > participant >
  *  share) is resolved upstream in resolveCommentAudience; here each recipient carries one reason.
- *  `mention` recipients always carry reason='mention'. */
-export type SlackReason = 'mention' | 'owner' | 'participant' | 'share'
+ *  `mention` recipients always carry reason='mention'. `shared` is the non-comment event: a site
+ *  was just directly shared with the recipient (notifyForShare). */
+export type SlackReason = 'mention' | 'owner' | 'participant' | 'share' | 'shared'
 
 /** KV + token + fetch handle every Slack HTTP helper needs. `token` optional: unset = kill-switch. */
 export type SlackHttpDeps = {
@@ -156,6 +157,7 @@ const VERB: Record<SlackReason, (siteLabel: string) => string> = {
   owner: (s) => `commented on your site ${s}`,
   participant: (s) => `replied in a thread you commented on · ${s}`,
   share: (s) => `commented on ${s}`,
+  shared: (s) => `shared ${s} with you`,
 }
 
 /** Build the Slack DM text: `*{actor}* {verb clause}` where the site label is a BOLD hyperlink

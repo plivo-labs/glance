@@ -9,7 +9,7 @@ import (
 )
 
 type notificationItem struct {
-	Type      string  `json:"type"` // "mention" | "comment"
+	Type      string  `json:"type"` // "mention" | "comment" | "share"
 	ActorName *string `json:"actorName"`
 	SiteLabel *string `json:"siteLabel"`
 	FilePath  *string `json:"filePath"`
@@ -92,8 +92,11 @@ func renderNotification(item notificationItem, now time.Time) string {
 		marker = "●"
 	}
 	verb := "commented on"
-	if item.Type == "mention" {
+	switch item.Type {
+	case "mention":
 		verb = "mentioned you on"
+	case "share":
+		verb = "shared"
 	}
 	paren := timeAgo(item.CreatedAt, now)
 	if fp := strOr(item.FilePath, ""); fp != "" {

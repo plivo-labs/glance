@@ -7,7 +7,7 @@ import type { WhatsNewList } from '@/lib/whatsNew'
 
 export interface Notification {
   id: string
-  type: 'mention' | 'comment'
+  type: 'mention' | 'comment' | 'share'
   actorId: string | null
   actorName: string | null // display name (name ?? email); null once the actor is deleted
   siteLabel: string | null // "space/slug"
@@ -23,7 +23,7 @@ export interface Notification {
 export function notificationLabel(n: Pick<Notification, 'type' | 'actorName'>): { actor: string; verb: string } {
   return {
     actor: n.actorName ?? 'Someone',
-    verb: n.type === 'comment' ? 'commented' : 'mentioned you',
+    verb: n.type === 'comment' ? 'commented' : n.type === 'share' ? 'shared a site with you' : 'mentioned you',
   }
 }
 

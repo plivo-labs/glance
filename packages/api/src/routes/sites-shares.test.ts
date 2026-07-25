@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { Hono } from 'hono'
+import { listNotifications } from '../db/notifications'
 import { resolveShareRole } from '../db/repo'
 import { requireSameOrigin } from '../middleware/auth'
 import { makeDb, makeKv, seedSite, seedSpace, seedUser } from '../test/harness'
@@ -89,5 +90,62 @@ describe('PUT/GET /shares — roles + backcompat', () => {
     expect(res.status).toBe(400)
     // no direct share smuggled in for the group id
     expect(await resolveShareRole(db, site, grp)).toBeNull()
+  })
+})
+
+// In app.request there is no executionCtx, so fireAndForget awaits inline — the notification
+// fan-out is complete when the PUT resolves.
+describe('PUT /shares — share notifications', () => {
+  test('share.notify.new: a newly granted user gets one unread type=share row', async () => {
+    const { db, app, env } = await setup()
+    expect((await put(app, env, { users: [{ id: 'ed', role: 'viewer' }] })).status).toBe(200)
+    const { items, unreadCount } = await listNotifications(db, 'ed')
+    expect(unreadCount).toBe(1)
+    expect(items[0]).toMatchObject({ type: 'share', actorName: 'owner@example.com', siteLabel: 'mine/doc' })
+  })
+
+  test('share.notify.no-regrant: re-PUT of the same user (even with a role change) raises nothing new', async () => {
+    const { db, app, env } = await setup()
+    await put(app, env, { users: [{ id: 'ed', role: 'viewer' }] })
+    await put(app, env, { users: [{ id: 'ed', role: 'editor' }, { id: 'vw', role: 'viewer' }] })
+    expect((await listNotifications(db, 'ed')).items).toHaveLength(1)
+    expect((await listNotifications(db, 'vw')).items).toHaveLength(1)
+  })
+
+  test('share.notify.removal-silent: dropping a user raises nothing', async () => {
+    const { db, app, env } = await setup()
+    await put(app, env, { users: [{ id: 'ed', role: 'viewer' }] })
+    await put(app, env, { users: [] })
+    expect((await listNotifications(db, 'ed')).items).toHaveLength(1)
+  })
+
+  test('share.notify.groups-silent: a group grant notifies nobody', async () => {
+    const { db, app, env, grp } = await setup()
+    await put(app, env, { groupIds: [grp] })
+    for (const id of ['owner', 'ed', 'vw']) expect((await listNotifications(db, id)).items).toHaveLength(0)
+  })
+
+  test('share.notify.actor-excluded: the caller granting themselves raises nothing', async () => {
+    const { db, app, env } = await setup()
+    await put(app, env, { users: [{ id: 'owner', role: 'viewer' }] })
+    expect((await listNotifications(db, 'owner')).items).toHaveLength(0)
+  })
+
+  test('share.notify.slack: with a bot token, the new user gets a "shared … with you" DM', async () => {
+    const { app, env } = await setup()
+    const posts: { channel: string; text: string }[] = []
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (url.includes('users.lookupByEmail')) return Response.json({ ok: true, user: { id: 'U-ED' } })
+      posts.push(JSON.parse(String(init?.body)))
+      return Response.json({ ok: true })
+    }) as unknown as typeof fetch
+    const slackEnv = { ...env, SLACK_BOT_TOKEN: 'xoxb-test', SLACK_FETCH: fetchImpl } as AppEnv['Bindings']
+    expect((await put(app, slackEnv, { users: [{ id: 'ed', role: 'viewer' }] })).status).toBe(200)
+    expect(posts).toHaveLength(1)
+    expect(posts[0].channel).toBe('U-ED')
+    expect(posts[0].text).toContain('shared')
+    expect(posts[0].text).toContain('with you')
+    expect(posts[0].text).toContain(`${APP_URL}/mine/doc`)
   })
 })

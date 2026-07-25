@@ -320,8 +320,9 @@ export const events = sqliteTable(
   ],
 )
 
-// Homepage notifications. Notifications carry type 'mention' (@-tag) or 'comment' (activity on your
-// sites / threads you participate in); `commentId` identifies the triggering comment for feed
+// Homepage notifications. Notifications carry type 'mention' (@-tag), 'comment' (activity on your
+// sites / threads you participate in), or 'share' (a site was directly shared with you — user
+// shares only, never group grants); `commentId` identifies the triggering comment for feed
 // dedupe. FK durability mirrors `events`/`comments`: the RECIPIENT cascades (a deleted user's
 // notifications are meaningless), but actor/site/thread/comment are SET NULL so the row survives the
 // deletion of what it points at — `siteLabel` denormalizes "space/slug" (captured from route params
@@ -333,7 +334,7 @@ export const notifications = sqliteTable(
   {
     id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
     recipientId: text('recipientId').notNull().references(() => users.id, { onDelete: 'cascade' }),
-    type: text('type', { enum: ['mention', 'comment'] }).notNull(),
+    type: text('type', { enum: ['mention', 'comment', 'share'] }).notNull(),
     actorId: text('actorId').references(() => users.id, { onDelete: 'set null' }),
     siteId: text('siteId').references(() => sites.id, { onDelete: 'set null' }),
     // Denormalized "space/slug" from the route params at insert — survives a site delete.
