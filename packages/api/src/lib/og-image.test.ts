@@ -27,7 +27,7 @@ describe('og signature', () => {
   test('signedOgImageUrl mints the sig as a query param on the CONTENT origin', async () => {
     const sig = await signOgSig(TEST_SIGNING_KEY, 'acme', 'report')
     expect(await signedOgImageUrl(TEST_SIGNING_KEY, 'https://content.example.com', 'acme', 'report')).toBe(
-      `https://content.example.com/_glance/og/acme/report.png?sig=${sig}`,
+      `https://content.example.com/_glance/og/acme/report.png?sig=${sig}&v=2`,
     )
   })
 })
