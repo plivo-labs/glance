@@ -126,6 +126,28 @@ describe('comments routes — auth / access / authz', () => {
     expect(byAuthor.status).toBe(200)
   })
 
+  test('non-author-member-cannot-delete: another member deleting someone else\'s comment → 403; author can delete own', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    const author = await mintUser(db, kv, { id: 'author' })
+    const other = await mintUser(db, kv, { id: 'other' })
+    const { spaceId } = await seedSiteWithFile(db, r2, owner, 'members')
+    await seedMember(db, spaceId, author)
+    await seedMember(db, spaceId, other)
+    const created = await (await app.request(url(), { method: 'POST', headers: auth(author), body: JSON.stringify({ filePath: 'index.html', body: 'mine', quote: 'fox' }) }, env)).json()
+    const commentId = (await (await app.request(url('?filePath=index.html'), { headers: auth(author) }, env)).json())[0].comments[0].id
+    const path = url(`/${created.threadId}/messages/${commentId}`)
+
+    const byOther = await app.request(path, { method: 'DELETE', headers: auth(other) }, env)
+    expect(byOther.status).toBe(403)
+    // The comment must still be intact — a 403 must not have soft-deleted it.
+    const after = await (await app.request(url('?filePath=index.html'), { headers: auth(author) }, env)).json()
+    expect(after[0].comments[0].deleted).toBe(false)
+
+    const byAuthor = await app.request(path, { method: 'DELETE', headers: auth(author) }, env)
+    expect(byAuthor.status).toBe(200)
+  })
+
   test('owner-superadmin-resolve-and-delete-any: owner resolves + deletes a member comment; member cannot resolve', async () => {
     const { app, env, db, r2, kv } = await setup()
     const owner = await mintUser(db, kv, { id: 'owner' })
