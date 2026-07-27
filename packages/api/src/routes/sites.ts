@@ -21,7 +21,7 @@ import { batchAll, chunk, D1_MAX_IN } from '../lib/d1'
 import { resolveIndexPath } from '../lib/extract'
 import { siteFeedColumns, toFeedRow } from '../lib/site-feed'
 import { readSessionOrBearer } from '../lib/session'
-import { resolveSite, resolveSiteForAccess } from '../lib/site-access'
+import { fetchAccessFacts, isSharedFromFacts, resolveSite, resolveSiteForAccess } from '../lib/site-access'
 import { isValidSlug } from '../lib/slug'
 import { copyObjects, deleteKeys, deleteSiteObjects } from '../lib/storage'
 import { signToken } from '../lib/token'
@@ -340,25 +340,27 @@ sites.get('/:spaceSlug/:siteSlug', async (c) => {
   const db = c.get('db')
   const { spaceSlug, siteSlug } = c.req.param()
 
-  // FCP hotpath: the session read is independent of the site lookup, so resolve both concurrently.
-  // Cookie (browser viewer) OR CLI Bearer token (`glance read`) — both mint the same gated URL.
-  const [site, user] = await Promise.all([resolveSite(db, spaceSlug, siteSlug), readSessionOrBearer(c)])
+  // FCP hotpath: KV session first (cheap, and the facts batch is keyed on the user id), then
+  // EVERYTHING D1 — site row, membership, share reach (S7: direct role + group reach; `role`/
+  // canReplace stay bound to the DIRECT role only), and the file manifest — in ONE slug-keyed
+  // db.batch. Cookie (browser viewer) OR CLI Bearer token (`glance read`) — both mint the same
+  // gated URL.
+  const user = await readSessionOrBearer(c)
+  const filesStmt = db
+    .select({ path: filesTable.path })
+    .from(filesTable)
+    .innerJoin(sitesTable, eq(filesTable.siteId, sitesTable.id))
+    .innerJoin(spaces, eq(sitesTable.spaceId, spaces.id))
+    .where(and(eq(spaces.slug, spaceSlug), eq(sitesTable.slug, siteSlug)))
+  const { facts, extras } = await fetchAccessFacts(db, spaceSlug, siteSlug, user?.id ?? null, filesStmt)
+  const site = facts.site
   // Existence (404) is still decided before any auth-dependent branch, so a missing site never
-  // leaks — running the session read early doesn't change the not-found-before-auth ordering.
+  // leaks — the site row rides the same batch.
   if (!site) return c.json({ error: 'not found' }, 404)
 
-  // ONE role-aware share resolve (S7): direct role + group reach in a single batch — checkAccess
-  // consumes the combined reach, while `role`/canReplace stay bound to the DIRECT role only (a
-  // group-only reacher gets viewer-grade access but no role field and no manifest).
-  const [isMember, share, siteFiles] = user
-    ? await Promise.all([
-        isSpaceMember(db, site.spaceId, user.id),
-        resolveShareAccess(db, site.id, user.id),
-        db.select({ path: filesTable.path }).from(filesTable).where(eq(filesTable.siteId, site.id)),
-      ])
-    : [false, { isShared: false, directRole: null } as const, [] as { path: string }[]]
-  const role = share.directRole
-  const access = checkAccess(site, user, isMember, share.isShared)
+  const [siteFiles] = extras
+  const role = facts.directRole
+  const access = checkAccess(site, user, facts.isMember, isSharedFromFacts(facts))
   if (!access.ok) return c.json({ error: 'forbidden' }, access.status)
 
   // Every tier requires an authenticated viewer (checkAccess 401s otherwise), so `user` is
