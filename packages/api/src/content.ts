@@ -118,7 +118,7 @@ app.get('/:space/:site/*', (c) => serve(c, c.req.param('space'), c.req.param('si
 async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, userId: string | null): Promise<Response> {
   const db = getDb(c)
   const reqPath = normalizePath(rest)
-  const cols = { path: files.path, storageKey: files.storageKey, mimeType: files.mimeType, size: files.size }
+  const cols = { path: files.path, storageKey: files.storageKey, mimeType: files.mimeType, size: files.size, etag: files.etag }
   // ONE D1 round trip: the slug-keyed access facts (site / user / membership / shares) plus the
   // file row, fused into a single batch. The file statement joins by BOTH slugs too (the site id
   // is unknown before the batch runs), and every statement returns empty rows rather than
@@ -130,8 +130,21 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
     .innerJoin(spaces, eq(sites.spaceId, spaces.id))
     .where(and(eq(spaces.slug, spaceSlug), eq(sites.slug, siteSlug), eq(files.path, reqPath)))
     .limit(1)
-  const { facts, extras } = await fetchAccessFacts(db, spaceSlug, siteSlug, userId, fileStmt)
-  const [fileRows] = extras
+  // Index-ish request (`…/` or explicit index.html): the single-file/dir-listing fallback's
+  // all-files read rides the SAME batch — a single-file site's every page view otherwise pays a
+  // serial follow-up round trip. Bounded by the 200-file upload cap; non-index assets (css/js/
+  // img — the traffic bulk) keep the lean batch.
+  const isIndexReq = reqPath === 'index.html' || reqPath.endsWith('/index.html')
+  const allFilesStmt = db
+    .select(cols)
+    .from(files)
+    .innerJoin(sites, eq(files.siteId, sites.id))
+    .innerJoin(spaces, eq(sites.spaceId, spaces.id))
+    .where(and(eq(spaces.slug, spaceSlug), eq(sites.slug, siteSlug)))
+  const { facts, extras } = isIndexReq
+    ? await fetchAccessFacts(db, spaceSlug, siteSlug, userId, fileStmt, allFilesStmt)
+    : await fetchAccessFacts(db, spaceSlug, siteSlug, userId, fileStmt)
+  const [fileRows, allFileRows] = extras as [(typeof extras)[0], (typeof extras)[0]?]
 
   const siteRow = facts.site
   if (!siteRow) return notFound(c)
@@ -158,9 +171,9 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
   // leaves an author who dropped a folder without a root index.html staring at a blank frame
   // with no clue what's wrong — fall back to either the single uploaded file or a navigable
   // listing of what IS in the site, so they can see the contents and click straight in.
-  if (!file && (reqPath === 'index.html' || reqPath.endsWith('/index.html'))) {
+  if (!file && isIndexReq) {
     const dir = reqPath.slice(0, -'index.html'.length) // '' at the root, else `docs/`
-    const all = await db.select(cols).from(files).where(eq(files.siteId, siteRow.id))
+    const all = allFileRows ?? [] // fused into the access batch above — never a follow-up trip
     // Single-file site: serve the lone uploaded file at the root (e.g. a dropped `report.html`).
     if (dir === '' && all.length === 1) {
       file = all[0]
@@ -264,10 +277,10 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
   // everything else (audio today; any other binary falls out the same door for free).
   const rangeable = !isHtml
   if (rangeable) headers.set('accept-ranges', 'bytes')
-  return serveStoredObject(c, { storageKey, size, headers, rangeable, isHtml, mime, view, selfOrigin })
+  return serveStoredObject(c, { storageKey, size, etag: file.etag, headers, rangeable, isHtml, mime, view, selfOrigin })
 }
 
-/** The storage tail of serve(): conditional (If-None-Match) probe, both Range flows (sized
+/** The storage tail of serve(): conditional (If-None-Match) handling, both Range flows (sized
  *  single-ranged-get and the legacy null-size full-get-first fallback), and the cache-fronted
  *  full-200 read — plus the HTML-only view() record and external-link rewrite. `headers`
  *  arrives pre-built (type/CSP/cache-control/accept-ranges); etag and range headers are
@@ -277,6 +290,7 @@ async function serveStoredObject(
   args: {
     storageKey: string
     size: number | null
+    etag: string | null
     headers: Headers
     rangeable: boolean
     isHtml: boolean
@@ -285,20 +299,25 @@ async function serveStoredObject(
     selfOrigin: string
   },
 ): Promise<Response> {
-  const { storageKey, size, headers, rangeable, isHtml, mime, view, selfOrigin } = args
+  const { storageKey, size, etag: rowEtag, headers, rangeable, isHtml, mime, view, selfOrigin } = args
 
   // Honor the conditional request: when the viewer already holds this exact ETag, answer 304 and
   // skip re-streaming the body. This MUST win over Range (RFC 7233 §3.1), so it runs before any
-  // Range handling — and the current etag is resolved with a head() probe, so a revalidation hit
-  // moves ZERO body bytes (no full get, no ranged get, no cache read).
+  // Range handling. The current etag comes from D1 (denormalized at upload — storage keys are
+  // immutable, so the row's etag is the object's for life): a revalidation hit costs ZERO R2 ops.
+  // Legacy pre-denormalization rows (etag NULL) fall back to the old head() probe.
   const inm = c.req.header('if-none-match')
   let probedEtag: string | undefined
   if (inm !== undefined) {
-    const probe = await c.env.GLANCE_FILES.head(storageKey)
-    if (!probe) return notFound(c)
-    probedEtag = probe.httpEtag
-    if (inm === probe.httpEtag) {
-      headers.set('etag', probe.httpEtag)
+    let current = rowEtag
+    if (current === null) {
+      const probe = await c.env.GLANCE_FILES.head(storageKey)
+      if (!probe) return notFound(c)
+      probedEtag = probe.httpEtag
+      current = probe.httpEtag
+    }
+    if (inm === current) {
+      headers.set('etag', current)
       if (isHtml) await view() // parity with the 200 path: an HTML revalidation is still a page load
       return new Response(null, { status: 304, headers })
     }
@@ -325,9 +344,9 @@ async function serveStoredObject(
     const ifRange = c.req.header('if-range')
     const decision = decideRange(rangeHeader, size, headers)
     if (decision.status === 416) {
-      // The 416 must still carry the current etag → ONE head() probe, zero body bytes (reuse
-      // the If-None-Match probe's etag when that branch already paid for it).
-      const etag = probedEtag ?? (await c.env.GLANCE_FILES.head(storageKey))?.httpEtag
+      // The 416 must still carry the current etag — from D1 when denormalized, else ONE head()
+      // probe, zero body bytes (reuse the If-None-Match probe's etag when it already paid).
+      const etag = rowEtag ?? probedEtag ?? (await c.env.GLANCE_FILES.head(storageKey))?.httpEtag
       if (etag === undefined) return notFound(c)
       // A STALE If-Range means the Range no longer applies at all (RFC 7233 §3.2) → full 200.
       if (ifRange !== undefined && ifRange !== etag) return serveFullDirect()

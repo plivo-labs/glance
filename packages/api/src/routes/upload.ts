@@ -1,8 +1,8 @@
 import { and, eq, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
-import { isSpaceMember, resolveShareRole } from '../db/repo'
 import type { NewFileRow } from '../db/schema'
-import { files, sites, spaces } from '../db/schema'
+import { files, sites, spaceMembers, spaces, siteUserShares } from '../db/schema'
+import { batchAll } from '../lib/d1'
 import { canReplace } from '../lib/access'
 import { fireAndForget } from '../lib/events'
 import { capTitle, extractHtmlMeta, NO_META, pickEntry } from '../lib/extract'
@@ -86,19 +86,19 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
     seenPaths.add(path)
   }
 
-  // Resolve space.
-  const space = (
-    await db.select({ id: spaces.id }).from(spaces).where(eq(spaces.slug, spaceSlug)).limit(1)
-  )[0]
-  if (!space) return c.json({ error: 'space not found' }, 404)
-  const isAdmin = user.role === 'superadmin'
-
-  // Resolve the existing site (if any) BEFORE authorizing — CREATE and REPLACE have DIFFERENT gates:
-  // creating needs space membership; replacing is open to the owner, a superadmin, or a direct EDITOR
-  // grantee (who is typically NOT a space member, so the old membership-first gate 403'd them). Load
-  // contentVersion + status too: the editor CAS + archived guard need them.
-  const existing = (
-    await db
+  // Every pre-write read in ONE db.batch — all four are independently slug/user-keyed, so the
+  // space row, the existing site (if any), the caller's membership, the direct share role, and
+  // the existing file keys resolve in a single round trip. Precedence over the results below is
+  // unchanged: space 404 → create-membership/replace-capability 403 → editor guards → 409.
+  const slugKey = () => and(eq(spaces.slug, spaceSlug), eq(sites.slug, siteSlug))
+  const [spaceRows, existingRows, memberRows, shareRoleRows, existingFileRows] = await batchAll(db, [
+    db.select({ id: spaces.id }).from(spaces).where(eq(spaces.slug, spaceSlug)).limit(1),
+    // The existing site (if any) is resolved BEFORE authorizing — CREATE and REPLACE have
+    // DIFFERENT gates: creating needs space membership; replacing is open to the owner, a
+    // superadmin, or a direct EDITOR grantee (who is typically NOT a space member, so the old
+    // membership-first gate 403'd them). contentVersion + status feed the editor CAS + archived
+    // guard.
+    db
       .select({
         id: sites.id,
         ownerId: sites.ownerId,
@@ -106,9 +106,34 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
         status: sites.status,
       })
       .from(sites)
-      .where(and(eq(sites.spaceId, space.id), eq(sites.slug, siteSlug)))
-      .limit(1)
-  )[0]
+      .innerJoin(spaces, eq(sites.spaceId, spaces.id))
+      .where(slugKey())
+      .limit(1),
+    db
+      .select({ userId: spaceMembers.userId })
+      .from(spaceMembers)
+      .innerJoin(spaces, eq(spaceMembers.spaceId, spaces.id))
+      .where(and(eq(spaces.slug, spaceSlug), eq(spaceMembers.userId, user.id)))
+      .limit(1),
+    db
+      .select({ role: siteUserShares.role })
+      .from(siteUserShares)
+      .innerJoin(sites, eq(siteUserShares.siteId, sites.id))
+      .innerJoin(spaces, eq(sites.spaceId, spaces.id))
+      .where(and(slugKey(), eq(siteUserShares.userId, user.id)))
+      .limit(1),
+    db
+      .select({ storageKey: files.storageKey })
+      .from(files)
+      .innerJoin(sites, eq(files.siteId, sites.id))
+      .innerJoin(spaces, eq(sites.spaceId, spaces.id))
+      .where(slugKey()),
+  ])
+
+  const space = spaceRows[0]
+  if (!space) return c.json({ error: 'space not found' }, 404)
+  const isAdmin = user.role === 'superadmin'
+  const existing = existingRows[0]
 
   const replace = c.req.query('replace') === 'true'
   const isCreate = !existing
@@ -120,7 +145,7 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
 
   if (!existing) {
     // CREATE: space member or superadmin only. An editor grant confers no create right.
-    if (!isAdmin && !(await isSpaceMember(db, space.id, user.id))) return c.json({ error: 'forbidden' }, 403)
+    if (!isAdmin && memberRows.length === 0) return c.json({ error: 'forbidden' }, 403)
     if (!isValidSlug(siteSlug)) return c.json({ error: 'invalid siteSlug' }, 400)
     siteId = crypto.randomUUID()
   } else {
@@ -128,7 +153,7 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
     // predicate shared with /exists + the manifest gate). An editor grant is only consulted for a
     // non-owner non-admin, so passing the gate while neither ⇒ acting as the editor.
     const isOwner = existing.ownerId === user.id
-    const shareRole = isOwner || isAdmin ? null : await resolveShareRole(db, existing.id, user.id)
+    const shareRole = isOwner || isAdmin ? null : (shareRoleRows[0]?.role ?? null)
     if (!canReplace(user, existing, shareRole)) return c.json({ error: 'forbidden' }, 403)
     actingAsEditor = !isOwner && !isAdmin
 
@@ -140,15 +165,11 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
     }
 
     siteId = existing.id
-    const existingFiles = await db
-      .select({ storageKey: files.storageKey })
-      .from(files)
-      .where(eq(files.siteId, siteId))
     // Conflict unless the caller explicitly opted into replacing.
-    if (existingFiles.length > 0 && !replace) {
+    if (existingFileRows.length > 0 && !replace) {
       return c.json({ error: 'site exists', conflict: true }, 409)
     }
-    oldKeys = existingFiles.map((r) => r.storageKey)
+    oldKeys = existingFileRows.map((r) => r.storageKey)
   }
 
   // Plan every object under a fresh prefix. Build the rows first so the R2 keys are known BEFORE
@@ -164,6 +185,7 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
       storageKey: `${prefix}/${path}`,
       mimeType: file.type || null,
       size: file.size,
+      etag: null as string | null, // filled from the R2 put result below, before the D1 insert
     } satisfies NewFileRow,
   }))
   for (const { row } of plan) {
@@ -192,10 +214,13 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
   try {
     for (let i = 0; i < plan.length; i += UPLOAD_CONCURRENCY) {
       await Promise.all(
-        plan.slice(i, i + UPLOAD_CONCURRENCY).map(({ file, row }) => {
+        plan.slice(i, i + UPLOAD_CONCURRENCY).map(async ({ file, row }) => {
           attempted.push(row.storageKey)
           const contentType = file.type || 'application/octet-stream'
-          return c.env.GLANCE_FILES.put(row.storageKey, file.stream(), { httpMetadata: { contentType } })
+          const put = await c.env.GLANCE_FILES.put(row.storageKey, file.stream(), { httpMetadata: { contentType } })
+          // Denormalize R2's etag onto the row (keys are immutable, so it's fixed for the row's
+          // life) — the content worker answers 304/416 conditionals from D1 with zero R2 ops.
+          row.etag = put?.httpEtag ?? null
         }),
       )
     }

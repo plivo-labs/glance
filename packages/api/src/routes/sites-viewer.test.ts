@@ -40,6 +40,21 @@ describe('GET /api/sites/:space/:site (viewer metadata)', () => {
     expect(body.contentUrl.endsWith('/docs/report/')).toBe(true)
   })
 
+  test('no auth → 401, and the batch reads ONLY the site row (no manifest scan for anonymous probes)', async () => {
+    const { db, kv, app, env } = await setup()
+    await mintUser(db, kv, 'owner')
+    const sp = await seedSpace(db, { createdBy: 'owner', slug: 'docs' })
+    const site = await seedSite(db, { spaceId: sp, ownerId: 'owner', slug: 'report', visibility: 'team' })
+    for (let i = 0; i < 3; i++) await seedFile(db, null, site, { path: `f${i}.html` })
+    db.resetCounters()
+    const res = await view(app, env, 'docs', 'report')
+    expect(res.status).toBe(401)
+    // Unauthenticated: site statement only — an anonymous prober must not burn manifest row reads.
+    expect(db.counters.loose).toBe(0)
+    expect(db.counters.batches).toBe(1)
+    expect(db.counters.batchStmts).toBe(1)
+  })
+
   test('no auth → 401 (every tier requires a viewer)', async () => {
     const { db, app, env } = await setup()
     await seedUser(db, { id: 'u1' })
@@ -216,10 +231,11 @@ describe('GET /api/sites/:space/:site — share-reach role resolution (S7 pins)'
 
     const res = await view(app, env, 'docs', 'report', { Authorization: 'Bearer tok-dv' })
     expect(res.status).toBe(200)
-    expect(db.counters.batches).toBe(1) // resolveShareAccess — the only share scan
-    // Loose/batch attribution races under Promise.all in the sequential harness shim, so pin the
-    // TOTAL: site resolve + membership + files + (direct-role + group-reach) = 5, down from 6.
-    expect(db.counters.loose + db.counters.batchStmts).toBe(5)
+    // FCP hotpath: the WHOLE metadata read is one fused batch (access facts + file manifest) —
+    // zero loose D1 statements. Stmts: site + user + membership + direct-role + group-reach + files.
+    expect(db.counters.batches).toBe(1)
+    expect(db.counters.loose).toBe(0)
+    expect(db.counters.batchStmts).toBe(6)
   })
 
   test('meta.superadmin: 200 with canReplace:true, manifest present, NO role field (no direct share)', async () => {

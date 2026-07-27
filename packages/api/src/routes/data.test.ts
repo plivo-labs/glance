@@ -5,7 +5,8 @@ import { Hono } from 'hono'
 import { documents, sites } from '../db/schema'
 import { signDataToken } from '../lib/data-token'
 import { makeDb, seedMember, seedSite, seedSpace, seedUser } from '../test/harness'
-import { MAX_DOCS_PER_SITE, dataApi, dataCapsFor } from './data'
+import { auth, makeRouteApp, mintUser } from '../test/route-fixtures'
+import { MAX_DOCS_PER_SITE, dataApi, dataCapsFor, dataToken } from './data'
 
 const HMAC_A = 'glance-test-aaa'
 // getDb() prefers the injected harness db, so GLANCE_DB is never touched; CONTENT_URL drives CORS.
@@ -371,5 +372,55 @@ describe('auth + validation + inert-when-unconfigured', () => {
       { CONTENT_URL: 'https://content.example.com' } as never,
     )
     expect(res.status).toBe(404)
+  })
+})
+
+describe('mint route — POST /api/data-token/:space/:site', () => {
+  // The mint gate mounted the way index.ts wires it: db injection + the router's own requireAuth
+  // (Bearer path through GLANCE_SESSIONS). makeRouteApp doesn't carry dataToken, so mount locally.
+  async function mintScenario() {
+    const { db, kv } = makeRouteApp()
+    const app = new Hono<{ Variables: { db: DrizzleD1Database } }>()
+    app.use('*', async (c, next) => {
+      c.set('db', db)
+      await next()
+    })
+    app.route('/api/data-token', dataToken)
+    const env = { DATA_TOKEN_SECRET: HMAC_A, GLANCE_SESSIONS: kv } as never
+    await mintUser(db, kv, 'owner')
+    await mintUser(db, kv, 'peer')
+    const sp = await seedSpace(db, { id: 'sp-m', slug: 'acme', createdBy: 'owner' })
+    await seedMember(db, sp, 'owner')
+    await seedMember(db, sp, 'peer')
+    await seedSite(db, { id: 'site-m', spaceId: sp, ownerId: 'owner', slug: 'doc', visibility: 'team' })
+    const mint = (as: string, space = 'acme', site = 'doc') =>
+      app.request(`/api/data-token/${space}/${site}`, { method: 'POST', headers: auth(as) }, env)
+    return { db, app, env, mint }
+  }
+
+  test('owner mints write caps; a plain viewer mints read+create only', async () => {
+    const { mint } = await mintScenario()
+    const ownerRes = await mint('owner')
+    expect(ownerRes.status).toBe(200)
+    expect((await ownerRes.json()).caps).toEqual(['read', 'create', 'write', 'read_all'])
+    const peerRes = await mint('peer')
+    expect(peerRes.status).toBe(200)
+    expect((await peerRes.json()).caps).toEqual(['read', 'create'])
+  })
+
+  test('missing site → 404; private site non-owner → 403 (fails closed)', async () => {
+    const { db, mint } = await mintScenario()
+    expect((await mint('owner', 'acme', 'nope')).status).toBe(404)
+    await db.update(sites).set({ visibility: 'private' }).where(eq(sites.id, 'site-m'))
+    expect((await mint('peer')).status).toBe(403)
+    expect((await mint('owner')).status).toBe(200)
+  })
+
+  test('request shape: exactly requireAuth’s 1 loose read + ONE fused access batch', async () => {
+    const { db, mint } = await mintScenario()
+    db.resetCounters()
+    expect((await mint('peer')).status).toBe(200)
+    expect(db.counters.loose).toBe(1) // requireAuth's user read — nothing else loose
+    expect(db.counters.batches).toBe(1) // the access-facts batch
   })
 })

@@ -74,6 +74,17 @@ describe('C2 — unreadCount counts only readAt IS NULL', () => {
     expect(items.length).toBe(3)
     expect(unreadCount).toBe(2)
   })
+
+  test('unreadCount is the FULL unread count even when limit truncates items', async () => {
+    const db = makeDb()
+    const me = await seedUser(db)
+    await seedNotification(db, { recipientId: me, readAt: null })
+    await seedNotification(db, { recipientId: me, readAt: null })
+    await seedNotification(db, { recipientId: me, readAt: null })
+    const { items, unreadCount } = await listNotifications(db, me, 1)
+    expect(items.length).toBe(1)
+    expect(unreadCount).toBe(3)
+  })
 })
 
 describe('C3 — markRead clears all (default) or one (by id)', () => {

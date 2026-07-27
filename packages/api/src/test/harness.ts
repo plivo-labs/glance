@@ -49,6 +49,7 @@ const MIGRATIONS = [
   'drizzle/0016_notifications_comment_index.sql',
   'drizzle/0017_site_updated_at.sql',
   'drizzle/0018_site_description.sql',
+  'drizzle/0019_files_etag.sql',
 ]
 
 // --- S0 recorder: one shared, ordered timeline across D1/R2/cache mocks so perf specs can
@@ -345,13 +346,16 @@ export async function seedGroupShare(db: DrizzleD1Database, siteId: string, spac
  *  Returns the storageKey so tests can read the same object the row points at. */
 export async function seedFile(
   db: DrizzleD1Database,
-  r2: { put: (key: string, value: string, opts?: unknown) => Promise<void> } | null,
+  r2: { put: (key: string, value: string, opts?: unknown) => Promise<{ httpEtag: string } | undefined> } | null,
   siteId: string,
   o: { path: string; text?: string; mimeType?: string; storageKey?: string } & Partial<NewFileRow>,
 ): Promise<string> {
   const id = o.id ?? nextId('file')
   const storageKey = o.storageKey ?? `${id}/${o.path}`
   const text = o.text ?? ''
+  // Put first so the row's etag mirrors the object's, like the upload route (a test models a
+  // legacy pre-denormalization row by nulling `etag` afterwards).
+  const put = r2 ? await r2.put(storageKey, text, { httpMetadata: { contentType: o.mimeType ?? 'text/html' } }) : null
   await db.insert(files).values({
     id,
     siteId,
@@ -359,8 +363,8 @@ export async function seedFile(
     storageKey,
     mimeType: o.mimeType ?? 'text/html',
     size: text.length,
+    etag: o.etag ?? put?.httpEtag ?? null,
   })
-  if (r2) await r2.put(storageKey, text, { httpMetadata: { contentType: o.mimeType ?? 'text/html' } })
   return storageKey
 }
 
@@ -611,8 +615,11 @@ export function makeR2(recorder?: Recorder) {
     ) => {
       const version = (versions.get(key) ?? 0) + 1
       versions.set(key, version)
-      store.set(key, { body: await toBytes(value), httpMetadata: options?.httpMetadata, httpEtag: `"${key}-v${version}"` })
+      const v = { body: await toBytes(value), httpMetadata: options?.httpMetadata, httpEtag: `"${key}-v${version}"` }
+      store.set(key, v)
       recorder?.record('r2:put')
+      // Real R2 put resolves to the written object's R2Object — upload denormalizes httpEtag from it.
+      return meta(key, v)
     },
     delete: (keys: string | string[]) => {
       for (const k of Array.isArray(keys) ? keys : [keys]) store.delete(k)

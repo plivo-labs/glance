@@ -33,7 +33,7 @@ async function opsOf(s: Setup, request: () => Promise<unknown>): Promise<Ops> {
 // Exact op shapes, named once and reused (tight `toEqual` — every counter pinned).
 const NO_OPS: Ops = { full: 0, ranged: 0, head: 0, matches: 0, puts: 0, hits: 0, misses: 0 }
 const ONE_RANGED: Ops = { ...NO_OPS, ranged: 1 } // satisfiable Range, size known: ONE ranged get, cache untouched
-const HEAD_ONLY: Ops = { ...NO_OPS, head: 1 } // etag resolved by a head probe, zero body bytes
+const HEAD_ONLY: Ops = { ...NO_OPS, head: 1 } // etag resolved by a head probe (legacy NULL-etag rows only)
 const COLD_FULL: Ops = { ...NO_OPS, full: 1, matches: 1, misses: 1, puts: 1 } // cache miss → one full get + warm
 const WARM_HIT: Ops = { ...NO_OPS, matches: 1, hits: 1 } // served from cache, zero R2
 const RAW_FULL: Ops = { ...NO_OPS, full: 1 } // raw=1: direct full get, cache never touched
@@ -136,7 +136,7 @@ describe('T2.2 unsatisfiable ranges: 416 + etag via head probe', () => {
     expect(res.headers.get('content-range')).toBe(`bytes */${BODY.length}`)
     expect(res.headers.get('etag')).toBe(etagOf(s, keys[0]))
     expect(await res.text()).toBe('')
-    expect(diff(before, ops(s))).toEqual(HEAD_ONLY)
+    expect(diff(before, ops(s))).toEqual(NO_OPS)
   })
 
   test('zero-byte object (size 0 in D1, empty R2 object): any Range → 416, never falsy-skipped', async () => {
@@ -147,7 +147,7 @@ describe('T2.2 unsatisfiable ranges: 416 + etag via head probe', () => {
     expect(res.status).toBe(416)
     expect(res.headers.get('content-range')).toBe('bytes */0')
     expect(res.headers.get('etag')).toBe(etagOf(s, keys[0]))
-    expect(diff(before, ops(s))).toEqual(HEAD_ONLY)
+    expect(diff(before, ops(s))).toEqual(NO_OPS)
   })
 })
 
@@ -196,7 +196,7 @@ describe('T2.3 null-size D1 row: full-get fallback', () => {
 describe('T2.4 conditional requests', () => {
   const mp3: FileSpec = { path: 'song.mp3', text: BODY, mimeType: 'application/octet-stream' }
 
-  test('If-None-Match match beats Range: 304, zero full/ranged/cache reads (one head allowed)', async () => {
+  test('If-None-Match match beats Range: 304 with ZERO R2 ops (etag answered from D1)', async () => {
     const s = setup()
     const { token, keys } = await teamSite(s, [mp3])
     const before = ops(s)
@@ -204,7 +204,7 @@ describe('T2.4 conditional requests', () => {
     expect(res.status).toBe(304)
     expect(res.headers.get('etag')).toBe(etagOf(s, keys[0]))
     expect(await res.text()).toBe('')
-    expect(diff(before, ops(s))).toEqual(HEAD_ONLY)
+    expect(diff(before, ops(s))).toEqual(NO_OPS)
   })
 
   test('stale If-Range → full 200 body, no slice headers (ops: the ranged probe + the full get)', async () => {
@@ -329,11 +329,11 @@ describe('T3.2 warm cache + Range/conditional: cache bypassed, never re-warmed',
 
     const before304 = ops(s)
     expect((await get(s, token, 'song.mp3', { 'if-none-match': etagOf(s, keys[0]) })).status).toBe(304)
-    expect(diff(before304, ops(s))).toEqual(HEAD_ONLY) // no put on a 304
+    expect(diff(before304, ops(s))).toEqual(NO_OPS) // etag from D1 — no probe, no put
 
     const before416 = ops(s)
     expect((await get(s, token, 'song.mp3', { range: 'bytes=99-' })).status).toBe(416)
-    expect(diff(before416, ops(s))).toEqual(HEAD_ONLY) // no put on a 416
+    expect(diff(before416, ops(s))).toEqual(NO_OPS) // etag from D1 — no probe, no put
   })
 })
 
@@ -538,5 +538,22 @@ describe('T3.6 per-transform byte identity (cold R2 vs warm cache)', () => {
     expect(await (await get(s, token, 'doc.md?raw=1')).text()).toBe('# Title')
     expect(diff(warmBefore, ops(s))).toEqual(RAW_FULL) // STILL bypasses the warm entry
     expect(await viewCount(s)).toBe(1) // only the render counted
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+// T2.6 legacy rows with etag NULL in D1 (pre-denormalization uploads): the 304 still works via
+// the old head() probe — exactly one head, zero body bytes.
+// ---------------------------------------------------------------------------------------------
+describe('T2.6 null-etag D1 row: head-probe fallback', () => {
+  test('legacy row: If-None-Match match → 304 via ONE head probe', async () => {
+    const s = setup()
+    const { token, keys } = await teamSite(s, [{ path: 'song.mp3', text: BODY, mimeType: 'application/octet-stream' }])
+    await s.db.update(files).set({ etag: null }).where(eq(files.storageKey, keys[0]))
+    const before = ops(s)
+    const res = await get(s, token, 'song.mp3', { 'if-none-match': etagOf(s, keys[0]) })
+    expect(res.status).toBe(304)
+    expect(res.headers.get('etag')).toBe(etagOf(s, keys[0]))
+    expect(diff(before, ops(s))).toEqual(HEAD_ONLY)
   })
 })

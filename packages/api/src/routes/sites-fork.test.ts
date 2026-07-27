@@ -87,6 +87,12 @@ describe('POST /api/sites/:space/:site/fork', () => {
     const idx = dst.find((f) => f.path === 'index.html')
     expect(await (await r2.get(idx?.storageKey ?? ''))?.text()).toBe('<h1>hi</h1>')
     expect(dst.find((f) => f.path === 'index.html')?.mimeType).toBe('text/html')
+
+    // Forked rows carry the COPY's denormalized etag (not the source's, not NULL) — without it
+    // every conditional request on a forked site pays the legacy head() probe forever.
+    for (const f of dst) {
+      expect(f.etag).toBe((await r2.head(f.storageKey))?.httpEtag ?? '(missing)')
+    }
   })
 
   test('fork.deleting.source.keeps.copy: purging the source never touches the fork’s objects', async () => {

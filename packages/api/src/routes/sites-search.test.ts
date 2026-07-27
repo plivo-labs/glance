@@ -155,3 +155,20 @@ describe('searchSites (cmdk site search)', () => {
     expect(ids(await searchSites(db, member(me), 'needle')).size).toBe(1)
   })
 })
+
+// Request-shape pin (perf): the two reach-set reads (member spaces + shared sites) must ride ONE
+// db.batch — a per-keystroke endpoint gets no loose serial round trips. Candidates are batch #2.
+describe('searchSites request shape', () => {
+  test('reach sets + candidates are two batches, zero loose statements', async () => {
+    const db = makeDb()
+    const me = await seedUser(db, { id: 'me' })
+    const owner = await seedUser(db)
+    const sp = await seedSpace(db, { createdBy: owner })
+    await seedMember(db, sp, me)
+    await seedSite(db, { spaceId: sp, ownerId: owner, slug: 'group-plan', visibility: 'members' })
+    db.resetCounters()
+    expect(ids(await searchSites(db, member(me), 'group-plan')).size).toBe(1)
+    expect(db.counters.loose).toBe(0)
+    expect(db.counters.batches).toBe(2)
+  })
+})
