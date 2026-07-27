@@ -51,11 +51,11 @@ export interface FeedState {
   activeTab: TabId
   // Any feed rejecting with a 401 means the session lapsed; the component redirects to login.
   unauthorized: boolean
-  // ?tab= names a conditional tab whose feed has SETTLED without producing it (last group space
+  // ?tab= names a conditional tab whose feed has RESOLVED without producing it (last group space
   // deleted, deep link to a tab the user doesn't have). The component clears the param so the URL
   // matches reality — otherwise it's unreachable via the UI (re-clicking the already-active
   // fallback tab fires no onValueChange) and silently re-steals the view if the tab pops back.
-  // While the feed is still pending the param is a legitimate deep link waiting for its tab.
+  // A pending feed is a deep link still waiting for its tab; a rejected feed proves nothing.
   staleTab: boolean
 }
 
@@ -122,11 +122,14 @@ export function deriveFeedState(slots: FeedSlots, view: { requestedTab: TabId })
     tabs,
     activeTab: exists ? view.requestedTab : 'sites',
     unauthorized: Object.values(slots).some(isUnauthorized),
-    // Only Shared and Spaces can be absent; each goes stale once its own feed settles.
+    // Only Shared and Spaces can be absent; each goes stale only once its own feed RESOLVES
+    // without the tab. A rejected feed (transient 500, network blip, or the 401 that's about to
+    // redirect to login) proves nothing about the tab's absence — erasing the ?tab= deep link
+    // there would lose it across a refresh or the login round-trip.
     staleTab:
       !exists &&
-      ((view.requestedTab === 'shared' && slots.shared.status !== 'pending') ||
-        (view.requestedTab === 'spaces' && slots.spaces.status !== 'pending')),
+      ((view.requestedTab === 'shared' && slots.shared.status === 'resolved') ||
+        (view.requestedTab === 'spaces' && slots.spaces.status === 'resolved')),
   }
 }
 

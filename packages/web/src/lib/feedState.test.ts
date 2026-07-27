@@ -192,16 +192,20 @@ describe('deriveFeedState', () => {
   })
 
   // T10.6 — staleTab: a ?tab= pointing at an absent conditional tab is a legitimate deep link
-  // while the feed is pending, and STALE (component clears the param) once the feed settles
-  // without producing the tab.
-  test('T10.6 staleTab fires only after the governing feed settles without the tab', () => {
+  // while the feed is pending, and STALE (component clears the param) only once the feed RESOLVES
+  // without producing the tab. A rejection (transient error or the 401 heading to login) proves
+  // nothing about absence — the deep link must survive it.
+  test('T10.6 staleTab fires only after the governing feed resolves without the tab', () => {
     const wantSpaces = { requestedTab: 'spaces' } as const
     expect(deriveFeedState(allPending(), wantSpaces).staleTab).toBe(false)
     expect(deriveFeedState({ ...allPending(), spaces: resolved([]) }, wantSpaces).staleTab).toBe(true)
     expect(
       deriveFeedState({ ...allPending(), spaces: resolved([space('p', 'personal')]) }, wantSpaces).staleTab,
     ).toBe(true)
-    expect(deriveFeedState({ ...allPending(), spaces: rejected(new Error('boom')) }, wantSpaces).staleTab).toBe(true)
+    expect(deriveFeedState({ ...allPending(), spaces: rejected(new Error('boom')) }, wantSpaces).staleTab).toBe(false)
+    expect(
+      deriveFeedState({ ...allPending(), spaces: rejected(new ApiError(401, 'Unauthorized')) }, wantSpaces).staleTab,
+    ).toBe(false)
     expect(
       deriveFeedState({ ...allPending(), spaces: resolved([space('g', 'group')]) }, wantSpaces).staleTab,
     ).toBe(false)
@@ -209,6 +213,7 @@ describe('deriveFeedState', () => {
     const wantShared = { requestedTab: 'shared' } as const
     expect(deriveFeedState(allPending(), wantShared).staleTab).toBe(false)
     expect(deriveFeedState({ ...allPending(), shared: resolved([]) }, wantShared).staleTab).toBe(true)
+    expect(deriveFeedState({ ...allPending(), shared: rejected(new Error('boom')) }, wantShared).staleTab).toBe(false)
     expect(deriveFeedState({ ...allPending(), shared: resolved([site('x')]) }, wantShared).staleTab).toBe(false)
 
     // Always-present tabs can never go stale.

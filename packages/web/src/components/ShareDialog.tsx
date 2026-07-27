@@ -239,6 +239,7 @@ export function PickerRow({
     <button
       type="button"
       onClick={onToggle}
+      aria-pressed={checked}
       className={cn('flex w-full items-center gap-3 rounded-md px-2 py-1.5 text-left hover:bg-muted', className)}
     >
       <span

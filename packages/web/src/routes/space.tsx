@@ -84,14 +84,17 @@ function InviteMembersDialog({ slug }: { slug: string }) {
       const results = await Promise.allSettled(
         picks.map((email) => api.post(`/api/spaces/${slug}/members`, { email })),
       )
-      const failed = results.filter((r) => r.status === 'rejected')
+      const failed = picks.filter((_, i) => results[i].status === 'rejected')
       if (failed.length === 0) {
         toast.success(picks.length === 1 ? 'Member invited' : `${picks.length} members invited`)
         setOpen(false)
       } else {
-        const first = failed[0].reason
+        // Keep ONLY the failed picks selected so the open dialog shows exactly what needs
+        // retrying, and name them — a bare count doesn't say which invite went wrong.
+        setSelected(new Set(failed))
+        const first = (results.find((r) => r.status === 'rejected') as PromiseRejectedResult).reason
         toast.error(`${failed.length} of ${picks.length} invites failed`, {
-          description: first instanceof Error ? first.message : undefined,
+          description: `${failed.join(', ')}${first instanceof Error ? ` — ${first.message}` : ''}`,
         })
       }
       if (failed.length < picks.length) revalidator.revalidate()
@@ -260,7 +263,8 @@ export function Component() {
           </span>
         }
       >
-        {isGroup && <InviteMembersDialog slug={space.slug} />}
+        {/* Invite is owner-only server-side — don't offer a button that can only 403. */}
+        {isGroup && space.isOwner && <InviteMembersDialog slug={space.slug} />}
       </PageHeader>
 
       <section className="space-y-4">
