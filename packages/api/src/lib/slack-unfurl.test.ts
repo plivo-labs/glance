@@ -57,11 +57,12 @@ describe('buildUnfurlBlocks', () => {
   const NOW = Date.parse('2026-07-27T12:00:00Z')
   const card: UnfurlCard = {
     title: 'Q3 Report',
-    slug: 'report',
+    spaceSlug: 'acme',
+    siteSlug: 'report',
     description: 'How the numbers moved',
     updatedAt: '2026-07-24T12:00:00Z',
   }
-  const build = (over: Partial<UnfurlCard>) => buildUnfurlBlocks({ ...card, ...over }, 'acme', `${APP}/acme/report`, NOW)
+  const build = (over: Partial<UnfurlCard>) => buildUnfurlBlocks({ ...card, ...over }, `${APP}/acme/report`, NOW)
 
   test('links the title and includes the blurb plus a context line with freshness', () => {
     const json = JSON.stringify(build({}))

@@ -64,7 +64,8 @@ export function relativeTime(iso: string, nowMs: number): string | null {
  *  is the signed brand-card PNG, absent when unavailable. */
 export type UnfurlCard = {
   title: string | null
-  slug: string
+  spaceSlug: string
+  siteSlug: string
   description: string | null
   updatedAt: string
   imageUrl?: string
@@ -74,16 +75,16 @@ export type UnfurlCard = {
  *  and a context line with space/site · freshness. Slack renders `text` fields as mrkdwn, so the
  *  author-controlled strings (title, description) go through `escapeSlack`; the slugs are
  *  `[a-z0-9-]` and need none. */
-export function buildUnfurlBlocks(card: UnfurlCard, spaceSlug: string, url: string, nowMs: number): SlackBlock[] {
+export function buildUnfurlBlocks(card: UnfurlCard, url: string, nowMs: number): SlackBlock[] {
   const updated = relativeTime(card.updatedAt, nowMs)
-  const meta = [`Glance · ${spaceSlug}/${card.slug}`, ...(updated ? [`Updated ${updated}`] : [])]
+  const meta = [`Glance · ${card.spaceSlug}/${card.siteSlug}`, ...(updated ? [`Updated ${updated}`] : [])]
   return [
-    { type: 'section', text: { type: 'mrkdwn', text: `*${slackLink(url, card.title ?? card.slug)}*` } },
+    { type: 'section', text: { type: 'mrkdwn', text: `*${slackLink(url, card.title ?? card.siteSlug)}*` } },
     ...(card.description
       ? [{ type: 'section', text: { type: 'mrkdwn', text: escapeSlack(card.description) } } as SlackBlock]
       : []),
     ...(card.imageUrl
-      ? [{ type: 'image', image_url: card.imageUrl, alt_text: card.title ?? card.slug } as SlackBlock]
+      ? [{ type: 'image', image_url: card.imageUrl, alt_text: card.title ?? card.siteSlug } as SlackBlock]
       : []),
     { type: 'context', elements: [{ type: 'mrkdwn', text: meta.join(' · ') }] },
   ]

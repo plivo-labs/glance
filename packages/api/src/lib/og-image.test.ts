@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { ogCardHtml, ogImageUrl, signOgSig, verifyOgSig } from './og-image'
+import { ogCardHtml, signedOgImageUrl, signOgSig, verifyOgSig } from './og-image'
 
 const TEST_SIGNING_KEY = 'not-a-real-og-secret'
 
@@ -19,16 +19,15 @@ describe('og signature', () => {
     expect(await verifyOgSig(TEST_SIGNING_KEY, 'acme', 'report', '')).toBe(false)
   })
 
-  test('the slug separator cannot be gamed: (a/b, c) never verifies as (a, b/c)', async () => {
+  test("the raw MAC message is separator-AMBIGUOUS — (a/b, c) and (a, b/c) sign identically — which is safe only because slugs are [a-z0-9-] (parseSiteUrl/isValidSlug) and can never contain '/'", async () => {
     const sig = await signOgSig(TEST_SIGNING_KEY, 'acme/report', 'x')
-    expect(await verifyOgSig(TEST_SIGNING_KEY, 'acme', 'report/x', sig)).toBe(true) // same message…
-    // …but slugs are [a-z0-9-] (parseSiteUrl/isValidSlug), so a slash never reaches signing in
-    // practice; this test just documents the raw-primitive behavior.
+    expect(await verifyOgSig(TEST_SIGNING_KEY, 'acme', 'report/x', sig)).toBe(true)
   })
 
-  test('ogImageUrl carries the sig as a query param on the CONTENT origin', () => {
-    expect(ogImageUrl('https://content.example.com', 'acme', 'report', 'abc123')).toBe(
-      'https://content.example.com/_glance/og/acme/report.png?sig=abc123',
+  test('signedOgImageUrl mints the sig as a query param on the CONTENT origin', async () => {
+    const sig = await signOgSig(TEST_SIGNING_KEY, 'acme', 'report')
+    expect(await signedOgImageUrl(TEST_SIGNING_KEY, 'https://content.example.com', 'acme', 'report')).toBe(
+      `https://content.example.com/_glance/og/acme/report.png?sig=${sig}`,
     )
   })
 })

@@ -27,10 +27,15 @@ export async function verifyOgSig(secret: string, spaceSlug: string, siteSlug: s
   return secretEquals(await signOgSig(secret, spaceSlug, siteSlug), sig)
 }
 
-/** The absolute image_url the unfurl card carries — on the CONTENT origin, under the reserved
- *  `_glance` prefix (never a space slug, see content.ts's asset routes). */
-export function ogImageUrl(contentUrl: string, spaceSlug: string, siteSlug: string, sig: string): string {
-  return `${contentUrl}/_glance/og/${spaceSlug}/${siteSlug}.png?sig=${sig}`
+/** The absolute, signed image_url the unfurl card carries — on the CONTENT origin, under the
+ *  reserved `_glance` prefix (never a space slug, see content.ts's asset routes). */
+export async function signedOgImageUrl(
+  secret: string,
+  contentUrl: string,
+  spaceSlug: string,
+  siteSlug: string,
+): Promise<string> {
+  return `${contentUrl}/_glance/og/${spaceSlug}/${siteSlug}.png?sig=${await signOgSig(secret, spaceSlug, siteSlug)}`
 }
 
 /** What the card renders. Kept to what the picture needs — the route resolves it, the renderer
@@ -43,6 +48,8 @@ const BRAND_MARK_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512
 
 const BRAND_MARK_DATA_URI = `data:image/svg+xml;base64,${btoa(BRAND_MARK_SVG)}`
 
+// Not lib/markdown's escapeHtml: that module imports Marked at top level, which the main worker
+// (importing this file to mint URLs) must not bundle.
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
 /** The card markup (satori's HTML subset: everything display:flex, inline styles only). Brand

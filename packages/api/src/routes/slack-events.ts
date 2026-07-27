@@ -1,7 +1,7 @@
 import { type Context, Hono } from 'hono'
 import { getUserByEmail, toSessionUser } from '../db/repo'
 import { fireAndForget } from '../lib/events'
-import { ogImageUrl, signOgSig } from '../lib/og-image'
+import { signedOgImageUrl } from '../lib/og-image'
 import { fetchAccessFacts, siteAccessFromFacts } from '../lib/site-access'
 import { lookupSlackEmail, slackDepsFromEnv, slackUnfurlEnabled } from '../lib/slack'
 import {
@@ -118,15 +118,15 @@ async function unfurlLinks(c: Context<AppEnv>, event: LinkSharedEvent): Promise<
       // The card image is fetched by Slack unauthenticated, so its URL carries an HMAC minted
       // HERE — only sites that already passed the sharer's access check ever get a signed URL.
       // CONTENT_TOKEN_SECRET because the image is served by the CONTENT worker (lib/og-image.ts).
-      const sig = await signOgSig(c.env.CONTENT_TOKEN_SECRET, parsed.spaceSlug, parsed.siteSlug)
       const card: UnfurlCard = {
         title: site.title,
-        slug: site.slug,
+        spaceSlug: parsed.spaceSlug,
+        siteSlug: parsed.siteSlug,
         description: site.description,
         updatedAt: site.updatedAt,
-        imageUrl: ogImageUrl(c.env.CONTENT_URL, parsed.spaceSlug, parsed.siteSlug, sig),
+        imageUrl: await signedOgImageUrl(c.env.CONTENT_TOKEN_SECRET, c.env.CONTENT_URL, parsed.spaceSlug, parsed.siteSlug),
       }
-      return urls.map((url) => [url, { blocks: buildUnfurlBlocks(card, parsed.spaceSlug, url, now) }] as const)
+      return urls.map((url) => [url, { blocks: buildUnfurlBlocks(card, url, now) }] as const)
     }),
   )
 
