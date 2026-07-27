@@ -23,12 +23,15 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 API="$ROOT/packages/api"
+# wrangler is a workspace devDependency, NOT a global install — put the pinned local copy on PATH
+# so every call below resolves after a plain `bun install`, with no `bun add -g` and no bunx prefix.
+export PATH="$ROOT/node_modules/.bin:$PATH"
 cd "$API"
 
 note() { printf '\n\033[1;36m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!  %s\033[0m\n' "$*"; }
 
-command -v wrangler >/dev/null || { echo "wrangler not found — install with 'bun add -g wrangler'"; exit 1; }
+command -v wrangler >/dev/null || { echo "wrangler not found — run 'bun install' in the repo root first"; exit 1; }
 command -v openssl  >/dev/null || { echo "openssl not found"; exit 1; }
 
 note "Checking Cloudflare auth"
@@ -57,6 +60,42 @@ for f in wrangler.jsonc wrangler.content.jsonc; do
     grep -v 'YOUR_ACCOUNT_ID' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
   fi
 done
+
+# --- identity: superadmin email + allowed Google domain (MUST be wired before the FIRST deploy) ---
+# Both are plain `vars`, so they ship inside the worker bundle. Deploying with the sentinels intact
+# makes bootstrap claim the literal `you@yourcompany.com` as the first superadmin
+# (routes/auth.ts `bootstrapSuperadminByEmail`), and the operator's real Google login later lands as
+# a plain member (`findOrCreateUser` never promotes) — recoverable only by deleting that row from D1.
+# CI already does this substitution from Actions Variables (.github/workflows/deploy.yml); this is
+# the same wiring for the local one-shot path.
+note "Wiring superadmin identity"
+if grep -q 'you@yourcompany.com' wrangler.jsonc; then
+  EMAIL="${SUPERADMIN_EMAIL:-}"
+  if [[ -z "$EMAIL" ]]; then
+    if [[ ! -t 0 ]]; then
+      echo "SUPERADMIN_EMAIL is unset and stdin is not a terminal."
+      echo "Re-run as: SUPERADMIN_EMAIL=you@yourcompany.com scripts/setup.sh"
+      exit 1
+    fi
+    read -rp "  Superadmin email (the account that will own this instance): " EMAIL
+  fi
+  [[ "$EMAIL" == *@*.* ]] || { echo "Not an email address: '$EMAIL' — aborting."; exit 1; }
+  # ALLOWED_HD gates Google Workspace logins; default it to the superadmin's own domain.
+  HD="${ALLOWED_HD:-${EMAIL#*@}}"
+  # ORDER MATTERS: the email sentinel CONTAINS the domain sentinel, so substituting the domain
+  # first would rewrite `you@yourcompany.com` into `you@<hd>` and silently corrupt the email.
+  # Same ordering, and the same reason, as the sed chain in deploy.yml.
+  wire you@yourcompany.com "$EMAIL" wrangler.jsonc
+  wire yourcompany.com "$HD" wrangler.jsonc
+  echo "   superadmin → $EMAIL"
+  echo "   allowed Google domain → $HD"
+else
+  echo "   already wired — skipping"
+fi
+if grep -q 'yourcompany.com' wrangler.jsonc; then
+  echo "Identity sentinels survived substitution — aborting rather than deploying a dead admin."
+  exit 1
+fi
 
 note "Provisioning D1 database (glance-db)"
 if grep -q 'YOUR_D1_DATABASE_ID' wrangler.jsonc; then
@@ -112,12 +151,12 @@ note "Deploying content worker"
 # shellcheck disable=SC2086
 CONTENT_URL="$(deploy_url $CONTENT)"
 
-# --- secrets: set each ONCE as a single shared value across both workers ---
+# --- secrets: generated ONCE, on a clean first run, and never rotated afterwards ---
 # `wrangler secret list` prints a JSON array of {"name":...}; grep the name, no jq needed.
-# Critical: CONTENT_TOKEN_SECRET is used to SIGN gated tokens on the main worker and VERIFY
-# them on the content worker, so both workers MUST carry the identical value. We set a given
-# secret only when BOTH workers lack it (clean first run) — otherwise we can't read it back
-# to guarantee a match, so we keep what's there and warn on a partial state.
+# Each secret goes only on the worker(s) that actually read it: SESSION_SECRET on the main worker,
+# CONTENT_TOKEN_SECRET on both (it is SIGNED on main and VERIFIED on content, so the two MUST carry
+# the identical value). A shared secret is written only when BOTH workers lack it — secrets can't be
+# read back, so a partial state can't be checked for a match and is treated as fatal, not warned past.
 # Returns 0 if secret $1 is present on the target worker, 1 if it is GENUINELY absent. If the
 # underlying `wrangler secret list` call itself fails (network/auth/transient), it ABORTS the whole
 # script rather than reporting "absent" — misreading a transient failure as absent would trip the
@@ -141,28 +180,44 @@ put_both() { # name value
   printf '%s' "$2" | wrangler secret put "$1" $CONTENT >/dev/null
 }
 
-note "Setting shared HMAC secrets across both workers (only on a clean first run)"
-for name in SESSION_SECRET CONTENT_TOKEN_SECRET; do
-  # shellcheck disable=SC2086
-  if has_secret "$name" || has_secret "$name" $CONTENT; then
-    # shellcheck disable=SC2086
-    if has_secret "$name" && has_secret "$name" $CONTENT; then
-      echo "   keep $name (already set on both)"
-    else
-      warn "$name is set on only one worker — leaving both. Re-sync manually so they MATCH:"
-      warn "   S=\$(openssl rand -hex 32); echo \$S | wrangler secret put $name; echo \$S | wrangler secret put $name $CONTENT"
-    fi
-  else
-    put_both "$name" "$(openssl rand -hex 32)"
-    echo "   set $name on both workers"
-  fi
-done
+# SESSION_SECRET signs app cookies + KV session tokens and is read ONLY by the main worker
+# (lib/session.ts and routes/auth.ts; content.ts imports neither). Setting it on the content
+# worker too would buy nothing and double the partial-state surface below — so, main only.
+note "Setting SESSION_SECRET on the main worker (only on a clean first run)"
+if has_secret SESSION_SECRET; then
+  echo "   keep SESSION_SECRET (already set)"
+else
+  printf '%s' "$(openssl rand -hex 32)" | wrangler secret put SESSION_SECRET >/dev/null
+  echo "   set SESSION_SECRET"
+fi
+
+# CONTENT_TOKEN_SECRET SIGNS gated content URLs on the main worker and VERIFIES them on the
+# content worker, so both MUST carry the identical value. Secrets cannot be read back, so a
+# half-written pair can't be repaired or even detected by comparison — and a mismatch means every
+# gated link 403s while the workers look healthy. Fail LOUD rather than print "Done" over it.
+note "Setting CONTENT_TOKEN_SECRET across both workers (only on a clean first run)"
+# shellcheck disable=SC2086
+if has_secret CONTENT_TOKEN_SECRET && has_secret CONTENT_TOKEN_SECRET $CONTENT; then
+  echo "   keep CONTENT_TOKEN_SECRET (already set on both)"
+# shellcheck disable=SC2086
+elif has_secret CONTENT_TOKEN_SECRET || has_secret CONTENT_TOKEN_SECRET $CONTENT; then
+  warn "CONTENT_TOKEN_SECRET is set on only ONE worker — every gated link would fail to verify."
+  warn "Re-sync it manually so both MATCH, then re-run this script:"
+  warn "   S=\$(openssl rand -hex 32)"
+  warn "   printf %s \"\$S\" | wrangler secret put CONTENT_TOKEN_SECRET"
+  warn "   printf %s \"\$S\" | wrangler secret put CONTENT_TOKEN_SECRET $CONTENT"
+  exit 1
+else
+  put_both CONTENT_TOKEN_SECRET "$(openssl rand -hex 32)"
+  echo "   set CONTENT_TOKEN_SECRET on both workers"
+fi
 
 note "Setting BOOTSTRAP_TOKEN on the main worker (first-run admin gate)"
 BOOTSTRAP_PRINTED=""
 if has_secret BOOTSTRAP_TOKEN; then
-  warn "BOOTSTRAP_TOKEN already set — leaving it. (Secrets can't be read back; reuse the"
-  warn "token you saved earlier, or rotate with: wrangler secret put BOOTSTRAP_TOKEN)"
+  warn "BOOTSTRAP_TOKEN already set — leaving it (secrets can't be read back)."
+  warn "Lost it? Rotating is safe while no superadmin exists yet, and re-opens setup:"
+  warn "   T=\$(openssl rand -hex 32); echo \"\$T\"; printf %s \"\$T\" | wrangler secret put BOOTSTRAP_TOKEN"
 else
   TOKEN="${BOOTSTRAP_TOKEN:-$(openssl rand -hex 32)}"
   printf '%s' "$TOKEN" | wrangler secret put BOOTSTRAP_TOKEN >/dev/null
@@ -204,7 +259,15 @@ fi
 # check and cookie `secure` flag must not trust a spoofable Host header.
 SUBDOMAIN=""
 if [[ "$APP_URL" =~ ^https://[^.]+\.([^.]+)\.workers\.dev$ ]]; then SUBDOMAIN="${BASH_REMATCH[1]}"; fi
-if [[ -n "$SUBDOMAIN" ]] && grep -rq 'YOUR-SUBDOMAIN' wrangler.jsonc wrangler.content.jsonc "$ROOT/packages/web/public/_headers"; then
+if grep -rq 'YOUR-SUBDOMAIN' wrangler.jsonc wrangler.content.jsonc "$ROOT/packages/web/public/_headers"; then
+  # The sentinel is still there, so this MUST succeed — shipping it means the content worker's
+  # `frame-ancestors` and the SPA's `_headers` frame-src both pin a host that doesn't exist, and
+  # every viewer iframe is blocked. An unparseable URL here is fatal, not a warning.
+  if [[ -z "$SUBDOMAIN" ]]; then
+    warn "Could not parse a workers.dev subdomain from: ${APP_URL:-<no URL captured>}"
+    warn "Set APP_URL/CONTENT_URL in both wrangler configs and _headers frame-src by hand, then re-run."
+    exit 1
+  fi
   note "Wiring workers.dev subdomain '$SUBDOMAIN' into config + CSP, then redeploying"
   # reuse the sentinel-replace helper (temp+mv for macOS/BSD vs GNU sed portability).
   wire YOUR-SUBDOMAIN "$SUBDOMAIN" wrangler.jsonc wrangler.content.jsonc "$ROOT/packages/web/public/_headers"
@@ -212,8 +275,25 @@ if [[ -n "$SUBDOMAIN" ]] && grep -rq 'YOUR-SUBDOMAIN' wrangler.jsonc wrangler.co
   wrangler deploy >/dev/null
   wrangler deploy --config wrangler.content.jsonc >/dev/null
 else
-  warn "Skipped URL wiring (no YOUR-SUBDOMAIN sentinel left, or URL not parseable)."
-  warn "Ensure APP_URL/CONTENT_URL in both wrangler configs and _headers frame-src are correct."
+  echo "   URLs already wired — skipping"
+fi
+
+# --- final gate: no sentinel may survive a "successful" run ---
+# Each one is a silent half-configuration (dead admin, unroutable binding, blocked iframe), and
+# every path above is meant to have replaced or removed it. Cheap to assert, expensive to debug.
+SENTINELS='YOUR_ACCOUNT_ID|YOUR_D1_DATABASE_ID|YOUR_KV_NAMESPACE_ID|YOUR-SUBDOMAIN|yourcompany.com'
+if grep -rEl "$SENTINELS" wrangler.jsonc wrangler.content.jsonc "$ROOT/packages/web/public/_headers" >/dev/null; then
+  warn "Placeholder sentinels still present after setup — this deploy is half-configured:"
+  grep -rEn "$SENTINELS" wrangler.jsonc wrangler.content.jsonc "$ROOT/packages/web/public/_headers" >&2 || true
+  exit 1
+fi
+
+note "Verifying the deploy"
+if CONFIG="$(curl -fsS "${APP_URL}/api/config" 2>/dev/null)"; then
+  echo "   ${APP_URL}/api/config → $CONFIG"
+else
+  warn "Could not reach ${APP_URL}/api/config yet — a fresh workers.dev route can take a moment."
+  warn "Re-check with: curl -fsS ${APP_URL}/api/config"
 fi
 
 note "Done."
