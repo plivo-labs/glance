@@ -11,7 +11,7 @@ app.use('/api/*', requireSameOrigin)
 app.post('/api/thing', (c) => c.json({ ok: true }))
 app.get('/api/thing', (c) => c.json({ ok: true }))
 
-const cookie = 'glance_session=signed-token'
+const cookie = '__Host-glance_session=signed-token'
 
 describe('requireSameOrigin', () => {
   test('cookie POST with foreign Origin → 403', async () => {

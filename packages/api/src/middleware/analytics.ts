@@ -5,7 +5,7 @@ import { fireAndForget, parseCliVersion, recordEvent } from '../lib/events'
 import { readSessionOrBearer } from '../lib/session'
 import type { AppEnv } from '../types'
 
-const SESSION_COOKIE = 'glance_session'
+const SESSION_COOKIE = '__Host-glance_session'
 
 // A request is a CLI call when it carries a Bearer token and NO session cookie — the exact rule
 // requireAuth uses to tag `authKind` (cookie wins, mirroring readSessionOrBearer). We DERIVE it

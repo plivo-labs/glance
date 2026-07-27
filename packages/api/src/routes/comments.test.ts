@@ -94,7 +94,7 @@ describe('comments routes — auth / access / authz', () => {
     await seedSiteWithFile(db, r2, owner)
     const res = await app.request(
       url(),
-      { method: 'POST', headers: { cookie: 'glance_session=x', Origin: 'https://evil.com', 'Content-Type': 'application/json' }, body: '{}' },
+      { method: 'POST', headers: { cookie: '__Host-glance_session=x', Origin: 'https://evil.com', 'Content-Type': 'application/json' }, body: '{}' },
       env,
     )
     expect(res.status).toBe(403)

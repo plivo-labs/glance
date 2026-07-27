@@ -107,7 +107,7 @@ describe('trackCliUsage', () => {
     // rule requireAuth uses). The route still 200s via the Bearer fallback, but nothing is recorded.
     const res = await app.request(
       '/api/sites/acme/demo',
-      { headers: { Authorization: `Bearer ${tok}`, Cookie: 'glance_session=irrelevant' } },
+      { headers: { Authorization: `Bearer ${tok}`, Cookie: '__Host-glance_session=irrelevant' } },
       env,
     )
     expect(res.status).toBe(200)

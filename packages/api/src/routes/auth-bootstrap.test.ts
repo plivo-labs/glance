@@ -48,7 +48,7 @@ describe('POST /api/auth/bootstrap', () => {
     const { app, env, db } = setup()
     const res = await post(app, env, { token: TOKEN })
     expect(res.status).toBe(200)
-    expect(res.headers.get('set-cookie') ?? '').toContain('glance_session=')
+    expect(res.headers.get('set-cookie') ?? '').toContain('__Host-glance_session=')
 
     const rows = await db.select().from(users).where(eq(users.email, 'owner@example.com'))
     expect(rows[0]?.role).toBe('superadmin')
