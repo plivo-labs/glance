@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { countingKv } from '../test/harness'
-import { buildUnfurlBlocks, parseSiteUrl, postUnfurl, relativeTime, type UnfurlCard } from './slack-unfurl'
+import { buildUnfurlAttachment, parseSiteUrl, postUnfurl, relativeTime, type UnfurlCard } from './slack-unfurl'
 import type { SlackHttpDeps } from './slack'
 
 const APP = 'https://glance.example.com'
@@ -53,7 +53,7 @@ describe('relativeTime', () => {
   })
 })
 
-describe('buildUnfurlBlocks', () => {
+describe('buildUnfurlAttachment', () => {
   const NOW = Date.parse('2026-07-27T12:00:00Z')
   const card: UnfurlCard = {
     title: 'Q3 Report',
@@ -62,44 +62,43 @@ describe('buildUnfurlBlocks', () => {
     description: 'How the numbers moved',
     updatedAt: '2026-07-24T12:00:00Z',
   }
-  const build = (over: Partial<UnfurlCard>) => buildUnfurlBlocks({ ...card, ...over }, `${APP}/acme/report`, NOW)
+  const build = (over: Partial<UnfurlCard>) => buildUnfurlAttachment({ ...card, ...over }, `${APP}/acme/report`, NOW)
 
-  test('links the title and includes the blurb plus a context line with freshness', () => {
-    const json = JSON.stringify(build({}))
-    expect(json).toContain(`<${APP}/acme/report|Q3 Report>`)
-    expect(json).toContain('How the numbers moved')
-    expect(json).toContain('Glance · acme/report · Updated 3 days ago')
+  test('a legacy-style attachment (NOT blocks — an image block always renders full-width): linked title, blurb, footer with freshness', () => {
+    expect(build({})).toEqual({
+      title: 'Q3 Report',
+      title_link: `${APP}/acme/report`,
+      text: 'How the numbers moved',
+      footer: 'Glance · acme/report · Updated 3 days ago',
+    })
   })
 
   test('falls back to the slug when the site has no title, and drops the blurb when absent', () => {
-    const blocks = build({ title: null, description: null })
-    expect(JSON.stringify(blocks)).toContain('|report>')
-    expect(blocks).toHaveLength(2) // title section + context, no description section
+    const attachment = build({ title: null, description: null })
+    expect(attachment.title).toBe('report')
+    expect(attachment).not.toHaveProperty('text')
   })
 
   test('an unparseable updatedAt drops the freshness clause, not the card', () => {
-    const json = JSON.stringify(build({ updatedAt: 'garbage' }))
-    expect(json).toContain('Glance · acme/report')
-    expect(json).not.toContain('Updated')
+    expect(build({ updatedAt: 'garbage' }).footer).toBe('Glance · acme/report')
   })
 
-  test('an imageUrl renders as an image block with the title as alt text', () => {
-    const blocks = build({ imageUrl: `${APP}/api/og/acme/report.png?sig=abc` })
-    const image = blocks.find((b) => b.type === 'image')
-    expect(image).toMatchObject({ image_url: `${APP}/api/og/acme/report.png?sig=abc`, alt_text: 'Q3 Report' })
-    expect(JSON.stringify(build({}))).not.toContain('"image"')
+  test('an imageUrl rides as the attachment image_url (400px-capped by Slack), absent otherwise', () => {
+    expect(build({ imageUrl: `${APP}/api/og/acme/report.png?sig=abc` }).image_url).toBe(
+      `${APP}/api/og/acme/report.png?sig=abc`,
+    )
+    expect(build({})).not.toHaveProperty('image_url')
   })
 
   test('escapes mrkdwn metacharacters in the author-controlled title and description', () => {
-    const json = JSON.stringify(build({ title: '<script>&x', description: 'a > b & c < d' }))
-    expect(json).toContain('&lt;script&gt;&amp;x')
-    expect(json).toContain('a &gt; b &amp; c &lt; d')
-    expect(json).not.toContain('<script>')
+    const attachment = build({ title: '<script>&x', description: 'a > b & c < d' })
+    expect(attachment.title).toBe('&lt;script&gt;&amp;x')
+    expect(attachment.text).toBe('a &gt; b &amp; c &lt; d')
   })
 })
 
 describe('postUnfurl', () => {
-  const unfurls = { [`${APP}/acme/report`]: { blocks: [{ type: 'section' }] } }
+  const unfurls = { [`${APP}/acme/report`]: { title: 'Q3', title_link: `${APP}/acme/report`, footer: 'Glance' } }
 
   /** Capture the JSON body chat.unfurl was called with (null when it was never called). */
   function capture() {

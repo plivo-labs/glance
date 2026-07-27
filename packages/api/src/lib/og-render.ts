@@ -6,18 +6,17 @@
 
 import { type OgCard, ogCardHtml } from './og-image'
 
-/** workers-og (satori→SVG, resvg→PNG) at 600×315 — Slack's 1.91:1 ratio at HALF the canonical
- *  1200×630. Slack shows an image block at its natural size (capped by the message column), so
- *  the full-size canvas dominated the channel; half keeps the same layout (ogCardHtml's styles
- *  are scaled to match) at a card-sized footprint. The font loads at render time via the Workers
- *  cache (loadGoogleFont) — bundling a typeface would cost more than the rest of the worker
- *  combined, and Slack's own image cache makes renders rare. */
+/** workers-og (satori→SVG, resvg→PNG) at the canonical OG 1200×630. Displayed size is Slack's
+ *  call, not ours: the card ships as a legacy attachment whose image_url is capped at 400×500
+ *  (slack-unfurl.ts), so the full canvas just makes that 400px display retina-crisp. The font
+ *  loads at render time via the Workers cache (loadGoogleFont) — bundling a typeface would cost
+ *  more than the rest of the worker combined, and Slack's own image cache makes renders rare. */
 export async function renderOgPng(card: OgCard): Promise<Response> {
   const { ImageResponse, loadGoogleFont } = await import('workers-og')
   const font = await loadGoogleFont({ family: 'IBM Plex Sans', weight: 600 })
   return new ImageResponse(ogCardHtml(card), {
-    width: 600,
-    height: 315,
+    width: 1200,
+    height: 630,
     fonts: [{ name: 'IBM Plex Sans', data: font, weight: 600, style: 'normal' }],
   })
 }
