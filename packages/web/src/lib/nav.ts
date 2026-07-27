@@ -1,4 +1,25 @@
-import { redirect } from 'react-router'
+import { redirect, type ShouldRevalidateFunctionArgs } from 'react-router'
+
+// The dashboard keeps UI state in the URL (?tab=, ?new=). React Router's default treats any
+// search change as "re-run every matched loader", so routes whose loaders don't read the search
+// string opt out of same-path search-only navigations with this predicate. Same-URL navigations
+// keep the default — that's how revalidator.revalidate() still reaches them.
+export function skipSearchOnlyRevalidation({
+  currentUrl,
+  nextUrl,
+  defaultShouldRevalidate,
+}: ShouldRevalidateFunctionArgs) {
+  if (currentUrl.pathname === nextUrl.pathname && currentUrl.search !== nextUrl.search) return false
+  return defaultShouldRevalidate
+}
+
+/** Href that opens the create-space dialog (?new=space on /dashboard), preserving the active
+ *  ?tab= when already there — the one spelling of this intent for every navigator. */
+export function newSpaceHref(location: { pathname: string; search: string }): string {
+  const params = new URLSearchParams(location.pathname === '/dashboard' ? location.search : '')
+  params.set('new', 'space')
+  return `/dashboard?${params}`
+}
 
 // Post-login return-URL helpers. The OAuth round-trip carries the intended path as a
 // `next` query param; these keep it same-origin so it can't become an open redirect.

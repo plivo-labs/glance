@@ -1,8 +1,9 @@
-import { useCallback, useState } from 'react'
-import { useNavigate } from 'react-router'
+import { type ReactNode, useCallback, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router'
 import { Check, Plus, Search, Share2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
+import { newSpaceHref } from '@/lib/nav'
 import { buildSharePayload } from '@/lib/shares'
 import type { ShareRole, ShareSet, SpaceSummary, UserLite } from '@/lib/types'
 import { Button } from '@/components/ui/button'
@@ -28,9 +29,12 @@ type Props = {
   // parent (e.g. a dropdown-menu item). Uncontrolled (default) keeps its own Share button.
   open?: boolean
   onOpenChange?: (open: boolean) => void
+  // Uncontrolled trigger's label — tight table rows shorten it to "Share".
+  triggerLabel?: string
 }
 
-function toggle(set: Set<string>, id: string): Set<string> {
+// Shared with the space page's invite dialog — one Set-toggle for every picker selection.
+export function toggle(set: Set<string>, id: string): Set<string> {
   const next = new Set(set)
   if (next.has(id)) next.delete(id)
   else next.add(id)
@@ -49,8 +53,16 @@ function toggleUser(map: Map<string, ShareRole>, id: string): Map<string, ShareR
 // site's visibility tier. Data loads on open via a ref-callback on the dialog content (Radix
 // mounts it on every open — and a controlled/external open does NOT fire Radix onOpenChange,
 // so the load can't live there); Save replaces the whole set via PUT.
-export function ShareDialog({ spaceSlug, siteSlug, title, open: openProp, onOpenChange }: Props) {
+export function ShareDialog({
+  spaceSlug,
+  siteSlug,
+  title,
+  open: openProp,
+  onOpenChange,
+  triggerLabel = 'Share with people & groups',
+}: Props) {
   const navigate = useNavigate()
+  const location = useLocation()
   const [internalOpen, setInternalOpen] = useState(false)
   const controlled = openProp !== undefined
   const open = controlled ? openProp : internalOpen
@@ -63,7 +75,6 @@ export function ShareDialog({ spaceSlug, siteSlug, title, open: openProp, onOpen
   // shared. Groups stay a plain Set — they're always view-only.
   const [selUsers, setSelUsers] = useState<Map<string, ShareRole>>(new Map())
   const [selGroups, setSelGroups] = useState<Set<string>>(new Set())
-  const [q, setQ] = useState('')
 
   const loadOnMount = useCallback(
     () => {
@@ -103,10 +114,6 @@ export function ShareDialog({ spaceSlug, siteSlug, title, open: openProp, onOpen
     }
   }
 
-  const needle = q.trim().toLowerCase()
-  const shownUsers = needle
-    ? users.filter((u) => u.email.toLowerCase().includes(needle) || (u.name ?? '').toLowerCase().includes(needle))
-    : users
   const count = selUsers.size + selGroups.size
 
   return (
@@ -115,7 +122,7 @@ export function ShareDialog({ spaceSlug, siteSlug, title, open: openProp, onOpen
         <DialogTrigger asChild>
           <Button variant="outline" size="sm">
             <Share2 />
-            Share with people &amp; groups
+            {triggerLabel}
           </Button>
         </DialogTrigger>
       )}
@@ -160,7 +167,7 @@ export function ShareDialog({ spaceSlug, siteSlug, title, open: openProp, onOpen
                   className="mt-2"
                   onClick={() => {
                     setOpen(false)
-                    navigate('/dashboard?new=space')
+                    navigate(newSpaceHref(location))
                   }}
                 >
                   <Plus />
@@ -171,38 +178,17 @@ export function ShareDialog({ spaceSlug, siteSlug, title, open: openProp, onOpen
 
             <div className="space-y-1.5">
               <p className="text-xs font-medium text-muted-foreground">People</p>
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                  placeholder="Search people…"
-                  className="pl-8"
-                />
-              </div>
-              <div className="max-h-56 space-y-0.5 overflow-y-auto">
-                {shownUsers.length === 0 ? (
-                  <p className="px-2 py-6 text-center text-sm text-muted-foreground">No people found.</p>
-                ) : (
-                  shownUsers.map((u) => {
-                    const role = selUsers.get(u.id)
-                    return (
-                      <div key={u.id} className="flex items-center gap-2">
-                        <PickerRow
-                          className="flex-1"
-                          checked={role !== undefined}
-                          onToggle={() => setSelUsers((s) => toggleUser(s, u.id))}
-                          label={u.name ?? u.email}
-                          sub={u.name ? u.email : undefined}
-                        />
-                        {role !== undefined && (
-                          <RolePicker role={role} onChange={(r) => setSelUsers((s) => new Map(s).set(u.id, r))} />
-                        )}
-                      </div>
-                    )
-                  })
-                )}
-              </div>
+              <PeoplePicker
+                users={users}
+                checked={(u) => selUsers.has(u.id)}
+                onToggle={(u) => setSelUsers((s) => toggleUser(s, u.id))}
+                trailing={(u) => {
+                  const role = selUsers.get(u.id)
+                  return role !== undefined ? (
+                    <RolePicker role={role} onChange={(r) => setSelUsers((s) => new Map(s).set(u.id, r))} />
+                  ) : null
+                }}
+              />
             </div>
           </div>
         )}
@@ -218,6 +204,53 @@ export function ShareDialog({ spaceSlug, siteSlug, title, open: openProp, onOpen
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+// Searchable directory list of PickerRows — the shared core of the share and invite dialogs.
+// Owns its query state, so it resets naturally with the dialog content that hosts it (Radix
+// remounts content on every open). `trailing` renders per-row extras (e.g. the RolePicker).
+export function PeoplePicker({
+  users,
+  checked,
+  onToggle,
+  trailing,
+}: {
+  users: UserLite[]
+  checked: (u: UserLite) => boolean
+  onToggle: (u: UserLite) => void
+  trailing?: (u: UserLite) => ReactNode
+}) {
+  const [q, setQ] = useState('')
+  const needle = q.trim().toLowerCase()
+  const shown = needle
+    ? users.filter((u) => u.email.toLowerCase().includes(needle) || (u.name ?? '').toLowerCase().includes(needle))
+    : users
+  return (
+    <div className="space-y-1.5">
+      <div className="relative">
+        <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search people…" className="pl-8" />
+      </div>
+      <div className="max-h-56 space-y-0.5 overflow-y-auto">
+        {shown.length === 0 ? (
+          <p className="px-2 py-6 text-center text-sm text-muted-foreground">No people found.</p>
+        ) : (
+          shown.map((u) => (
+            <div key={u.id} className="flex items-center gap-2">
+              <PickerRow
+                className="flex-1"
+                checked={checked(u)}
+                onToggle={() => onToggle(u)}
+                label={u.name ?? u.email}
+                sub={u.name ? u.email : undefined}
+              />
+              {trailing?.(u)}
+            </div>
+          ))
+        )}
+      </div>
+    </div>
   )
 }
 

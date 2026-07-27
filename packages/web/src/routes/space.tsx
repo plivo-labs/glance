@@ -1,19 +1,11 @@
 import { useCallback, useState } from 'react'
 import { type LoaderFunctionArgs, useLoaderData, useNavigate, useRevalidator } from 'react-router'
-import { ExternalLink, Search, Share2, Trash2, UserPlus } from 'lucide-react'
+import { ExternalLink, Trash2, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
-import { CopyButton } from '@/components/CopyButton'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
-import { PickerRow, ShareDialog } from '@/components/ShareDialog'
-import {
-  actionsColumn,
-  createdColumn,
-  nameColumn,
-  OpenLinkButton,
-  urlColumn,
-  visibilityBadgeColumn,
-} from '@/components/siteColumns'
-import { SortableTable, type Column } from '@/components/SortableTable'
+import { PeoplePicker, ShareDialog, toggle } from '@/components/ShareDialog'
+import { CopyOpenActions, feedColumns } from '@/components/siteColumns'
+import { SortableTable } from '@/components/SortableTable'
 import { EmptyState, PageHeader, SectionHeader, Spinner } from '@/components/states'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -26,7 +18,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
 import { MountSensor } from '@/components/ui/mount-sensor'
 import { Separator } from '@/components/ui/separator'
 import { api, ApiError } from '@/lib/api'
@@ -62,12 +53,10 @@ function InviteMembersDialog({ slug }: { slug: string }) {
   const [saving, setSaving] = useState(false)
   const [users, setUsers] = useState<UserLite[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set()) // emails — the API's invite key
-  const [q, setQ] = useState('')
 
   const loadOnMount = useCallback(() => {
     setBusy(true)
     setSelected(new Set())
-    setQ('')
     api
       .get<UserLite[]>('/api/users')
       .then(setUsers)
@@ -84,29 +73,26 @@ function InviteMembersDialog({ slug }: { slug: string }) {
       const results = await Promise.allSettled(
         picks.map((email) => api.post(`/api/spaces/${slug}/members`, { email })),
       )
-      const failed = picks.filter((_, i) => results[i].status === 'rejected')
-      if (failed.length === 0) {
+      const rejects = results.flatMap((r, i) =>
+        r.status === 'rejected' ? [{ email: picks[i], reason: r.reason }] : [],
+      )
+      if (rejects.length === 0) {
         toast.success(picks.length === 1 ? 'Member invited' : `${picks.length} members invited`)
         setOpen(false)
       } else {
         // Keep ONLY the failed picks selected so the open dialog shows exactly what needs
         // retrying, and name them — a bare count doesn't say which invite went wrong.
-        setSelected(new Set(failed))
-        const first = (results.find((r) => r.status === 'rejected') as PromiseRejectedResult).reason
-        toast.error(`${failed.length} of ${picks.length} invites failed`, {
-          description: `${failed.join(', ')}${first instanceof Error ? ` — ${first.message}` : ''}`,
+        setSelected(new Set(rejects.map((r) => r.email)))
+        const { reason } = rejects[0]
+        toast.error(`${rejects.length} of ${picks.length} invites failed`, {
+          description: `${rejects.map((r) => r.email).join(', ')}${reason instanceof Error ? ` — ${reason.message}` : ''}`,
         })
       }
-      if (failed.length < picks.length) revalidator.revalidate()
+      if (rejects.length < picks.length) revalidator.revalidate()
     } finally {
       setSaving(false)
     }
   }
-
-  const needle = q.trim().toLowerCase()
-  const shown = needle
-    ? users.filter((u) => u.email.toLowerCase().includes(needle) || (u.name ?? '').toLowerCase().includes(needle))
-    : users
 
   return (
     <Dialog open={open} onOpenChange={(o) => !saving && setOpen(o)}>
@@ -128,34 +114,11 @@ function InviteMembersDialog({ slug }: { slug: string }) {
             <Spinner className="size-5" />
           </div>
         ) : (
-          <div className="space-y-1.5">
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search people…" className="pl-8" />
-            </div>
-            <div className="max-h-56 space-y-0.5 overflow-y-auto">
-              {shown.length === 0 ? (
-                <p className="px-2 py-6 text-center text-sm text-muted-foreground">No people found.</p>
-              ) : (
-                shown.map((u) => (
-                  <PickerRow
-                    key={u.id}
-                    checked={selected.has(u.email)}
-                    onToggle={() =>
-                      setSelected((s) => {
-                        const next = new Set(s)
-                        if (next.has(u.email)) next.delete(u.email)
-                        else next.add(u.email)
-                        return next
-                      })
-                    }
-                    label={u.name ?? u.email}
-                    sub={u.name ? u.email : undefined}
-                  />
-                ))
-              )}
-            </div>
-          </div>
+          <PeoplePicker
+            users={users}
+            checked={(u) => selected.has(u.email)}
+            onToggle={(u) => setSelected((s) => toggle(s, u.email))}
+          />
         )}
 
         <DialogFooter className="sm:justify-between">
@@ -172,39 +135,14 @@ function InviteMembersDialog({ slug }: { slug: string }) {
   )
 }
 
-// Same table shell as the dashboard feeds; per-row actions add Share for sites the caller owns.
-const SPACE_SITE_COLUMNS: Column<SpaceSite>[] = [
-  nameColumn(),
-  urlColumn(),
-  visibilityBadgeColumn(),
-  createdColumn(),
-  actionsColumn((s) => <SpaceSiteActions site={s} />),
-]
-
-function SpaceSiteActions({ site }: { site: SpaceSite }) {
-  const [shareOpen, setShareOpen] = useState(false)
-  return (
-    <div className="flex items-center justify-end gap-1">
-      <CopyButton text={site.url} label="" variant="outline" />
-      <OpenLinkButton url={site.url} />
-      {site.isOwner && (
-        <>
-          <Button variant="outline" size="sm" onClick={() => setShareOpen(true)}>
-            <Share2 />
-            Share
-          </Button>
-          <ShareDialog
-            spaceSlug={site.spaceSlug}
-            siteSlug={site.siteSlug}
-            title={site.title}
-            open={shareOpen}
-            onOpenChange={setShareOpen}
-          />
-        </>
-      )}
-    </div>
-  )
-}
+// Same table shell as the dashboard feeds; owners get a Share action on their own rows.
+const SPACE_SITE_COLUMNS = feedColumns<SpaceSite>((s) => (
+  <CopyOpenActions url={s.url}>
+    {s.isOwner && (
+      <ShareDialog spaceSlug={s.spaceSlug} siteSlug={s.siteSlug} title={s.title} triggerLabel="Share" />
+    )}
+  </CopyOpenActions>
+))
 
 function DangerZone({ space }: { space: SpaceDetail }) {
   const navigate = useNavigate()
