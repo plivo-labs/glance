@@ -12,6 +12,10 @@ import { seedFile, seedGroupShare, seedMember, seedSite, seedSpace, seedUser, se
 // statements (site, user, membership, direct share, group share) + 1 fused file-row statement.
 // A legitimate future arity change is a one-line edit HERE.
 const SERVE_BATCH_ARITY = 6
+// An index-ish request (`…/` or an explicit index.html) carries ONE more fused statement: the
+// all-files select feeding the single-file/dir-listing fallback — bounded by the 200-file upload
+// cap, and what keeps a single-file site's every page view from paying a serial follow-up trip.
+const INDEX_BATCH_ARITY = SERVE_BATCH_ARITY + 1
 
 // Cache-less wiring: these specs pin today's uncached op shape (getCache resolves null).
 const setup = () => setupFixture({ withCaches: false })
@@ -263,12 +267,12 @@ describe('T1.4 live transitions on the same token', () => {
 })
 
 // ---------------------------------------------------------------------------------------------
-// T1.2 [guard] the dir-listing fallback stays OUT of the batch: with an index.html present the
-// batch alone resolves everything; only an index MISS takes one extra loose select (and still
-// renders today's listing).
+// T1.2 the single-file/dir-listing fallback rides the batch on index-ish requests: no serial
+// follow-up select ever — a single-file site's page view and the listing are one round trip.
+// Non-index assets (css/js/img — the traffic bulk) keep the lean SERVE_BATCH_ARITY batch.
 // ---------------------------------------------------------------------------------------------
-describe('T1.2 dir-listing fallback stays out of the batch', () => {
-  test('index.html EXISTS: exact batch arity, no all-files statement anywhere', async () => {
+describe('T1.2 dir-listing fallback rides the index-ish batch', () => {
+  test('index.html EXISTS: fallback statement fused, zero loose selects', async () => {
     const s = setup()
     const { token: t } = await teamSite(s, [
       { path: 'index.html', text: '<p>home</p>' },
@@ -278,13 +282,13 @@ describe('T1.2 dir-listing fallback stays out of the batch', () => {
     expect(res.status).toBe(200)
     expect(await res.text()).toBe('<p>home</p>')
     expect(s.db.counters.batches).toBe(1)
-    expect(s.db.counters.batchStmts).toBe(SERVE_BATCH_ARITY)
+    expect(s.db.counters.batchStmts).toBe(INDEX_BATCH_ARITY)
     // index.html is a page load → exactly ONE loose statement, and it's the view-event insert.
     expect(s.db.counters.loose).toBe(1)
     expect(s.db.counters.insert).toBe(1)
   })
 
-  test('no index.html: ONE extra loose select after the batch, listing still renders', async () => {
+  test('no index.html: listing renders from the SAME batch — no loose select at all', async () => {
     const s = setup()
     const { token: t } = await teamSite(s, [
       { path: 'a.html', text: '<p>a</p>' },
@@ -296,8 +300,8 @@ describe('T1.2 dir-listing fallback stays out of the batch', () => {
     expect(body).toContain('a.html')
     expect(body).toContain('b.html')
     expect(s.db.counters.batches).toBe(1)
-    expect(s.db.counters.batchStmts).toBe(SERVE_BATCH_ARITY)
-    expect(s.db.counters.loose).toBe(1) // the all-files fallback select — nothing else
+    expect(s.db.counters.batchStmts).toBe(INDEX_BATCH_ARITY)
+    expect(s.db.counters.loose).toBe(0)
     expect(s.db.counters.insert).toBe(0) // a listing is not a page view
   })
 })
@@ -411,19 +415,20 @@ describe('T1.7 fault injection and branch parity', () => {
       { path: 'doc.md', text: '# Title', mimeType: 'text/markdown' },
     ])
     const hits = [
-      { url: `/_t/${t}/sp/site/doc.md?raw=1`, contains: '# Title' },
-      { url: `/_t/${t}/sp/site/index.html?glance_annotate=1`, contains: 'window.__GLANCE__' },
-      { url: `/_t/${t}/sp/site/doc.md`, contains: '<h1>Title</h1>' },
+      { url: `/_t/${t}/sp/site/doc.md?raw=1`, contains: '# Title', arity: SERVE_BATCH_ARITY },
+      { url: `/_t/${t}/sp/site/index.html?glance_annotate=1`, contains: 'window.__GLANCE__', arity: INDEX_BATCH_ARITY },
+      { url: `/_t/${t}/sp/site/doc.md`, contains: '<h1>Title</h1>', arity: SERVE_BATCH_ARITY },
     ]
     for (const hit of hits) {
       s.db.resetCounters()
       const res = await s.app.request(hit.url, {}, s.env)
       expect(res.status).toBe(200)
       expect(await res.text()).toContain(hit.contains)
-      // Identical read shape on every branch: ONE batch at the exact arity, and every loose
-      // statement (if any) is the view-event insert — never a re-query.
+      // Identical read shape on every branch: ONE batch at the exact arity (index-ish requests
+      // carry the fused fallback statement), and every loose statement (if any) is the
+      // view-event insert — never a re-query.
       expect(s.db.counters.batches).toBe(1)
-      expect(s.db.counters.batchStmts).toBe(SERVE_BATCH_ARITY)
+      expect(s.db.counters.batchStmts).toBe(hit.arity)
       expect(s.db.counters.loose).toBe(s.db.counters.insert)
     }
   })

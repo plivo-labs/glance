@@ -130,8 +130,21 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
     .innerJoin(spaces, eq(sites.spaceId, spaces.id))
     .where(and(eq(spaces.slug, spaceSlug), eq(sites.slug, siteSlug), eq(files.path, reqPath)))
     .limit(1)
-  const { facts, extras } = await fetchAccessFacts(db, spaceSlug, siteSlug, userId, fileStmt)
-  const [fileRows] = extras
+  // Index-ish request (`…/` or explicit index.html): the single-file/dir-listing fallback's
+  // all-files read rides the SAME batch — a single-file site's every page view otherwise pays a
+  // serial follow-up round trip. Bounded by the 200-file upload cap; non-index assets (css/js/
+  // img — the traffic bulk) keep the lean batch.
+  const isIndexReq = reqPath === 'index.html' || reqPath.endsWith('/index.html')
+  const allFilesStmt = db
+    .select(cols)
+    .from(files)
+    .innerJoin(sites, eq(files.siteId, sites.id))
+    .innerJoin(spaces, eq(sites.spaceId, spaces.id))
+    .where(and(eq(spaces.slug, spaceSlug), eq(sites.slug, siteSlug)))
+  const { facts, extras } = isIndexReq
+    ? await fetchAccessFacts(db, spaceSlug, siteSlug, userId, fileStmt, allFilesStmt)
+    : await fetchAccessFacts(db, spaceSlug, siteSlug, userId, fileStmt)
+  const [fileRows, allFileRows] = extras as [(typeof extras)[0], (typeof extras)[0]?]
 
   const siteRow = facts.site
   if (!siteRow) return notFound(c)
@@ -158,9 +171,9 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
   // leaves an author who dropped a folder without a root index.html staring at a blank frame
   // with no clue what's wrong — fall back to either the single uploaded file or a navigable
   // listing of what IS in the site, so they can see the contents and click straight in.
-  if (!file && (reqPath === 'index.html' || reqPath.endsWith('/index.html'))) {
+  if (!file && isIndexReq) {
     const dir = reqPath.slice(0, -'index.html'.length) // '' at the root, else `docs/`
-    const all = await db.select(cols).from(files).where(eq(files.siteId, siteRow.id))
+    const all = allFileRows ?? [] // fused into the access batch above — never a follow-up trip
     // Single-file site: serve the lone uploaded file at the root (e.g. a dropped `report.html`).
     if (dir === '' && all.length === 1) {
       file = all[0]
