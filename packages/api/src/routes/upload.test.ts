@@ -331,3 +331,15 @@ describe('upload — derived title: R2 integrity + COALESCE race', () => {
     expect(row.title).toBe('Manual Name')
   })
 })
+
+// Request-shape pin (perf): every pre-write read (space, existing site, membership) rides ONE
+// db.batch — requireAuth's user read is the only loose statement on a CREATE.
+describe('upload — pre-write request shape', () => {
+  test('CREATE: 1 loose (requireAuth) + fused read batch + write batch', async () => {
+    const { app, env, db } = await setup()
+    db.resetCounters()
+    expect((await postFiles(app, env, 'shape-new', [html('<html>hi</html>', 'index.html')])).status).toBe(200)
+    expect(db.counters.loose).toBe(1)
+    expect(db.counters.batches).toBe(2)
+  })
+})
