@@ -1,5 +1,8 @@
 export const TEXT_CAP = 40_000
 export const TITLE_CAP = 200
+// Unfurl cards (Slack, and OG consumers generally) truncate well before this; 300 keeps a full
+// two-sentence blurb without letting a pathological meta tag bloat the row.
+export const DESCRIPTION_CAP = 300
 
 export type EntryFile = { path: string; mimeType: string | null }
 export type Extracted = { ok: true; text: string; truncated: boolean } | { ok: false; reason: string }
@@ -73,15 +76,28 @@ function decodeEntities(text: string): string {
   })
 }
 
-// The entry document's <title>, for the site's display title when the uploader didn't name it.
-// HTML only — a markdown entry has no <title>. Takes the FIRST title in document order that is
-// not an <svg>/<template> accessibility/inert title. NOT `head > title`: a streaming rewriter
-// never sees an implied <head>, and headless fragments (a file starting at <style>/<h1>) are
-// common among agent-generated uploads — the bare selector plus exclusion covers both.
-// The body streams through the rewriter and only title chunks are retained, so a 20MB entry is
-// never buffered. Whitespace-collapsed, trimmed, entity-decoded, capped; empty/absent → null.
-export async function extractHtmlTitle(entry: EntryFile, body: Blob | string): Promise<string | null> {
-  if (!(/\.html?$/i.test(entry.path) || entry.mimeType === 'text/html')) return null
+const clean = (raw: string, limit: number): string | null => {
+  const text = decodeEntities(raw).replace(/\s+/g, ' ').trim()
+  return text ? cap(text, limit).text : null
+}
+
+export type HtmlMeta = { title: string | null; description: string | null }
+
+/** The "nothing derivable" result — also what an upload with no HTML entry at all should use. */
+export const NO_META: HtmlMeta = { title: null, description: null }
+
+// The entry document's <title> and description meta, for the site's display title (when the
+// uploader didn't name it) and the unfurl card's blurb. HTML only — a markdown entry has neither.
+// Title: the FIRST one in document order that is not an <svg>/<template> accessibility/inert title.
+// NOT `head > title`: a streaming rewriter never sees an implied <head>, and headless fragments (a
+// file starting at <style>/<h1>) are common among agent-generated uploads — the bare selector plus
+// exclusion covers both. Description: `og:description` wins over `name="description"` regardless of
+// document order (the author-curated share blurb beats the SEO one), first of each kind wins.
+// The body streams through ONE rewriter pass and only the matched strings are retained, so a 20MB
+// entry is never buffered. Each value is whitespace-collapsed, trimmed, entity-decoded, and capped;
+// empty/absent → null.
+export async function extractHtmlMeta(entry: EntryFile, body: Blob | string): Promise<HtmlMeta> {
+  if (!(/\.html?$/i.test(entry.path) || entry.mimeType === 'text/html')) return NO_META
   // Handlers on the same element fire in registration order, so the exclusion selectors run
   // before the bare 'title' handler and can flag the element it is about to see.
   let excluded = false
@@ -96,6 +112,9 @@ export async function extractHtmlTitle(entry: EntryFile, body: Blob | string): P
       },
     })
   }
+  // Attribute values arrive raw (entities undecoded), same as text chunks — `clean` handles both.
+  let ogDescription: string | null = null
+  let nameDescription: string | null = null
   const transformed = rewriter
     .on('title', {
       element() {
@@ -107,12 +126,22 @@ export async function extractHtmlTitle(entry: EntryFile, body: Blob | string): P
         if (taking) chunks.push(text.text)
       },
     })
+    .on('meta', {
+      element(element) {
+        const content = element.getAttribute('content')
+        if (!content) return
+        if (ogDescription === null && element.getAttribute('property') === 'og:description') {
+          ogDescription = clean(content, DESCRIPTION_CAP)
+        } else if (nameDescription === null && element.getAttribute('name')?.toLowerCase() === 'description') {
+          nameDescription = clean(content, DESCRIPTION_CAP)
+        }
+      },
+    })
     .transform(new Response(body))
   // Drain without collecting the rewritten output (Response.text() would rebuild the whole body).
   const reader = transformed.body?.getReader()
   if (reader) while (!(await reader.read()).done) {}
-  const title = decodeEntities(chunks.join('')).replace(/\s+/g, ' ').trim()
-  return title ? capTitle(title) : null
+  return { title: clean(chunks.join(''), TITLE_CAP), description: ogDescription ?? nameDescription }
 }
 
 export async function extractText(entry: EntryFile, body: string): Promise<Extracted> {

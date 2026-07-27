@@ -8,6 +8,7 @@ import { commentFeed } from '../routes/comment-feed'
 import { comments } from '../routes/comments'
 import { summary } from '../routes/summary'
 import { sites } from '../routes/sites'
+import { slackEvents } from '../routes/slack-events'
 import { spaces } from '../routes/spaces'
 import type { AppEnv } from '../types'
 import { makeDb, makeKv, makeR2, seedUser } from './harness'
@@ -39,7 +40,23 @@ export function makeRouteApp() {
   app.route('/api/sites', comments)
   app.route('/api/sites', summary)
   app.route('/api/comments', commentFeed)
+  app.route('/api/slack', slackEvents)
   return { app, env, db, kv, r2 }
+}
+
+/** Slack's request signature for a raw body — `v0:{ts}:{body}` HMAC'd with the signing secret, hex,
+ *  `v0=`-prefixed. Derived independently of lib/slack-verify so route tests exercise the real
+ *  algorithm rather than replaying the implementation. */
+export async function signSlack(secret: string, body: string, timestamp: number): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  )
+  const mac = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`v0:${timestamp}:${body}`))
+  return `v0=${Array.from(new Uint8Array(mac), (b) => b.toString(16).padStart(2, '0')).join('')}`
 }
 
 export type RouteApp = ReturnType<typeof makeRouteApp>

@@ -71,6 +71,10 @@ jobs:
           # (those are the CloudFront origins). Unset → stays on *.workers.dev (self-host default).
           CF_APP_URL: ${{ vars.CF_APP_URL }}
           CF_CONTENT_URL: ${{ vars.CF_CONTENT_URL }}
+          # Optional Cloudflare Web Analytics beacon token (dash.cloudflare.com → Web Analytics).
+          # Public-by-design (it ships in the served HTML), but kept out of the committed template
+          # so forks don't send RUM to someone else's analytics. Unset → no beacon injected.
+          CF_ANALYTICS_TOKEN: ${{ vars.CF_ANALYTICS_TOKEN }}
         run: |
           : "${CF_ACCOUNT_ID:?set repo Actions variable CF_ACCOUNT_ID}"
           : "${CF_D1_DATABASE_ID:?set repo Actions variable CF_D1_DATABASE_ID}"
@@ -109,6 +113,14 @@ jobs:
                 -e "s#https://glance.${CF_WORKERS_SUBDOMAIN}.workers.dev#${CF_APP_URL}#g" \
                 "$f"
             done
+          fi
+          # Inject the Cloudflare Web Analytics beacon into the SPA shell, if configured. Runs
+          # BEFORE build:web (vite passes the tag through). The committed index.html stays clean —
+          # dev and beaconless self-hosts never load it. _headers already allowlists the beacon
+          # hosts (script-src static.cloudflareinsights.com, connect-src cloudflareinsights.com).
+          if [ -n "${CF_ANALYTICS_TOKEN}" ]; then
+            sed -i "s#</head>#  <script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{\"token\": \"${CF_ANALYTICS_TOKEN}\"}'></script>\n  </head>#" packages/web/index.html
+            grep -q cloudflareinsights packages/web/index.html || { echo "beacon injection failed" >&2; exit 1; }
           fi
 
       - name: Build web

@@ -17,11 +17,13 @@ export type ResolvedSite = {
   spaceId: string
   slug: string
   title: string | null
+  description: string | null
   visibility: Visibility
   status: 'active' | 'archived'
   ownerId: string
   contentVersion: number
   createdAt: string
+  updatedAt: string
 }
 
 const RESOLVED_SITE_COLUMNS = {
@@ -29,11 +31,13 @@ const RESOLVED_SITE_COLUMNS = {
   spaceId: sitesTable.spaceId,
   slug: sitesTable.slug,
   title: sitesTable.title,
+  description: sitesTable.description,
   visibility: sitesTable.visibility,
   status: sitesTable.status,
   ownerId: sitesTable.ownerId,
   contentVersion: sitesTable.contentVersion,
   createdAt: sitesTable.createdAt,
+  updatedAt: sitesTable.updatedAt,
 }
 
 /** Resolve a site by (spaceSlug, siteSlug), joined to its space. Null if missing. */
