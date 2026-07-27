@@ -256,6 +256,14 @@ graph LR
 
 Every mermaid diagram type works (flowchart, sequenceDiagram, stateDiagram-v2, erDiagram, gantt…); each `<pre class="mermaid">` on the page renders independently. Syntax reference: https://mermaid.js.org → "Diagram Syntax".
 
+The dividing line vs hand-written SVG is **auto-layout vs designed geometry**, not size:
+
+- **Mermaid** whenever the visual is a graph of labeled nodes/edges or ordered steps (architecture, flows, sequences, state, ER, dependency maps) — even a 4-box flow. Routing connectors by hand in SVG is where effort goes to die and arrows start overlapping.
+- **Inline SVG** when you want control of the geometry and nothing needs routed connectors: small illustrations, icons, gauges, timelines, badges, decoration. SVG inherits the page's CSS variables/palette, so bespoke visuals stay on-design.
+- **Charts stay recharts/d3** (below) — mermaid's pie/gantt are weak, and hand-SVG charts are wasted effort.
+
+On a designed page, theme mermaid to the palette so diagrams don't look pasted-in: `mermaid.initialize({ startOnLoad: true, theme: 'base', themeVariables: { primaryColor: '…', primaryTextColor: '…', lineColor: '…', fontFamily: '…' } })` — pull the values from the page's CSS custom properties.
+
 ## Building React apps (no build step)
 
 Served HTML has no CSP, so a React SPA is just an `index.html` with an import map — no bundler, no npm install. Paste this `<head>` recipe (pinned versions; add/remove libs as needed):
