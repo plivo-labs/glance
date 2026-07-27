@@ -3,7 +3,7 @@ import { type DrizzleD1Database, drizzle } from 'drizzle-orm/d1'
 import { type Context, Hono } from 'hono'
 import { type DocumentRow, type Site, documents, sites } from '../db/schema'
 import { type DataCapability, type DataClaims, hasCap, signDataToken, verifyDataToken } from '../lib/data-token'
-import { authorizeViewerById, resolveSiteForAccess } from '../lib/site-access'
+import { authorizeViewerById, fetchAccessFacts, siteAccessFromFacts } from '../lib/site-access'
 import { requireAuth } from '../middleware/auth'
 import type { AppEnv, Bindings, SessionUser } from '../types'
 
@@ -348,7 +348,8 @@ dataToken.post('/:space/:site', async (c) => {
   const db = c.get('db')
   const user = c.get('user')
   const { space, site: siteSlug } = c.req.param()
-  const { site, access } = await resolveSiteForAccess(db, space, siteSlug, user)
+  const { facts } = await fetchAccessFacts(db, space, siteSlug, user.id)
+  const { site, access } = siteAccessFromFacts(facts, user)
   if (!site) return c.json({ error: 'not found' }, 404)
   if (!access.ok) return c.json({ error: 'forbidden' }, access.status)
 

@@ -193,12 +193,12 @@ export async function listNotifications(
   userId: string,
   limit = 30,
 ): Promise<{ items: NotificationView[]; unreadCount: number }> {
-  const rows = await db
+  const rowsStmt = db
     .select({
       id: notifications.id,
       type: notifications.type,
       actorId: notifications.actorId,
-      actorName: sql<string | null>`coalesce(${users.name}, ${users.email})`,
+      actorName: sql<string | null>`coalesce(${users.name}, ${users.email})`.as('actorName'),
       siteLabel: notifications.siteLabel,
       filePath: notifications.filePath,
       threadId: notifications.threadId,
@@ -213,10 +213,13 @@ export async function listNotifications(
     .orderBy(desc(notifications.createdAt), sql`notifications.rowid desc`)
     .limit(limit)
 
-  const [{ c }] = await db
-    .select({ c: sql<number>`count(*)` })
+  const countStmt = db
+    .select({ c: sql<number>`count(*)`.as('c') })
     .from(notifications)
     .where(and(eq(notifications.recipientId, userId), isNull(notifications.readAt)))
+
+  // The bell poll is the app's most frequent endpoint — both reads ride one D1 round trip.
+  const [rows, [{ c }]] = await batchAll(db, [rowsStmt, countStmt])
 
   const items: NotificationView[] = rows.map((r) => ({
     id: r.id,

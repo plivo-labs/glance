@@ -3,13 +3,15 @@ import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { Hono } from 'hono'
 import {
   type ShareUser,
+  foldMemberSpaceIds,
+  foldSharedSiteRoles,
   isSpaceMember,
   listSiteShares,
-  memberSpaceIds,
+  memberSpaceIdsStmt,
   replaceSiteShares,
   resolveShareAccess,
   resolveShareRole,
-  sharedSiteIds,
+  sharedSiteRoleStmts,
   sharedSiteRoles,
 } from '../db/repo'
 import type { Visibility } from '../db/schema'
@@ -89,8 +91,13 @@ export async function searchSites(
   const qMatch = sql`(lower(${sitesTable.title}) like ${term} escape '\\' or lower(${sitesTable.slug}) like ${term} escape '\\' or lower(${spaces.slug}) like ${term} escape '\\' or lower(${spaces.name}) like ${term} escape '\\')`
 
   const isSuper = user.role === 'superadmin'
-  const memberSpaces = isSuper ? new Set<string>() : await memberSpaceIds(db, user.id)
-  const shared = isSuper ? new Set<string>() : await sharedSiteIds(db, user.id)
+  // Per-keystroke endpoint: both reach-set reads ride ONE db.batch (comment-feed.ts fuses the
+  // same statements the same way).
+  const [memberRows, direct, viaGroup] = isSuper
+    ? [[], [], []]
+    : await batchAll(db, [memberSpaceIdsStmt(db, user.id), ...sharedSiteRoleStmts(db, user.id)])
+  const memberSpaces = foldMemberSpaceIds(memberRows)
+  const shared = new Set(foldSharedSiteRoles(direct, viaGroup).keys())
 
   // Candidate reach as a set of bounded WHERE clauses, unioned in memory: `X AND (A OR B OR C)`
   // ≡ union of `X AND A`, `X AND B`, `X AND C`. Member-space / shared id lists are chunked under
@@ -107,7 +114,9 @@ export async function searchSites(
   const cols = {
     id: sitesTable.id,
     spaceId: sitesTable.spaceId,
-    spaceSlug: spaces.slug,
+    // Aliased: inside db.batch real D1 maps rows by column NAME, and spaces.slug would collide
+    // with sites.slug (both emit "slug").
+    spaceSlug: sql<string>`${spaces.slug}`.as('spaceSlug'),
     siteSlug: sitesTable.slug,
     title: sitesTable.title,
     visibility: sitesTable.visibility,
@@ -115,7 +124,8 @@ export async function searchSites(
     ownerId: sitesTable.ownerId,
     createdAt: sitesTable.createdAt,
   }
-  const batches = await Promise.all(
+  const batches = await batchAll(
+    db,
     reaches.map((reach) =>
       db
         .select(cols)
