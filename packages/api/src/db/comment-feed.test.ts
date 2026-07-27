@@ -730,7 +730,7 @@ describe('assembleCommentFeed', () => {
     expect(authored).toEqual({
       kind: 'authored',
       id: 'authored-payload',
-      snippet: 'x'.repeat(200),
+      snippet: `${'x'.repeat(200)}…`,
       actorName: null,
       spaceSlug: 'authored-space',
       siteSlug: 'authored-site',
@@ -763,8 +763,8 @@ describe('assembleCommentFeed', () => {
       memberSpaceIds: new Set(),
       sharedSiteRoles: new Map(),
     })
-    expect(surrogateItem?.snippet?.length).toBe(199)
-    expect(surrogateItem?.snippet).toBe('x'.repeat(199))
+    expect(surrogateItem?.snippet?.length).toBe(200)
+    expect(surrogateItem?.snippet).toBe(`${'x'.repeat(199)}…`)
 
     // The notification snippet is a write-time snapshot: editing or deleting its source comment
     // later does not change the feed payload.

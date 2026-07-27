@@ -86,6 +86,22 @@ describe('W — comment route fans out to Slack', () => {
     expect(posts[0].text).toContain('&amp;review=1')
   })
 
+  test('W1b: long comment → Slack quote cut at 1500 + ellipsis, in-app snippet cut at 200 + ellipsis', async () => {
+    const { app, env, db, kv, owner } = await seedCommentApp({ ownerEmail: 'owner@x.com', commenterEmail: 'c@x.com' })
+    await kv.put('slackuid:owner@x.com', 'Uowner')
+    const { fetchImpl, posts } = slackFetch()
+    const res = await postComment(app, bindings(env, { SLACK_BOT_TOKEN: 'xoxb', SLACK_FETCH: fetchImpl }), {
+      body: `${'a'.repeat(1500)}TAIL`,
+      filePath: 'index.html',
+    })
+    expect(res.status).toBe(201)
+    expect(posts).toHaveLength(1)
+    expect(posts[0].text).toContain(`> _${'a'.repeat(1500)}…_`) // Slack cap, marked as a cut
+    expect(posts[0].text).not.toContain('TAIL')
+    const inApp = await listNotifications(db, owner)
+    expect(inApp.items[0]?.snippet).toBe(`${'a'.repeat(200)}…`) // feed cap unchanged, marked as a cut
+  })
+
   test('W2: 1 mention + 1 comment recipient → 2 posts, mention body first', async () => {
     const { app, env, db, kv } = await seedCommentApp({ ownerEmail: 'owner@x.com', commenterEmail: 'c@x.com' })
     const mentioned = await seedUser(db, { id: 'mtn', email: 'mtn@x.com' })
