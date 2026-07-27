@@ -146,6 +146,8 @@ describe('POST /api/slack/events — link_shared', () => {
     expect(card).toContain('Q3 Report')
     expect(card).toContain('How the numbers moved')
     expect(card).toContain(url)
+    // The thumbnail: a SIGNED image_url on the CONTENT origin (Slack fetches it unauthenticated).
+    expect(card).toMatch(/content\.example\.com\/_glance\/og\/acme\/report\.png\?sig=[0-9a-f]{64}/)
   })
 
   test('a PRIVATE site the sharer cannot read → no card at all (no title, no existence signal)', async () => {

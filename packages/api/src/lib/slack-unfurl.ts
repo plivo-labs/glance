@@ -41,20 +41,51 @@ export function parseSiteUrl(raw: string, appUrl: string): ParsedSiteUrl | null 
   return { spaceSlug, siteSlug }
 }
 
-/** Block Kit blocks for one site card: bold linked title, the derived blurb, and a context line
- *  naming the space/site. Slack renders `text` fields as mrkdwn, so the two author-controlled
- *  strings (title, description) go through `escapeSlack`; the slugs are `[a-z0-9-]` and need none. */
-export function buildUnfurlBlocks(
-  site: { title: string | null; description: string | null; slug: string },
-  spaceSlug: string,
-  url: string,
-): SlackBlock[] {
+/** Coarse "Updated …" clause for the card's context line. Sub-minute (and any clock skew that
+ *  makes the timestamp look future) collapses to "just now"; an unparseable timestamp yields
+ *  null so the caller drops the clause rather than rendering "NaN days ago". */
+export function relativeTime(iso: string, nowMs: number): string | null {
+  const diff = nowMs - Date.parse(iso)
+  if (Number.isNaN(diff)) return null
+  const ago = (v: number, unit: string) => `${v} ${unit}${v === 1 ? '' : 's'} ago`
+  const minutes = Math.floor(diff / 60_000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return ago(minutes, 'minute')
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return ago(hours, 'hour')
+  const days = Math.floor(hours / 24)
+  if (days < 31) return ago(days, 'day')
+  const months = Math.floor(days / 30)
+  if (months < 12) return ago(months, 'month')
+  return ago(Math.floor(months / 12), 'year')
+}
+
+/** Everything the card renders, assembled by the route from the access-facts batch. `imageUrl`
+ *  is the signed brand-card PNG, absent when unavailable. */
+export type UnfurlCard = {
+  title: string | null
+  slug: string
+  description: string | null
+  updatedAt: string
+  imageUrl?: string
+}
+
+/** Block Kit blocks for one site card: bold linked title, the derived blurb, the brand image,
+ *  and a context line with space/site · freshness. Slack renders `text` fields as mrkdwn, so the
+ *  author-controlled strings (title, description) go through `escapeSlack`; the slugs are
+ *  `[a-z0-9-]` and need none. */
+export function buildUnfurlBlocks(card: UnfurlCard, spaceSlug: string, url: string, nowMs: number): SlackBlock[] {
+  const updated = relativeTime(card.updatedAt, nowMs)
+  const meta = [`Glance · ${spaceSlug}/${card.slug}`, ...(updated ? [`Updated ${updated}`] : [])]
   return [
-    { type: 'section', text: { type: 'mrkdwn', text: `*${slackLink(url, site.title ?? site.slug)}*` } },
-    ...(site.description
-      ? [{ type: 'section', text: { type: 'mrkdwn', text: escapeSlack(site.description) } } as SlackBlock]
+    { type: 'section', text: { type: 'mrkdwn', text: `*${slackLink(url, card.title ?? card.slug)}*` } },
+    ...(card.description
+      ? [{ type: 'section', text: { type: 'mrkdwn', text: escapeSlack(card.description) } } as SlackBlock]
       : []),
-    { type: 'context', elements: [{ type: 'mrkdwn', text: `Glance · ${spaceSlug}/${site.slug}` }] },
+    ...(card.imageUrl
+      ? [{ type: 'image', image_url: card.imageUrl, alt_text: card.title ?? card.slug } as SlackBlock]
+      : []),
+    { type: 'context', elements: [{ type: 'mrkdwn', text: meta.join(' · ') }] },
   ]
 }
 

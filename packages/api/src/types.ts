@@ -35,6 +35,10 @@ export interface Bindings {
   // env to capture users.lookupByEmail / chat.postMessage without touching global fetch. Never set in
   // prod — unset → deliverSlack falls back to globalThis.fetch.
   SLACK_FETCH?: typeof fetch
+  // DI seam for the unfurl-card PNG renderer (same idiom as SLACK_FETCH): route tests inject a fake
+  // so the satori/resvg wasm never loads under bun. Never set in prod — unset → lib/og-image's
+  // renderOgPng.
+  OG_RENDER?: (card: { title: string; spaceSlug: string; siteSlug: string }) => Promise<Response>
   SESSION_SECRET: string
   CONTENT_TOKEN_SECRET: string
   // Optional: separate HMAC secret for the shared-backend data-plane tokens (glance.db SDK).

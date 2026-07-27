@@ -16,7 +16,8 @@
     "arctic": "^3.7.0",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.12.0",
-    "marked": "^18.0.5"
+    "marked": "^18.0.5",
+    "workers-og": "^0.0.27"
   },
   "devDependencies": {
     "drizzle-kit": "^0.31.10",

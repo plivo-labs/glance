@@ -23,6 +23,7 @@ export type ResolvedSite = {
   ownerId: string
   contentVersion: number
   createdAt: string
+  updatedAt: string
 }
 
 const RESOLVED_SITE_COLUMNS = {
@@ -36,6 +37,7 @@ const RESOLVED_SITE_COLUMNS = {
   ownerId: sitesTable.ownerId,
   contentVersion: sitesTable.contentVersion,
   createdAt: sitesTable.createdAt,
+  updatedAt: sitesTable.updatedAt,
 }
 
 /** Resolve a site by (spaceSlug, siteSlug), joined to its space. Null if missing. */

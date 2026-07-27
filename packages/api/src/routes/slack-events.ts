@@ -1,6 +1,7 @@
 import { type Context, Hono } from 'hono'
 import { getUserByEmail, toSessionUser } from '../db/repo'
 import { fireAndForget } from '../lib/events'
+import { ogImageUrl, signOgSig } from '../lib/og-image'
 import { fetchAccessFacts, siteAccessFromFacts } from '../lib/site-access'
 import { lookupSlackEmail, slackDepsFromEnv, slackUnfurlEnabled } from '../lib/slack'
 import {
@@ -9,6 +10,7 @@ import {
   type ParsedSiteUrl,
   postUnfurl,
   type SlackBlock,
+  type UnfurlCard,
   type UnfurlTarget,
 } from '../lib/slack-unfurl'
 import { verifySlackSignature } from '../lib/slack-verify'
@@ -105,6 +107,7 @@ async function unfurlLinks(c: Context<AppEnv>, event: LinkSharedEvent): Promise<
 
   // One batched access read per site, all in flight together — the sites are independent, and D1's
   // primary is far enough away that serializing these would dominate the whole handler.
+  const now = Date.now()
   const cards = await Promise.all(
     targets.map(async ({ parsed, urls }) => {
       // checkAccess is the single source of truth (lib/access.ts) — archived sites and every
@@ -112,7 +115,18 @@ async function unfurlLinks(c: Context<AppEnv>, event: LinkSharedEvent): Promise<
       const { facts } = await fetchAccessFacts(db, parsed.spaceSlug, parsed.siteSlug, user.id)
       const { site, access } = siteAccessFromFacts(facts, user)
       if (!site || !access.ok) return []
-      return urls.map((url) => [url, { blocks: buildUnfurlBlocks(site, parsed.spaceSlug, url) }] as const)
+      // The card image is fetched by Slack unauthenticated, so its URL carries an HMAC minted
+      // HERE — only sites that already passed the sharer's access check ever get a signed URL.
+      // CONTENT_TOKEN_SECRET because the image is served by the CONTENT worker (lib/og-image.ts).
+      const sig = await signOgSig(c.env.CONTENT_TOKEN_SECRET, parsed.spaceSlug, parsed.siteSlug)
+      const card: UnfurlCard = {
+        title: site.title,
+        slug: site.slug,
+        description: site.description,
+        updatedAt: site.updatedAt,
+        imageUrl: ogImageUrl(c.env.CONTENT_URL, parsed.spaceSlug, parsed.siteSlug, sig),
+      }
+      return urls.map((url) => [url, { blocks: buildUnfurlBlocks(card, parsed.spaceSlug, url, now) }] as const)
     }),
   )
 
