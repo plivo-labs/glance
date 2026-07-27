@@ -5,6 +5,11 @@ export function Spinner({ className }: { className?: string }) {
   return <Loader2 className={cn('size-4 animate-spin', className)} />
 }
 
+/** The brand mark (favicon.svg) with the primary glow — the header logo in AppShell and the viewer. */
+export function BrandMark() {
+  return <img src="/favicon.svg" alt="" className="size-4 rounded-[4px] shadow-[0_0_8px_0_var(--primary)]" />
+}
+
 export function PageHeader({
   title,
   description,

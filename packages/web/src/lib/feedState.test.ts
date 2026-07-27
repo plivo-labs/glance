@@ -95,7 +95,7 @@ describe('deriveFeedState', () => {
 
     expect(state.tabs).toEqual([
       { id: 'sites', label: 'Your sites', count: null, content: { kind: 'loading' } },
-      { id: 'shared', label: 'Shared with me', count: 3, content: { kind: 'rows', rows: theirs } },
+      { id: 'shared', label: 'Shared with me', count: 3, rows: theirs },
       { id: 'team', label: 'Team activity', count: null, content: { kind: 'loading' } },
       { id: 'comments', label: 'Comments', count: null, content: { kind: 'loading' } },
     ])
@@ -122,18 +122,8 @@ describe('deriveFeedState', () => {
 
     expect(state.tabs).toEqual([
       { id: 'sites', label: 'Your sites', count: 1, content: { kind: 'rows', rows: mine } },
-      {
-        id: 'shared',
-        label: 'Shared with me',
-        count: 1,
-        content: { kind: 'rows', rows: [site('s')] },
-      },
-      {
-        id: 'spaces',
-        label: 'Your spaces',
-        count: 1,
-        content: { kind: 'rows', rows: [space('g', 'group')] },
-      },
+      { id: 'shared', label: 'Shared with me', count: 1, rows: [site('s')] },
+      { id: 'spaces', label: 'Your spaces', count: 1, rows: [space('g', 'group')] },
       { id: 'team', label: 'Team activity', count: null, content: { kind: 'error', message: 'D1 exploded' } },
       { id: 'comments', label: 'Comments', count: null, content: { kind: 'loading' } },
     ])
@@ -179,7 +169,7 @@ describe('deriveFeedState', () => {
       id: 'spaces',
       label: 'Your spaces',
       count: 2,
-      content: { kind: 'rows', rows: groups },
+      rows: groups,
     })
   })
 
@@ -321,12 +311,7 @@ describe('deriveFeedState', () => {
         expected: {
           tabs: [
             { id: 'sites', label: 'Your sites', count: null, content: { kind: 'loading' } },
-            {
-              id: 'shared',
-              label: 'Shared with me',
-              count: 1,
-              content: { kind: 'rows', rows: [site('shared')] },
-            },
+            { id: 'shared', label: 'Shared with me', count: 1, rows: [site('shared')] },
             { id: 'team', label: 'Team activity', count: null, content: { kind: 'loading' } },
           ],
           activeTab: 'team',

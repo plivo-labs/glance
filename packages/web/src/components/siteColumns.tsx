@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { ExternalLink, Mic, Sparkles } from 'lucide-react'
+import { CopyButton } from '@/components/CopyButton'
 import type { Column } from '@/components/SortableTable'
 import { VisibilityBadge } from '@/components/visibility'
 import { Badge } from '@/components/ui/badge'
@@ -83,6 +84,23 @@ export function OpenLinkButton({ url }: { url: string }) {
 // the buttons (Open + kebab / Copy + Open / Open).
 export function actionsColumn<T>(render: (row: T) => ReactNode): Column<T> {
   return { key: 'actions', label: '', headClassName: 'text-right', cellClassName: 'text-right', render }
+}
+
+// The read-only feed table — Name / URL / Visibility / Created plus caller-supplied trailing
+// actions. Shared by the dashboard's "Shared with me" tab and the space page's sites table.
+export function feedColumns<T extends SiteSummary>(actions: (row: T) => ReactNode): Column<T>[] {
+  return [nameColumn(), urlColumn(), visibilityBadgeColumn(), createdColumn(), actionsColumn(actions)]
+}
+
+/** Copy + Open trailing cell; `children` appends row-specific extras (e.g. an owner's Share). */
+export function CopyOpenActions({ url, children }: { url: string; children?: ReactNode }) {
+  return (
+    <div className="flex items-center justify-end gap-1">
+      <CopyButton text={url} label="" variant="outline" />
+      <OpenLinkButton url={url} />
+      {children}
+    </div>
+  )
 }
 
 export function createdColumn<T extends SiteSummary>(key = 'created', label = 'Created'): Column<T> {

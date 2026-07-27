@@ -23,9 +23,8 @@ export interface FeedSlots {
   comments: FeedSlot<CommentFeedItem[]>
 }
 
-export type TabId = 'sites' | 'shared' | 'spaces' | 'team' | 'comments'
-
-const TAB_IDS: readonly TabId[] = ['sites', 'shared', 'spaces', 'team', 'comments']
+export const TAB_IDS = ['sites', 'shared', 'spaces', 'team', 'comments'] as const
+export type TabId = (typeof TAB_IDS)[number]
 
 /** Parse a ?tab= URL value: a known tab id passes through, anything else means 'sites'. */
 export const tabFromParam = (value: string | null): TabId =>
@@ -37,10 +36,12 @@ export type TabContent<T> =
   | { kind: 'error'; message: string }
 
 // Discriminated on `id` so the component can switch and get the right row type per tab.
+// Shared and Spaces exist only when their feed resolved with rows, so they carry `rows`
+// directly — a conditional tab being "loading" or "errored" is unrepresentable.
 export type DashboardTab =
   | { id: 'sites'; label: 'Your sites'; count: number | null; content: TabContent<SiteSummary[]> }
-  | { id: 'shared'; label: 'Shared with me'; count: number; content: TabContent<SiteSummary[]> }
-  | { id: 'spaces'; label: 'Your spaces'; count: number; content: TabContent<SpaceSummary[]> }
+  | { id: 'shared'; label: 'Shared with me'; count: number; rows: SiteSummary[] }
+  | { id: 'spaces'; label: 'Your spaces'; count: number; rows: SpaceSummary[] }
   | { id: 'team'; label: 'Team activity'; count: null; content: TabContent<TeamUpload[]> }
   | { id: 'comments'; label: 'Comments'; count: null; content: TabContent<CommentFeedItem[]> }
 
@@ -94,24 +95,10 @@ export function deriveFeedState(slots: FeedSlots, view: { requestedTab: TabId })
       content: contentOf(slots.sites),
     },
     ...(slots.shared.status === 'resolved' && slots.shared.data.length > 0
-      ? [
-          {
-            id: 'shared',
-            label: 'Shared with me',
-            count: slots.shared.data.length,
-            content: { kind: 'rows', rows: slots.shared.data },
-          } as const,
-        ]
+      ? [{ id: 'shared', label: 'Shared with me', count: slots.shared.data.length, rows: slots.shared.data } as const]
       : []),
     ...(groupSpaces !== null && groupSpaces.length > 0
-      ? [
-          {
-            id: 'spaces',
-            label: 'Your spaces',
-            count: groupSpaces.length,
-            content: { kind: 'rows', rows: groupSpaces },
-          } as const,
-        ]
+      ? [{ id: 'spaces', label: 'Your spaces', count: groupSpaces.length, rows: groupSpaces } as const]
       : []),
     { id: 'team', label: 'Team activity', count: null, content: contentOf(slots.team) },
     { id: 'comments', label: 'Comments', count: null, content: contentOf(slots.comments) },
@@ -122,14 +109,11 @@ export function deriveFeedState(slots: FeedSlots, view: { requestedTab: TabId })
     tabs,
     activeTab: exists ? view.requestedTab : 'sites',
     unauthorized: Object.values(slots).some(isUnauthorized),
-    // Only Shared and Spaces can be absent; each goes stale only once its own feed RESOLVES
-    // without the tab. A rejected feed (transient 500, network blip, or the 401 that's about to
-    // redirect to login) proves nothing about the tab's absence — erasing the ?tab= deep link
+    // An absent tab can only be Shared or Spaces; it goes stale only once its own feed RESOLVES
+    // without producing it. A rejected feed (transient 500, network blip, or the 401 that's about
+    // to redirect to login) proves nothing about the tab's absence — erasing the ?tab= deep link
     // there would lose it across a refresh or the login round-trip.
-    staleTab:
-      !exists &&
-      ((view.requestedTab === 'shared' && slots.shared.status === 'resolved') ||
-        (view.requestedTab === 'spaces' && slots.spaces.status === 'resolved')),
+    staleTab: !exists && slots[view.requestedTab].status === 'resolved',
   }
 }
 

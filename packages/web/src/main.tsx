@@ -12,6 +12,7 @@ import { AppShell } from './components/AppShell'
 import { Button } from './components/ui/button'
 import { Toaster } from './components/ui/sonner'
 import { api, ApiError } from './lib/api'
+import { skipSearchOnlyRevalidation } from './lib/nav'
 import { EMPTY_NOTIFICATIONS, type RootData, notifications } from './lib/notifications'
 import type { Me } from './lib/types'
 import { EMPTY_WHATS_NEW, whatsNew } from './lib/whatsNew'
@@ -78,14 +79,9 @@ const router = createBrowserRouter([
     id: 'root',
     Component: AppShell,
     loader: rootLoader,
-    // Same-path search-only navigations (the dashboard's ?tab= / ?new= params) must not re-run
-    // this loader: it AWAITS /api/auth/me (so every tab click would block on a network round
-    // trip) and would hand the Bell/WhatsNew <Await>s fresh promise identities, re-suspending
-    // them to their unread=0 fallbacks. Mirrors the dashboard route's own shouldRevalidate.
-    shouldRevalidate: ({ currentUrl, nextUrl, defaultShouldRevalidate }) =>
-      currentUrl.pathname === nextUrl.pathname && currentUrl.search !== nextUrl.search
-        ? false
-        : defaultShouldRevalidate,
+    // This loader AWAITS /api/auth/me and its promises feed the Bell/WhatsNew <Await>s — a
+    // search-only re-run would block the navigation and flash those badges to zero.
+    shouldRevalidate: skipSearchOnlyRevalidation,
     ErrorBoundary: RootError,
     children: [
       { index: true, loader: () => redirect('/dashboard') },

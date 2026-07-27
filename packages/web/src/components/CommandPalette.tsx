@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/command'
 import { toggleTheme } from '@/components/theme'
 import { api } from '@/lib/api'
+import { newSpaceHref } from '@/lib/nav'
 import { encodePathSegments } from '@/lib/paths'
 import { siteName, useRecents, visibleEntries } from '@/lib/recents'
 import type { Me, SiteSummary, SpaceSummary } from '@/lib/types'
@@ -174,16 +175,7 @@ export function CommandPalette({
               Admin
             </CommandItem>
           )}
-          <CommandItem
-            onSelect={() =>
-              run(() => {
-                // Merge, don't clobber: already on /dashboard means an active ?tab= to preserve.
-                const params = new URLSearchParams(location.pathname === '/dashboard' ? location.search : '')
-                params.set('new', 'space')
-                navigate(`/dashboard?${params}`)
-              })
-            }
-          >
+          <CommandItem onSelect={() => run(() => navigate(newSpaceHref(location)))}>
             <Plus />
             New space
           </CommandItem>
