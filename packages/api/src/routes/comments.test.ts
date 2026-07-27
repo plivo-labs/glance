@@ -126,21 +126,50 @@ describe('comments routes — auth / access / authz', () => {
     expect(byAuthor.status).toBe(200)
   })
 
-  test('owner-superadmin-resolve-and-delete-any: owner resolves + deletes a member comment; member cannot resolve', async () => {
+  test('non-author-member-cannot-delete: another member deleting someone else\'s comment → 403; author can delete own', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    const author = await mintUser(db, kv, { id: 'author' })
+    const other = await mintUser(db, kv, { id: 'other' })
+    const { spaceId } = await seedSiteWithFile(db, r2, owner, 'members')
+    await seedMember(db, spaceId, author)
+    await seedMember(db, spaceId, other)
+    const created = await (await app.request(url(), { method: 'POST', headers: auth(author), body: JSON.stringify({ filePath: 'index.html', body: 'mine', quote: 'fox' }) }, env)).json()
+    const commentId = (await (await app.request(url('?filePath=index.html'), { headers: auth(author) }, env)).json())[0].comments[0].id
+    const path = url(`/${created.threadId}/messages/${commentId}`)
+
+    const byOther = await app.request(path, { method: 'DELETE', headers: auth(other) }, env)
+    expect(byOther.status).toBe(403)
+    // The comment must still be intact — a 403 must not have soft-deleted it.
+    const after = await (await app.request(url('?filePath=index.html'), { headers: auth(author) }, env)).json()
+    expect(after[0].comments[0].deleted).toBe(false)
+
+    const byAuthor = await app.request(path, { method: 'DELETE', headers: auth(author) }, env)
+    expect(byAuthor.status).toBe(200)
+  })
+
+  test('delete-is-author-only: owner and superadmin cannot delete a member comment; resolve moderation unchanged', async () => {
     const { app, env, db, r2, kv } = await setup()
     const owner = await mintUser(db, kv, { id: 'owner' })
     const member = await mintUser(db, kv, { id: 'member' })
+    const admin = await mintUser(db, kv, { id: 'admin', role: 'superadmin' })
     const { spaceId } = await seedSiteWithFile(db, r2, owner, 'members')
     await seedMember(db, spaceId, member)
     const created = await (await app.request(url(), { method: 'POST', headers: auth(member), body: JSON.stringify({ filePath: 'index.html', body: 'mine', quote: 'fox' }) }, env)).json()
     const commentId = (await (await app.request(url('?filePath=index.html'), { headers: auth(member) }, env)).json())[0].comments[0].id
+    const msgPath = url(`/${created.threadId}/messages/${commentId}`)
 
     const memberResolve = await app.request(url(`/${created.threadId}`), { method: 'PATCH', headers: auth(member), body: JSON.stringify({ status: 'resolved' }) }, env)
     expect(memberResolve.status).toBe(403)
     const ownerResolve = await app.request(url(`/${created.threadId}`), { method: 'PATCH', headers: auth(owner), body: JSON.stringify({ status: 'resolved' }) }, env)
     expect(ownerResolve.status).toBe(200)
-    const ownerDelete = await app.request(url(`/${created.threadId}/messages/${commentId}`), { method: 'DELETE', headers: auth(owner) }, env)
-    expect(ownerDelete.status).toBe(200)
+
+    const ownerDelete = await app.request(msgPath, { method: 'DELETE', headers: auth(owner) }, env)
+    expect(ownerDelete.status).toBe(403)
+    const adminDelete = await app.request(msgPath, { method: 'DELETE', headers: auth(admin) }, env)
+    expect(adminDelete.status).toBe(403)
+    const authorDelete = await app.request(msgPath, { method: 'DELETE', headers: auth(member) }, env)
+    expect(authorDelete.status).toBe(200)
 
     // soft-delete-keeps-thread-shape: the comment row survives, body redacted.
     const after = await (await app.request(url('?filePath=index.html'), { headers: auth(owner) }, env)).json()

@@ -68,7 +68,7 @@ export function ThreadCard({
                 </Badge>
               )}
               {c.editedAt && !c.deleted && <span>(edited)</span>}
-              {!c.deleted && (c.authorId === me?.id || canModerate) && (
+              {!c.deleted && c.authorId === me?.id && (
                 <button
                   type="button"
                   onClick={() => run(() => comments.remove(site, thread.id, c.id))}
