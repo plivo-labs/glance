@@ -1,6 +1,6 @@
 ---
 name: glance-cli
-description: Use the `glance` CLI to build a self-contained HTML explainer/dashboard for a codebase or system and publish it — "explain with html", "make an html dashboard", "visualize this architecture", "a simple HTML summary for my boss" — or to deploy any file/folder to a Glance instance and get a URL, manage sites (list, delete, move, fork), and close the review loop from the terminal (pull a site's review comments, reply to a thread, then redeploy).
+description: Use the `glance` CLI to build a self-contained HTML explainer/dashboard for a codebase or system and publish it — "explain with html", "make an html dashboard", "visualize this architecture", "a simple HTML summary for my boss" — or to deploy any file/folder to a Glance instance and get a URL, manage sites (list, delete, move, fork), and close the review loop from the terminal (pull a site's review comments, reply to a thread, then redeploy). Also hosts no-build React SPAs (import-map recipe included) and mermaid diagrams.
 ---
 
 # Glance CLI
@@ -238,6 +238,55 @@ any document (moderation); other viewers can never change existing documents · 
 the site's sharing — lose access to the site, lose access to its data. If it errors with "not
 enabled", ask your Glance admin to turn the feature on.
 
+## Diagrams & flowcharts — default to mermaid
+
+For any flowchart, sequence, architecture, or state diagram, reach for **mermaid FIRST**: it auto-layouts from text — no positions, no React, two lines total. Only step up to React Flow (below) when nodes must be interactive (drag, click handlers, custom node components).
+
+```html
+<script type="module">
+  import mermaid from 'https://esm.sh/mermaid@11'
+  mermaid.initialize({ startOnLoad: true })
+</script>
+<pre class="mermaid">
+graph LR
+  CLI[glance CLI] --> API[main worker] --> R2[(R2)]
+  API --> D1[(D1)]
+</pre>
+```
+
+Every mermaid diagram type works (flowchart, sequenceDiagram, stateDiagram-v2, erDiagram, gantt…); each `<pre class="mermaid">` on the page renders independently. Syntax reference: https://mermaid.js.org → "Diagram Syntax".
+
+## Building React apps (no build step)
+
+Served HTML has no CSP, so a React SPA is just an `index.html` with an import map — no bundler, no npm install. Paste this `<head>` recipe (pinned versions; add/remove libs as needed):
+
+```html
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@19.1.0",
+    "react/jsx-runtime": "https://esm.sh/react@19.1.0/jsx-runtime",
+    "react-dom/client": "https://esm.sh/react-dom@19.1.0/client",
+    "lodash": "https://esm.sh/lodash-es@4.17.21",
+    "d3": "https://esm.sh/d3@7.9.0",
+    "recharts": "https://esm.sh/recharts@2.15.0?deps=react@19.1.0",
+    "lucide-react": "https://esm.sh/lucide-react@0.525.0?deps=react@19.1.0",
+    "@xyflow/react": "https://esm.sh/@xyflow/react@12.8.2?deps=react@19.1.0,react-dom@19.1.0"
+  }
+}
+</script>
+<script src="https://esm.sh/@babel/standalone@7.26.0/babel.min.js"></script>
+<!-- only if using @xyflow/react (React Flow — INTERACTIVE node/edge graphs; static diagrams → mermaid above): -->
+<link rel="stylesheet" href="https://esm.sh/@xyflow/react@12.8.2/dist/style.css">
+```
+
+Then write normal React in `<script type="text/babel" data-type="module" data-presets="react">` — standard imports (`import { useState } from 'react'`), JSX transpiled in-browser, `createRoot(document.getElementById('root')).render(<App/>)`.
+
+- **Pin `?deps=react@19.1.0` on any lib that itself depends on react** (recharts, lucide-react…) — without it esm.sh loads a second react copy → "invalid hook call".
+- **React Flow (`@xyflow/react`) is for INTERACTIVE graphs only — static diagrams belong to mermaid (above).** It does NOT auto-layout: don't hand-place `position: {x,y}`, compute positions with dagre (add `"@dagrejs/dagre": "https://esm.sh/@dagrejs/dagre@1.1.5"` to the import map) per React Flow's layouting docs. Give the `<ReactFlow>` wrapper an explicit height (`height: 100vh`) — with no height the canvas renders blank.
+- **Multi-file works**: relative ESM imports (`import { Chart } from './chart.js'`) resolve against the site's files. Hash routing (`#/page`) for client-side navigation.
+- **Big/TS apps**: skip the recipe — build locally (`vite build` / `bun build`) and `glance deploy ./dist`.
+
 ## Explaining code or a system as HTML
 
 When the user wants to understand — or share understanding of — a codebase, module, system, or technical query, don't answer in prose: build ONE self-contained, visually distinctive `.html` page and deploy it. This turns "explain X" into an artifact someone can open, click through, and share via URL.
@@ -260,7 +309,7 @@ When the user wants to understand — or share understanding of — a codebase, 
 ```bash
 glance deploy <file>.html      # --name defaults to the filename slug; renders at the site root
 ```
-Report the returned `✓ Deployed → <url>` as the deliverable — not the prose. Visibility defaults to `team`; use `--visibility public` only when the link must open for someone outside the team (e.g. a boss without a Glance account), and confirm before a public deploy. Re-deploying the same name prompts `Replace? (y/N)` and updates the live URL in place — matches the "living doc" behavior above.
+Report the returned `✓ Deployed → <url>` as the deliverable — not the prose. Visibility defaults to `team`; there is no public tier — every viewer needs a Glance login. Re-deploying the same name prompts `Replace? (y/N)` and updates the live URL in place — matches the "living doc" behavior above.
 
 ### Anti-patterns
 - Explaining from memory/assumption instead of reading the code.
