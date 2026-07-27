@@ -76,7 +76,8 @@ function canComment(_site: ResolvedSite, access: { ok: boolean }): boolean {
   return access.ok
 }
 
-// Site owner or superadmin may resolve/reopen any thread and delete any comment.
+// Site owner or superadmin may resolve/reopen any thread. Deleting a comment is AUTHOR-ONLY —
+// deliberately not a moderation power (nobody, superadmin included, deletes someone else's words).
 const canModerate = (site: ResolvedSite, user: SessionUser): boolean =>
   site.ownerId === user.id || user.role === 'superadmin'
 
@@ -600,13 +601,12 @@ comments.patch('/:space/:site/comments/:threadId/messages/:commentId', async (c)
   return c.json({ ok: true })
 })
 
-// DELETE — soft-delete a comment (author, or owner/superadmin). S9c fused pre-write batch.
+// DELETE — soft-delete a comment (author only, like edit). S9c fused pre-write batch.
 comments.delete('/:space/:site/comments/:threadId/messages/:commentId', async (c) => {
   const gate = await siteWithUrlComment(c)
   if (gate instanceof Response) return gate
-  const { site, comment } = gate
-  const user = c.get('user')
-  if (comment.authorId !== user.id && !canModerate(site, user)) return c.json({ error: 'forbidden' }, 403)
+  const { comment } = gate
+  if (comment.authorId !== c.get('user').id) return c.json({ error: 'forbidden' }, 403)
   // Capture the audio key before the delete nulls it, then hard-delete the recording off the
   // serving path — the row survives redacted, the audio does not (documented voice asymmetry).
   const { audioKey } = comment
