@@ -5,11 +5,11 @@ import { signedOgImageUrl } from '../lib/og-image'
 import { fetchAccessFacts, siteAccessFromFacts } from '../lib/site-access'
 import { lookupSlackEmail, slackDepsFromEnv, slackUnfurlEnabled } from '../lib/slack'
 import {
-  buildUnfurlBlocks,
+  buildUnfurlAttachment,
   parseSiteUrl,
   type ParsedSiteUrl,
   postUnfurl,
-  type SlackBlock,
+  type SlackAttachment,
   type UnfurlCard,
   type UnfurlTarget,
 } from '../lib/slack-unfurl'
@@ -126,9 +126,9 @@ async function unfurlLinks(c: Context<AppEnv>, event: LinkSharedEvent): Promise<
         updatedAt: site.updatedAt,
         imageUrl: await signedOgImageUrl(c.env.CONTENT_TOKEN_SECRET, c.env.CONTENT_URL, parsed.spaceSlug, parsed.siteSlug),
       }
-      return urls.map((url) => [url, { blocks: buildUnfurlBlocks(card, url, now) }] as const)
+      return urls.map((url) => [url, buildUnfurlAttachment(card, url, now)] as const)
     }),
   )
 
-  await postUnfurl(deps, event, Object.fromEntries(cards.flat()) as Record<string, { blocks: SlackBlock[] }>)
+  await postUnfurl(deps, event, Object.fromEntries(cards.flat()) as Record<string, SlackAttachment>)
 }

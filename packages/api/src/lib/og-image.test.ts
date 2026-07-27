@@ -27,16 +27,17 @@ describe('og signature', () => {
   test('signedOgImageUrl mints the sig as a query param on the CONTENT origin', async () => {
     const sig = await signOgSig(TEST_SIGNING_KEY, 'acme', 'report')
     expect(await signedOgImageUrl(TEST_SIGNING_KEY, 'https://content.example.com', 'acme', 'report')).toBe(
-      `https://content.example.com/_glance/og/acme/report.png?sig=${sig}&v=2`,
+      `https://content.example.com/_glance/og/acme/report.png?sig=${sig}&v=3`,
     )
   })
 })
 
 describe('ogCardHtml', () => {
-  test('escapes the author-controlled title and shows the space/site pair', () => {
+  test('neutralizes markup in the author-controlled title WITHOUT entities (workers-og never decodes them — &amp; would render literally)', () => {
     const html = ogCardHtml({ title: '<b>&"Q3"', spaceSlug: 'acme', siteSlug: 'report' })
-    expect(html).toContain('&lt;b&gt;&amp;&quot;Q3&quot;')
+    expect(html).toContain('‹b›&"Q3"') // angle-quote lookalikes; & and " stay raw
     expect(html).not.toContain('<b>')
+    expect(html).not.toContain('&amp;')
     expect(html).toContain('acme/report')
     expect(html).toContain('data:image/svg+xml;base64,') // the brand mark rides inline
   })

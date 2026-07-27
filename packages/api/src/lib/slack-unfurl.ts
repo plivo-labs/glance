@@ -7,15 +7,22 @@
 // stay fully gated (lib/access.ts is untouched), and we can authorize the card against the person
 // who pasted the link. Docs: https://docs.slack.dev/messaging/unfurling-links-in-messages/
 
-import { escapeSlack, slackLink, slackPost, type SlackHttpDeps } from './slack'
+import { escapeSlack, slackPost, type SlackHttpDeps } from './slack'
 import { RESERVED_SLUGS } from './slug'
 
 const UNFURL_URL = 'https://slack.com/api/chat.unfurl'
 
-/** A Block Kit block. Slack's schema is open-ended (dozens of block/element types), so this pins the
- *  one field every block has rather than pretending to model the union — still far tighter than the
- *  `object` it replaces. */
-export type SlackBlock = { type: string } & Record<string, unknown>
+/** The unfurl card as a LEGACY-style attachment, deliberately not Block Kit: Slack renders an
+ *  attachment's `image_url` capped at 400×500 (the native link-preview look), while a Block Kit
+ *  `image` block always stretches to the full message column — the image size is the whole
+ *  reason this stays on the legacy shape. */
+export type SlackAttachment = {
+  title: string
+  title_link: string
+  text?: string
+  image_url?: string
+  footer: string
+}
 
 /** The site slugs a pasted URL points at. Deliberately NOT the in-site file path: the card links the
  *  pasted URL verbatim, so nothing downstream needs the path split out. */
@@ -71,23 +78,20 @@ export type UnfurlCard = {
   imageUrl?: string
 }
 
-/** Block Kit blocks for one site card: bold linked title, the derived blurb, the brand image,
- *  and a context line with space/site · freshness. Slack renders `text` fields as mrkdwn, so the
- *  author-controlled strings (title, description) go through `escapeSlack`; the slugs are
- *  `[a-z0-9-]` and need none. */
-export function buildUnfurlBlocks(card: UnfurlCard, url: string, nowMs: number): SlackBlock[] {
+/** One site card: linked title, the derived blurb, the brand image (400px-capped, see
+ *  SlackAttachment), and a footer with space/site · freshness. The author-controlled strings
+ *  (title, description) go through `escapeSlack` (Slack requires `&<>` escaped in all text);
+ *  the slugs are `[a-z0-9-]` and need none. */
+export function buildUnfurlAttachment(card: UnfurlCard, url: string, nowMs: number): SlackAttachment {
   const updated = relativeTime(card.updatedAt, nowMs)
   const meta = [`Glance · ${card.spaceSlug}/${card.siteSlug}`, ...(updated ? [`Updated ${updated}`] : [])]
-  return [
-    { type: 'section', text: { type: 'mrkdwn', text: `*${slackLink(url, card.title ?? card.siteSlug)}*` } },
-    ...(card.description
-      ? [{ type: 'section', text: { type: 'mrkdwn', text: escapeSlack(card.description) } } as SlackBlock]
-      : []),
-    ...(card.imageUrl
-      ? [{ type: 'image', image_url: card.imageUrl, alt_text: card.title ?? card.siteSlug } as SlackBlock]
-      : []),
-    { type: 'context', elements: [{ type: 'mrkdwn', text: meta.join(' · ') }] },
-  ]
+  return {
+    title: escapeSlack(card.title ?? card.siteSlug),
+    title_link: url,
+    ...(card.description ? { text: escapeSlack(card.description) } : {}),
+    ...(card.imageUrl ? { image_url: card.imageUrl } : {}),
+    footer: meta.join(' · '),
+  }
 }
 
 /** The `link_shared` fields that say WHICH message to attach the unfurl to. `unfurl_id`+`source` is
@@ -101,7 +105,7 @@ export type UnfurlTarget = { unfurl_id?: string; source?: string; channel?: stri
 export async function postUnfurl(
   deps: SlackHttpDeps,
   target: UnfurlTarget,
-  unfurls: Record<string, { blocks: SlackBlock[] }>,
+  unfurls: Record<string, SlackAttachment>,
 ): Promise<void> {
   if (Object.keys(unfurls).length === 0) return
   await slackPost(deps, UNFURL_URL, {
