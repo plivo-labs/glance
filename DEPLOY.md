@@ -38,6 +38,14 @@ Apply migrations to remote D1:
 cd packages/api && wrangler d1 migrations apply glance-db --remote
 ```
 
+Enable D1 read replication (reads route to the nearest replica via the Sessions API; billing is unchanged — still rows_read/rows_written). It's a database-level setting with no wrangler command: use the dashboard (D1 → glance-db → Settings) or the REST API with a `D1:Edit` token:
+
+```bash
+curl -X PUT "https://api.cloudflare.com/client/v4/accounts/<account_id>/d1/database/<database_id>" \
+  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"read_replication": {"mode": "auto"}}'
+```
+
 ## 2. Secrets
 
 Both workers need `SESSION_SECRET` and `CONTENT_TOKEN_SECRET` (keep them distinct). The main worker also needs `BOOTSTRAP_TOKEN` for first-run admin setup.

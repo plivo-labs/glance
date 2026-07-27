@@ -108,7 +108,8 @@ describe('comment feed route — C4.6 root-app composition', () => {
     const env = {
       APP_URL,
       CONTENT_URL: 'https://content.example.com',
-      GLANCE_DB: {},
+      // Minimal binding shape withDb needs; the request 401s before any query runs.
+      GLANCE_DB: { withSession: () => ({ getBookmark: () => null }) },
       GLANCE_SESSIONS: makeKv(),
     } as unknown as AppEnv['Bindings']
 
