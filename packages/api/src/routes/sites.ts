@@ -618,6 +618,9 @@ sites.post('/:spaceSlug/:siteSlug/fork', requireAuth, async (c) => {
         spaceId: dest.id,
         slug,
         title,
+        // A fork COPIES the bytes, so it inherits the blurb derived from them; the next replace
+        // re-derives it from whatever the fork's own content becomes.
+        description: site.description,
         // Inherit the source's tier: a fork of a private site is private, not silently widened.
         visibility: site.visibility,
         ownerId: user.id,

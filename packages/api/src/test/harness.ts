@@ -48,6 +48,7 @@ const MIGRATIONS = [
   'drizzle/0015_notifications_comment_id.sql',
   'drizzle/0016_notifications_comment_index.sql',
   'drizzle/0017_site_updated_at.sql',
+  'drizzle/0018_site_description.sql',
 ]
 
 // --- S0 recorder: one shared, ordered timeline across D1/R2/cache mocks so perf specs can
@@ -311,6 +312,7 @@ export async function seedSite(
     ownerId: o.ownerId,
     slug: o.slug ?? id,
     title: o.title ?? null,
+    description: o.description ?? null,
     visibility: o.visibility ?? 'team',
     status: o.status ?? 'active',
     // Omitted → schema $defaultFn (now). Passable so ordering specs can pin exact timelines.

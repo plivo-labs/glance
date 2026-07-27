@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { countingKv } from '../test/harness'
-import { deliverSlack, formatSlackMessage, lookupSlackId } from './slack'
+import { deliverSlack, formatSlackMessage, lookupSlackEmail, lookupSlackId } from './slack'
 
 // Records every fetch call so specs can assert exact request count, URL, and headers.
 function recordingFetch(handler: (url: string, init?: RequestInit) => Response | Promise<Response>) {
@@ -253,5 +253,51 @@ describe('deliverSlack', () => {
       { id: 'u1', email: 'live@plivo.com', reason: 'owner' },
     ])
     expect(posts).toBe(1)
+  })
+})
+
+describe('lookupSlackEmail', () => {
+  const infoOk = (email: string) => Response.json({ ok: true, user: { profile: { email } } })
+
+  test('resolves the profile email, caches it 30d, and serves the second call from KV', async () => {
+    const kv = countingKv()
+    const { fetchImpl, calls } = recordingFetch(() => infoOk('sam@plivo.com'))
+    const deps = { kv, token: 'xoxb-tok', fetchImpl }
+
+    expect(await lookupSlackEmail(deps, 'U123')).toBe('sam@plivo.com')
+    expect(await lookupSlackEmail(deps, 'U123')).toBe('sam@plivo.com')
+    expect(calls).toHaveLength(1)
+    expect(calls[0].url).toContain('users.info')
+    expect(bearer(calls[0].init)).toBe('Bearer xoxb-tok')
+    expect(kv.store.get('slackemail:U123')).toBe('sam@plivo.com')
+    expect(kv.ttls.get('slackemail:U123')).toBe(2_592_000)
+  })
+
+  test('an ok response with no readable email is DEFINITIVE — negative-cached, so no re-fetch storm', async () => {
+    const kv = countingKv()
+    const { fetchImpl, calls } = recordingFetch(() => Response.json({ ok: true, user: { profile: {} } }))
+    const deps = { kv, token: 'tok', fetchImpl }
+
+    expect(await lookupSlackEmail(deps, 'Ubot')).toBeNull()
+    expect(await lookupSlackEmail(deps, 'Ubot')).toBeNull()
+    expect(calls).toHaveLength(1) // second call short-circuits on the cached marker
+    expect(kv.ttls.get('slackemail:Ubot')).toBe(3_600)
+  })
+
+  test('transient failures (5xx, ok:false, network throw) return null and cache NOTHING', async () => {
+    const kv = countingKv()
+    const server = recordingFetch(() => new Response('', { status: 503 }))
+    expect(await lookupSlackEmail({ kv, token: 't', fetchImpl: server.fetchImpl }, 'U1')).toBeNull()
+    const notOk = recordingFetch(() => Response.json({ ok: false, error: 'ratelimited' }))
+    expect(await lookupSlackEmail({ kv, token: 't', fetchImpl: notOk.fetchImpl }, 'U1')).toBeNull()
+    const threw = recordingFetch(() => {
+      throw new Error('network')
+    })
+    expect(await lookupSlackEmail({ kv, token: 't', fetchImpl: threw.fetchImpl }, 'U1')).toBeNull()
+    expect(kv.ops().put).toBe(0)
+
+    // ...and a later success still resolves, proving nothing was poisoned.
+    const ok = recordingFetch(() => infoOk('a@b.c'))
+    expect(await lookupSlackEmail({ kv, token: 't', fetchImpl: ok.fetchImpl }, 'U1')).toBe('a@b.c')
   })
 })

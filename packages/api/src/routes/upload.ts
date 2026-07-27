@@ -5,7 +5,7 @@ import type { NewFileRow } from '../db/schema'
 import { files, sites, spaces } from '../db/schema'
 import { canReplace } from '../lib/access'
 import { fireAndForget } from '../lib/events'
-import { capTitle, extractHtmlTitle, pickEntry } from '../lib/extract'
+import { capTitle, extractHtmlMeta, NO_META, pickEntry } from '../lib/extract'
 import { isValidSlug } from '../lib/slug'
 import { deleteKeys, MAX_FILE_BYTES, sanitizePath } from '../lib/storage'
 import { isVisibility, normalizeVisibility } from '../lib/visibility'
@@ -102,7 +102,6 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
       .select({
         id: sites.id,
         ownerId: sites.ownerId,
-        title: sites.title,
         contentVersion: sites.contentVersion,
         status: sites.status,
       })
@@ -178,12 +177,13 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
   // null-title check here is ONLY work-avoidance — the replace UPDATE enforces fill-only-null
   // atomically via COALESCE, so a title set concurrently (PATCH, racing replace) between this
   // read and that write is never clobbered. Runs after request validation, before any R2 write.
-  const wantsDerivedTitle = existing ? !actingAsEditor && existing.title === null : title === null
-  let derivedTitle: string | null = null
-  if (wantsDerivedTitle) {
-    const entry = pickEntry(items.map(({ path, file }) => ({ path, file, mimeType: file.type || null })))
-    if (entry) derivedTitle = await extractHtmlTitle(entry, entry.file)
-  }
+  // Derive title + description from the entry HTML in ONE streamed pass. Started here but awaited
+  // AFTER the R2 puts, so the parse overlaps the uploads instead of delaying them — nothing needs the
+  // result until the D1 write. The description is derived unconditionally: unlike the title (identity
+  // — a re-upload must never rename a site) it describes the CURRENT bytes, so every write below sets
+  // it outright, clearing it to null when the new entry carries no description meta.
+  const entry = pickEntry(items.map(({ path, file }) => ({ path, file, mimeType: file.type || null })))
+  const metaPromise = entry ? extractHtmlMeta(entry, entry.file) : Promise.resolve(NO_META)
 
   // Write the objects with bounded concurrency so latency doesn't scale linearly with file count.
   // Track every key we attempt: if ANY put throws mid-flight, delete the ones already written so
@@ -204,6 +204,13 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
     throw err
   }
 
+  // Both writes below enforce the real rules themselves — the insert via `title ?? derivedTitle`, the
+  // owner replace via SQL COALESCE (atomic against a concurrent PATCH rename) — so the only thing to
+  // decide here is that an EDITOR never touches the title at all (content-only role).
+  const meta = await metaPromise
+  const derivedTitle = actingAsEditor ? null : meta.title
+  const { description } = meta
+
   const newRows = plan.map((p) => p.row)
   const insertRows = newRows.map((r) => db.insert(files).values(r))
   const newKeys = newRows.map((r) => r.storageKey)
@@ -220,6 +227,7 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
           spaceId: space.id,
           slug: siteSlug,
           title: title ?? derivedTitle,
+          description,
           visibility: isVisibility(visibility) ? visibility : 'team',
           ownerId: user.id,
         }),
@@ -236,14 +244,25 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
       // price of leaving files untouched on a stale 409, which a single atomic batch cannot express.)
       const claimed = await db
         .update(sites)
-        .set({ contentVersion: sql`${sites.contentVersion} + 1`, lastReplacedBy: user.id, updatedAt: new Date().toISOString() })
+        .set({
+          contentVersion: sql`${sites.contentVersion} + 1`,
+          lastReplacedBy: user.id,
+          updatedAt: new Date().toISOString(),
+        })
         .where(and(eq(sites.id, siteId), eq(sites.contentVersion, expectedVersion as number)))
         .returning({ id: sites.id })
       if (claimed.length === 0) {
         await deleteKeys(c.env.GLANCE_FILES, newKeys)
         return c.json({ error: 'version conflict', conflict: true }, 409)
       }
-      await db.batch([db.delete(files).where(eq(files.siteId, siteId)), ...insertRows])
+      // The blurb ships in the SWAP batch, not the claim above: it describes the bytes, so it must
+      // commit with them — a claim-time write would advertise the new description while the site
+      // still served the old content if the swap then threw. (Editors never touch the title.)
+      await db.batch([
+        db.delete(files).where(eq(files.siteId, siteId)),
+        ...insertRows,
+        db.update(sites).set({ description }).where(eq(sites.id, siteId)),
+      ])
     } else {
       // OWNER / SUPERADMIN REPLACE: atomically swap file rows, bump the version advisorily + record
       // lastReplacedBy, and apply visibility only when the caller explicitly sent one (absent → keep
@@ -260,6 +279,9 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
             updatedAt: new Date().toISOString(),
             ...(hasVisibility && isVisibility(visibility) ? { visibility } : {}),
             ...(derivedTitle !== null ? { title: sql`coalesce(${sites.title}, ${derivedTitle})` } : {}),
+            // Unconditional (not COALESCE'd): a redeploy whose entry dropped its description meta
+            // must clear the stale blurb rather than keep unfurling the previous content's.
+            description,
           })
           .where(eq(sites.id, siteId)),
       ])

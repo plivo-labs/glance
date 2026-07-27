@@ -254,6 +254,43 @@ describe('upload — derived title from entry HTML', () => {
   })
 })
 
+describe('upload — derived description from entry HTML', () => {
+  const described = (d: string) =>
+    html(`<html><head><title>T</title><meta name="description" content="${d}"></head><body>x</body></html>`, 'index.html')
+  async function siteDescription(db: Awaited<ReturnType<typeof setup>>['db'], slug: string) {
+    return (await db.select({ description: sites.description }).from(sites).where(eq(sites.slug, slug)))[0]?.description
+  }
+
+  test('create derives the description from the entry description meta', async () => {
+    const { app, env, db } = await setup()
+    expect((await postUpload(app, env, 'blurb', [described('Quarterly numbers')])).status).toBe(200)
+    expect(await siteDescription(db, 'blurb')).toBe('Quarterly numbers')
+  })
+
+  test('replace OVERWRITES the description — unlike the title, it tracks the current content', async () => {
+    const { app, env, db } = await setup()
+    await postUpload(app, env, 'moving', [described('First blurb')])
+    await postUpload(app, env, 'moving', [described('Second blurb')], { replace: true })
+    expect(await siteDescription(db, 'moving')).toBe('Second blurb')
+  })
+
+  test('a redeploy whose entry dropped its description CLEARS the stale one', async () => {
+    const { app, env, db } = await setup()
+    await postUpload(app, env, 'cleared', [described('Was here')])
+    await postUpload(app, env, 'cleared', [html('<html><head><title>T</title></head><body>x</body></html>', 'index.html')], {
+      replace: true,
+    })
+    expect(await siteDescription(db, 'cleared')).toBeNull()
+  })
+
+  test('no HTML entry → null, and the site still uploads', async () => {
+    const { app, env, db } = await setup()
+    const md = new File(['# hi'], 'notes.md', { type: 'text/markdown' })
+    expect((await postUpload(app, env, 'nohtml', [md])).status).toBe(200)
+    expect(await siteDescription(db, 'nohtml')).toBeNull()
+  })
+})
+
 describe('upload — derived title: R2 integrity + COALESCE race', () => {
   const titled = (t: string) => html(`<html><head><title>${t}</title></head><body>x</body></html>`, 'index.html')
 
