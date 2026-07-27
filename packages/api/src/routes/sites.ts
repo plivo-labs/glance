@@ -9,7 +9,6 @@ import {
   listSiteShares,
   memberSpaceIdsStmt,
   replaceSiteShares,
-  resolveShareAccess,
   resolveShareRole,
   sharedSiteRoleStmts,
   sharedSiteRoles,

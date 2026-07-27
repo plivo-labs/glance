@@ -79,6 +79,10 @@ export const files = sqliteTable(
     storageKey: text('storageKey').notNull().unique(),
     mimeType: text('mimeType'),
     size: integer('size'),
+    // R2's httpEtag, denormalized at upload (storage keys are immutable — a replace mints new
+    // keys — so the etag is fixed for the row's life). Lets the content worker answer 304/416
+    // conditionals with zero R2 ops; NULL on pre-denormalization rows → head() probe fallback.
+    etag: text('etag'),
     // RESERVED / currently unused. Was intended to hold a normalized-text digest (lib/anchor
     // `normalizeText`) of the file body to power a "hash unchanged → skip re-anchor" gate, but
     // nothing writes or reads it today (anchors are painted client-side, not reconciled server-

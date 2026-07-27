@@ -185,6 +185,7 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
       storageKey: `${prefix}/${path}`,
       mimeType: file.type || null,
       size: file.size,
+      etag: null as string | null, // filled from the R2 put result below, before the D1 insert
     } satisfies NewFileRow,
   }))
   for (const { row } of plan) {
@@ -213,10 +214,13 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
   try {
     for (let i = 0; i < plan.length; i += UPLOAD_CONCURRENCY) {
       await Promise.all(
-        plan.slice(i, i + UPLOAD_CONCURRENCY).map(({ file, row }) => {
+        plan.slice(i, i + UPLOAD_CONCURRENCY).map(async ({ file, row }) => {
           attempted.push(row.storageKey)
           const contentType = file.type || 'application/octet-stream'
-          return c.env.GLANCE_FILES.put(row.storageKey, file.stream(), { httpMetadata: { contentType } })
+          const put = await c.env.GLANCE_FILES.put(row.storageKey, file.stream(), { httpMetadata: { contentType } })
+          // Denormalize R2's etag onto the row (keys are immutable, so it's fixed for the row's
+          // life) — the content worker answers 304/416 conditionals from D1 with zero R2 ops.
+          row.etag = put?.httpEtag ?? null
         }),
       )
     }
