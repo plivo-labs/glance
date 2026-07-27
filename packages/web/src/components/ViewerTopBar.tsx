@@ -1,37 +1,28 @@
-import { Check, ChevronRight, Command, GitFork, History, MessageSquare, Sparkles } from 'lucide-react'
+import { Check, ChevronRight, Command, GitFork, History, Menu, MessageSquare, Share2, Sparkles } from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { useForkSite } from '@/hooks/useForkSite'
 import type { ViewerSite } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { ShareDialog } from '@/components/ShareDialog'
 import { SummarySheet } from '@/components/SummarySheet'
 import { Spinner } from '@/components/states'
-
-// Copy this site into a space of your own. Deliberately NOT gated on site.isOwner (unlike Share):
-// anyone who can read a site can fork it, so a plain viewer gets this button too.
-function ForkButton({ site }: { site: ViewerSite }) {
-  const { fork, forking } = useForkSite(site)
-  return (
-    <Button
-      size="sm"
-      variant="ghost"
-      className="gap-1.5"
-      disabled={forking}
-      onClick={() => void fork()}
-      title="Copy this site into your own space"
-    >
-      {forking ? <Spinner className="size-3.5" /> : <GitFork className="size-3.5" />}
-      Fork
-    </Button>
-  )
-}
 
 // The persistent top chrome for the viewer: brand (→ dashboard) + a breadcrumb, then one action
 // row that stays put across modes — Fork, TL;DR, Comments (with an open count, outside review),
 // Share, and Done while reviewing. The Read·Annotate toggle lives in the ReviewRail header, next
 // to the comments it drives. Replaces the old floating PreviewToolbar dock.
+//
+// Below `md` the row doesn't fit (7 controls overlapped the breadcrumb on a phone), so everything
+// except Comments and Done collapses into a hamburger menu. Fork/TL;DR/Share are driven from shared
+// state rather than duplicated components, so the desktop button and the menu item are one action.
 export function ViewerTopBar({
   site,
   sitePath,
@@ -52,21 +43,31 @@ export function ViewerTopBar({
   onSearch: () => void
 }) {
   const [summaryOpen, setSummaryOpen] = useState(false)
+  const [shareOpen, setShareOpen] = useState(false)
+  const { fork, forking } = useForkSite(site)
   return (
-    <header className="flex h-12 shrink-0 items-center gap-3 border-b bg-background px-3">
+    <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-background px-3 md:gap-3">
       <Link to="/dashboard" className="flex shrink-0 items-center gap-2 font-mono font-semibold text-sm tracking-tight">
         <span className="size-2.5 rounded-[3px] bg-primary shadow-[0_0_12px_1px_var(--primary)]" />
         glance
       </Link>
 
-      <Button size="sm" variant="ghost" className="shrink-0 px-2" title="Recently opened" aria-label="Recently opened" onClick={onToggleSidebar}>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="hidden shrink-0 px-2 md:inline-flex"
+        title="Recently opened"
+        aria-label="Recently opened"
+        onClick={onToggleSidebar}
+      >
         <History className="size-3.5" />
       </Button>
 
       <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-muted-foreground text-sm">
         <ChevronRight className="size-3.5 shrink-0 opacity-40" />
-        <span className="shrink-0">{site.spaceSlug}</span>
-        <span className="opacity-40">/</span>
+        {/* The space slug is the first thing to go on a phone — the file being viewed matters more. */}
+        <span className="hidden shrink-0 md:inline">{site.spaceSlug}</span>
+        <span className="hidden opacity-40 md:inline">/</span>
         <span className={cn('truncate', !sitePath && 'text-foreground')}>{site.title ?? site.siteSlug}</span>
         {sitePath && (
           <>
@@ -80,7 +81,7 @@ export function ViewerTopBar({
         <Button
           variant="outline"
           size="sm"
-          className="gap-2 text-muted-foreground"
+          className="hidden gap-2 text-muted-foreground md:inline-flex"
           onClick={onSearch}
           title="Search sites or run a command"
         >
@@ -90,8 +91,26 @@ export function ViewerTopBar({
             ⌘K
           </kbd>
         </Button>
-        <ForkButton site={site} />
-        <Button size="sm" variant="ghost" className="gap-1.5" title="AI summary" onClick={() => setSummaryOpen(true)}>
+        {/* Fork is deliberately NOT gated on site.isOwner (unlike Share): anyone who can read a
+            site can fork it, so a plain viewer gets this too. */}
+        <Button
+          size="sm"
+          variant="ghost"
+          className="hidden gap-1.5 md:inline-flex"
+          disabled={forking}
+          onClick={() => void fork()}
+          title="Copy this site into your own space"
+        >
+          {forking ? <Spinner className="size-3.5" /> : <GitFork className="size-3.5" />}
+          Fork
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="hidden gap-1.5 md:inline-flex"
+          title="AI summary"
+          onClick={() => setSummaryOpen(true)}
+        >
           <Sparkles className="size-3.5" />
           TL;DR
         </Button>
@@ -112,16 +131,69 @@ export function ViewerTopBar({
             )}
           </Button>
         )}
-        {site.isOwner && <ShareDialog spaceSlug={site.spaceSlug} siteSlug={site.siteSlug} title={site.title} compact />}
+        {site.isOwner && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="hidden size-8 rounded-full md:inline-flex"
+            title="Share with people & groups"
+            aria-label="Share with people & groups"
+            onClick={() => setShareOpen(true)}
+          >
+            <Share2 />
+          </Button>
+        )}
         {review && (
           <Button size="sm" variant="secondary" onClick={onExit}>
             <Check className="size-3.5" />
             Done
           </Button>
         )}
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" className="size-8 md:hidden" aria-label="Menu">
+              <Menu />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-48">
+            <DropdownMenuItem onSelect={onToggleSidebar}>
+              <History />
+              Recently opened
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={onSearch}>
+              <Command />
+              Search
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={forking} onSelect={() => void fork()}>
+              <GitFork />
+              Fork
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setSummaryOpen(true)}>
+              <Sparkles />
+              TL;DR
+            </DropdownMenuItem>
+            {site.isOwner && (
+              <DropdownMenuItem onSelect={() => setShareOpen(true)}>
+                <Share2 />
+                Share…
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
-      {/* Sheet renders through a portal, so it can live inside the header without affecting layout. */}
+      {/* Both render through a portal, so they can live inside the header without affecting layout.
+          Controlled (no inline trigger) — the desktop button and the menu item drive the same state. */}
       <SummarySheet spaceSlug={site.spaceSlug} siteSlug={site.siteSlug} open={summaryOpen} onOpenChange={setSummaryOpen} />
+      {site.isOwner && (
+        <ShareDialog
+          spaceSlug={site.spaceSlug}
+          siteSlug={site.siteSlug}
+          title={site.title}
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+        />
+      )}
     </header>
   )
 }

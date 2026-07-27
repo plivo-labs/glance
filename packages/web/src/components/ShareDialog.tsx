@@ -24,7 +24,6 @@ type Props = {
   spaceSlug: string
   siteSlug: string
   title?: string | null
-  compact?: boolean
   // Controlled mode: when `open` is provided the dialog renders no trigger and is driven by the
   // parent (e.g. a dropdown-menu item). Uncontrolled (default) keeps its own Share button.
   open?: boolean
@@ -50,7 +49,7 @@ function toggleUser(map: Map<string, ShareRole>, id: string): Map<string, ShareR
 // site's visibility tier. Data loads on open via a ref-callback on the dialog content (Radix
 // mounts it on every open — and a controlled/external open does NOT fire Radix onOpenChange,
 // so the load can't live there); Save replaces the whole set via PUT.
-export function ShareDialog({ spaceSlug, siteSlug, title, compact, open: openProp, onOpenChange }: Props) {
+export function ShareDialog({ spaceSlug, siteSlug, title, open: openProp, onOpenChange }: Props) {
   const navigate = useNavigate()
   const [internalOpen, setInternalOpen] = useState(false)
   const controlled = openProp !== undefined
@@ -114,22 +113,10 @@ export function ShareDialog({ spaceSlug, siteSlug, title, compact, open: openPro
     <Dialog open={open} onOpenChange={setOpen}>
       {!controlled && (
         <DialogTrigger asChild>
-          {compact ? (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-8 rounded-full"
-              title="Share with people & groups"
-              aria-label="Share with people & groups"
-            >
-              <Share2 />
-            </Button>
-          ) : (
-            <Button variant="outline" size="sm">
-              <Share2 />
-              Share with people &amp; groups
-            </Button>
-          )}
+          <Button variant="outline" size="sm">
+            <Share2 />
+            Share with people &amp; groups
+          </Button>
         </DialogTrigger>
       )}
       <DialogContent className="sm:max-w-md">
