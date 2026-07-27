@@ -40,6 +40,21 @@ describe('GET /api/sites/:space/:site (viewer metadata)', () => {
     expect(body.contentUrl.endsWith('/docs/report/')).toBe(true)
   })
 
+  test('no auth → 401, and the batch reads ONLY the site row (no manifest scan for anonymous probes)', async () => {
+    const { db, kv, app, env } = await setup()
+    await mintUser(db, kv, 'owner')
+    const sp = await seedSpace(db, { createdBy: 'owner', slug: 'docs' })
+    const site = await seedSite(db, { spaceId: sp, ownerId: 'owner', slug: 'report', visibility: 'team' })
+    for (let i = 0; i < 3; i++) await seedFile(db, null, site, { path: `f${i}.html` })
+    db.resetCounters()
+    const res = await view(app, env, 'docs', 'report')
+    expect(res.status).toBe(401)
+    // Unauthenticated: site statement only — an anonymous prober must not burn manifest row reads.
+    expect(db.counters.loose).toBe(0)
+    expect(db.counters.batches).toBe(1)
+    expect(db.counters.batchStmts).toBe(1)
+  })
+
   test('no auth → 401 (every tier requires a viewer)', async () => {
     const { db, app, env } = await setup()
     await seedUser(db, { id: 'u1' })

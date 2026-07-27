@@ -351,13 +351,17 @@ sites.get('/:spaceSlug/:siteSlug', async (c) => {
     .innerJoin(sitesTable, eq(filesTable.siteId, sitesTable.id))
     .innerJoin(spaces, eq(sitesTable.spaceId, spaces.id))
     .where(and(eq(spaces.slug, spaceSlug), eq(sitesTable.slug, siteSlug)))
-  const { facts, extras } = await fetchAccessFacts(db, spaceSlug, siteSlug, user?.id ?? null, filesStmt)
+  // The manifest rides the batch only for an AUTHED caller — an anonymous probe 401s below and
+  // must not burn up-to-200 manifest row reads per request on this cookie-less endpoint.
+  const { facts, extras } = await (user
+    ? fetchAccessFacts(db, spaceSlug, siteSlug, user.id, filesStmt)
+    : fetchAccessFacts(db, spaceSlug, siteSlug, null))
   const site = facts.site
   // Existence (404) is still decided before any auth-dependent branch, so a missing site never
   // leaks — the site row rides the same batch.
   if (!site) return c.json({ error: 'not found' }, 404)
 
-  const [siteFiles] = extras
+  const [siteFiles = []] = extras
   const role = facts.directRole
   const access = checkAccess(site, user, facts.isMember, isSharedFromFacts(facts))
   if (!access.ok) return c.json({ error: 'forbidden' }, access.status)

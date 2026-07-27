@@ -61,9 +61,12 @@ export async function copyObjects(
   bucket: R2Bucket,
   rows: CopyableFile[],
   prefix: string,
-): Promise<CopyableFile[]> {
+): Promise<(CopyableFile & { etag: string | null })[]> {
   const plan = rows.map((r) => ({ from: r.storageKey, to: `${prefix}/${r.path}`, row: r }))
   const written: string[] = []
+  // The COPY's own httpEtag per destination key (never the source's — etags are per-object), so
+  // the inserted rows serve 304/416 conditionals without the legacy head() fallback.
+  const etags = new Map<string, string | null>()
   try {
     for (let i = 0; i < plan.length; i += COPY_CONCURRENCY) {
       await Promise.all(
@@ -71,9 +74,10 @@ export async function copyObjects(
           const object = await bucket.get(from)
           if (!object) throw new Error(`source object missing: ${from}`)
           written.push(to)
-          await bucket.put(to, object.body, {
+          const put = await bucket.put(to, object.body, {
             httpMetadata: { contentType: row.mimeType ?? 'application/octet-stream' },
           })
+          etags.set(to, put?.httpEtag ?? null)
         }),
       )
     }
@@ -81,7 +85,13 @@ export async function copyObjects(
     await deleteKeys(bucket, written)
     throw err
   }
-  return plan.map(({ to, row }) => ({ path: row.path, storageKey: to, mimeType: row.mimeType, size: row.size }))
+  return plan.map(({ to, row }) => ({
+    path: row.path,
+    storageKey: to,
+    mimeType: row.mimeType,
+    size: row.size,
+    etag: etags.get(to) ?? null,
+  }))
 }
 
 /** Delete all R2 objects recorded for a site: the site's uploaded files AND its voice-comment
