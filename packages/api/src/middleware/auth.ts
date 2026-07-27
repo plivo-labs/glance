@@ -4,7 +4,7 @@ import { getUserById } from '../db/repo'
 import { readSessionOrBearer } from '../lib/session'
 import type { AppEnv } from '../types'
 
-const SESSION_COOKIE = 'glance_session'
+const SESSION_COOKIE = '__Host-glance_session'
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
 /**
