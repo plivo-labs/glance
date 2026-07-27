@@ -22,7 +22,14 @@ import {
   resolveCommentAudience,
   usersEmailsByIds,
 } from '../db/notifications'
-import { deliverSlack, type SlackReason, type SlackRecipient, slackDepsFromEnv, slackEnabled } from '../lib/slack'
+import {
+  deliverSlack,
+  SLACK_SNIPPET_LENGTH,
+  type SlackReason,
+  type SlackRecipient,
+  slackDepsFromEnv,
+  slackEnabled,
+} from '../lib/slack'
 import type { Comment, CommentThread } from '../db/schema'
 import { listMentionableUsers } from '../db/repo'
 import { fireAndForget } from '../lib/events'
@@ -230,11 +237,13 @@ async function notifyForComment(
           audience.map((a) => toRow(a.id, a.reason === 'mention' ? 'mention' : 'comment')),
         )
 
+        // Slack DMs get their own, roomier cut of the SAME body — the 200-char snippet above is
+        // sized for the in-app feed, not for Slack.
         await deliverSlackForComment(c, audience, {
           siteLabel,
           filePath: opts.filePath,
           threadId: opts.threadId,
-          snippet,
+          snippet: truncateSnippet(opts.snippet, SLACK_SNIPPET_LENGTH),
         })
       } catch {
         // Notifications are best-effort — never surface to the caller (mirrors recordEvent).

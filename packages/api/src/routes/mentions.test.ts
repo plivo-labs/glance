@@ -337,7 +337,7 @@ describe('S2 C1 TRACER — JSON thread without mentions notifies the owner', () 
       filePath: 'index.html',
       threadId: created.threadId,
       commentId: created.openingCommentId,
-      snippet: body.slice(0, 200),
+      snippet: `${body.slice(0, 200)}…`,
     })
   })
 })

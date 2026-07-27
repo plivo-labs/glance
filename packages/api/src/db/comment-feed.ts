@@ -127,9 +127,13 @@ type FeedCandidate =
 
 const KIND_RANK = { mention: 0, authored: 1, owned: 2 } as const
 
-export function truncateSnippet(body: string): string {
-  const s = body.slice(0, FEED_SNIPPET_LENGTH)
-  return s.length === FEED_SNIPPET_LENGTH && /[\uD800-\uDBFF]$/.test(s) ? s.slice(0, -1) : s
+/** Cap a comment body for a notification surface. A body within the cap passes through untouched;
+ *  a longer one is cut (never splitting a surrogate pair) and marked with an ellipsis so the cut
+ *  reads as a preview, not a lost message. */
+export function truncateSnippet(body: string, max = FEED_SNIPPET_LENGTH): string {
+  if (body.length <= max) return body
+  const s = body.slice(0, max)
+  return `${/[\uD800-\uDBFF]$/.test(s) ? s.slice(0, -1) : s}…`
 }
 
 function compareFeedCandidates(a: FeedCandidate, b: FeedCandidate): number {

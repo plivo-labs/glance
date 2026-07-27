@@ -177,6 +177,11 @@ export function formatSlackMessage(input: SlackMessageInput, appUrl: string): st
   return lines.join('\n')
 }
 
+// Slack DMs can carry far more than the in-app feed's 200-char snippet (chat.postMessage allows
+// ~40k chars of text), so the Slack quote gets its own, roomier cap — 1500 keeps a long comment
+// readable in the DM without flooding it.
+export const SLACK_SNIPPET_LENGTH = 1_500
+
 const POST_URL = 'https://slack.com/api/chat.postMessage'
 // Cap on Slack DMs per comment event, mentions first — bounds the blast radius of a wide @-everyone
 // or a large shared audience. Slack-ONLY: the in-app fan-out (createNotifications) is intentionally
