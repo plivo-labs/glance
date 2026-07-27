@@ -1,3 +1,4 @@
+import { BOOKMARK_HEADER, captureDbBookmark, getDbBookmark } from './api'
 import { type DroppedFile, stripCommonRoot } from './walkFiles'
 
 // fetch() cannot report upload progress — XHR is required. Posts a multipart form to the
@@ -33,10 +34,15 @@ export function uploadFiles(
     const xhr = new XMLHttpRequest()
     xhr.open('POST', url)
     xhr.withCredentials = true
+    // D1 bookmark round-trip (issue #79): XHR bypasses the api.ts wrapper, but an upload is the
+    // write whose result the very next read must see — thread the bookmark both ways by hand.
+    const bookmark = getDbBookmark()
+    if (bookmark) xhr.setRequestHeader(BOOKMARK_HEADER, bookmark)
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) opts.onProgress?.(Math.round((e.loaded / e.total) * 100))
     }
     xhr.onload = () => {
+      captureDbBookmark(xhr.getResponseHeader(BOOKMARK_HEADER))
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
           resolve(JSON.parse(xhr.responseText) as UploadResult)

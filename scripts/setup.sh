@@ -176,6 +176,29 @@ fi
 note "Applying D1 migrations to the remote database"
 wrangler d1 migrations apply glance-db --remote
 
+# --- D1 read replication (issue #79): reads route to the nearest replica via the Sessions API
+# the workers use; billing is unchanged (still rows_read/rows_written). A DB-level setting with
+# no wrangler command — REST only, so the OAuth login can't authenticate it. Best-effort here;
+# CI (deploy.yml) also ensures it on every deploy.
+note "Enabling D1 read replication (glance-db)"
+if wrangler d1 info glance-db --json 2>/dev/null | grep -q '"mode": *"auto"'; then
+  echo "   already enabled — skipping"
+elif [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]]; then
+  ACCT="${CLOUDFLARE_ACCOUNT_ID:-$(wrangler whoami 2>/dev/null | grep -oE "$HEX32" | head -1 || true)}"
+  DBID="$(grep '"database_id"' wrangler.jsonc | grep -oiE "$UUID" | head -1 || true)"
+  if [[ -n "$ACCT" && -n "$DBID" ]] && curl -sS -X PUT "https://api.cloudflare.com/client/v4/accounts/$ACCT/d1/database/$DBID" \
+      -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' \
+      -d '{"read_replication":{"mode":"auto"}}' | grep -q '"success": *true'; then
+    echo "   read replication → auto"
+  else
+    warn "Could not enable read replication via the API — enable it in the dashboard:"
+    warn "   dash.cloudflare.com → Storage & Databases → D1 → glance-db → Settings"
+  fi
+else
+  warn "Needs a REST call (no wrangler command). Enable it in the dashboard (D1 → glance-db →"
+  warn "Settings) or export CLOUDFLARE_API_TOKEN (D1:Edit) and re-run."
+fi
+
 # --- wire live URLs into config (single sentinel replace — safe, see PLAN Step 11) ---
 # APP_URL is kept an explicit var (NOT request-derived): the bootstrap same-origin/CSRF
 # check and cookie `secure` flag must not trust a spoofable Host header.

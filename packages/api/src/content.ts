@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm'
-import { type DrizzleD1Database, drizzle } from 'drizzle-orm/d1'
+import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { type Context, Hono } from 'hono'
+import { sessionDb } from './db/client'
 import { ANNOTATE_CSS, ANNOTATE_JS, ANNOTATE_VERSION } from './annotate/bundle'
 import { GLANCE_DB_JS, GLANCE_DB_VERSION } from './glancedb/bundle'
 import { type NewEvent, files, sites, spaces } from './db/schema'
@@ -33,8 +34,11 @@ const app = new Hono<ContentEnv>()
 
 // Per-request drizzle client. The D1 binding is request-scoped, so the client must not be
 // memoized across requests; tests inject a harness db via c.set('db').
+// 'first-unconstrained': every read may hit the nearest replica. Replica lag on this origin is
+// an accepted posture — a just-uploaded site can already miss transiently (404s are no-store,
+// see notFound), and share revocation propagating within seconds matches KV session semantics.
 function getDb(c: Ctx): DrizzleD1Database {
-  return c.get('db') ?? drizzle(c.env.GLANCE_DB)
+  return c.get('db') ?? sessionDb(c.env.GLANCE_DB, 'first-unconstrained')
 }
 
 // The edge cache for full-200 object reads. In the Workers runtime this is the global

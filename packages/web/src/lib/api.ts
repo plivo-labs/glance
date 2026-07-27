@@ -11,8 +11,28 @@ export class ApiError extends Error {
   }
 }
 
+/** D1 session bookmark round-trip (issue #79): the server tags responses with the newest
+ *  bookmark; echoing it back anchors its next D1 session so reads on a replica still see
+ *  this browser's prior writes. */
+export const BOOKMARK_HEADER = 'x-glance-d1-bookmark'
+
+let dbBookmark: string | null = null
+export const __resetDbBookmark = () => {
+  dbBookmark = null
+}
+
+/** Feed a bookmark captured outside this wrapper (the XHR upload path) into the round-trip. */
+export const captureDbBookmark = (bookmark: string | null) => {
+  dbBookmark = bookmark ?? dbBookmark
+}
+
+/** Current bookmark, for requests made outside this wrapper (the XHR upload path). */
+export const getDbBookmark = () => dbBookmark
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, { credentials: 'include', ...init })
+  const headers = dbBookmark ? { ...init?.headers, [BOOKMARK_HEADER]: dbBookmark } : init?.headers
+  const res = await fetch(path, { credentials: 'include', ...init, headers })
+  captureDbBookmark(res.headers.get(BOOKMARK_HEADER))
   if (!res.ok) {
     let message = res.statusText
     try {

@@ -1,6 +1,7 @@
 import { and, count, desc, eq } from 'drizzle-orm'
-import { type DrizzleD1Database, drizzle } from 'drizzle-orm/d1'
+import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { type Context, Hono } from 'hono'
+import { sessionDb } from '../db/client'
 import { type DocumentRow, type Site, documents, sites } from '../db/schema'
 import { type DataCapability, type DataClaims, hasCap, signDataToken, verifyDataToken } from '../lib/data-token'
 import { authorizeViewerById, fetchAccessFacts, siteAccessFromFacts } from '../lib/site-access'
@@ -37,8 +38,12 @@ const SHARED_PREFIX = 'shared-'
 type DataEnv = { Bindings: Bindings; Variables: { db?: DrizzleD1Database; claims: DataClaims } }
 type DataCtx = Context<DataEnv>
 
+// 'first-primary': the auth middleware's site lookup is always the session's first query, so it
+// anchors the session at the primary's current state — an SDK create followed by a list stays
+// read-your-write with no client-side bookmark threading (the SDK/broker never see D1 headers).
+// Later queries in the request still ride replicas consistent with that anchor.
 function getDb(c: DataCtx): DrizzleD1Database {
-  return c.get('db') ?? drizzle(c.env.GLANCE_DB)
+  return c.get('db') ?? sessionDb(c.env.GLANCE_DB, 'first-primary')
 }
 
 export const dataApi = new Hono<DataEnv>()
