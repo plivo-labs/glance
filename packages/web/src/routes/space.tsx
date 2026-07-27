@@ -1,45 +1,41 @@
-import {
-  type ActionFunctionArgs,
-  type LoaderFunctionArgs,
-  useFetcher,
-  useLoaderData,
-  useNavigate,
-} from 'react-router'
-import { ExternalLink, Mic, Trash2, UserPlus } from 'lucide-react'
+import { useCallback, useState } from 'react'
+import { type LoaderFunctionArgs, useLoaderData, useNavigate, useRevalidator } from 'react-router'
+import { ExternalLink, Search, Share2, Trash2, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import { CopyButton } from '@/components/CopyButton'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
-import { ShareDialog } from '@/components/ShareDialog'
+import { PickerRow, ShareDialog } from '@/components/ShareDialog'
+import {
+  actionsColumn,
+  createdColumn,
+  nameColumn,
+  OpenLinkButton,
+  urlColumn,
+  visibilityBadgeColumn,
+} from '@/components/siteColumns'
+import { SortableTable, type Column } from '@/components/SortableTable'
 import { EmptyState, PageHeader, SectionHeader, Spinner } from '@/components/states'
-import { VisibilityBadge } from '@/components/visibility'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import { MountSensor } from '@/components/ui/mount-sensor'
 import { Separator } from '@/components/ui/separator'
 import { api, ApiError } from '@/lib/api'
 import { toLogin } from '@/lib/nav'
-import type { SpaceDetail, Visibility } from '@/lib/types'
-import { cn } from '@/lib/utils'
+import type { SiteSummary, SpaceDetail, UserLite } from '@/lib/types'
 
-interface SpaceSite {
-  id: string
-  spaceSlug: string
-  siteSlug: string
-  title: string | null
-  visibility: Visibility
-  status: 'active' | 'archived'
+// GET /api/spaces/:slug/sites returns the shared feed-row shape plus per-row ownership.
+interface SpaceSite extends SiteSummary {
   isOwner: boolean
-  audio?: boolean
-  url: string
-  createdAt: string
 }
 
 export async function loader({ params, request }: LoaderFunctionArgs) {
@@ -55,93 +51,155 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
   }
 }
 
-export async function action({ request, params }: ActionFunctionArgs) {
-  const email = String((await request.formData()).get('email') ?? '')
-  try {
-    await api.post(`/api/spaces/${params.space}/members`, { email })
-    return { ok: true as const }
-  } catch (err) {
-    return { error: err instanceof ApiError ? err.message : 'Invite failed' }
+// Invite members via a modal with the company directory (same picker rows as ShareDialog) instead
+// of a free-text email form. Multi-select, then one POST per pick — the API invites by email and
+// is idempotent for existing members. Directory loads on open via MountSensor (Radix mounts the
+// content each open). On any success the route revalidates so the member count stays honest.
+function InviteMembersDialog({ slug }: { slug: string }) {
+  const revalidator = useRevalidator()
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [users, setUsers] = useState<UserLite[]>([])
+  const [selected, setSelected] = useState<Set<string>>(new Set()) // emails — the API's invite key
+  const [q, setQ] = useState('')
+
+  const loadOnMount = useCallback(() => {
+    setBusy(true)
+    setSelected(new Set())
+    setQ('')
+    api
+      .get<UserLite[]>('/api/users')
+      .then(setUsers)
+      .catch((err) =>
+        toast.error('Could not load people', { description: err instanceof Error ? err.message : undefined }),
+      )
+      .finally(() => setBusy(false))
+  }, [])
+
+  async function invite() {
+    setSaving(true)
+    try {
+      const picks = [...selected]
+      const results = await Promise.allSettled(
+        picks.map((email) => api.post(`/api/spaces/${slug}/members`, { email })),
+      )
+      const failed = results.filter((r) => r.status === 'rejected')
+      if (failed.length === 0) {
+        toast.success(picks.length === 1 ? 'Member invited' : `${picks.length} members invited`)
+        setOpen(false)
+      } else {
+        const first = failed[0].reason
+        toast.error(`${failed.length} of ${picks.length} invites failed`, {
+          description: first instanceof Error ? first.message : undefined,
+        })
+      }
+      if (failed.length < picks.length) revalidator.revalidate()
+    } finally {
+      setSaving(false)
+    }
   }
-}
 
-type InviteResult = { ok?: boolean; error?: string }
-
-function InviteCard() {
-  const fetcher = useFetcher<InviteResult>()
-  const busy = fetcher.state !== 'idle'
-  const data = fetcher.data
+  const needle = q.trim().toLowerCase()
+  const shown = needle
+    ? users.filter((u) => u.email.toLowerCase().includes(needle) || (u.name ?? '').toLowerCase().includes(needle))
+    : users
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Invite a member</CardTitle>
-        <CardDescription>Add a teammate by email to grant them access to this space.</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <fetcher.Form method="post" className="flex flex-col gap-3 sm:flex-row sm:items-end">
-          <div className="flex-1 space-y-1.5">
-            <Label htmlFor="invite-email">Email</Label>
-            <Input
-              id="invite-email"
-              name="email"
-              type="email"
-              placeholder="teammate@example.com"
-              required
-              disabled={busy}
-              autoComplete="email"
-            />
+    <Dialog open={open} onOpenChange={(o) => !saving && setOpen(o)}>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm">
+          <UserPlus />
+          Invite members
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-md">
+        <MountSensor onMount={loadOnMount} />
+        <DialogHeader>
+          <DialogTitle>Invite members</DialogTitle>
+          <DialogDescription>Pick teammates to grant them access to this space.</DialogDescription>
+        </DialogHeader>
+
+        {busy ? (
+          <div className="flex items-center justify-center py-10 text-muted-foreground">
+            <Spinner className="size-5" />
           </div>
-          <Button type="submit" disabled={busy} className="sm:w-28">
-            {busy ? <Spinner /> : <UserPlus />}
+        ) : (
+          <div className="space-y-1.5">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search people…" className="pl-8" />
+            </div>
+            <div className="max-h-56 space-y-0.5 overflow-y-auto">
+              {shown.length === 0 ? (
+                <p className="px-2 py-6 text-center text-sm text-muted-foreground">No people found.</p>
+              ) : (
+                shown.map((u) => (
+                  <PickerRow
+                    key={u.id}
+                    checked={selected.has(u.email)}
+                    onToggle={() =>
+                      setSelected((s) => {
+                        const next = new Set(s)
+                        if (next.has(u.email)) next.delete(u.email)
+                        else next.add(u.email)
+                        return next
+                      })
+                    }
+                    label={u.name ?? u.email}
+                    sub={u.name ? u.email : undefined}
+                  />
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
+        <DialogFooter className="sm:justify-between">
+          <span className="self-center text-xs text-muted-foreground">
+            {selected.size === 0 ? 'No one selected' : `${selected.size} selected`}
+          </span>
+          <Button onClick={invite} disabled={busy || saving || selected.size === 0}>
+            {saving && <Spinner />}
             Invite
           </Button>
-        </fetcher.Form>
-
-        {data?.ok && (
-          <output className="block rounded-md border border-success/30 bg-success/15 px-3 py-2 text-sm font-medium text-success">
-            Invited.
-          </output>
-        )}
-        {data?.error && (
-          <div
-            role="alert"
-            className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm font-medium text-destructive"
-          >
-            {data.error}
-          </div>
-        )}
-      </CardContent>
-    </Card>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
-function SiteCard({ site }: { site: SpaceSite }) {
-  const archived = site.status === 'archived'
+// Same table shell as the dashboard feeds; per-row actions add Share for sites the caller owns.
+const SPACE_SITE_COLUMNS: Column<SpaceSite>[] = [
+  nameColumn(),
+  urlColumn(),
+  visibilityBadgeColumn(),
+  createdColumn(),
+  actionsColumn((s) => <SpaceSiteActions site={s} />),
+]
+
+function SpaceSiteActions({ site }: { site: SpaceSite }) {
+  const [shareOpen, setShareOpen] = useState(false)
   return (
-    <Card className={cn(archived && 'opacity-75')}>
-      <CardHeader>
-        <div className="flex flex-wrap items-center gap-2">
-          {site.audio && <Mic className="size-4 shrink-0 text-primary" aria-label="Audio" />}
-          <CardTitle className="min-w-0 truncate text-base">{site.title ?? site.siteSlug}</CardTitle>
-          <VisibilityBadge value={site.visibility} />
-          {archived && <Badge variant="secondary">Archived</Badge>}
-        </div>
-        <CardDescription className="truncate font-mono text-xs">{site.url}</CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-wrap items-center gap-2">
-        <Button asChild variant="secondary" size="sm">
-          <a href={site.url} target="_blank" rel="noreferrer">
-            <ExternalLink />
-            Open
-          </a>
-        </Button>
-        <CopyButton text={site.url} />
-        {site.isOwner && (
-          <ShareDialog spaceSlug={site.spaceSlug} siteSlug={site.siteSlug} title={site.title} />
-        )}
-      </CardContent>
-    </Card>
+    <div className="flex items-center justify-end gap-1">
+      <CopyButton text={site.url} label="" variant="outline" />
+      <OpenLinkButton url={site.url} />
+      {site.isOwner && (
+        <>
+          <Button variant="outline" size="sm" onClick={() => setShareOpen(true)}>
+            <Share2 />
+            Share
+          </Button>
+          <ShareDialog
+            spaceSlug={site.spaceSlug}
+            siteSlug={site.siteSlug}
+            title={site.title}
+            open={shareOpen}
+            onOpenChange={setShareOpen}
+          />
+        </>
+      )}
+    </div>
   )
 }
 
@@ -201,9 +259,9 @@ export function Component() {
             <span className="font-mono">/{space.slug}</span>
           </span>
         }
-      />
-
-      {isGroup && <InviteCard />}
+      >
+        {isGroup && <InviteMembersDialog slug={space.slug} />}
+      </PageHeader>
 
       <section className="space-y-4">
         <SectionHeader index={1} title="Sites" />
@@ -214,11 +272,12 @@ export function Component() {
             description="No sites you can access here yet."
           />
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2">
-            {sites.map((s) => (
-              <SiteCard key={s.id} site={s} />
-            ))}
-          </div>
+          <SortableTable
+            rows={sites}
+            columns={SPACE_SITE_COLUMNS}
+            getRowKey={(s) => s.id}
+            initialSort={{ key: 'created', dir: 'desc' }}
+          />
         )}
       </section>
 

@@ -48,7 +48,8 @@ export function ViewerTopBar({
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-background px-3 md:gap-3">
       <Link to="/dashboard" className="flex shrink-0 items-center gap-2 font-mono font-semibold text-sm tracking-tight">
-        <span className="size-2.5 rounded-[3px] bg-primary shadow-[0_0_12px_1px_var(--primary)]" />
+        {/* The brand mark (favicon.svg), keeping the old yellow box's primary glow. */}
+        <img src="/favicon.svg" alt="" className="size-5 rounded-[5px] shadow-[0_0_12px_1px_var(--primary)]" />
         glance
       </Link>
 

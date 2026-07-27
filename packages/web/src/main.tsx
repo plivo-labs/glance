@@ -78,6 +78,14 @@ const router = createBrowserRouter([
     id: 'root',
     Component: AppShell,
     loader: rootLoader,
+    // Same-path search-only navigations (the dashboard's ?tab= / ?new= params) must not re-run
+    // this loader: it AWAITS /api/auth/me (so every tab click would block on a network round
+    // trip) and would hand the Bell/WhatsNew <Await>s fresh promise identities, re-suspending
+    // them to their unread=0 fallbacks. Mirrors the dashboard route's own shouldRevalidate.
+    shouldRevalidate: ({ currentUrl, nextUrl, defaultShouldRevalidate }) =>
+      currentUrl.pathname === nextUrl.pathname && currentUrl.search !== nextUrl.search
+        ? false
+        : defaultShouldRevalidate,
     ErrorBoundary: RootError,
     children: [
       { index: true, loader: () => redirect('/dashboard') },

@@ -2,6 +2,7 @@ import { type ReactNode, useEffect, useState } from 'react'
 import {
   Link,
   Navigate,
+  type ShouldRevalidateFunctionArgs,
   useLoaderData,
   useLocation,
   useNavigate,
@@ -9,7 +10,7 @@ import {
   useRouteLoaderData,
   useSearchParams,
 } from 'react-router'
-import { ChevronDown, Download, ExternalLink, Mic, Plus, Rocket, Terminal, Upload } from 'lucide-react'
+import { ChevronDown, Download, Mic, Plus, Rocket, Terminal, Upload, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import { CopyButton } from '@/components/CopyButton'
 import { DeployCard } from '@/components/DeployCard'
@@ -38,7 +39,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from '@/components/ui/dialog'
 import {
   DropdownMenu,
@@ -58,8 +58,8 @@ import {
   type DashboardTab,
   type FeedSlot,
   type TabContent,
-  type TabId,
   feedRowPath,
+  tabFromParam,
 } from '@/lib/feedState'
 import { notificationHref } from '@/lib/mentions'
 import type { RootData } from '@/lib/notifications'
@@ -87,6 +87,26 @@ export function loader() {
     team: observed(api.get<TeamUpload[]>('/api/sites/team')),
     comments: observed(api.get<CommentFeedItem[]>('/api/comments/feed')),
   }
+}
+
+// The active tab (?tab=) and the create-space dialog (?new=space) live in the search params, so a
+// same-path search-only navigation must NOT re-run the loader — that would refire all five feed
+// calls on every tab click. Everything else (path changes, revalidator.revalidate() after a
+// mutation — where the URL is unchanged) keeps the default behavior.
+export function shouldRevalidate({
+  currentUrl,
+  nextUrl,
+  defaultShouldRevalidate,
+}: ShouldRevalidateFunctionArgs) {
+  if (currentUrl.pathname === nextUrl.pathname && currentUrl.search !== nextUrl.search) return false
+  return defaultShouldRevalidate
+}
+
+/** Copy-and-mutate helper for setSearchParams updaters (params come to us read-only). */
+const withParams = (prev: URLSearchParams, mutate: (next: URLSearchParams) => void) => {
+  const next = new URLSearchParams(prev)
+  mutate(next)
+  return next
 }
 
 // Sites shared with me — same table shell as Your sites, minus the owner-only actions.
@@ -154,22 +174,22 @@ export function Component() {
     team: useFeedSlot(loaded.team),
     comments: useFeedSlot(loaded.comments),
   }
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const location = useLocation()
-  // Controlled tabs (Radix Tabs is otherwise uncontrolled): the user's pick is `requestedTab`;
-  // deriveFeedState reconciles it against the tabs that exist and the two URL/feed-driven steers.
-  const [requestedTab, setRequestedTab] = useState<TabId>('sites')
-  const state = deriveFeedState(slots, {
-    requestedTab,
-    // #6 — a deep link ?new=space (from CommandPalette/ShareDialog, even while already on
-    // /dashboard) must select the Spaces tab so NewSpaceDialog mounts + opens.
-    wantsNewSpace: searchParams.get('new') === 'space',
-  })
-  // Reconcile during render, not in an effect (the repo's idiom). This CONSUMES the steering
-  // signal: once requestedTab is 'spaces', the next derive returns steerTo: null — fire-once.
-  // It also makes the #38 fallback sticky (active Shared tab emptied away → land on Your sites).
-  const target = state.steerTo ?? state.activeTab
-  if (requestedTab !== target) setRequestedTab(target)
+  // The active tab lives in the URL (?tab=) so a refresh or a shared link lands on the same tab.
+  // deriveFeedState reconciles it against the tabs that actually exist; the URL is NOT rewritten
+  // on fallback, so a ?tab=shared deep link activates once the Shared tab pops in (#38: an active
+  // Shared tab emptied away falls back to Your sites the same way).
+  const state = deriveFeedState(slots, { requestedTab: tabFromParam(searchParams.get('tab')) })
+
+  // Drop a stale ?tab= (its feed settled without producing the tab) — see FeedState.staleTab.
+  // An effect, not a render-time set: this mutates the URL, and it must also run before the
+  // unauthorized early-return below to keep hook order stable.
+  useEffect(() => {
+    if (state.staleTab) {
+      setSearchParams((prev) => withParams(prev, (next) => next.delete('tab')), { replace: true })
+    }
+  }, [state.staleTab, setSearchParams])
 
   // Any feed 401'd — the session lapsed. Bounce to login, preserving where we were.
   if (state.unauthorized) {
@@ -182,7 +202,25 @@ export function Component() {
     <div className="space-y-10">
       <ToolbarSection spaces={slots.spaces} />
       <AgentSetup />
-      <Tabs value={state.activeTab} onValueChange={(t) => setRequestedTab(t as TabId)} className="gap-6">
+      {/* Mounted at the route level (not inside a tab), so ?new=space opens it from anywhere. */}
+      <NewSpaceDialog />
+      <Tabs
+        value={state.activeTab}
+        onValueChange={(t) => {
+          // Radix fires onValueChange twice per click (click, then focus) because the controlled
+          // value only catches up after our async URL update. The refire would be a same-URL
+          // navigation — which React Router treats as "revalidate every loader". Dedupe against
+          // the LIVE URL (not a closure/state snapshot: the refire happens before the re-render,
+          // but history has already been updated synchronously).
+          if (t === tabFromParam(new URLSearchParams(window.location.search).get('tab'))) return
+          setSearchParams(
+            // 'sites' is the default — keep the landing URL clean instead of pinning ?tab=sites.
+            (prev) => withParams(prev, (next) => (t === 'sites' ? next.delete('tab') : next.set('tab', t))),
+            { replace: true },
+          )
+        }}
+        className="gap-6"
+      >
         <TabsList variant="line">
           {state.tabs.map((tab) => (
             <TabsTrigger key={tab.id} value={tab.id}>
@@ -206,11 +244,15 @@ export function Component() {
 function ToolbarSection({ spaces }: { spaces: FeedSlot<SpaceSummary[]> }) {
   if (spaces.status === 'pending') return <ToolbarSkeleton />
   if (spaces.status === 'rejected') {
+    // Keep the New menu alive on a failed feed — with the Spaces tab now conditional, it's the
+    // page's only create-space affordance. The deploy pickers degrade inside their own dialogs.
     return (
-      <EmptyState
-        title="Couldn't load the deploy form"
-        description={errorMessage(spaces.error, 'Something went wrong. Try refreshing.')}
-      />
+      <div className="space-y-2">
+        <DashboardToolbar spaces={[]} />
+        <p className="text-destructive text-sm" role="alert">
+          Couldn't load your spaces — {errorMessage(spaces.error, 'something went wrong. Try refreshing.')}
+        </p>
+      </div>
     )
   }
   return <DashboardToolbar spaces={spaces.data} />
@@ -246,30 +288,12 @@ function TabBody({ tab }: { tab: DashboardTab }) {
         </TabPanel>
       )
     case 'spaces':
-      // The New-space row renders in every content state so ?new=space can open the dialog (#6)
-      // even while the feed is still loading. Rows here are the GROUP spaces (helper-filtered).
+      // The tab only exists when the feed resolved with GROUP spaces (helper-filtered), so no
+      // empty state; New space lives in the top New menu.
       return (
-        <div className="space-y-4">
-          <div className="flex justify-end">
-            <NewSpaceDialog />
-          </div>
-          <TabPanel content={tab.content} what="your spaces">
-            {(groupSpaces) =>
-              groupSpaces.length === 0 ? (
-                <EmptyState
-                  title="No group spaces"
-                  description="Create a space to collaborate with teammates."
-                />
-              ) : (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {groupSpaces.map((s) => (
-                    <SpaceCard key={s.id} space={s} />
-                  ))}
-                </div>
-              )
-            }
-          </TabPanel>
-        </div>
+        <TabPanel content={tab.content} what="your spaces">
+          {(groupSpaces) => <SpacesTable spaces={groupSpaces} />}
+        </TabPanel>
       )
     case 'team':
       return (
@@ -504,9 +528,11 @@ function AgentSetup() {
 }
 
 // One primary button opens a menu: Record audio (RecordDialog) · Upload files (UploadDialog wrapping
-// the bare DeployCard) · Install the CLI (the one-liner). onSelect closes the menu, then opens the
-// controlled dialog rendered as a sibling — no nesting, so focus returns cleanly on close.
+// the bare DeployCard) · Create space (?new=space → the route-level NewSpaceDialog) · Install the
+// CLI (the one-liner). onSelect closes the menu, then opens the controlled dialog rendered as a
+// sibling — no nesting, so focus returns cleanly on close.
 function NewMenu({ spaces }: { spaces: SpaceSummary[] }) {
+  const [, setSearchParams] = useSearchParams()
   const [recordOpen, setRecordOpen] = useState(false)
   const [uploadOpen, setUploadOpen] = useState(false)
   const [installOpen, setInstallOpen] = useState(false)
@@ -534,6 +560,19 @@ function NewMenu({ spaces }: { spaces: SpaceSummary[] }) {
             <div className="flex flex-col">
               <span>Upload files</span>
               <span className="text-muted-foreground text-xs">Drop a folder, get a URL</span>
+            </div>
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={() =>
+              setSearchParams((prev) => withParams(prev, (next) => next.set('new', 'space')), {
+                replace: true,
+              })
+            }
+          >
+            <Users />
+            <div className="flex flex-col">
+              <span>Create space</span>
+              <span className="text-muted-foreground text-xs">Share sites with a group</span>
             </div>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
@@ -597,17 +636,41 @@ function UploadDialog({
 
 // ─── Your spaces ─────────────────────────────────────────────────────────────
 
-function SpaceCard({ space }: { space: SpaceSummary }) {
-  return (
-    <Card className="gap-0 py-0 transition-colors hover:border-primary/40">
-      <Link to={`/${space.slug}`} className="flex items-center justify-between gap-3 p-4">
-        <div className="min-w-0">
-          <p className="truncate font-medium">{space.name}</p>
-          <p className="font-mono text-sm text-muted-foreground">/{space.slug}</p>
-        </div>
-        <ExternalLink className="size-4 shrink-0 text-muted-foreground" />
+// Same table shell as the site feeds — one system across every collection on the dashboard.
+const SPACE_COLUMNS: Column<SpaceSummary>[] = [
+  {
+    key: 'name',
+    label: 'Name',
+    headClassName: 'max-w-[15rem]',
+    cellClassName: 'max-w-[15rem]',
+    compare: (a, b) => a.name.localeCompare(b.name),
+    render: (s) => (
+      <Link to={`/${s.slug}`} className="block truncate font-medium hover:underline">
+        {s.name}
       </Link>
-    </Card>
+    ),
+  },
+  {
+    key: 'path',
+    label: 'Path',
+    compare: (a, b) => a.slug.localeCompare(b.slug),
+    render: (s) => <span className="font-mono text-sm text-muted-foreground">/{s.slug}</span>,
+  },
+  actionsColumn((s) => (
+    <Button asChild variant="outline" size="sm">
+      <Link to={`/${s.slug}`}>Open</Link>
+    </Button>
+  )),
+]
+
+function SpacesTable({ spaces }: { spaces: SpaceSummary[] }) {
+  return (
+    <SortableTable
+      rows={spaces}
+      columns={SPACE_COLUMNS}
+      getRowKey={(s) => s.id}
+      initialSort={{ key: 'name', dir: 'asc' }}
+    />
   )
 }
 
@@ -615,27 +678,22 @@ function NewSpaceDialog() {
   const navigate = useNavigate()
   const revalidator = useRevalidator()
   const [searchParams, setSearchParams] = useSearchParams()
-  const [internalOpen, setInternalOpen] = useState(false)
   const [slug, setSlug] = useState('')
   const [name, setName] = useState('')
   const [saving, setSaving] = useState(false)
 
-  // Open LIVE from the URL: CommandPalette/ShareDialog navigate to ?new=space while already on
-  // /dashboard, so a mount-time initializer (which never re-runs) would silently no-op (#6).
-  // Reading the param each render catches every arrival.
-  const open = internalOpen || searchParams.get('new') === 'space'
+  // Driven ENTIRELY by the URL: NewMenu, CommandPalette and ShareDialog all set ?new=space (even
+  // while already on /dashboard — reading the param each render catches every arrival, #6), and
+  // closing clears the param so the still-present URL doesn't immediately reopen the dialog.
+  const open = searchParams.get('new') === 'space'
   const setOpen = (o: boolean) => {
-    setInternalOpen(o)
-    // Clear the param on close so the still-present URL doesn't immediately reopen the dialog.
-    if (!o && searchParams.get('new') === 'space') {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev)
-          next.delete('new')
-          return next
-        },
-        { replace: true },
-      )
+    if (!o) {
+      // Reset the fields so a reopened dialog doesn't show a previous attempt's draft.
+      setSlug('')
+      setName('')
+      if (open) {
+        setSearchParams((prev) => withParams(prev, (next) => next.delete('new')), { replace: true })
+      }
     }
   }
 
@@ -662,12 +720,6 @@ function NewSpaceDialog() {
 
   return (
     <Dialog open={open} onOpenChange={(o) => !saving && setOpen(o)}>
-      <DialogTrigger asChild>
-        <Button variant="outline" size="sm">
-          <Plus />
-          New space
-        </Button>
-      </DialogTrigger>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Create a space</DialogTitle>
