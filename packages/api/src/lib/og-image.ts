@@ -46,7 +46,9 @@ const BRAND_MARK_DATA_URI = `data:image/svg+xml;base64,${btoa(BRAND_MARK_SVG)}`
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
 /** The card markup (satori's HTML subset: everything display:flex, inline styles only). Brand
- *  palette from the mark: dark #15181e, cream #faf6ec, amber #e0a13a. */
+ *  palette from the mark: dark #15181e, cream #faf6ec, amber #e0a13a. The title uses satori's
+ *  native line-clamp (needs display:block): a long title ends in a visible ellipsis at exactly
+ *  three wrapped lines instead of clipping mid-sentence. */
 export function ogCardHtml(card: OgCard): string {
   return `<div style="display:flex;flex-direction:column;justify-content:space-between;width:100vw;height:100vh;background:#15181e;padding:72px;font-family:'IBM Plex Sans'">
   <div style="display:flex;align-items:center">
@@ -54,7 +56,7 @@ export function ogCardHtml(card: OgCard): string {
     <span style="margin-left:28px;font-size:44px;font-weight:600;color:#faf6ec">Glance</span>
   </div>
   <div style="display:flex;flex-direction:column">
-    <span style="font-size:64px;font-weight:600;color:#faf6ec;line-height:1.2;max-height:230px;overflow:hidden">${esc(card.title)}</span>
+    <span style="display:block;line-clamp:3;font-size:64px;font-weight:600;color:#faf6ec;line-height:1.2">${esc(card.title)}</span>
     <span style="margin-top:24px;font-size:32px;color:#e0a13a">${esc(card.spaceSlug)}/${esc(card.siteSlug)}</span>
   </div>
 </div>`

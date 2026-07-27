@@ -41,4 +41,10 @@ describe('ogCardHtml', () => {
     expect(html).toContain('acme/report')
     expect(html).toContain('data:image/svg+xml;base64,') // the brand mark rides inline
   })
+
+  test('the title span carries satori line-clamp so overlong titles ellipsize at three lines', () => {
+    const html = ogCardHtml({ title: 'Q3 Report', spaceSlug: 'acme', siteSlug: 'report' })
+    // Needs display:block on the same span — satori only clamps block text containers.
+    expect(html).toMatch(/display:block;line-clamp:3;[^"]*">Q3 Report</)
+  })
 })
