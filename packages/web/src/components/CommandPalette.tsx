@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router'
+import { useLocation, useNavigate } from 'react-router'
 import { Copy, ExternalLink, Folder, History, LayoutDashboard, LogOut, Plus, Shield, SunMoon, Terminal } from 'lucide-react'
 import {
   CommandDialog,
@@ -28,6 +28,7 @@ export function CommandPalette({
   user: Me | null
 }) {
   const navigate = useNavigate()
+  const location = useLocation()
   // Data comes from the `api` fetch helper, not useFetcher: useFetcher().load() resolves a
   // React Router route, but /api/* are worker endpoints with no client route (they'd match
   // the splat). Site search is driven by the input; spaces load when the palette opens.
@@ -173,7 +174,16 @@ export function CommandPalette({
               Admin
             </CommandItem>
           )}
-          <CommandItem onSelect={() => run(() => navigate('/dashboard?new=space'))}>
+          <CommandItem
+            onSelect={() =>
+              run(() => {
+                // Merge, don't clobber: already on /dashboard means an active ?tab= to preserve.
+                const params = new URLSearchParams(location.pathname === '/dashboard' ? location.search : '')
+                params.set('new', 'space')
+                navigate(`/dashboard?${params}`)
+              })
+            }
+          >
             <Plus />
             New space
           </CommandItem>

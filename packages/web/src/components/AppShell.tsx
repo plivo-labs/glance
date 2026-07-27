@@ -61,7 +61,8 @@ export function AppShell() {
       <header className="sticky top-0 z-40 border-b border-border/70 bg-background/80 backdrop-blur-md">
         <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4 sm:px-6">
           <Link to="/dashboard" className="flex items-center gap-2 font-mono text-sm font-semibold tracking-tight">
-            <span className="size-2.5 rounded-[3px] bg-primary shadow-[0_0_12px_1px_var(--primary)]" />
+            {/* The brand mark (favicon.svg), keeping the old yellow box's primary glow. */}
+            <img src="/favicon.svg" alt="" className="size-5 rounded-[5px] shadow-[0_0_12px_1px_var(--primary)]" />
             glance
           </Link>
           {user && (

@@ -212,18 +212,22 @@ describe('GET /api/spaces/:slug — post-auth D1 request budget + member facts (
     db.resetCounters()
     const asMember = await app.request('/api/spaces/acme', { headers: auth('m2') }, env)
     expect(asMember.status).toBe(200)
-    expect(await asMember.json()).toMatchObject({ slug: 'acme', memberCount: 3, isMember: true })
+    expect(await asMember.json()).toMatchObject({ slug: 'acme', memberCount: 3, isMember: true, isOwner: false })
     expect(postAuthRequests(db)).toBeLessThanOrEqual(2)
 
     db.resetCounters()
     const asOutsider = await app.request('/api/spaces/acme', { headers: auth('out') }, env)
     expect(asOutsider.status).toBe(200)
-    expect(await asOutsider.json()).toMatchObject({ slug: 'acme', memberCount: 3, isMember: false })
+    expect(await asOutsider.json()).toMatchObject({ slug: 'acme', memberCount: 3, isMember: false, isOwner: false })
+
     expect(postAuthRequests(db)).toBeLessThanOrEqual(2)
     // Exact shape: ONE batch carrying all three SELECTs (space row, member count, membership).
     expect(db.counters.loose).toBe(1)
     expect(db.counters.batches).toBe(1)
     expect(db.counters.batchStmts).toBe(3)
+
+    const asOwner = await app.request('/api/spaces/acme', { headers: auth('owner') }, env)
+    expect(await asOwner.json()).toMatchObject({ slug: 'acme', isMember: true, isOwner: true })
   })
 })
 

@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import { ApiError } from './api'
-import { deriveFeedState, feedRowPath, type FeedSlot, type FeedSlots } from './feedState'
+import { deriveFeedState, feedRowPath, tabFromParam, type FeedSlot, type FeedSlots } from './feedState'
 import { notificationHref } from './mentions'
 import type { CommentFeedItem, SiteSummary, SpaceSummary, TeamUpload } from './types'
 
 // deriveFeedState is the dashboard's per-feed render brain: these tests pin which tabs exist,
-// per-tab content state, 401 signalling, ?new=space steering fire-once, and temporal stability.
+// per-tab content state, 401 signalling, the ?tab= URL parse, and temporal stability.
 // NOTE: a pure-helper suite cannot fail the original bug (the component gating all tabs on one
 // Promise.all before ANY tab painted) — the G4 real-browser progressive-paint smoke is the net
 // for that; these tests guard the derivation the component now renders from.
@@ -61,7 +61,7 @@ const allPending = (): FeedSlots => ({
   comments: pending,
 })
 
-const onSites = { requestedTab: 'sites', wantsNewSpace: false } as const
+const onSites = { requestedTab: 'sites' } as const
 
 // Every state a feed slot can be in — Comments' behavior must be invariant across all of them.
 const commentSlotStates: FeedSlot<CommentFeedItem[]>[] = [
@@ -73,20 +73,18 @@ const commentSlotStates: FeedSlot<CommentFeedItem[]>[] = [
 
 describe('deriveFeedState', () => {
   // T10.1 — mine resolved, everything else still pending: Your sites is renderable with rows
-  // immediately; Shared is ABSENT (not a skeleton tab) until its feed proves it has rows.
-  test('T10.1 sites resolve first: Your sites has rows, Shared absent, rest loading', () => {
+  // immediately; Shared and Spaces are ABSENT (not skeleton tabs) until their feeds prove rows.
+  test('T10.1 sites resolve first: Your sites has rows, Shared/Spaces absent, rest loading', () => {
     const mine = [site('a'), site('b')]
     const state = deriveFeedState({ ...allPending(), sites: resolved(mine) }, onSites)
 
     expect(state.tabs).toEqual([
       { id: 'sites', label: 'Your sites', count: 2, content: { kind: 'rows', rows: mine } },
-      { id: 'spaces', label: 'Your spaces', count: null, content: { kind: 'loading' } },
       { id: 'team', label: 'Team activity', count: null, content: { kind: 'loading' } },
       { id: 'comments', label: 'Comments', count: null, content: { kind: 'loading' } },
     ])
     expect(state.activeTab).toBe('sites')
     expect(state.unauthorized).toBe(false)
-    expect(state.steerTo).toBeNull()
   })
 
   // T10.2 — the Shared tab pops in only when its feed resolves with rows; an empty resolve keeps
@@ -98,7 +96,6 @@ describe('deriveFeedState', () => {
     expect(state.tabs).toEqual([
       { id: 'sites', label: 'Your sites', count: null, content: { kind: 'loading' } },
       { id: 'shared', label: 'Shared with me', count: 3, content: { kind: 'rows', rows: theirs } },
-      { id: 'spaces', label: 'Your spaces', count: null, content: { kind: 'loading' } },
       { id: 'team', label: 'Team activity', count: null, content: { kind: 'loading' } },
       { id: 'comments', label: 'Comments', count: null, content: { kind: 'loading' } },
     ])
@@ -106,7 +103,7 @@ describe('deriveFeedState', () => {
 
   test('T10.2 shared resolves empty: tab stays absent', () => {
     const state = deriveFeedState({ ...allPending(), shared: resolved([]) }, onSites)
-    expect(state.tabs.map((t) => t.id)).toEqual(['sites', 'spaces', 'team', 'comments'])
+    expect(state.tabs.map((t) => t.id)).toEqual(['sites', 'team', 'comments'])
   })
 
   // T10.3 — one failed feed degrades only its own tab; the rest render from their own slots.
@@ -157,37 +154,71 @@ describe('deriveFeedState', () => {
     // A non-401 shared failure means we cannot prove it has rows — the tab stays absent.
     const broken = deriveFeedState({ ...allPending(), shared: rejected(new ApiError(500, 'boom')) }, onSites)
     expect(broken.unauthorized).toBe(false)
-    expect(broken.tabs.map((t) => t.id)).toEqual(['sites', 'spaces', 'team', 'comments'])
+    expect(broken.tabs.map((t) => t.id)).toEqual(['sites', 'team', 'comments'])
   })
 
-  // T10.4 — ?new=space steers IMMEDIATELY (the Spaces tab always exists, so a slow/rejected feed
-  // must not kill the deep link); consuming the signal (requestedTab becomes 'spaces') makes
-  // every later derive return steerTo: null.
-  test('T10.4 ?new=space steers immediately, fires exactly once', () => {
-    const spaces = [space('personal', 'personal'), space('g1', 'group'), space('g2', 'group')]
-    const wants = { requestedTab: 'sites', wantsNewSpace: true } as const
+  // T10.4 — the Spaces tab mirrors Shared: it exists only once its feed resolves with at least
+  // one GROUP space. The personal space never earns the tab; a pending or failed feed keeps it
+  // absent (the toolbar, rendering off the same slot, surfaces a spaces-feed failure).
+  test('T10.4 spaces tab exists only when the feed resolves with group spaces', () => {
+    const absent = (slot: FeedSlot<SpaceSummary[]>) =>
+      deriveFeedState({ ...allPending(), spaces: slot }, onSites).tabs.map((t) => t.id)
 
-    // Pending spaces: steering fires anyway — the tab exists even before its feed settles.
-    const before = deriveFeedState(allPending(), wants)
-    expect(before.steerTo).toBe('spaces')
+    expect(absent(pending)).toEqual(['sites', 'team', 'comments'])
+    expect(absent(rejected(new Error('boom')))).toEqual(['sites', 'team', 'comments'])
+    expect(absent(resolved([]))).toEqual(['sites', 'team', 'comments'])
+    expect(absent(resolved([space('personal', 'personal')]))).toEqual(['sites', 'team', 'comments'])
 
-    // A rejected feed doesn't kill the deep link either.
-    const broken = deriveFeedState({ ...allPending(), spaces: rejected(new Error('boom')) }, wants)
-    expect(broken.steerTo).toBe('spaces')
-
-    // Resolve → count counts only GROUP spaces; steering still on while the active tab is elsewhere.
-    const fired = deriveFeedState({ ...allPending(), spaces: resolved(spaces) }, wants)
-    expect(fired.tabs.find((t) => t.id === 'spaces')?.count).toBe(2)
-    expect(fired.steerTo).toBe('spaces')
-
-    // The component consumes the signal by requesting 'spaces'; re-derives (fresh slot
-    // identities, same data, param still in the URL) must NOT re-fire.
-    const after = deriveFeedState(
-      { ...allPending(), spaces: resolved(spaces.map((s) => ({ ...s }))) },
-      { requestedTab: 'spaces', wantsNewSpace: true },
+    // Group spaces present → tab pops in, counting and listing ONLY the group spaces.
+    const groups = [space('g1', 'group'), space('g2', 'group')]
+    const state = deriveFeedState(
+      { ...allPending(), spaces: resolved([space('personal', 'personal'), ...groups]) },
+      onSites,
     )
-    expect(after.steerTo).toBeNull()
-    expect(after.activeTab).toBe('spaces')
+    expect(state.tabs.find((t) => t.id === 'spaces')).toEqual({
+      id: 'spaces',
+      label: 'Your spaces',
+      count: 2,
+      content: { kind: 'rows', rows: groups },
+    })
+  })
+
+  test('T10.4 requested Spaces without a spaces tab falls back to Your sites', () => {
+    const view = { requestedTab: 'spaces' } as const
+    expect(deriveFeedState(allPending(), view).activeTab).toBe('sites')
+    // The URL keeps ?tab=spaces, so once the feed proves group spaces the tab activates.
+    const landed = deriveFeedState({ ...allPending(), spaces: resolved([space('g', 'group')]) }, view)
+    expect(landed.activeTab).toBe('spaces')
+  })
+
+  // T10.6 — staleTab: a ?tab= pointing at an absent conditional tab is a legitimate deep link
+  // while the feed is pending, and STALE (component clears the param) only once the feed RESOLVES
+  // without producing the tab. A rejection (transient error or the 401 heading to login) proves
+  // nothing about absence — the deep link must survive it.
+  test('T10.6 staleTab fires only after the governing feed resolves without the tab', () => {
+    const wantSpaces = { requestedTab: 'spaces' } as const
+    expect(deriveFeedState(allPending(), wantSpaces).staleTab).toBe(false)
+    expect(deriveFeedState({ ...allPending(), spaces: resolved([]) }, wantSpaces).staleTab).toBe(true)
+    expect(
+      deriveFeedState({ ...allPending(), spaces: resolved([space('p', 'personal')]) }, wantSpaces).staleTab,
+    ).toBe(true)
+    expect(deriveFeedState({ ...allPending(), spaces: rejected(new Error('boom')) }, wantSpaces).staleTab).toBe(false)
+    expect(
+      deriveFeedState({ ...allPending(), spaces: rejected(new ApiError(401, 'Unauthorized')) }, wantSpaces).staleTab,
+    ).toBe(false)
+    expect(
+      deriveFeedState({ ...allPending(), spaces: resolved([space('g', 'group')]) }, wantSpaces).staleTab,
+    ).toBe(false)
+
+    const wantShared = { requestedTab: 'shared' } as const
+    expect(deriveFeedState(allPending(), wantShared).staleTab).toBe(false)
+    expect(deriveFeedState({ ...allPending(), shared: resolved([]) }, wantShared).staleTab).toBe(true)
+    expect(deriveFeedState({ ...allPending(), shared: rejected(new Error('boom')) }, wantShared).staleTab).toBe(false)
+    expect(deriveFeedState({ ...allPending(), shared: resolved([site('x')]) }, wantShared).staleTab).toBe(false)
+
+    // Always-present tabs can never go stale.
+    expect(deriveFeedState(allPending(), onSites).staleTab).toBe(false)
+    expect(deriveFeedState(allPending(), { requestedTab: 'comments' }).staleTab).toBe(false)
   })
 
   // T10.5 — TEMPORAL: revalidation hands the component brand-new promise/slot/object identities
@@ -201,7 +232,7 @@ describe('deriveFeedState', () => {
       team: resolved([upload('t')]),
       comments: pending,
     })
-    const view = { requestedTab: 'team', wantsNewSpace: false } as const
+    const view = { requestedTab: 'team' } as const
 
     const first = deriveFeedState(build(), view)
     const second = deriveFeedState(build(), view)
@@ -212,19 +243,18 @@ describe('deriveFeedState', () => {
   })
 
   test('T10.5 shared pop-in while user sits on Team does not steal the active tab', () => {
-    const view = { requestedTab: 'team', wantsNewSpace: false } as const
+    const view = { requestedTab: 'team' } as const
     const before = deriveFeedState(allPending(), view)
     expect(before.activeTab).toBe('team')
-    expect(before.tabs.map((t) => t.id)).toEqual(['sites', 'spaces', 'team', 'comments'])
+    expect(before.tabs.map((t) => t.id)).toEqual(['sites', 'team', 'comments'])
 
     const after = deriveFeedState({ ...allPending(), shared: resolved([site('x')]) }, view)
-    expect(after.tabs.map((t) => t.id)).toEqual(['sites', 'shared', 'spaces', 'team', 'comments'])
+    expect(after.tabs.map((t) => t.id)).toEqual(['sites', 'shared', 'team', 'comments'])
     expect(after.activeTab).toBe('team')
-    expect(after.steerTo).toBeNull()
   })
 
   test('T10.5 active Shared tab disappearing (feed emptied) falls back to Your sites', () => {
-    const view = { requestedTab: 'shared', wantsNewSpace: false } as const
+    const view = { requestedTab: 'shared' } as const
     const withShared = deriveFeedState({ ...allPending(), shared: resolved([site('x')]) }, view)
     expect(withShared.activeTab).toBe('shared')
 
@@ -235,7 +265,7 @@ describe('deriveFeedState', () => {
   test('C5.1 comments tab is always present across every slot state', () => {
     for (const comments of commentSlotStates) {
       const state = deriveFeedState({ ...allPending(), comments }, onSites)
-      expect(state.tabs.map((tab) => tab.id)).toEqual(['sites', 'spaces', 'team', 'comments'])
+      expect(state.tabs.map((tab) => tab.id)).toEqual(['sites', 'team', 'comments'])
     }
   })
 
@@ -254,10 +284,7 @@ describe('deriveFeedState', () => {
 
   test('C5.1 requested Comments stays active across every slot state', () => {
     for (const comments of commentSlotStates) {
-      const state = deriveFeedState(
-        { ...allPending(), comments },
-        { requestedTab: 'comments', wantsNewSpace: false },
-      )
+      const state = deriveFeedState({ ...allPending(), comments }, { requestedTab: 'comments' })
       expect(state.activeTab).toBe('comments')
     }
   })
@@ -267,16 +294,10 @@ describe('deriveFeedState', () => {
       { ...allPending(), shared: resolved([site('shared')]) },
       onSites,
     )
-    expect(withShared.tabs.map((tab) => tab.id)).toEqual([
-      'sites',
-      'shared',
-      'spaces',
-      'team',
-      'comments',
-    ])
+    expect(withShared.tabs.map((tab) => tab.id)).toEqual(['sites', 'shared', 'team', 'comments'])
 
     const withoutShared = deriveFeedState({ ...allPending(), shared: resolved([]) }, onSites)
-    expect(withoutShared.tabs.map((tab) => tab.id)).toEqual(['sites', 'spaces', 'team', 'comments'])
+    expect(withoutShared.tabs.map((tab) => tab.id)).toEqual(['sites', 'team', 'comments'])
   })
 
   test('C5.2 five-wide derivation preserves representative four-feed goldens', () => {
@@ -287,17 +308,16 @@ describe('deriveFeedState', () => {
         expected: {
           tabs: [
             { id: 'sites', label: 'Your sites', count: null, content: { kind: 'loading' } },
-            { id: 'spaces', label: 'Your spaces', count: null, content: { kind: 'loading' } },
             { id: 'team', label: 'Team activity', count: null, content: { kind: 'loading' } },
           ],
           activeTab: 'sites',
           unauthorized: false,
-          steerTo: null,
+          staleTab: false,
         },
       },
       {
         slots: { ...allPending(), shared: resolved([site('shared')]) },
-        view: { requestedTab: 'team', wantsNewSpace: false } as const,
+        view: { requestedTab: 'team' } as const,
         expected: {
           tabs: [
             { id: 'sites', label: 'Your sites', count: null, content: { kind: 'loading' } },
@@ -307,40 +327,38 @@ describe('deriveFeedState', () => {
               count: 1,
               content: { kind: 'rows', rows: [site('shared')] },
             },
-            { id: 'spaces', label: 'Your spaces', count: null, content: { kind: 'loading' } },
             { id: 'team', label: 'Team activity', count: null, content: { kind: 'loading' } },
           ],
           activeTab: 'team',
           unauthorized: false,
-          steerTo: null,
+          staleTab: false,
         },
       },
       {
         slots: { ...allPending(), shared: resolved([]) },
-        view: { requestedTab: 'shared', wantsNewSpace: false } as const,
+        view: { requestedTab: 'shared' } as const,
         expected: {
           tabs: [
             { id: 'sites', label: 'Your sites', count: null, content: { kind: 'loading' } },
-            { id: 'spaces', label: 'Your spaces', count: null, content: { kind: 'loading' } },
             { id: 'team', label: 'Team activity', count: null, content: { kind: 'loading' } },
           ],
           activeTab: 'sites',
           unauthorized: false,
-          steerTo: null,
+          staleTab: true, // requested Shared, whose feed settled empty
         },
       },
       {
+        // The personal space alone never earns the Spaces tab.
         slots: { ...allPending(), spaces: resolved([space('personal', 'personal')]) },
-        view: { requestedTab: 'sites', wantsNewSpace: true } as const,
+        view: onSites,
         expected: {
           tabs: [
             { id: 'sites', label: 'Your sites', count: null, content: { kind: 'loading' } },
-            { id: 'spaces', label: 'Your spaces', count: 0, content: { kind: 'rows', rows: [] } },
             { id: 'team', label: 'Team activity', count: null, content: { kind: 'loading' } },
           ],
           activeTab: 'sites',
           unauthorized: false,
-          steerTo: 'spaces',
+          staleTab: false,
         },
       },
     ]
@@ -350,6 +368,20 @@ describe('deriveFeedState', () => {
       expect(state.tabs.at(-1)?.id).toBe('comments')
       expect({ ...state, tabs: state.tabs.filter((tab) => tab.id !== 'comments') }).toEqual(expected)
     }
+  })
+})
+
+describe('tabFromParam — the ?tab= URL parse', () => {
+  test('passes through every known tab id', () => {
+    for (const id of ['sites', 'shared', 'spaces', 'team', 'comments'] as const) {
+      expect(tabFromParam(id)).toBe(id)
+    }
+  })
+
+  test('falls back to sites for a missing or unknown value', () => {
+    expect(tabFromParam(null)).toBe('sites')
+    expect(tabFromParam('')).toBe('sites')
+    expect(tabFromParam('bogus')).toBe('sites')
   })
 })
 

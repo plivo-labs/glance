@@ -139,7 +139,7 @@ export function ShareDialog({ spaceSlug, siteSlug, title, open: openProp, onOpen
                 <p className="text-xs font-medium text-muted-foreground">Other spaces</p>
                 <div className="max-h-32 space-y-0.5 overflow-y-auto">
                   {groups.map((g) => (
-                    <Row
+                    <PickerRow
                       key={g.id}
                       checked={selGroups.has(g.id)}
                       onToggle={() => setSelGroups((s) => toggle(s, g.id))}
@@ -188,7 +188,7 @@ export function ShareDialog({ spaceSlug, siteSlug, title, open: openProp, onOpen
                     const role = selUsers.get(u.id)
                     return (
                       <div key={u.id} className="flex items-center gap-2">
-                        <Row
+                        <PickerRow
                           className="flex-1"
                           checked={role !== undefined}
                           onToggle={() => setSelUsers((s) => toggleUser(s, u.id))}
@@ -221,7 +221,8 @@ export function ShareDialog({ spaceSlug, siteSlug, title, open: openProp, onOpen
   )
 }
 
-function Row({
+// Shared with the space page's invite dialog — one checkbox-row look across both pickers.
+export function PickerRow({
   checked,
   onToggle,
   label,
@@ -238,6 +239,7 @@ function Row({
     <button
       type="button"
       onClick={onToggle}
+      aria-pressed={checked}
       className={cn('flex w-full items-center gap-3 rounded-md px-2 py-1.5 text-left hover:bg-muted', className)}
     >
       <span

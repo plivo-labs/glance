@@ -85,7 +85,17 @@ spaces.get('/:slug', requireAuth, async (c) => {
 
   const memberCount = Number(counted[0]?.count ?? 0)
   const isMember = memberRows.length > 0
-  return c.json({ id: space.id, slug: space.slug, name: space.name, type: space.type, memberCount, isMember })
+  // isOwner lets the UI gate owner-only affordances (invite members) instead of offering
+  // actions that can only 403 — the member routes below all enforce createdBy.
+  return c.json({
+    id: space.id,
+    slug: space.slug,
+    name: space.name,
+    type: space.type,
+    memberCount,
+    isMember,
+    isOwner: space.createdBy === user.id,
+  })
 })
 
 // GET /api/spaces/:slug/sites — sites in the space the caller can actually access, in ONE post-auth
