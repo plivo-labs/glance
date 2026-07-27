@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { countingKv } from '../test/harness'
-import { buildUnfurlBlocks, parseSiteUrl, postUnfurl } from './slack-unfurl'
+import { buildUnfurlBlocks, parseSiteUrl, postUnfurl, relativeTime, type UnfurlCard } from './slack-unfurl'
 import type { SlackHttpDeps } from './slack'
 
 const APP = 'https://glance.example.com'
@@ -32,26 +32,66 @@ describe('parseSiteUrl', () => {
   })
 })
 
-describe('buildUnfurlBlocks', () => {
-  const site = { title: 'Q3 Report', description: 'How the numbers moved', slug: 'report' }
+describe('relativeTime', () => {
+  const NOW = Date.parse('2026-07-27T12:00:00Z')
+  const at = (iso: string) => relativeTime(iso, NOW)
 
-  test('links the title and includes the blurb plus a context line', () => {
-    const json = JSON.stringify(buildUnfurlBlocks(site, 'acme', `${APP}/acme/report`))
+  test('picks the coarsest unit that fits', () => {
+    expect(at('2026-07-27T11:59:30Z')).toBe('just now')
+    expect(at('2026-07-27T11:55:00Z')).toBe('5 minutes ago')
+    expect(at('2026-07-27T09:00:00Z')).toBe('3 hours ago')
+    expect(at('2026-07-24T12:00:00Z')).toBe('3 days ago')
+    expect(at('2026-05-20T12:00:00Z')).toBe('2 months ago')
+    expect(at('2024-07-01T12:00:00Z')).toBe('2 years ago')
+  })
+
+  test('singular units, future skew clamps to "just now", garbage yields null', () => {
+    expect(at('2026-07-27T10:59:00Z')).toBe('1 hour ago')
+    expect(at('2026-07-26T11:00:00Z')).toBe('1 day ago')
+    expect(at('2026-07-28T12:00:00Z')).toBe('just now') // clock skew, never "in 1 day"
+    expect(at('not-a-date')).toBeNull()
+  })
+})
+
+describe('buildUnfurlBlocks', () => {
+  const NOW = Date.parse('2026-07-27T12:00:00Z')
+  const card: UnfurlCard = {
+    title: 'Q3 Report',
+    spaceSlug: 'acme',
+    siteSlug: 'report',
+    description: 'How the numbers moved',
+    updatedAt: '2026-07-24T12:00:00Z',
+  }
+  const build = (over: Partial<UnfurlCard>) => buildUnfurlBlocks({ ...card, ...over }, `${APP}/acme/report`, NOW)
+
+  test('links the title and includes the blurb plus a context line with freshness', () => {
+    const json = JSON.stringify(build({}))
     expect(json).toContain(`<${APP}/acme/report|Q3 Report>`)
     expect(json).toContain('How the numbers moved')
-    expect(json).toContain('acme/report')
+    expect(json).toContain('Glance · acme/report · Updated 3 days ago')
   })
 
   test('falls back to the slug when the site has no title, and drops the blurb when absent', () => {
-    const blocks = buildUnfurlBlocks({ ...site, title: null, description: null }, 'acme', `${APP}/acme/report`)
+    const blocks = build({ title: null, description: null })
     expect(JSON.stringify(blocks)).toContain('|report>')
     expect(blocks).toHaveLength(2) // title section + context, no description section
   })
 
+  test('an unparseable updatedAt drops the freshness clause, not the card', () => {
+    const json = JSON.stringify(build({ updatedAt: 'garbage' }))
+    expect(json).toContain('Glance · acme/report')
+    expect(json).not.toContain('Updated')
+  })
+
+  test('an imageUrl renders as an image block with the title as alt text', () => {
+    const blocks = build({ imageUrl: `${APP}/api/og/acme/report.png?sig=abc` })
+    const image = blocks.find((b) => b.type === 'image')
+    expect(image).toMatchObject({ image_url: `${APP}/api/og/acme/report.png?sig=abc`, alt_text: 'Q3 Report' })
+    expect(JSON.stringify(build({}))).not.toContain('"image"')
+  })
+
   test('escapes mrkdwn metacharacters in the author-controlled title and description', () => {
-    const json = JSON.stringify(
-      buildUnfurlBlocks({ ...site, title: '<script>&x', description: 'a > b & c < d' }, 'acme', `${APP}/acme/report`),
-    )
+    const json = JSON.stringify(build({ title: '<script>&x', description: 'a > b & c < d' }))
     expect(json).toContain('&lt;script&gt;&amp;x')
     expect(json).toContain('a &gt; b &amp; c &lt; d')
     expect(json).not.toContain('<script>')

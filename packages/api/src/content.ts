@@ -9,8 +9,10 @@ import { checkAccess } from './lib/access'
 import { escapeHtml, markdown } from './lib/markdown'
 import { contentType } from './lib/mime'
 import { type CacheLike, IMMUTABLE, readFullObject } from './lib/object-read'
+import { verifyOgSig } from './lib/og-image'
+import { renderOgPng } from './lib/og-render'
 import { decideRange } from './lib/range'
-import { fetchAccessFacts, isSharedFromFacts } from './lib/site-access'
+import { fetchAccessFacts, isSharedFromFacts, resolveSite } from './lib/site-access'
 import { verifyToken } from './lib/token'
 import type { Bindings } from './types'
 
@@ -72,6 +74,30 @@ app.get('/_glance/annotate.css', (c) =>
 app.get('/_glance/db.js', (c) =>
   c.body(GLANCE_DB_JS, 200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': IMMUTABLE }),
 )
+
+// The Slack unfurl card's PNG (lib/og-image.ts). Slack fetches image_url server-side,
+// unauthenticated, and caches it — a PUBLIC GET whose only gate is the HMAC minted alongside
+// the card (signed on the MAIN worker with the shared CONTENT_TOKEN_SECRET, the same direction
+// as content tokens). It lives on THIS worker so the satori/resvg wasm (lib/og-render.ts) never
+// bloats the main worker bundle. The signature check runs BEFORE any D1 read, and every failure
+// is the same opaque 404 (no existence signal — the enumeration posture of the unfurl itself).
+app.get('/_glance/og/:space/:site{[a-z0-9-]+\\.png}', async (c) => {
+  const spaceSlug = c.req.param('space')
+  const siteSlug = c.req.param('site').replace(/\.png$/, '')
+  const verified = await verifyOgSig(c.env.CONTENT_TOKEN_SECRET, spaceSlug, siteSlug, c.req.query('sig') ?? '')
+  if (!verified) return notFound(c)
+
+  const site = await resolveSite(getDb(c), spaceSlug, siteSlug)
+  // A signed URL outlives the site it was minted for — deleted or archived sites stop serving.
+  if (site?.status !== 'active') return notFound(c)
+
+  const render = c.env.OG_RENDER ?? renderOgPng
+  const image = await render({ title: site.title ?? site.slug, spaceSlug, siteSlug })
+  // A day keeps Slack's and the edge's caches warm without pinning a renamed title forever.
+  return new Response(image.body, {
+    headers: { 'content-type': 'image/png', 'cache-control': 'public, max-age=86400' },
+  })
+})
 
 // Gated access: token is bound to the viewer's userId AND scoped to "<space>/<site>".
 // Path: /_t/<token>/<space>/<site>/<rest>. We verify the signature (recovering the bound

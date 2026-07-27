@@ -1,4 +1,5 @@
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
+import type { OgCard } from './lib/og-image'
 
 /** Worker bindings + secrets/vars. Secrets come from `.dev.vars` locally and
  *  `wrangler secret put` in prod; plain vars can live in wrangler.jsonc `vars`. */
@@ -35,6 +36,10 @@ export interface Bindings {
   // env to capture users.lookupByEmail / chat.postMessage without touching global fetch. Never set in
   // prod — unset → deliverSlack falls back to globalThis.fetch.
   SLACK_FETCH?: typeof fetch
+  // DI seam for the unfurl-card PNG renderer (same idiom as SLACK_FETCH): route tests inject a fake
+  // so the satori/resvg wasm never loads under bun. Never set in prod — unset → lib/og-render's
+  // renderOgPng.
+  OG_RENDER?: (card: OgCard) => Promise<Response>
   SESSION_SECRET: string
   CONTENT_TOKEN_SECRET: string
   // Optional: separate HMAC secret for the shared-backend data-plane tokens (glance.db SDK).
