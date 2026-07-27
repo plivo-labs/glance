@@ -30,6 +30,13 @@ export async function hmacSign(secret: string, message: string): Promise<string>
   return b64urlEncode(mac)
 }
 
+/** hex(HMAC-SHA256(secret, message)) — same primitive, the encoding third parties ask for (Slack's
+ *  request signatures are `v0=<hex>`). Compare the result with `secretEquals`, never `===`. */
+export async function hmacSignHex(secret: string, message: string): Promise<string> {
+  const mac = await crypto.subtle.sign('HMAC', await importKey(secret), enc.encode(message))
+  return Array.from(new Uint8Array(mac), (b) => b.toString(16).padStart(2, '0')).join('')
+}
+
 /** Constant-time verify of a base64url MAC against `message`. False on any decode error. */
 export async function hmacVerify(secret: string, message: string, macB64: string): Promise<boolean> {
   let mac: Uint8Array

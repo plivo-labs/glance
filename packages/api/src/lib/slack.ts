@@ -22,8 +22,17 @@ export type SlackHttpDeps = {
  *  whitespace-only token is OFF everywhere, never doing wasted D1/HTTP work). */
 export const slackEnabled = (token?: string): boolean => !!token && token.trim() !== ''
 
+/** The unfurl surface needs BOTH secrets — the bot token to post the card and the signing secret to
+ *  authenticate Slack's inbound request — and both must mean "off" the same way, so a whitespace-only
+ *  secret goes dark rather than leaving the endpoint live behind a guessable key. Shape mirrors
+ *  `isGoogleEnabled`. */
+export const slackUnfurlEnabled = (env: Pick<Bindings, 'SLACK_BOT_TOKEN' | 'SLACK_SIGNING_SECRET'>): boolean =>
+  slackEnabled(env.SLACK_BOT_TOKEN) && slackEnabled(env.SLACK_SIGNING_SECRET)
+
 const LOOKUP_URL = 'https://slack.com/api/users.lookupByEmail'
+const INFO_URL = 'https://slack.com/api/users.info'
 const CACHE_PREFIX = 'slackuid:'
+const EMAIL_CACHE_PREFIX = 'slackemail:'
 // Positive results are stable, so cache ~30d; a definitive not-found only ~1h (the person may join
 // the workspace). TTLs are product-chosen (see tracker 3.1).
 const POSITIVE_TTL = 2_592_000 // 30d
@@ -34,44 +43,86 @@ const NEGATIVE_MARKER = '-'
 
 const cacheKey = (email: string) => `${CACHE_PREFIX}${email.toLowerCase()}`
 
-type LookupResponse = { ok?: boolean; error?: string; user?: { id?: unknown } }
+type LookupResponse = { ok?: boolean; error?: string; user?: { id?: unknown; profile?: { email?: unknown } } }
 
-/** Resolve a Slack user-id (usable directly as a DM channel) for an email, KV-cached. Cache hit →
- *  return (a negative marker resolves to null, never leaks as a channel). Miss → Slack
- *  users.lookupByEmail: a hit caches ~30d, a definitive `users_not_found` caches the negative marker
- *  ~1h. Transient/auth failures (5xx, network throw, 429, invalid_auth, or a malformed ok body) →
- *  null WITHOUT caching, so a later call re-attempts and never poisons on a recoverable error.
- *  Never throws. */
-export async function lookupSlackId(deps: SlackHttpDeps, email: string): Promise<string | null> {
-  const key = cacheKey(email)
+/** Slack GET with the bot token. Returns the parsed body, or null when the call failed in a way the
+ *  caller must treat as RETRYABLE (429, 5xx, network throw, unparseable body) — never as an answer.
+ *  Every Slack read goes through here so the transient-failure policy is stated exactly once. */
+async function slackGet(deps: SlackHttpDeps, url: string): Promise<LookupResponse | null> {
+  const fetchImpl = deps.fetchImpl ?? globalThis.fetch
+  try {
+    const res = await fetchImpl(url, { headers: { Authorization: `Bearer ${deps.token ?? ''}` } })
+    if (res.status === 429 || res.status >= 500) return null
+    return (await res.json()) as LookupResponse
+  } catch {
+    return null
+  }
+}
+
+/** Slack POST with a JSON body. Best-effort by contract: every failure mode (non-2xx, `{ok:false}`,
+ *  network throw) means "this message didn't land", and there is nothing to retry or report — so it
+ *  returns nothing and never throws. */
+export async function slackPost(deps: SlackHttpDeps, url: string, body: unknown): Promise<void> {
+  const fetchImpl = deps.fetchImpl ?? globalThis.fetch
+  try {
+    await fetchImpl(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${deps.token ?? ''}`, 'Content-Type': 'application/json; charset=utf-8' },
+      body: JSON.stringify(body),
+    })
+  } catch {
+    // Swallowed on purpose — see the contract above.
+  }
+}
+
+/** What a lookup response means, as the caching policy sees it: a resolved value, a DEFINITIVE miss
+ *  (worth remembering briefly), or a transient failure (never cached). */
+type LookupOutcome = { value: string } | 'not-found' | 'transient'
+
+/** KV-cached Slack identity lookup, shared by both directions (email→id, id→email). Cache hit →
+ *  return (the negative marker resolves to null, never leaking as a channel id). Miss → one
+ *  `slackGet`, then: a value caches ~30d, a definitive miss caches the marker ~1h (so a bot or
+ *  email-less guest doesn't re-hit Slack on every event), and a transient failure caches NOTHING so
+ *  a later call re-attempts. Caching is best-effort — a KV put failure must never lose an already
+ *  resolved value. Never throws. */
+async function cachedLookup(
+  deps: SlackHttpDeps,
+  key: string,
+  url: string,
+  read: (data: LookupResponse) => LookupOutcome,
+): Promise<string | null> {
   const cached = await deps.kv.get(key)
   if (cached !== null) return cached === NEGATIVE_MARKER ? null : cached
 
-  const fetchImpl = deps.fetchImpl ?? globalThis.fetch
-  let data: LookupResponse
-  try {
-    const res = await fetchImpl(`${LOOKUP_URL}?email=${encodeURIComponent(email)}`, {
-      headers: { Authorization: `Bearer ${deps.token ?? ''}` },
-    })
-    // Transient HTTP (rate-limit / server) — retryable, so never cache a negative.
-    if (res.status === 429 || res.status >= 500) return null
-    data = (await res.json()) as LookupResponse
-  } catch {
-    return null // network throw / bad JSON — transient, no cache
-  }
-
-  // Caching is best-effort: a KV put failure must never lose an already-resolved id (nor turn a
-  // clean not-found into a thrown error) — the caller still gets to deliver this event.
-  if (data.ok && typeof data.user?.id === 'string') {
-    await deps.kv.put(key, data.user.id, { expirationTtl: POSITIVE_TTL }).catch(() => {})
-    return data.user.id
-  }
-  if (data.error === 'users_not_found') {
+  const data = await slackGet(deps, url)
+  const outcome = data === null ? 'transient' : read(data)
+  if (outcome === 'transient') return null
+  if (outcome === 'not-found') {
     await deps.kv.put(key, NEGATIVE_MARKER, { expirationTtl: NEGATIVE_TTL }).catch(() => {})
     return null
   }
-  // invalid_auth, other errors, or ok-but-no-id → transient/unknown; return null without caching.
-  return null
+  await deps.kv.put(key, outcome.value, { expirationTtl: POSITIVE_TTL }).catch(() => {})
+  return outcome.value
+}
+
+/** Resolve a Slack user-id (usable directly as a DM channel) for an email. */
+export function lookupSlackId(deps: SlackHttpDeps, email: string): Promise<string | null> {
+  return cachedLookup(deps, cacheKey(email), `${LOOKUP_URL}?email=${encodeURIComponent(email)}`, (data) => {
+    if (data.ok && typeof data.user?.id === 'string') return { value: data.user.id }
+    // `users_not_found` is definitive; invalid_auth / other errors / ok-but-no-id are not.
+    return data.error === 'users_not_found' ? 'not-found' : 'transient'
+  })
+}
+
+/** Resolve the profile email of a Slack user-id — the inverse binding, used to map whoever shared a
+ *  link back onto a Glance account. An `ok` response with no readable email is DEFINITIVE (a bot, a
+ *  guest, or a workspace that never granted `users:read.email`), not a transient failure. */
+export function lookupSlackEmail(deps: SlackHttpDeps, userId: string): Promise<string | null> {
+  return cachedLookup(deps, `${EMAIL_CACHE_PREFIX}${userId}`, `${INFO_URL}?user=${encodeURIComponent(userId)}`, (data) => {
+    if (!data.ok) return 'transient'
+    const email = data.user?.profile?.email
+    return typeof email === 'string' && email !== '' ? { value: email } : 'not-found'
+  })
 }
 
 /** The per-event context shared by every DM: the actor and the link/snippet fields. */
@@ -89,8 +140,14 @@ export type SlackEvent = {
  *  fields feed notificationLink; `snippet` is the already-truncated comment body (may be null/empty). */
 export type SlackMessageInput = SlackEvent & { reason: SlackReason }
 
-// Slack mrkdwn only reserves &, <, > in message text (order matters — & first).
-const escapeSlack = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+// Slack mrkdwn only reserves &, <, > in message text (order matters — & first). Exported because
+// EVERY Slack-wire string (DM text, unfurl card blocks) must pass through this one copy.
+export const escapeSlack = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+/** Slack's hyperlink idiom, `<url|label>`. The `&` in a query string must be entity-escaped even
+ *  inside the URL (mrkdwn's rule), and the label is escaped like any other text. */
+export const slackLink = (url: string, label: string): string =>
+  `<${url.replace(/&/g, '&amp;')}|${escapeSlack(label)}>`
 
 // The verb clause per reason (owner > participant > share precedence is decided upstream). The
 // wording is Slack-only — the in-app bell keeps its terse "commented" (no schema change).
@@ -113,9 +170,7 @@ export function formatSlackMessage(input: SlackMessageInput, appUrl: string): st
     filePath: input.filePath,
     threadId: input.threadId,
   })
-  // Site label as a bold Slack hyperlink. Slack link syntax is <url|text>; the & in the query string
-  // must be entity-escaped even inside the URL (Slack's mrkdwn escaping rule).
-  const site = `*<${url.replace(/&/g, '&amp;')}|${escapeSlack(input.siteLabel)}>*`
+  const site = `*${slackLink(url, input.siteLabel)}*` // bold hyperlink
   const lines = [`${actor} ${VERB[input.reason](site)}`]
   const snippet = input.snippet ? escapeSlack(input.snippet).trim() : ''
   if (snippet) lines.push(`> _${snippet}_`) // block-quoted + italic
@@ -172,21 +227,14 @@ function capMentionFirst(recipients: SlackRecipient[]): SlackRecipient[] {
  *  or surfaces to the caller. Never throws. */
 export async function deliverSlack(deps: SlackDeps, event: SlackEvent, recipients: SlackRecipient[]): Promise<void> {
   if (!slackEnabled(deps.token)) return
-  const fetchImpl = deps.fetchImpl ?? globalThis.fetch
   for (const r of capMentionFirst(recipients)) {
     try {
       if (!r.email) continue
       const channel = await lookupSlackId(deps, r.email)
       if (!channel) continue
-      const text = formatSlackMessage({ ...event, reason: r.reason }, deps.appUrl)
-      // Best-effort post: every non-success outcome (429/5xx or an ok:false body) means "this DM
-      // didn't land" — there's nothing to retry and nothing to do differently, so we just move on.
-      // A network throw lands in the catch below. Neither ever aborts the remaining recipients.
-      await fetchImpl(POST_URL, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${deps.token}`, 'Content-Type': 'application/json; charset=utf-8' },
-        body: JSON.stringify({ channel, text }),
-      })
+      // slackPost is best-effort by contract (see its docstring); the try/catch here is the
+      // per-recipient isolation for the lookup, so one bad DM never aborts the remaining fan-out.
+      await slackPost(deps, POST_URL, { channel, text: formatSlackMessage({ ...event, reason: r.reason }, deps.appUrl) })
     } catch {
       // Per-recipient isolation — swallow so one bad DM never fails the comment that already committed.
     }

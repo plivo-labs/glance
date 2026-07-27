@@ -17,6 +17,7 @@ export type ResolvedSite = {
   spaceId: string
   slug: string
   title: string | null
+  description: string | null
   visibility: Visibility
   status: 'active' | 'archived'
   ownerId: string
@@ -29,6 +30,7 @@ const RESOLVED_SITE_COLUMNS = {
   spaceId: sitesTable.spaceId,
   slug: sitesTable.slug,
   title: sitesTable.title,
+  description: sitesTable.description,
   visibility: sitesTable.visibility,
   status: sitesTable.status,
   ownerId: sitesTable.ownerId,

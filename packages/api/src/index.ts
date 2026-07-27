@@ -17,6 +17,7 @@ import { dataApi, dataToken } from './routes/data'
 import { notifications } from './routes/notifications'
 import { whatsNew } from './routes/whats-new'
 import { sites } from './routes/sites'
+import { slackEvents } from './routes/slack-events'
 import { spaces } from './routes/spaces'
 import { upload } from './routes/upload'
 import { users } from './routes/users'
@@ -108,5 +109,9 @@ app.route('/api/users', users)
 app.route('/api/notifications', notifications)
 app.route('/api/whats-new', whatsNew)
 app.route('/api/admin', admin)
+// Slack Events API (link_shared → chat.unfurl). Authenticated by Slack's HMAC signature, not a
+// session: requireSameOrigin above only guards COOKIE-authed unsafe methods, so this cookieless
+// POST passes through it untouched and the signature check inside the route is the real gate.
+app.route('/api/slack', slackEvents)
 
 export default app

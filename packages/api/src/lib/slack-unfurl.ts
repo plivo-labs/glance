@@ -1,0 +1,81 @@
+// Slack link-unfurl lib: parse a pasted Glance URL, build the card, post it back via chat.unfurl.
+// Transport, escaping, and identity lookups all come from lib/slack.ts — this file owns only what is
+// unfurl-specific (URL shape, card layout).
+//
+// Why app-controlled unfurling instead of public Open Graph tags: the unfurl travels over Slack's
+// authenticated API, so NO site metadata is ever exposed to an anonymous fetch of the URL. Sites
+// stay fully gated (lib/access.ts is untouched), and we can authorize the card against the person
+// who pasted the link. Docs: https://docs.slack.dev/messaging/unfurling-links-in-messages/
+
+import { escapeSlack, slackLink, slackPost, type SlackHttpDeps } from './slack'
+import { RESERVED_SLUGS } from './slug'
+
+const UNFURL_URL = 'https://slack.com/api/chat.unfurl'
+
+/** A Block Kit block. Slack's schema is open-ended (dozens of block/element types), so this pins the
+ *  one field every block has rather than pretending to model the union — still far tighter than the
+ *  `object` it replaces. */
+export type SlackBlock = { type: string } & Record<string, unknown>
+
+/** The site slugs a pasted URL points at. Deliberately NOT the in-site file path: the card links the
+ *  pasted URL verbatim, so nothing downstream needs the path split out. */
+export type ParsedSiteUrl = { spaceSlug: string; siteSlug: string }
+
+/** Parse a pasted URL into (space, site), or null when it isn't a site link on THIS instance.
+ *  Rejects: another origin (a look-alike host must never be resolved against our D1), fewer than two
+ *  path segments (`/dashboard`, `/:space`), and a reserved first segment (`/api/…`, `/assets/…` —
+ *  never a space, see lib/slug.ts, so this skips a pointless D1 read). Slugs are `[a-z0-9-]` by
+ *  `isValidSlug`, so no percent-decoding is needed to compare them. */
+export function parseSiteUrl(raw: string, appUrl: string): ParsedSiteUrl | null {
+  let url: URL
+  let base: URL
+  try {
+    url = new URL(raw)
+    base = new URL(appUrl)
+  } catch {
+    return null
+  }
+  if (url.origin !== base.origin) return null
+  const [spaceSlug, siteSlug] = url.pathname.split('/').filter(Boolean)
+  if (!spaceSlug || !siteSlug || RESERVED_SLUGS.has(spaceSlug)) return null
+  return { spaceSlug, siteSlug }
+}
+
+/** Block Kit blocks for one site card: bold linked title, the derived blurb, and a context line
+ *  naming the space/site. Slack renders `text` fields as mrkdwn, so the two author-controlled
+ *  strings (title, description) go through `escapeSlack`; the slugs are `[a-z0-9-]` and need none. */
+export function buildUnfurlBlocks(
+  site: { title: string | null; description: string | null; slug: string },
+  spaceSlug: string,
+  url: string,
+): SlackBlock[] {
+  return [
+    { type: 'section', text: { type: 'mrkdwn', text: `*${slackLink(url, site.title ?? site.slug)}*` } },
+    ...(site.description
+      ? [{ type: 'section', text: { type: 'mrkdwn', text: escapeSlack(site.description) } } as SlackBlock]
+      : []),
+    { type: 'context', elements: [{ type: 'mrkdwn', text: `Glance · ${spaceSlug}/${site.slug}` }] },
+  ]
+}
+
+/** The `link_shared` fields that say WHICH message to attach the unfurl to. `unfurl_id`+`source` is
+ *  the modern pair (it also covers composer-time previews); `channel`+`ts` is the fallback for an
+ *  event that carries no unfurl_id. */
+export type UnfurlTarget = { unfurl_id?: string; source?: string; channel?: string; message_ts?: string }
+
+/** POST the assembled cards to chat.unfurl. Keys of `unfurls` MUST be the URLs verbatim as they
+ *  appeared in the link_shared event; the nested-object form is what Slack's chat.unfurl JSON-body
+ *  docs show. No cards → no request at all. */
+export async function postUnfurl(
+  deps: SlackHttpDeps,
+  target: UnfurlTarget,
+  unfurls: Record<string, { blocks: SlackBlock[] }>,
+): Promise<void> {
+  if (Object.keys(unfurls).length === 0) return
+  await slackPost(deps, UNFURL_URL, {
+    ...(target.unfurl_id
+      ? { unfurl_id: target.unfurl_id, source: target.source }
+      : { channel: target.channel, ts: target.message_ts }),
+    unfurls,
+  })
+}

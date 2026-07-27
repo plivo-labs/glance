@@ -127,6 +127,13 @@
       "when": 1784300000000,
       "tag": "0017_site_updated_at",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1784400000000,
+      "tag": "0018_site_description",
+      "breakpoints": true
     }
   ]
 }

@@ -42,6 +42,9 @@ export const sites = sqliteTable(
     spaceId: text('spaceId').notNull().references(() => spaces.id, { onDelete: 'cascade' }),
     slug: text('slug').notNull(),
     title: text('title'),
+    // Short blurb derived from the entry HTML's description meta at upload. CONTENT-derived, so a
+    // replace overwrites it (title is identity and stays fill-only-null). Feeds the Slack unfurl card.
+    description: text('description'),
     visibility: text('visibility', { enum: ['private', 'members', 'team'] })
       .notNull()
       .default('team'),

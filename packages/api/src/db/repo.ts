@@ -32,6 +32,22 @@ export async function getUserById(
   return row[0] ?? null
 }
 
+/** The same identity read keyed by email. `users.email` is lowercase-canonical by construction (every
+ *  write path lowercases), and an external provider may hand us any casing — so the normalization is
+ *  the REPO layer's job here, not each caller's. Email is UNIQUE, so this is a single indexed read;
+ *  null when nobody with that address has a Glance account. */
+export async function getUserByEmail(
+  db: DrizzleD1Database,
+  email: string,
+): Promise<Pick<User, 'id' | 'email' | 'name' | 'role'> | null> {
+  const row = await db
+    .select({ id: users.id, email: users.email, name: users.name, role: users.role })
+    .from(users)
+    .where(eq(users.email, email.toLowerCase()))
+    .limit(1)
+  return row[0] ?? null
+}
+
 /** True iff at least one user row has role='superadmin'. Drives bootstrap availability. */
 export async function superadminExists(db: DrizzleD1Database): Promise<boolean> {
   const row = await db.select({ id: users.id }).from(users).where(eq(users.role, 'superadmin')).limit(1)

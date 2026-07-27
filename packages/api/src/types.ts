@@ -28,6 +28,9 @@ export interface Bindings {
   // Optional Slack bot token (xoxb-…). Unset = kill-switch: comment notifications never fan out to
   // Slack (deliverSlack no-ops on line one). Set via `wrangler secret put SLACK_BOT_TOKEN`.
   SLACK_BOT_TOKEN?: string
+  // Optional Slack app signing secret. Verifies inbound Events API requests (link_shared → unfurl);
+  // unset → /api/slack/events is inert (404). Set via `wrangler secret put SLACK_SIGNING_SECRET`.
+  SLACK_SIGNING_SECRET?: string
   // DI seam for Slack HTTP (mirrors summarize's injected fetchImpl): route tests set a fake fetch on
   // env to capture users.lookupByEmail / chat.postMessage without touching global fetch. Never set in
   // prod — unset → deliverSlack falls back to globalThis.fetch.
