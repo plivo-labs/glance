@@ -2,10 +2,22 @@ import { and, count, desc, eq } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { type Context, Hono } from 'hono'
 import { sessionDb } from '../db/client'
-import { type DocumentRow, type Site, documents, sites } from '../db/schema'
+import { type ChangeLogRow, type DocumentRow, type Site, documents, sites } from '../db/schema'
 import { type DataCapability, type DataClaims, hasCap, signDataToken, verifyDataToken } from '../lib/data-token'
+import { canViewerRead, readsEveryCreator } from '../lib/data-visibility'
 import { authorizeViewerById, fetchAccessFacts, siteAccessFromFacts } from '../lib/site-access'
 import { requireAuth } from '../middleware/auth'
+import {
+  changesAfter,
+  currentSeq,
+  logChangeStmt,
+  logCreateIfAbsentStmt,
+  logDeletedStmt,
+  toEvent,
+} from '../realtime/change-log'
+import { decodeCursor, encodeCursor } from '../realtime/cursor'
+import { notifyChange } from '../realtime/notify'
+import { TOKEN_HEADER, WS_PROTOCOL } from '../realtime/protocol'
 import type { AppEnv, Bindings, SessionUser } from '../types'
 
 // The shared-backend data plane (`glance.db`). Two surfaces:
@@ -26,16 +38,19 @@ const MAX_LIMIT = 200
 // rows (forms/polls are viewer-writable). Exported so the boundary is unit-tested directly.
 export const MAX_DOCS_PER_SITE = 5000
 const DATA_TOKEN_TTL_SEC = 300
-// Read-policy opt-in by naming convention: documents in a `shared-*` collection are readable by
-// EVERY authorized viewer of the site (polls, boards, tallies). Writes are unaffected — put and
-// delete stay creator-scoped, so a shared collection is many-writers-of-their-own-rows, never a
-// free-for-all.
-const SHARED_PREFIX = 'shared-'
+// Rows scanned per catch-up call. The cursor advances past every scanned row, so a client behind
+// by more than this pages forward on the `more` flag below — a bounded response, never an
+// unbounded replay. Exported so the page boundary is exercised directly.
+export const MAX_CHANGES = 200
 
 // `db` is optional: production runs no middleware that sets it, so getDb() falls back to a
 // per-request client from the D1 binding; tests inject the in-memory harness db via c.set('db')
-// — the same seam the content worker uses.
-type DataEnv = { Bindings: Bindings; Variables: { db?: DrizzleD1Database; claims: DataClaims } }
+// — the same seam the content worker uses. `token` is the raw verified credential, kept only so
+// the WebSocket upgrade can re-present it to the Durable Object, which re-verifies it itself.
+type DataEnv = {
+  Bindings: Bindings
+  Variables: { db?: DrizzleD1Database; claims: DataClaims; token: string; secret: string }
+}
 type DataCtx = Context<DataEnv>
 
 // 'first-primary': the auth middleware's site lookup is always the session's first query, so it
@@ -53,7 +68,11 @@ export const dataApi = new Hono<DataEnv>()
 // attaches the app session cookie to these routes — the bearer data token is the only authority.
 // Inert (404) when DATA_TOKEN_SECRET is unset, so the feature is opt-in per deploy.
 dataApi.use('*', async (c, next) => {
-  if (!c.env.DATA_TOKEN_SECRET) return c.text('Not found', 404)
+  // Narrowed ONCE here and carried as a variable: every downstream use is then a plain string, so
+  // the "secret is set" invariant is expressed by the type instead of re-asserted by a cast.
+  const secret = c.env.DATA_TOKEN_SECRET
+  if (!secret) return c.text('Not found', 404)
+  c.set('secret', secret)
   c.header('Access-Control-Allow-Origin', c.env.CONTENT_URL)
   c.header('Vary', 'Origin')
   c.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
@@ -68,9 +87,9 @@ dataApi.use('*', async (c, next) => {
 // archived site, or deleted user blocks data access immediately — the token is never trusted
 // as a standalone snapshot.
 dataApi.use('*', async (c, next) => {
-  const header = c.req.header('Authorization')
-  const token = header?.startsWith('Bearer ') ? header.slice(7).trim() : null
-  const claims = await verifyDataToken(c.env.DATA_TOKEN_SECRET as string, token)
+  const token = credential(c)
+  if (!token) return c.json({ error: 'unauthorized' }, 401)
+  const claims = await verifyDataToken(c.get('secret'), token)
   if (!claims) return c.json({ error: 'unauthorized' }, 401)
 
   const db = getDb(c)
@@ -94,8 +113,32 @@ dataApi.use('*', async (c, next) => {
 
   c.set('db', db)
   c.set('claims', claims)
+  c.set('token', token)
   await next()
 })
+
+// --- Upgrade credential ---
+
+// Browsers cannot set `Authorization` on `new WebSocket()`, and a token in the query string is
+// written to Cloudflare's request logs forever. The subprotocol list is the only channel a browser
+// controls that is neither, so an upgrade presents `new WebSocket(url, [WS_PROTOCOL, token])`.
+
+const subprotocols = (c: DataCtx): string[] => {
+  const raw = c.req.header('Sec-WebSocket-Protocol')
+  return raw ? raw.split(',').map((p) => p.trim()) : []
+}
+
+const isUpgrade = (c: DataCtx): boolean => c.req.header('Upgrade')?.toLowerCase() === 'websocket'
+
+// The subprotocol credential counts ONLY on a real upgrade, so no ordinary request on this surface
+// gains a second way to authenticate.
+function credential(c: DataCtx): string | null {
+  const header = c.req.header('Authorization')
+  if (header?.startsWith('Bearer ')) return header.slice(7).trim()
+  if (!isUpgrade(c)) return null
+  const [sentinel, token] = subprotocols(c)
+  return sentinel === WS_PROTOCOL && token ? token : null
+}
 
 // Method → required capability, enforced structurally for every current AND future route on
 // this surface — a new endpoint cannot ship without a capability check. POST maps to `create`
@@ -105,6 +148,87 @@ dataApi.use('*', async (c, next) => {
   const cap = METHOD_CAP[c.req.method]
   if (!cap || !hasCap(c.get('claims'), cap)) return c.json({ error: 'forbidden' }, 403)
   await next()
+})
+
+// Catch-up replay. Registered BEFORE the /:collection routes so the static segment wins — a
+// document collection literally named `_sync` must not be able to shadow the change feed.
+//
+// A missing cursor means "from now": the caller gets an empty backlog and a position, which is
+// what a page subscribing for the first time wants. A cursor that fails to decode is a hard 400,
+// never a silent fall back to 0 — that would replay a site's entire history to anyone who
+// scribbles on the query string.
+dataApi.get('/_sync/changes', async (c) => {
+  const claims = c.get('claims')
+  const secret = c.get('secret')
+  const db = getDb(c)
+
+  const raw = c.req.query('cursor')
+  let from: number
+  if (raw === undefined || raw === '') {
+    from = await currentSeq(db, claims.siteId)
+  } else {
+    const cursor = await decodeCursor(secret, raw)
+    // The cursor's identity is INSIDE the ciphertext and must equal the verified token's, so a
+    // cursor cannot be lifted from one viewer (or one site) and replayed as another.
+    if (!cursor || cursor.siteId !== claims.siteId || cursor.viewerId !== claims.viewerId) {
+      return c.json({ error: 'invalid cursor' }, 400)
+    }
+    from = cursor.seq
+  }
+
+  const rows = await changesAfter(db, claims.siteId, from, MAX_CHANGES)
+  // The SAME predicate the GET routes ask, against the DOCUMENT's creator — a push (or a replay)
+  // is a second read path, so the policy is asked, never restated.
+  const events = rows.filter((r) => canViewerRead(claims, r.collection, r.createdBy)).map(toEvent)
+  // The new position advances past every row SCANNED, not every row returned: the filtered-out
+  // rows must never be re-examined, and the client is told nothing about how many there were.
+  const seq = rows.length > 0 ? (rows[rows.length - 1] as ChangeLogRow).seq : from
+  return c.json({
+    events,
+    cursor: await encodeCursor(secret, { siteId: claims.siteId, viewerId: claims.viewerId, seq }),
+    // A FULL page means the scan stopped at the limit, not at the head. Without this the caller
+    // has no way to know: the cursor has already advanced past every scanned row, so whatever
+    // lies beyond them is never requested by anyone and the page goes permanently stale. It is
+    // a boolean, never a count — "keep paging", not how many rows the viewer could not see.
+    more: rows.length === MAX_CHANGES,
+  })
+})
+
+// Realtime subscribe. Registered beside /_sync/changes (before the /:collection routes) so it
+// inherits the whole data-plane gate: inert 404 without DATA_TOKEN_SECRET, a verified token, a
+// LIVE re-authorization against current DB state, and METHOD_CAP's GET→`read`. All of that runs
+// BEFORE the Durable Object is addressed, so junk, expired and revoked traffic costs zero DO
+// quota — the object is only ever woken for a caller who has already been fully authorized.
+dataApi.get('/_sync/socket', async (c) => {
+  if (!isUpgrade(c)) return c.text('expected websocket', 426)
+  const room = c.env.SITE_ROOM
+  // Optional binding (like AI): a deploy that never enabled realtime keeps the whole HTTP data
+  // plane — including the catch-up feed — working, and simply cannot be subscribed to.
+  if (!room) return c.json({ error: 'realtime unavailable' }, 503)
+
+  const claims = c.get('claims')
+  // THE ROOM IS NAMED BY THE TOKEN'S siteId, never by anything in the URL. The token carries no
+  // space/slug, so a slug in the path could only be an unverified caller-supplied key — a viewer
+  // holding a token for site X would join site Y's room and receive its events (a full IDOR).
+  // notify.ts keys the write side the same way, and the DO hard-compares its own name against the
+  // claims it re-verifies, so all three agree or nothing is delivered.
+  const stub = room.get(room.idFromName(claims.siteId))
+  const res = await stub.fetch(
+    new Request('https://site-room/subscribe', {
+      // The token rides one dedicated header — never a URL, never the DO's own name. The worker's
+      // check above is a cheap quota guard, NOT the authority: the DO verifies the token again.
+      headers: { Upgrade: 'websocket', [TOKEN_HEADER]: c.get('token') },
+    }),
+  )
+  // The 101 is re-issued here rather than passed through: the browser's subprotocol offer is
+  // negotiated by the worker (the DO never sees it) and a subrequest response's headers are
+  // immutable. A client that offered a subprotocol closes the connection unless the 101 picks one.
+  const negotiated = res.status === 101 && subprotocols(c).includes(WS_PROTOCOL)
+  return new Response(null, {
+    status: res.status,
+    webSocket: res.webSocket,
+    headers: negotiated ? { 'Sec-WebSocket-Protocol': WS_PROTOCOL } : {},
+  })
 })
 
 // Create a document (server-generated id).
@@ -122,15 +246,28 @@ dataApi.post('/:collection', async (c) => {
   const now = new Date().toISOString()
   // siteId + createdBy come from the verified TOKEN, not the body — a body carrying its own
   // `siteId`/`createdBy` keys just lands inside the opaque `json` blob and changes nothing.
-  await db.insert(documents).values({
-    siteId: claims.siteId,
-    collection,
-    docId,
-    json: parsed.value,
-    createdBy: claims.viewerId,
-    createdAt: now,
-    updatedAt: now,
-  })
+  // The change_log row rides the SAME batch (one D1 transaction), so a replayable event exists
+  // for every row that exists — see realtime/change-log.
+  const [logged] = await db.batch([
+    logChangeStmt(db, {
+      siteId: claims.siteId,
+      collection,
+      docId,
+      createdBy: claims.viewerId,
+      type: 'create',
+      at: now,
+    }),
+    db.insert(documents).values({
+      siteId: claims.siteId,
+      collection,
+      docId,
+      json: parsed.value,
+      createdBy: claims.viewerId,
+      createdAt: now,
+      updatedAt: now,
+    }),
+  ])
+  await notifyChange(c, logged[0])
   return c.json({ id: docId, data: parsed.value, createdAt: now, updatedAt: now }, 201)
 })
 
@@ -195,10 +332,20 @@ dataApi.put('/:collection/:docId', async (c) => {
     )[0]
     if (!existing) return null
     if (existing.createdBy !== claims.viewerId) return c.json({ error: 'not found' }, 404)
-    await db
-      .update(documents)
-      .set({ json: parsed.value, updatedAt: now })
-      .where(scoped(claims, collection, docId))
+    const [logged] = await db.batch([
+      // createdBy is the row's own creator (== viewerId here, since the guard above 404s any
+      // foreign row) — never the writer, so the same field means the same thing on every path.
+      logChangeStmt(db, {
+        siteId: claims.siteId,
+        collection,
+        docId,
+        createdBy: existing.createdBy,
+        type: 'update',
+        at: now,
+      }),
+      db.update(documents).set({ json: parsed.value, updatedAt: now }).where(scoped(claims, collection, docId)),
+    ])
+    await notifyChange(c, logged[0])
     return c.json({ id: docId, data: parsed.value, createdAt: existing.createdAt, updatedAt: now })
   }
 
@@ -210,20 +357,34 @@ dataApi.put('/:collection/:docId', async (c) => {
   // Fresh id: insert race-safely. onConflictDoNothing + returning() means a concurrent first-PUT
   // can never 500 on the unique index — an empty return says the row appeared meanwhile, so take
   // the update path after all (which also yields the correct 404 if the winner was another viewer).
-  const inserted = await db
-    .insert(documents)
-    .values({
+  // The log statement runs first and carries the SAME "id still free" condition the unique index
+  // enforces, so the race that makes the insert a no-op also makes the log a no-op — a lost race
+  // logs (and pushes) nothing, and the retry below records the 'update' it actually became.
+  const [logged, inserted] = await db.batch([
+    logCreateIfAbsentStmt(db, {
       siteId: claims.siteId,
       collection,
       docId,
-      json: parsed.value,
       createdBy: claims.viewerId,
-      createdAt: now,
-      updatedAt: now,
-    })
-    .onConflictDoNothing()
-    .returning({ id: documents.id })
+      type: 'create',
+      at: now,
+    }),
+    db
+      .insert(documents)
+      .values({
+        siteId: claims.siteId,
+        collection,
+        docId,
+        json: parsed.value,
+        createdBy: claims.viewerId,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoNothing()
+      .returning({ id: documents.id }),
+  ])
   if (inserted.length === 0) return (await updateExisting()) ?? c.json({ error: 'not found' }, 404)
+  await notifyChange(c, logged[0])
   return c.json({ id: docId, data: parsed.value, createdAt: now, updatedAt: now }, 201)
 })
 
@@ -238,7 +399,15 @@ dataApi.delete('/:collection/:docId', async (c) => {
   const where = hasCap(claims, 'read_all')
     ? and(...docWhere(claims, collection, docId))
     : scoped(claims, collection, docId)
-  await getDb(c).delete(documents).where(where)
+  // The log SELECTs the doomed row through the very same predicate, one statement before the
+  // delete in the same batch: that is the only moment the DOCUMENT's creator still exists, and a
+  // predicate matching nothing logs nothing (so a no-op delete still 204s but pushes no phantom).
+  const db = getDb(c)
+  const [logged] = await db.batch([
+    logDeletedStmt(db, claims.siteId, new Date().toISOString(), where),
+    db.delete(documents).where(where),
+  ])
+  await notifyChange(c, logged[0])
   return c.body(null, 204)
 })
 
@@ -248,24 +417,19 @@ function docWhere(claims: DataClaims, collection: string, docId: string) {
   return [eq(documents.siteId, claims.siteId), eq(documents.collection, collection), eq(documents.docId, docId)]
 }
 
-// The creator wall for READS, dropped only for `shared-*` collections (opt-in by name, visible
-// to every viewer) or a `read_all` token. Returned as a spreadable list so callers AND it in.
+// The creator wall for READS, expressed in SQL. The POLICY itself is not restated here — it is
+// DERIVED from lib/data-visibility, the single source of truth shared with every other read path
+// (a realtime fan-out filter asks canViewerRead for the same answer this WHERE clause encodes).
+// Returned as a spreadable list so callers AND it in.
 function readCreatorWhere(claims: DataClaims, collection: string) {
-  return collection.startsWith(SHARED_PREFIX) || hasCap(claims, 'read_all')
-    ? []
-    : [eq(documents.createdBy, claims.viewerId)]
+  return readsEveryCreator(claims, collection) ? [] : [eq(documents.createdBy, claims.viewerId)]
 }
 
 // Every single-doc WRITE query is scoped by (token siteId + collection + docId + token viewer)
 // so a docId from another site or another viewer can never be touched (tenant + creator
 // isolation) — shared-* read visibility never widens write reach.
 function scoped(claims: DataClaims, collection: string, docId: string) {
-  return and(
-    eq(documents.siteId, claims.siteId),
-    eq(documents.collection, collection),
-    eq(documents.docId, docId),
-    eq(documents.createdBy, claims.viewerId),
-  )
+  return and(...docWhere(claims, collection, docId), eq(documents.createdBy, claims.viewerId))
 }
 
 // Cheap per-site row COUNT (siteId is the leftmost column of documents_site_collection_creator,

@@ -114,4 +114,8 @@ app.route('/api/admin', admin)
 // POST passes through it untouched and the signature check inside the route is the real gate.
 app.route('/api/slack', slackEvents)
 
+// The Durable Object class must be a NAMED export of the module wrangler.jsonc points `main` at,
+// or the SITE_ROOM binding (class_name: "SiteRoom") fails to resolve at deploy time.
+export { SiteRoom } from './realtime/site-room'
+
 export default app

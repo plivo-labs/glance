@@ -50,6 +50,7 @@ const MIGRATIONS = [
   'drizzle/0017_site_updated_at.sql',
   'drizzle/0018_site_description.sql',
   'drizzle/0019_files_etag.sql',
+  'drizzle/0020_change_log.sql',
 ]
 
 // --- S0 recorder: one shared, ordered timeline across D1/R2/cache mocks so perf specs can
@@ -701,4 +702,103 @@ export function makeCaches(recorder?: Recorder) {
       nextPutError = null
     },
   }
+}
+
+// --- Durable Object / WebSocket-hibernation fakes ---------------------------------------------
+// bun is not workerd: there is no DO runtime, no hibernation, no eviction, and neither
+// `WebSocketPair` nor `WebSocketRequestResponsePair` exists as a global. These fakes drive the
+// SiteRoom's hibernation CONTRACT — which sockets it accepts, the tags it accepts them with, what
+// it puts in an attachment, who it sends to — and prove NOTHING about real hibernation, eviction,
+// or billing. Every socket is an inert object that records the calls made on it.
+
+/** A stand-in for a hibernatable WebSocket: records accept/send/close and round-trips an
+ *  attachment through a structured clone (as the real one does), so a test can read exactly what
+ *  the room persisted per connection. `failNextSend` makes exactly the next send throw. */
+export function makeWebSocket() {
+  let attachment: unknown
+  let sendError: unknown = null
+  return {
+    accepts: 0,
+    sent: [] as string[],
+    closed: [] as { code?: number; reason?: string }[],
+    accept() {
+      this.accepts++
+    },
+    send(data: string) {
+      if (sendError != null) {
+        const err = sendError
+        sendError = null
+        throw err
+      }
+      this.sent.push(data)
+    },
+    close(code?: number, reason?: string) {
+      this.closed.push({ code, reason })
+    },
+    serializeAttachment(value: unknown) {
+      attachment = structuredClone(value)
+    },
+    // Real API: null when nothing was ever attached.
+    deserializeAttachment() {
+      return attachment === undefined ? null : structuredClone(attachment)
+    },
+    failNextSend(err: unknown) {
+      sendError = err
+    },
+  }
+}
+export type FakeWebSocket = ReturnType<typeof makeWebSocket>
+
+/** A stand-in for `DurableObjectState`, holding accepted sockets the way the runtime does: OUTSIDE
+ *  the object instance. A test can therefore construct a SECOND room over the same state — the
+ *  closest bun can get to "the object hibernated and woke up as a fresh instance". `name` mirrors
+ *  `DurableObjectId.name` (populated for every `idFromName` stub). */
+export function makeDurableObjectState(name?: string) {
+  const accepted: { ws: FakeWebSocket; tags: string[] }[] = []
+  let autoResponse: { request: string; response: string } | null = null
+  return {
+    id: { name, toString: () => name ?? '' },
+    accepted,
+    acceptWebSocket(ws: FakeWebSocket, tags: string[] = []) {
+      accepted.push({ ws, tags })
+    },
+    getWebSockets(tag?: string) {
+      return accepted.filter((s) => tag === undefined || s.tags.includes(tag)).map((s) => s.ws)
+    },
+    getTags(ws: FakeWebSocket) {
+      return accepted.find((s) => s.ws === ws)?.tags ?? []
+    },
+    setWebSocketAutoResponse(pair: { request: string; response: string } | null) {
+      autoResponse = pair
+    },
+    getWebSocketAutoResponse() {
+      return autoResponse
+    },
+  }
+}
+export type FakeDurableObjectState = ReturnType<typeof makeDurableObjectState>
+
+class FakeWebSocketPair {
+  0: FakeWebSocket
+  1: FakeWebSocket
+  constructor() {
+    this[0] = makeWebSocket()
+    this[1] = makeWebSocket()
+  }
+}
+
+class FakeWebSocketRequestResponsePair {
+  constructor(
+    readonly request: string,
+    readonly response: string,
+  ) {}
+}
+
+/** Install fake `WebSocketPair` / `WebSocketRequestResponsePair` globals — the seam the upgrade
+ *  path reads them through (the same `globalThis.x ?? …` idiom content.ts uses for
+ *  `caches.default`). Idempotent, and never overwrites a real workerd global. */
+export function installWorkerSocketGlobals() {
+  const g = globalThis as unknown as Record<string, unknown>
+  g.WebSocketPair ??= FakeWebSocketPair
+  g.WebSocketRequestResponsePair ??= FakeWebSocketRequestResponsePair
 }

@@ -12,26 +12,48 @@
 // What it can NOT do: name another site (we bind every request to the site the viewer opened),
 // steal the token (never sent), or reach any other API route (op → fixed path template, no raw
 // paths cross the channel).
+//
+// Realtime works the same way: the iframe holds no credential, so WE open the WebSocket with OUR
+// token and relay each pushed frame down the same port as {type:'glance:db-event'} — deliberately
+// with no numeric `id`, because the SDK settles any numbered frame as a reply to an in-flight
+// request. The socket outlives the iframe document, so an in-site navigation resumes from the
+// cursor we kept rather than replaying from nothing.
 
 const COLLECTION_RE = /^[a-zA-Z0-9_-]{1,64}$/
 const DOCID_RE = /^[a-zA-Z0-9_-]{1,128}$/
 const NEEDS_DOC_ID = new Set(['get', 'put', 'delete'])
 const NEEDS_DATA = new Set(['create', 'put'])
-const OPS = new Set(['create', 'get', 'list', 'put', 'delete'])
+// Stream ops address the site's room, not a collection — they carry a cursor and nothing else.
+const STREAM_OPS = new Set(['subscribe', 'unsubscribe'])
+const OPS = new Set(['create', 'get', 'list', 'put', 'delete', 'subscribe', 'unsubscribe'])
 const OP_METHOD: Record<string, string> = { create: 'POST', get: 'GET', list: 'GET', put: 'PUT', delete: 'DELETE' }
 // Pre-check only — the server's 100KB byte cap is authoritative.
 const MAX_DATA_CHARS = 110_000
 const TOKEN_SLACK_MS = 30_000
+const WS_PROTOCOL = 'glance.db.v1'
+const RECONNECT_MS = 3000
+const PING_MS = 30_000
 
 export type BrokerSite = { spaceSlug: string; siteSlug: string }
+/** Only what the relay uses — so a test can stand in for a real socket. */
+export type BrokerSocket = {
+  send: (data: string) => void
+  close: () => void
+  onopen: (() => void) | null
+  onmessage: ((e: { data: unknown }) => void) | null
+  onclose: (() => void) | null
+}
 type MintResponse = { token: string; caps: string[]; expiresIn: number }
-type BrokerRequest = { id: number; op: string; collection: string; docId?: string; data?: unknown }
+type BrokerRequest = { id: number; op: string; collection: string; docId?: string; data?: unknown; cursor?: string }
 
 export type DbBroker = { onWindowMessage: (e: MessageEvent) => void; dispose: () => void }
 
 export function createDbBroker(
-  opts: { site: BrokerSite; contentOrigin: string; getSource: () => Window | null | undefined },
-  deps: { fetchFn: typeof fetch } = { fetchFn: (...args) => fetch(...args) },
+  opts: { site: BrokerSite; contentOrigin: string; appOrigin: string; getSource: () => Window | null | undefined },
+  deps: { fetchFn: typeof fetch; newSocket: (url: string, protocols: string[]) => BrokerSocket } = {
+    fetchFn: (...args) => fetch(...args),
+    newSocket: (url, protocols) => new WebSocket(url, protocols) as unknown as BrokerSocket,
+  },
 ): DbBroker {
   let port: MessagePort | null = null
   let token: string | null = null
@@ -51,9 +73,20 @@ export function createDbBroker(
 
   const ensureToken = () => (token && Date.now() < expiresAt ? Promise.resolve(token) : mint())
 
+  /** One request, with exactly one re-mint if the token aged out or access changed. */
+  async function withToken(run: (t: string) => Promise<Response>): Promise<Response> {
+    const res = await run(await ensureToken())
+    return res.status === 401 ? run(await mint()) : res
+  }
+
   async function execute(req: BrokerRequest): Promise<{ ok: boolean; status: number; body: unknown }> {
     const bad = validate(req)
     if (bad) return { ok: false, status: 400, body: { error: bad } }
+    if (req.op === 'subscribe') return subscribe(req)
+    if (req.op === 'unsubscribe') {
+      closeStream()
+      return { ok: true, status: 200, body: null }
+    }
     const path =
       req.docId !== undefined
         ? `/api/_data/${req.collection}/${encodeURIComponent(req.docId)}`
@@ -67,21 +100,120 @@ export function createDbBroker(
         body: NEEDS_DATA.has(req.op) ? JSON.stringify(req.data) : undefined,
         credentials: 'omit',
       })
-    let res = await call(await ensureToken())
-    if (res.status === 401) {
-      // Token aged out or access changed — one fresh mint decides which.
-      res = await call(await mint())
-    }
+    const res = await withToken(call)
     const body = res.status === 204 ? null : await res.json().catch(() => null)
     return { ok: res.ok, status: res.status, body }
   }
 
   function validate(req: BrokerRequest): string | null {
     if (!OPS.has(req.op)) return 'unknown operation'
+    if (STREAM_OPS.has(req.op))
+      return req.cursor === undefined || typeof req.cursor === 'string' ? null : 'invalid cursor'
     if (typeof req.collection !== 'string' || !COLLECTION_RE.test(req.collection)) return 'invalid collection'
     if (NEEDS_DOC_ID.has(req.op) && (typeof req.docId !== 'string' || !DOCID_RE.test(req.docId))) return 'invalid id'
     if (NEEDS_DATA.has(req.op) && JSON.stringify(req.data ?? null).length > MAX_DATA_CHARS) return 'document too large'
     return null
+  }
+
+  // --- realtime relay -----------------------------------------------------------------------
+
+  let socket: BrokerSocket | null = null
+  // Non-null once the page has asked for a stream; resolves on the first live socket. Nulling it
+  // is what stops the redial loop.
+  let live: Promise<void> | null = null
+  let markLive: (() => void) | null = null
+  let dials = 0
+  let cursor: string | null = null
+  let reauth: ReturnType<typeof setTimeout> | null = null
+  let ping: ReturnType<typeof setInterval> | null = null
+  let disposed = false
+
+  /** Catch up over HTTP, but only once the socket is LIVE: read the log first and any change
+   *  committed between the read and the upgrade is lost by both paths. */
+  async function subscribe(req: BrokerRequest): Promise<{ ok: boolean; status: number; body: unknown }> {
+    if (!live) {
+      live = new Promise<void>((resolve) => {
+        markLive = resolve
+      })
+      dial()
+    }
+    await live
+    // The page's own cursor wins; ours is the fallback that survives an in-site navigation.
+    const from = req.cursor ?? cursor
+    const q = from ? `?cursor=${encodeURIComponent(from)}` : ''
+    const res = await withToken((t) =>
+      deps.fetchFn(`/api/_data/_sync/changes${q}`, { headers: { Authorization: `Bearer ${t}` }, credentials: 'omit' }),
+    )
+    const body = (await res.json().catch(() => null)) as { cursor?: unknown } | null
+    if (res.ok && typeof body?.cursor === 'string') cursor = body.cursor
+    return { ok: res.ok, status: res.status, body }
+  }
+
+  function dial(): void {
+    dials++
+    ensureToken().then((t) => {
+      if (disposed || !live) return
+      // Browsers cannot set Authorization on a WebSocket, so the token rides the subprotocol list.
+      const ws = deps.newSocket(`${opts.appOrigin.replace(/^http/, 'ws')}/api/_data/_sync/socket`, [WS_PROTOCOL, t])
+      socket = ws
+      scheduleReauth()
+      ping = setInterval(() => socket === ws && ws.send('ping'), PING_MS)
+      ws.onopen = () => {
+        markLive?.()
+        // Any dial past the first means the page missed a window: tell it to replay. The first
+        // one needs no nudge — the subscribe that started it is still awaiting this moment.
+        if (dials > 1) port?.postMessage({ type: 'glance:db-open' })
+      }
+      ws.onmessage = (e) => {
+        const f = parseFrame(e.data)
+        if (!f) return
+        cursor = f.cursor
+        port?.postMessage({ type: 'glance:db-event', events: f.events, cursor: f.cursor })
+      }
+      ws.onclose = () => {
+        if (socket !== ws) return
+        socket = null
+        redial()
+      }
+    }, redial)
+  }
+
+  function redial(): void {
+    if (ping) clearInterval(ping)
+    ping = null
+    if (disposed || !live) return
+    setTimeout(() => {
+      if (!disposed && live) dial()
+    }, RECONNECT_MS)
+  }
+
+  /** A listen-only page issues no ops, so nothing else would ever re-mint and the room would drop
+   *  the socket on its first wake past `exp`. Re-authenticate in place instead. */
+  function scheduleReauth(): void {
+    if (reauth) clearTimeout(reauth)
+    reauth = setTimeout(
+      () => {
+        reauth = null
+        if (disposed || !socket) return
+        mint().then((t) => {
+          socket?.send(JSON.stringify({ type: 'auth', token: t }))
+          scheduleReauth()
+        }, redial)
+      },
+      Math.max(0, expiresAt - Date.now()),
+    )
+  }
+
+  function closeStream(): void {
+    live = null
+    markLive = null
+    if (reauth) clearTimeout(reauth)
+    if (ping) clearInterval(ping)
+    reauth = null
+    ping = null
+    const ws = socket
+    socket = null
+    ws?.close()
   }
 
   function onPortMessage(p: MessagePort, e: MessageEvent): void {
@@ -113,10 +245,23 @@ export function createDbBroker(
   return {
     onWindowMessage,
     dispose() {
+      disposed = true
+      closeStream()
       port?.close()
       port = null
       token = null
     },
+  }
+}
+
+/** A pushed frame, or nothing — the heartbeat's auto-response is not JSON. */
+function parseFrame(data: unknown): { events: unknown[]; cursor: string } | null {
+  if (typeof data !== 'string') return null
+  try {
+    const f = JSON.parse(data) as { events?: unknown; cursor?: unknown }
+    return Array.isArray(f?.events) && typeof f.cursor === 'string' ? { events: f.events, cursor: f.cursor } : null
+  } catch {
+    return null
   }
 }
 
@@ -132,7 +277,9 @@ export function attachDbBroker(opts: {
   contentOrigin: string
   getSource: () => Window | null | undefined
 }): { dispose: () => void } {
-  const broker = createDbBroker(opts)
+  // The app origin is ours — the data plane is reached by relative path, but a WebSocket URL
+  // cannot be relative. Taken here so the broker itself stays free of ambient globals.
+  const broker = createDbBroker({ ...opts, appOrigin: window.location.origin })
   window.addEventListener('message', broker.onWindowMessage)
   return {
     dispose() {
