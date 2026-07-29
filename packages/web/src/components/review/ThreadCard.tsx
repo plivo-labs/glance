@@ -25,14 +25,22 @@ export function ThreadCard({
   const [replying, setReplying] = useState(false)
   const canModerate = site.isOwner || me?.role === 'superadmin'
 
+  // RETHROWS after toasting: a reply that resolves on failure lets the caller close the composer
+  // and Composer clear the draft, so the typed reply (or the recording) is gone with nothing to
+  // retry. Callers that close UI on success must therefore await this and let a rejection stop them.
   async function run(fn: () => Promise<unknown>) {
     try {
       await fn()
-      onChanged()
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Action failed')
+      throw err
     }
+    onChanged()
   }
+
+  // The button actions have no draft to protect — their failure is already a toast, so the
+  // rejection `run` now raises is deliberately dropped here rather than left unhandled.
+  const fireAndForget = (p: Promise<unknown>) => void p.catch(() => {})
 
   return (
     // id lets a notification deep-link scroll this card into view (viewer S11).
@@ -71,7 +79,7 @@ export function ThreadCard({
               {!c.deleted && c.authorId === me?.id && (
                 <button
                   type="button"
-                  onClick={() => run(() => comments.remove(site, thread.id, c.id))}
+                  onClick={() => fireAndForget(run(() => comments.remove(site, thread.id, c.id)))}
                   className="ml-auto opacity-0 transition-opacity group-hover:opacity-100"
                   aria-label="Delete comment"
                 >
@@ -126,7 +134,7 @@ export function ThreadCard({
             (thread.status === 'open' ? (
               <button
                 type="button"
-                onClick={() => run(() => comments.setStatus(site, thread.id, 'resolved'))}
+                onClick={() => fireAndForget(run(() => comments.setStatus(site, thread.id, 'resolved')))}
                 className="flex items-center gap-1 text-muted-foreground text-xs transition-colors hover:text-foreground"
               >
                 <Check className="size-3" />
@@ -135,7 +143,7 @@ export function ThreadCard({
             ) : (
               <button
                 type="button"
-                onClick={() => run(() => comments.setStatus(site, thread.id, 'open'))}
+                onClick={() => fireAndForget(run(() => comments.setStatus(site, thread.id, 'open')))}
                 className="flex items-center gap-1 text-muted-foreground text-xs transition-colors hover:text-foreground"
               >
                 <RotateCcw className="size-3" />

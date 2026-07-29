@@ -348,9 +348,10 @@ function Viewer() {
     focusAnchor(target)
   }, [deepLinkThreadId, review, loaded, threads, focusAnchor])
 
-  // THROWS rather than returning when there's nothing to anchor to: the composer treats a resolved
-  // onSubmit as success and clears the draft, so a silent early return here would swallow the
-  // comment the user just typed. `filePath` is null until the iframe reports ready.
+  // Both create paths REJECT on every failure — no anchor yet, or the write itself failing. The
+  // composer treats a resolved onSubmit as success and clears the draft, so anything that resolves
+  // without having written destroys what the user typed (or recorded). Toast for the human, rethrow
+  // for the composer. `filePath` is null until the iframe reports ready.
   async function createThread(body: string, mentions: string[]) {
     if (!filePath || !composing) {
       toast.error('This page is still loading — try again in a moment')
@@ -358,25 +359,31 @@ function Viewer() {
     }
     try {
       await comments.create(site, pendingToInput(filePath, body, composing), mentions)
-      setComposing(null)
-      await refresh(filePath)
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed to add comment')
+      throw err
     }
+    setComposing(null)
+    await refresh(filePath)
   }
 
   // Voice sibling of createThread: the anchor fields come from the same pending anchor (body is the
-  // server-side transcript, so it's dropped from the multipart payload).
+  // server-side transcript, so it's dropped from the multipart payload). A lost recording can't be
+  // retyped, so this rejects on failure exactly like the text path.
   async function createVoiceThread(blob: Blob) {
-    if (!filePath || !composing) return
+    if (!filePath || !composing) {
+      toast.error('This page is still loading — try again in a moment')
+      throw new Error('no anchor to comment on yet')
+    }
     try {
       const { body: _body, ...fields } = pendingToInput(filePath, '', composing)
       await comments.createVoice(site, blob, fields)
-      setComposing(null)
-      await refresh(filePath)
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed to add voice comment')
+      throw err
     }
+    setComposing(null)
+    await refresh(filePath)
   }
 
   function exitReview() {
