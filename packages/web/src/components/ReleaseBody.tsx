@@ -20,7 +20,7 @@ export function ReleaseImage({ src, className }: { src: string; className?: stri
       src={`/whats-new/${src}`}
       alt=""
       loading="lazy"
-      className={cn('mb-3 aspect-[21/9] w-full rounded-md border border-border/60 object-cover', className)}
+      className={cn('mb-3 aspect-[5/2] w-full rounded-md border border-border/60 object-cover', className)}
     />
   )
 }
