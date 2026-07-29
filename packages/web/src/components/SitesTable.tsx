@@ -9,6 +9,7 @@ import {
   actionsColumn,
   createdColumn,
   nameColumn,
+  starColumn,
   OpenLinkButton,
   urlColumn,
   visibilityColumn,
@@ -44,6 +45,7 @@ const visibilityLabel = (v: Visibility): string => v.charAt(0).toUpperCase() + v
 
 // Stable module-scope columns so SortableTable's sort memo doesn't rebuild every render.
 const OWNER_COLUMNS: Column<SiteSummary>[] = [
+  starColumn(),
   nameColumn(),
   urlColumn(),
   visibilityColumn((s) => <OwnerVisibilityCell site={s} />),

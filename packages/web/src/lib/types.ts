@@ -40,6 +40,9 @@ export interface SiteSummary {
   status: SiteStatus
   audio?: boolean // every file is audio — a recording/voice site; shows a Mic badge
   hasSummary?: boolean // the site has a stored AI summary; shows a sparkle badge
+  // Whether the CALLER has starred this site — per-user state riding a shared feed, never the
+  // owner's. Absent on legacy payloads, so treat undefined as "not starred".
+  starred?: boolean
   // The caller's direct-share role on this site — set on the "Shared with me" feed so an editor row
   // shows a "You can edit" badge. Absent on owned/team feeds.
   role?: ShareRole
@@ -77,6 +80,9 @@ export interface ViewerSite {
   visibility: Visibility
   status: SiteStatus
   isOwner: boolean
+  // The caller's own star on this site, resolved in the viewer's single metadata batch so the
+  // top-bar button is correct on first paint.
+  starred?: boolean
   contentUrl: string
   // The file the root URL serves (single-file site → that file; else 'index.html'; else '').
   // Lets the viewer pick the audio player at a site's root, not only at its explicit file path.
