@@ -1,7 +1,16 @@
 import { describe, expect, test } from 'bun:test'
 import { Window } from 'happy-dom'
 import { TEXT_CONTEXT_LIMIT } from '../lib/anchor'
-import { computeSelector, describeElement, findRange, isPageSpanning, resolveSelector, selectionContext } from './locator'
+import {
+  computeSelector,
+  describeElement,
+  findRange,
+  isPageSpanning,
+  newEpoch,
+  resolveSelector,
+  selectionContext,
+  sharedTextIndex,
+} from './locator'
 
 // Seam S1: the locator is global-free, so we drive it under a constructed happy-dom document and
 // pass nodes in — no GlobalRegistrator, so nothing leaks into the other (server-side) api tests.
@@ -364,15 +373,85 @@ describe('selectionContext — boundaries that map to no indexed text', () => {
   })
 })
 
+describe('sharedTextIndex — ONE index per DOM version', () => {
+  // Painting N anchors used to walk the whole document N times (findRange rebuilt the index every
+  // call). The index is now built once per DOM VERSION and only an explicit newEpoch() rebuilds it.
+  // Which events call newEpoch() (and which deliberately do not) is reflow.ts's — see reflow.test.ts.
+
+  test('repeated reads reuse ONE index; a version bump replaces it', () => {
+    const doc = docFrom('<p>alpha text</p>')
+    const first = sharedTextIndex(doc)
+    findRange('alpha text', doc)
+    expect(sharedTextIndex(doc)).toBe(first) // no rebuild: same DOM version
+    newEpoch()
+    expect(sharedTextIndex(doc)).not.toBe(first)
+  })
+
+  test('a version bump rebuilds, and the rebuilt index SEES text inserted since', () => {
+    const doc = docFrom('<p>first sentence.</p>')
+    expect(findRange('first sentence.', doc)).not.toBeNull() // builds the index
+    doc.body.insertAdjacentHTML('beforeend', '<p>added later.</p>')
+    expect(findRange('added later.', doc)).toBeNull() // still the cached index — no rebuild
+    newEpoch()
+    expect(findRange('added later.', doc)!.toString()).toBe('added later.') // rebuilt, sees the insert
+  })
+
+  test('findRange and selectionContext at the same version read the SAME index', () => {
+    // The painter and the capture must never disagree about what the document says: a mutation
+    // between the two, with no version bump, must be invisible to BOTH.
+    const doc = docFrom('<p>lead in. Revenue is up. tail.</p>')
+    const range = findRange('Revenue is up.', doc)!
+    doc.body.insertAdjacentHTML('afterbegin', '<p>injected lead.</p>')
+    expect(selectionContext(range, doc).prefix).toBe('lead in. ')
+  })
+
+  test('the cache is a SINGLE slot — another document evicts, it never aliases', () => {
+    // A page has one document, so one slot is right; what must never happen is doc b reading doc a's
+    // index. Asserting the eviction (not just "they differ") is what makes this test say something:
+    // buildTextIndex returns a fresh object every call, so "they differ" is true either way.
+    const a = docFrom('<p>doc a</p>')
+    const b = docFrom('<p>doc b</p>')
+    const firstA = sharedTextIndex(a)
+    expect(sharedTextIndex(b)).not.toBe(firstA)
+    expect(sharedTextIndex(a)).not.toBe(firstA) // evicted by b, rebuilt
+    expect(findRange('doc b', b)!.toString()).toBe('doc b')
+    expect(findRange('doc a', b)).toBeNull()
+  })
+
+  test('an index read one beat after the text shrank clamps, it does not throw', () => {
+    // The index describes a DOM VERSION and a MutationObserver delivers in a microtask, so an
+    // in-place write followed by a re-find in the SAME task still reads the old offsets. Past the
+    // live data length that is an IndexSizeError out of range.setStart — thrown inside a paint or a
+    // rAF, uncaught, killing painting and badge emission for the rest of the session.
+    const doc = docFrom('<p>alpha beta gamma</p>')
+    expect(findRange('gamma', doc)).not.toBeNull() // builds the index at the full length
+    const text = doc.querySelector('p')!.firstChild as Text
+    text.data = 'ab' // shrinks under the cached index; no epoch bump yet
+    const range = findRange('gamma', doc)
+    expect(range).not.toBeNull()
+    expect(range!.toString()).toBe('') // clamped to the end of what is actually there
+    newEpoch()
+    expect(findRange('gamma', doc)).toBeNull() // and the next version has the truth
+  })
+})
+
 describe('describeElement — tag + human preview + bounded fallback', () => {
   test('prefers aria-label / alt / title over text', () => {
     const doc = docFrom('<button aria-label="Close dialog">X</button>')
-    expect(describeElement(doc.querySelector('button')!)).toEqual({ tag: 'button', preview: 'Close dialog', textFallback: 'X' })
+    expect(describeElement(doc.querySelector('button')!)).toEqual({
+      tag: 'button',
+      preview: 'Close dialog',
+      textFallback: 'X',
+    })
   })
 
   test('falls back to collapsed text, then to the tag', () => {
     const doc = docFrom('<p>  hello   world  </p><svg></svg>')
-    expect(describeElement(doc.querySelector('p')!)).toEqual({ tag: 'p', preview: 'hello world', textFallback: 'hello world' })
+    expect(describeElement(doc.querySelector('p')!)).toEqual({
+      tag: 'p',
+      preview: 'hello world',
+      textFallback: 'hello world',
+    })
     expect(describeElement(doc.querySelector('svg')!)).toEqual({ tag: 'svg', preview: 'svg', textFallback: '' })
   })
 

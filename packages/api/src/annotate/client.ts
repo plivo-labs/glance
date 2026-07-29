@@ -16,6 +16,7 @@
 import { withAnnotateParam } from './linkRewrite'
 import type { TextContext } from '../lib/anchor'
 import { computeSelector, describeElement, findRange, isPageSpanning, resolveSelector } from './locator'
+import { createRectEmitter, installIndexInvalidation, type TextAnchor } from './reflow'
 import { installSelectionCapture, type Rect } from './selection'
 
 type Boot = { siteId: string; filePath: string; appOrigin: string }
@@ -177,6 +178,7 @@ let lastResolutionKey = ''
 function reposition(): void {
   const root = ensureOverlayRoot()
   repositionPending(root)
+  emitTextRects(textAnchors, document)
   for (const b of Array.from(root.querySelectorAll('[data-glance-anchor]'))) b.remove()
   if (elementAnchors.length === 0) {
     lastResolutionKey = ''
@@ -214,18 +216,14 @@ function scheduleReflow(): void {
   })
 }
 
-let watching = false
-function ensureReflowWatchers(): void {
-  if (watching) return
-  watching = true
-  window.addEventListener('scroll', scheduleReflow, true) // capture: catch scroll on any container
-  window.addEventListener('resize', scheduleReflow)
-  new MutationObserver(scheduleReflow).observe(document.body, { subtree: true, childList: true, attributes: true })
-}
+// Watchers are installed at boot, not on the first paint: the shared text index backs
+// `selectionContext` at pointerup too, on pages that have no comments yet and so are never painted.
+// Which triggers end a DOM version (and why scroll is not one of them) lives in reflow.ts.
+installIndexInvalidation({ doc: document, win: window, onInvalidate: scheduleReflow })
+window.addEventListener('scroll', scheduleReflow, true) // capture: catch scroll on any container
 
 function paintElements(anchors: PaintAnchor[]): void {
   elementAnchors = anchors.filter((a) => a.selector).map((a) => ({ id: a.id, selector: a.selector as string }))
-  if (elementAnchors.length > 0) ensureReflowWatchers()
   reposition()
 }
 
@@ -251,7 +249,6 @@ function repositionPending(root: HTMLElement): void {
  *  clear. Outlives the hover box so the selection stays visible while you type. */
 function setPending(selector: string | null): void {
   pendingSelector = selector
-  if (selector) ensureReflowWatchers()
   reposition()
 }
 
@@ -259,7 +256,14 @@ function setPending(selector: string | null): void {
 
 const supportsHighlight = typeof CSS !== 'undefined' && 'highlights' in CSS
 
+let textAnchors: TextAnchor[] = []
+
+/** Hand the parent where each text anchor currently sits, so it can draw a badge beside it. Batch
+ *  shape, the epoch tag and the empty-batch rule are reflow.ts's; this is the wiring. */
+const emitTextRects = createRectEmitter(toParent)
+
 function paintTexts(anchors: PaintAnchor[]): void {
+  textAnchors = anchors.filter((a) => a.quote)
   if (!supportsHighlight) return // span-wrap fallback is intentionally omitted in v1
   const highlight = new Highlight()
   for (const a of anchors) {

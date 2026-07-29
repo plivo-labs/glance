@@ -13,6 +13,7 @@
     "src/test/**",
     "src/annotate/client.ts",
     "src/annotate/locator.ts",
+    "src/annotate/reflow.ts",
     "src/annotate/selection.ts",
     "src/glancedb/client.ts",
     "scripts/**"

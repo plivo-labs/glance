@@ -145,6 +145,33 @@ function buildTextIndex(doc: Document): TextIndex {
   return { acc, segs }
 }
 
+// The index is IDENTICAL for every read until the document changes, but painting N anchors calls
+// findRange N times — so it is built once per DOM VERSION and shared. The version is owned by the
+// CALLER: this file installs no observer and reads no global. reflow.ts decides which events end a
+// version (DOM mutation incl. characterData, and resize — the index holds only RENDERED text, which
+// is a layout verdict; NOT scroll). One slot, because a page has one document.
+let epoch = 0
+let cached: { doc: Document; epoch: number; index: TextIndex } | null = null
+
+/** The shared index for `doc` at the current DOM version, built on first read and reused after. */
+export function sharedTextIndex(doc: Document): TextIndex {
+  if (cached && cached.doc === doc && cached.epoch === epoch) return cached.index
+  const index = buildTextIndex(doc)
+  cached = { doc, epoch, index }
+  return index
+}
+
+/** The DOM changed: the next read rebuilds. Returns the new version so the caller can tag anything
+ *  it measured under it (a rect batch consumed asynchronously by the parent). */
+export function newEpoch(): number {
+  return ++epoch
+}
+
+/** The version the shared index currently describes. */
+export function currentEpoch(): number {
+  return epoch
+}
+
 /** True when a text node is rendered, anchorable content: no SCRIPT/STYLE/NOSCRIPT/TEXTAREA/TEMPLATE
  *  ancestor, and a parent that occupies layout (`getClientRects` is empty for a `display:none`
  *  subtree in a real browser). happy-dom reports rects for everything, so the rect check never
@@ -167,7 +194,7 @@ export function findRange(quote: string, doc: Document, context?: TextContext): 
   if (tokens.length === 0 || !doc.body) return null
   const re = new RegExp(tokens.join('\\s*'), 'gi')
 
-  const { acc, segs } = buildTextIndex(doc)
+  const { acc, segs } = sharedTextIndex(doc)
   // EVERY occurrence, not just the first: an identical quote can appear many times (a repeated
   // table cell, a nav label, a boilerplate sentence) and `context` is what tells them apart.
   const hits: [number, number][] = []
@@ -196,7 +223,13 @@ export function findRange(quote: string, doc: Document, context?: TextContext): 
  *  `offsetOf` does in the other direction so the two can't disagree. Untouched nodes (nearly all of
  *  them) are index-identical and skip the scan. */
 function rawOffset(seg: TextIndex['segs'][number], pos: number): number {
-  if (!seg.folded) return pos
+  // Clamped, because the index describes a DOM VERSION and the caller may read it one beat after the
+  // text moved on: a MutationObserver delivers its records in a microtask, so an in-place write
+  // followed by a re-find in the SAME task still sees the old offsets. Past `data.length` that is an
+  // IndexSizeError out of `range.setStart` — thrown inside a paint or a rAF, uncaught, killing
+  // painting AND badge emission for the rest of the session. A clamped (briefly wrong) position is
+  // repaired by the very next epoch; a thrown one never is.
+  if (!seg.folded) return Math.min(pos, seg.node.data.length)
   const raw = seg.node.data
   let k = 0
   while (k < raw.length && raw.slice(0, k).normalize('NFKC').length < pos) k++
@@ -248,7 +281,7 @@ const commonSuffixLen = (a: string, b: string): number => {
  *  "…Beta lead " — no shared character, EVERY occurrence scores 0, and the first one wins. That is
  *  first-occurrence painting again, i.e. the whole feature silently off for most real selections. */
 export function selectionContext(range: Range, doc: Document): TextContext {
-  const { acc, segs } = buildTextIndex(doc)
+  const { acc, segs } = sharedTextIndex(doc)
   let lo = offsetOf(segs, range.startContainer, range.startOffset, 'start')
   let hi = offsetOf(segs, range.endContainer, range.endOffset, 'end')
   if (lo === null || hi === null) return { prefix: '', suffix: '' }
