@@ -271,6 +271,7 @@ sites.get('/team', requireAuth, async (c) => {
   const rows = await db
     .select({
       ...siteFeedColumns(),
+      uploaderId: users.id,
       uploaderName: users.name,
       uploaderEmail: users.email,
     })
@@ -283,6 +284,7 @@ sites.get('/team', requireAuth, async (c) => {
   return c.json(
     rows.map((r) => ({
       ...toFeedRow(r, c.env.APP_URL),
+      uploaderId: r.uploaderId, // avatar key for the "Shipped by" column
       uploaderName: r.uploaderName,
       uploaderEmail: r.uploaderEmail,
     })),

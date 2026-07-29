@@ -52,6 +52,7 @@ function commentCandidatesStmt(db: DrizzleD1Database, where: SQL | undefined) {
       createdAt: sql<string>`${comments.createdAt}`.as('createdAt'),
       editedAt: sql<string | null>`${comments.editedAt}`.as('editedAt'),
       rowid: commentsRowid.as('rowid'),
+      actorId: sql<string | null>`${users.id}`.as('actorId'),
       actorName: sql<string | null>`${users.name}`.as('actorName'),
       actorEmail: sql<string | null>`${users.email}`.as('actorEmail'),
       ...THREAD_SITE_COLUMNS,
@@ -89,6 +90,7 @@ export function mentionCandidatesStmt(db: DrizzleD1Database, userId: string) {
       snippet: sql<string | null>`${notifications.snippet}`.as('snippet'),
       createdAt: sql<string>`${notifications.createdAt}`.as('createdAt'),
       rowid: notificationsRowid.as('rowid'),
+      actorId: sql<string | null>`${users.id}`.as('actorId'),
       actorName: sql<string | null>`${users.name}`.as('actorName'),
       actorEmail: sql<string | null>`${users.email}`.as('actorEmail'),
       ...THREAD_SITE_COLUMNS,
@@ -110,6 +112,9 @@ export type CommentFeedItem = {
   kind: 'mention' | 'authored' | 'owned'
   id: string
   snippet: string | null
+  // Identity, not display: carried for EVERY kind (including 'authored', where actorName stays
+  // null so the row reads "You") purely so the feed can render that person's avatar.
+  actorId: string | null
   actorName: string | null
   spaceSlug: string
   siteSlug: string
@@ -154,6 +159,7 @@ function toCommentFeedItem(candidate: FeedCandidate): CommentFeedItem {
     threadId: row.threadId,
     threadStatus: row.threadStatus,
     createdAt: row.createdAt,
+    actorId: row.actorId,
   }
   if (candidate.kind === 'mention') {
     return {

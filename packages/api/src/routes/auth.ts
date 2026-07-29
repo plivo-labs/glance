@@ -6,6 +6,7 @@ import { events, users } from '../db/schema'
 import { bootstrapSuperadminByEmail, createPersonalSpace, superadminStatus, toSessionUser } from '../db/repo'
 import { NEWEST_RELEASE_DATE } from '../whats-new/catalog'
 import { requireAuth } from '../middleware/auth'
+import { sanitizeAvatarUrl } from '../lib/avatar'
 import { bootstrapDecision } from '../lib/bootstrap'
 import { createGoogle, isGoogleEnabled, OAUTH_SCOPES } from '../lib/oauth'
 import { createCliToken, createSession, destroyCliToken, destroySession } from '../lib/session'
@@ -25,6 +26,9 @@ interface GoogleClaims {
   email: string
   email_verified: boolean
   name?: string
+  // Profile photo URL (granted by the `profile` scope). Stored host-pinned and served through
+  // /api/avatars — never handed to the browser as-is. See lib/avatar.
+  picture?: string
   hd?: string
 }
 
@@ -263,9 +267,17 @@ export async function findOrCreateUser(
   const byGoogle = await db.select().from(users).where(eq(users.googleId, claims.sub)).limit(1)
   const existing = byGoogle[0] ?? (await db.select().from(users).where(eq(users.email, email)).limit(1))[0]
 
+  // The photo is re-read from the id_token on EVERY login, which is also the only backfill Google
+  // offers: users who signed up before avatars existed get one the next time they sign in. A claim
+  // that fails the host pin leaves the stored URL untouched rather than clearing a good one.
+  const avatarUrl = sanitizeAvatarUrl(claims.picture)
+
   if (existing) {
     const name = claims.name ?? existing.name
-    await db.update(users).set({ name, googleId: claims.sub }).where(eq(users.id, existing.id))
+    await db
+      .update(users)
+      .set({ name, googleId: claims.sub, avatarUrl: avatarUrl ?? existing.avatarUrl })
+      .where(eq(users.id, existing.id))
     return toSessionUser({ ...existing, name })
   }
 
@@ -273,9 +285,15 @@ export async function findOrCreateUser(
   const role = email === env.SUPERADMIN_EMAIL.toLowerCase() ? 'superadmin' : 'member'
   // New signups start caught up on release notes (watermark = newest), so they don't land on an
   // inbox full of "unread" features that shipped before they existed. null would mean all-unread.
-  await db
-    .insert(users)
-    .values({ id, email, name: claims.name ?? null, googleId: claims.sub, role, lastSeenReleaseAt: NEWEST_RELEASE_DATE })
+  await db.insert(users).values({
+    id,
+    email,
+    name: claims.name ?? null,
+    googleId: claims.sub,
+    avatarUrl,
+    role,
+    lastSeenReleaseAt: NEWEST_RELEASE_DATE,
+  })
   await createPersonalSpace(db, id, email)
   return { id, email, name: claims.name ?? null, role }
 }

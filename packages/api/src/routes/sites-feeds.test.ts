@@ -97,6 +97,7 @@ describe('C31 — site feed characterization before summary badge', () => {
         url: `${APP_URL}/acme/voice`,
         createdAt: at(7),
         updatedAt: at(7),
+        uploaderId: 'owner',
         uploaderName: null,
         uploaderEmail: 'owner@e.com',
       },
@@ -194,7 +195,7 @@ describe('feeds — audio badge pins (S5b T5.4)', () => {
     // The 30-file site is pure audio; the file-less rest are not. Full payload on the head row.
     expect(rows[0]).toEqual({
       id: 's51', spaceSlug: 'acme', siteSlug: 's51', title: null, visibility: 'team', status: 'active',
-      audio: true, hasSummary: false, url: `${APP_URL}/acme/s51`, createdAt: at(51), updatedAt: at(51), uploaderName: null, uploaderEmail: 'owner@e.com',
+      audio: true, hasSummary: false, url: `${APP_URL}/acme/s51`, createdAt: at(51), updatedAt: at(51), uploaderId: 'owner', uploaderName: null, uploaderEmail: 'owner@e.com',
     })
     expect(rows.slice(1).every((r) => r.audio === false)).toBe(true)
     expect(rows.every((r) => r.hasSummary === false)).toBe(true)

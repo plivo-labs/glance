@@ -1,6 +1,7 @@
 import { Clock, Mic, Square, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { UserAvatar } from '@/components/UserAvatar'
 import { useMediaRecorder } from '@/hooks/useMediaRecorder'
 import { formatTimestamp } from '@/lib/audio'
 import { type MentionUser, filterMentions, insertMention, mentionLabel, mentionQuery } from '@/lib/mentions'
@@ -229,12 +230,15 @@ export function Composer({
                     pickMention(u)
                   }}
                   className={cn(
-                    'flex w-full flex-col items-start rounded-sm px-2 py-1.5 text-left text-sm',
+                    'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm',
                     i === activeIdx ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/60',
                   )}
                 >
-                  <span className="font-medium">{mentionLabel(u)}</span>
-                  {u.name && <span className="text-muted-foreground text-xs">{u.email}</span>}
+                  <UserAvatar userId={u.id} name={u.name} email={u.email} />
+                  <span className="flex min-w-0 flex-col">
+                    <span className="truncate font-medium">{mentionLabel(u)}</span>
+                    {u.name && <span className="truncate text-muted-foreground text-xs">{u.email}</span>}
+                  </span>
                 </button>
               </li>
             ))}
