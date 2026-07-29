@@ -1,6 +1,6 @@
 ---
 name: glance-cli
-description: Use the `glance` CLI to build a self-contained HTML explainer/dashboard for a codebase or system and publish it — "explain with html", "make an html dashboard", "visualize this architecture", "a simple HTML summary for my boss" — or to deploy any file/folder to a Glance instance and get a URL, manage sites (list, delete, move, fork), and close the review loop from the terminal (pull a site's review comments, reply to a thread, then redeploy). Also hosts no-build React SPAs (import-map recipe included) and mermaid diagrams.
+description: Use the `glance` CLI to build a self-contained HTML explainer/dashboard for a codebase or system and publish it — "explain with html", "make an html dashboard", "create a dashboard", "visualize this architecture", "a simple HTML summary for my boss" — or to deploy any file/folder to a Glance instance and get a URL, manage sites (list, delete, move, fork), and close the review loop from the terminal (pull a site's review comments, reply to a thread, then redeploy). Also covers `glance.db`, the built-in per-site document store with REALTIME subscriptions — reach for this on "realtime page", "live dashboard", "page that updates itself", "push updates from my backend/script/cron to a page", a form/poll/board that collects submissions, or any page whose data changes after deploy. Also hosts no-build React SPAs (import-map recipe included) and mermaid diagrams.
 ---
 
 # Glance CLI
@@ -237,6 +237,49 @@ viewer sees all of it (polls, boards) · the site **owner** sees everything and 
 any document (moderation); other viewers can never change existing documents · access follows
 the site's sharing — lose access to the site, lose access to its data. If it errors with "not
 enabled", ask your Glance admin to turn the feature on.
+
+## Live pages — subscribe instead of polling
+
+A page can be **pushed** changes as they happen. Do not write a `setInterval` that re-`list()`s;
+subscribe:
+
+```js
+const c = glance.db.collection('shared-metrics')
+
+c.onCreate(e => addRow(e))       // e = {type, collection, id, createdBy, at}
+c.onUpdate(e => refresh(e.id))
+c.onDelete(e => removeRow(e.id))
+
+const off = c.onCreate(handler)  // each returns its own unsubscribe
+off()                            // the last one out closes the connection
+```
+
+**The event tells you WHAT changed, not the new contents** — there is no document body on it. Call
+`c.get(e.id)` when you need the data. That is deliberate: a push carrying bodies would be a third
+read path, and a replayed backlog would fetch every row.
+
+This is a live dashboard end to end: a backend writes with the `curl` recipe above, and every open
+page updates within a second — no polling, no refresh button.
+
+```bash
+# from a cron job / CI / any server — the page updates itself
+curl -H "Authorization: Bearer $TOKEN" -X POST -d '{"deploys":42,"ok":true}' \
+  "$GLANCE_API_URL/api/_data/shared-metrics"
+```
+
+Worth knowing:
+
+- **Subscriptions are lazy** — a page that never subscribes never opens a connection.
+- **Reconnects replay.** Connections drop (a Glance deploy restarts them); the SDK reconnects and
+  replays everything missed from its last position before delivering anything live, so a page left
+  open overnight is not silently stale. You get each change once, in order.
+- **`shared-…` is what makes a dashboard multi-viewer.** On a default collection each viewer only
+  ever sees their own rows, so their pushes are their own writes. For a page where everyone watches
+  the same data, name the collection `shared-…`.
+- **You are pushed only what you may read** — the same rule as `list()`, so subscriptions never leak
+  another viewer's rows.
+- Same constraint as the rest of `glance.db`: it works when the page is opened **through the Glance
+  app**, not from the raw content URL.
 
 ## Diagrams & flowcharts — default to mermaid
 
