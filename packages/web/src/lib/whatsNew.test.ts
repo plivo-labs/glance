@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { EMPTY_WHATS_NEW, openWhatsNew, whatsNew, type WhatsNewList } from './whatsNew'
+import { catchUpWhatsNew, EMPTY_WHATS_NEW, type Release, unreadReleases, whatsNew, type WhatsNewList } from './whatsNew'
 
 // Capture the last fetch call so we assert on the REQUEST (path/method/credentials/body),
 // not just that the module imports api.
@@ -34,27 +34,53 @@ describe('E2 web.client.behavior', () => {
   })
 })
 
-describe('E3 ui.state.transition — openWhatsNew pure fn', () => {
+describe('E3 ui.state.transition — catchUpWhatsNew pure fn', () => {
   const base: WhatsNewList = {
     items: [{ slug: 's', title: 't', date: '2026-07-01T15:00:00.000Z', featured: false, bodyHtml: '<p>x</p>' }],
     unreadCount: 3,
     throughDate: '2026-07-01T15:00:00.000Z',
   }
-  test('opening with unread → clears the badge and persists the throughDate', () => {
-    const { state, persist } = openWhatsNew(base)
+  test('catching up with unread → clears the badge and persists the throughDate', () => {
+    const { state, persist } = catchUpWhatsNew(base)
     expect(state.unreadCount).toBe(0)
     expect(persist).toBe('2026-07-01T15:00:00.000Z')
     expect(state.items).toBe(base.items) // items untouched
   })
-  test('opening with 0 unread → no state change, nothing to persist (dot already hidden)', () => {
+  test('catching up with 0 unread → no state change, nothing to persist (dot already hidden)', () => {
     const caughtUp: WhatsNewList = { ...base, unreadCount: 0 }
-    const { state, persist } = openWhatsNew(caughtUp)
+    const { state, persist } = catchUpWhatsNew(caughtUp)
     expect(state).toBe(caughtUp)
     expect(persist).toBeNull()
   })
   test('unread but throughDate null → badge clears yet nothing to persist (component guards on persist)', () => {
-    const { state, persist } = openWhatsNew({ items: [], unreadCount: 2, throughDate: null })
+    const { state, persist } = catchUpWhatsNew({ items: [], unreadCount: 2, throughDate: null })
     expect(state.unreadCount).toBe(0)
     expect(persist).toBeNull()
+  })
+  test('a second catch-up is a no-op — the dialog dismiss and a Sheet open cannot double-POST', () => {
+    const first = catchUpWhatsNew(base)
+    const second = catchUpWhatsNew(first.state)
+    expect(second.state).toBe(first.state)
+    expect(second.persist).toBeNull()
+  })
+})
+
+describe('E4 firstrun.dialog.contents — unreadReleases picks the head of the newest-first list', () => {
+  const rel = (slug: string, date: string): Release => ({ slug, title: slug, date, featured: false, bodyHtml: '' })
+  const items = [rel('c', '2026-07-14T00:00:00.000Z'), rel('b', '2026-07-01T00:00:00.000Z'), rel('a', '2026-06-20T00:00:00.000Z')]
+
+  test('unreadCount 2 → the two NEWEST releases, in order', () => {
+    const got = unreadReleases({ items, unreadCount: 2, throughDate: items[0].date })
+    expect(got.map((r) => r.slug)).toEqual(['c', 'b'])
+  })
+  test('0 unread → empty, so a caught-up user is never greeted', () => {
+    expect(unreadReleases({ items, unreadCount: 0, throughDate: items[0].date })).toEqual([])
+  })
+  test('count larger than the items on hand → clamped, never over-sliced', () => {
+    // A release published between the loader fetch and this render would otherwise over-slice.
+    expect(unreadReleases({ items, unreadCount: 9, throughDate: items[0].date }).map((r) => r.slug)).toEqual(['c', 'b', 'a'])
+  })
+  test('empty catalog → empty', () => {
+    expect(unreadReleases(EMPTY_WHATS_NEW)).toEqual([])
   })
 })

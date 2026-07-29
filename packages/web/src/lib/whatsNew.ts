@@ -9,6 +9,7 @@ export interface Release {
   title: string
   subtitle?: string
   version?: string
+  image?: string // basename of a static asset under public/whats-new/; optional
   date: string
   featured: boolean
   bodyHtml: string // pre-escaped at build time; injected via dangerouslySetInnerHTML
@@ -28,10 +29,18 @@ export const whatsNew = {
   seen: (throughDate: string) => api.post<{ ok: true }>('/api/whats-new/seen', { throughDate }),
 }
 
-// Pure UI-state transition for opening the What's New panel: optimistically clear the unread badge
-// and report the date to persist. No unread → no state change, nothing to persist. Kept pure (no
-// fetch, no React) so it's unit-testable; the component wires it to the Sheet's onOpenChange.
-export function openWhatsNew(state: WhatsNewList): { state: WhatsNewList; persist: string | null } {
+// Pure UI-state transition for catching the user up: optimistically clear the unread badge and
+// report the date to persist. No unread → no state change, nothing to persist. Kept pure (no fetch,
+// no React) so it's unit-testable. BOTH surfaces run it — opening the Sheet, and dismissing the
+// first-run dialog — so a catch-up from either place clears the other's badge exactly once.
+export function catchUpWhatsNew(state: WhatsNewList): { state: WhatsNewList; persist: string | null } {
   if (state.unreadCount === 0) return { state, persist: null }
   return { state: { ...state, unreadCount: 0 }, persist: state.throughDate }
+}
+
+// The releases the user hasn't seen: `items` is newest-first and `unreadCount` counts from the
+// front, so the unread ones are exactly its head. Clamped — a count larger than the page of items
+// (a release published between the loader's fetch and this render) must not over-slice.
+export function unreadReleases(state: WhatsNewList): Release[] {
+  return state.items.slice(0, Math.min(state.unreadCount, state.items.length))
 }

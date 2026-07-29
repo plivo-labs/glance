@@ -6,6 +6,7 @@ export const RELEASES: Release[] = [
   {
     "slug": "live-data",
     "title": "Live data on any page",
+    "image": "live-data.png",
     "date": "2026-07-29T09:00:00.000Z",
     "featured": true,
     "bodyHtml": "<p>A page you deploy can now <strong>store data and update itself</strong> — no backend to run, nothing to host. Ask for a form, a poll, a board or a dashboard, and it gets a real data store: <code>glance.db</code>.</p>\n<ul>\n<li><strong>Anyone who can open the site can add to it</strong>, attributed to them — so forms and surveys just work</li>\n<li><strong>Changes are pushed, not polled.</strong> Every open page updates the moment something lands, with no refresh button</li>\n<li><strong>Your scripts can write too</strong> — a cron job or CI step posts to the site and every dashboard watching it reacts</li>\n<li>By default you only see what <strong>you</strong> added; a <code>shared-…</code> collection is one everybody watching sees together</li>\n<li>The site <strong>owner</strong> can edit or remove any entry, so a public board stays moderatable</li>\n</ul>\n<p>Leave a page open overnight and it catches up on whatever it missed — no stale tab, no reload.</p>\n"
@@ -13,6 +14,7 @@ export const RELEASES: Release[] = [
   {
     "slug": "tldr-summaries",
     "title": "TL;DR any site",
+    "image": "tldr-summaries.png",
     "date": "2026-07-14T18:00:00.000Z",
     "featured": true,
     "bodyHtml": "<p>Every site now has an AI summary one click away: hit <strong>TL;DR</strong> in the viewer top bar, or <strong>Summary</strong> from a site&#39;s row menu on the dashboard.</p>\n<ul>\n<li>Summaries are cached — reopening one is instant and free until the site&#39;s content changes</li>\n<li>When content changes, the sheet shows what version the summary was written for and offers a one-click update</li>\n<li>Sites with a summary show a sparkle next to their name on the dashboard</li>\n</ul>\n"
@@ -20,6 +22,7 @@ export const RELEASES: Release[] = [
   {
     "slug": "fork-a-site",
     "title": "Make it your own — fork any site",
+    "image": "fork-a-site.png",
     "date": "2026-07-14T12:00:00.000Z",
     "featured": false,
     "bodyHtml": "<p>Found a site you want to build on? <strong>Fork</strong> it. You get your own copy in your own space — edit it, redeploy it, break it, without touching the original.</p>\n<ul>\n<li>Fork from the <strong>⋯ menu</strong> on the dashboard, or straight from the <strong>top bar</strong> of any site you&#39;re viewing</li>\n<li>Anyone who can open a site can fork it, so a page someone shared with you is yours to riff on</li>\n<li>The copy is completely independent: your own files, your own comments, your own sharing</li>\n<li>Handy before a risky redeploy — fork first, and you&#39;ve got a snapshot to fall back on</li>\n</ul>\n"
@@ -27,6 +30,7 @@ export const RELEASES: Release[] = [
   {
     "slug": "comments-tab",
     "title": "All your comments, one feed",
+    "image": "comments-tab.png",
     "date": "2026-07-11T12:00:00.000Z",
     "featured": false,
     "bodyHtml": "<p>The dashboard has a new <strong>Comments</strong> tab: every <strong>mention of you</strong> and every <strong>comment you wrote</strong>, across all your sites, in one newest-first feed.</p>\n<ul>\n<li>Click any row to jump straight to that thread on the page, with the review rail already open</li>\n<li>Rows show where the conversation lives and whether it&#39;s still open or already resolved</li>\n<li>Mentions stay actionable here even after you&#39;ve read them in the bell</li>\n</ul>\n"
@@ -34,6 +38,7 @@ export const RELEASES: Release[] = [
   {
     "slug": "voice-comments",
     "title": "Comment with your voice",
+    "image": "voice-comments.png",
     "date": "2026-07-01T15:00:00.000Z",
     "featured": false,
     "bodyHtml": "<p>Some feedback is faster said than typed. You can now <strong>record a voice comment</strong> right on a site — pin it to the exact spot you&#39;re talking about, and your teammates can play it back inline.</p>\n<ul>\n<li>Record straight from the comment composer</li>\n<li>Voice notes are transcribed automatically, so the thread stays searchable</li>\n<li>Play, pause, and scrub without leaving the page</li>\n</ul>\n"
@@ -41,6 +46,7 @@ export const RELEASES: Release[] = [
   {
     "slug": "external-links-new-tab",
     "title": "Links open where you expect",
+    "image": "external-links-new-tab.png",
     "date": "2026-06-20T09:00:00.000Z",
     "featured": false,
     "bodyHtml": "<p>Links in a shared site that point somewhere <strong>off Glance</strong> now open in a <strong>new tab</strong>, so a click never yanks a reviewer out of the page they were reading.</p>\n<p>Internal links and in-page anchors keep navigating in place, exactly as before — only genuinely external destinations get the new tab.</p>\n"

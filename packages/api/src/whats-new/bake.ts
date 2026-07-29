@@ -11,6 +11,7 @@ export interface Release {
   title: string
   subtitle?: string
   version?: string
+  image?: string
   date: string
   featured: boolean
   bodyHtml: string
@@ -115,6 +116,7 @@ export async function buildCatalog(raws: string[]): Promise<Catalog> {
       title: data.title,
       subtitle: data.subtitle || undefined,
       version: data.version || undefined,
+      image: data.image || undefined,
       date: data.date,
       featured: data.featured === 'true',
       bodyHtml: await markdown.parse(body),
