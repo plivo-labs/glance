@@ -246,20 +246,23 @@ subscribe:
 ```js
 const c = glance.db.collection('shared-metrics')
 
-c.onCreate(e => addRow(e))       // e = {type, collection, id, createdBy, at}
+const off = c.onCreate(e => addRow(e))   // e = {type, collection, id, createdBy, at}
 c.onUpdate(e => refresh(e.id))
 c.onDelete(e => removeRow(e.id))
 
-const off = c.onCreate(handler)  // each returns its own unsubscribe
-off()                            // the last one out closes the connection
+off()   // every subscribe returns its own unsubscribe; the connection itself
+        // closes only once the LAST subscription on the page is gone
 ```
 
 **The event tells you WHAT changed, not the new contents** — there is no document body on it. Call
 `c.get(e.id)` when you need the data. That is deliberate: a push carrying bodies would be a third
 read path, and a replayed backlog would fetch every row.
 
-This is a live dashboard end to end: a backend writes with the `curl` recipe above, and every open
-page updates within a second — no polling, no refresh button.
+This is a live dashboard end to end: a backend writes with the `curl` recipe above and every open
+page reacts — no polling, no refresh button. Delivery is fast (sub-second on a warm site) but it is
+not a latency guarantee: a first connection, a viewer far from the site's region, or a reconnect
+after a deploy all cost more. Build pages that react to an event whenever it lands, not ones that
+assume it already has.
 
 ```bash
 # from a cron job / CI / any server — the page updates itself
