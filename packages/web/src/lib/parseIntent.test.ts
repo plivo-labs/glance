@@ -128,6 +128,126 @@ describe('parseIntent', () => {
     expect(parseIntent(ev({ data: { type: 'glance:pinpoint', selector: 'x'.repeat(9000) } }), expected)).toBeNull()
   })
 
+  const validRect = { top: 1, left: 2, width: 3, height: 4 }
+  const anchorRectsBatch = (over: Record<string, unknown> = {}) => ({
+    type: 'glance:anchor-rects',
+    epoch: 3,
+    rects: [
+      { id: 'a', rect: validRect },
+      { id: 'b', rect: { top: 5, left: 6, width: 7, height: 8 } },
+    ],
+    ...over,
+  })
+
+  test('parses a well-formed anchor-rects batch', () => {
+    expect(parseIntent(ev({ data: anchorRectsBatch() }), expected)).toEqual({
+      type: 'anchorRects',
+      epoch: 3,
+      rects: [
+        { id: 'a', rect: validRect },
+        { id: 'b', rect: { top: 5, left: 6, width: 7, height: 8 } },
+      ],
+    })
+  })
+
+  test('anchor-rects rejects a non-finite epoch instead of coercing it to 0 (the lowest epoch)', () => {
+    // num() would turn each of these into 0, the lowest possible epoch — every later, legitimate
+    // batch would then look stale forever and the badges would freeze in place.
+    expect(parseIntent(ev({ data: anchorRectsBatch({ epoch: undefined }) }), expected)).toBeNull()
+    expect(parseIntent(ev({ data: anchorRectsBatch({ epoch: NaN }) }), expected)).toBeNull()
+    expect(parseIntent(ev({ data: anchorRectsBatch({ epoch: '3' }) }), expected)).toBeNull()
+  })
+
+  test('epoch 0 is a real epoch, not a missing one', () => {
+    expect(parseIntent(ev({ data: anchorRectsBatch({ epoch: 0 }) }), expected)).toMatchObject({ epoch: 0 })
+  })
+
+  test('anchor-rects with an empty rects array still parses — that message clears the last badge', () => {
+    expect(parseIntent(ev({ data: anchorRectsBatch({ rects: [] }) }), expected)).toEqual({
+      type: 'anchorRects',
+      epoch: 3,
+      rects: [],
+    })
+  })
+
+  test('anchor-rects rejects when rects is not an array', () => {
+    expect(parseIntent(ev({ data: anchorRectsBatch({ rects: undefined }) }), expected)).toBeNull()
+    expect(parseIntent(ev({ data: anchorRectsBatch({ rects: {} }) }), expected)).toBeNull()
+    expect(parseIntent(ev({ data: anchorRectsBatch({ rects: 'nope' }) }), expected)).toBeNull()
+  })
+
+  test('an entry with a non-finite edge is dropped, not coerced to 0 — surviving sibling still comes through', () => {
+    const res = parseIntent(
+      ev({ data: anchorRectsBatch({ rects: [{ id: 'bad', rect: { top: NaN, left: 0, width: 1, height: 1 } }, { id: 'good', rect: validRect }] }) }),
+      expected,
+    )
+    expect(res).toMatchObject({ type: 'anchorRects', rects: [{ id: 'good', rect: validRect }] })
+    expect((res as { rects: { id: string; rect: DOMRectLike }[] }).rects).toHaveLength(1)
+    expect((res as { rects: { rect: DOMRectLike }[] }).rects.some((r) => r.rect.top === 0)).toBe(false)
+  })
+
+  test('an entry with an infinite edge is dropped', () => {
+    const res = parseIntent(
+      ev({ data: anchorRectsBatch({ rects: [{ id: 'bad', rect: { top: 0, left: 0, width: Infinity, height: 1 } }] }) }),
+      expected,
+    )
+    expect(res).toMatchObject({ type: 'anchorRects', rects: [] })
+  })
+
+  test('a collapsed (zero-area) rect is dropped', () => {
+    const res = parseIntent(
+      ev({ data: anchorRectsBatch({ rects: [{ id: 'collapsed', rect: { top: 0, left: 0, width: 0, height: 0 } }] }) }),
+      expected,
+    )
+    expect(res).toMatchObject({ type: 'anchorRects', rects: [] })
+  })
+
+  test('an entry with a missing, non-string, or empty id is dropped', () => {
+    for (const id of [undefined, 7, '']) {
+      const res = parseIntent(ev({ data: anchorRectsBatch({ rects: [{ id, rect: validRect }] }) }), expected)
+      expect(res).toMatchObject({ type: 'anchorRects', rects: [] })
+    }
+  })
+
+  test('a null entry in rects is dropped, not thrown on — surviving sibling still comes through', () => {
+    // A hostile or buggy iframe can post `rects: [null]`. The `typeof entry !== 'object'` guard
+    // exists precisely for this: `typeof null === 'object'` in JS, so without the `!entry` half
+    // of the check, `entry as Record<string, unknown>` would let `e.id`/`e.rect` explode with
+    // "Cannot read properties of null" instead of quietly dropping the garbage entry.
+    const res = parseIntent(ev({ data: anchorRectsBatch({ rects: [null, { id: 'good', rect: validRect }] }) }), expected)
+    expect(res).toMatchObject({ type: 'anchorRects', rects: [{ id: 'good', rect: validRect }] })
+    expect((res as { rects: { id: string; rect: DOMRectLike }[] }).rects).toHaveLength(1)
+  })
+
+  test('primitive entries (string, number) in rects are dropped, not thrown on', () => {
+    const res = parseIntent(ev({ data: anchorRectsBatch({ rects: ['nope', 7] }) }), expected)
+    expect(res).toMatchObject({ type: 'anchorRects', rects: [] })
+  })
+
+  test('a rects array of only garbage entries parses to an empty batch, not null', () => {
+    // Same reasoning as the empty-array case above: an all-garbage batch must still clear the
+    // last badge, not be treated as a malformed message.
+    const res = parseIntent(ev({ data: anchorRectsBatch({ rects: [null, 'nope', 7] }) }), expected)
+    expect(res).toEqual({ type: 'anchorRects', epoch: 3, rects: [] })
+  })
+
+  test('a negative-width entry is accepted verbatim today — deliberate, and harmless', () => {
+    // strictRect only gates on `width > 0 || height > 0`, so a negative width alongside a
+    // positive height sails through unchanged. This is only reachable from a forged message: a
+    // real getBoundingClientRect never returns a negative dimension, and reflow.ts applies the
+    // same measurableRect rule before posting. It's harmless too — CSS ignores a negative width,
+    // and buildBadges places a badge from left + width, so the value never distorts anything on
+    // screen. Pinned here so a future change to strictRect's sign handling is a deliberate choice,
+    // not an accidental behaviour change.
+    const forged = { top: 0, left: 0, width: -9999, height: 4 }
+    const res = parseIntent(ev({ data: anchorRectsBatch({ rects: [{ id: 'forged', rect: forged }] }) }), expected)
+    expect(res).toMatchObject({ type: 'anchorRects', rects: [{ id: 'forged', rect: forged }] })
+  })
+
+  test('anchor-rects is rejected on a wrong origin, like every other intent', () => {
+    expect(parseIntent(ev({ origin: 'https://evil.com', data: anchorRectsBatch() }), expected)).toBeNull()
+  })
+
   test('accepts a ready handshake; missing source check is skippable', () => {
     expect(parseIntent(ev({ data: { type: 'glance:ready', filePath: 'index.html' } }), expected)).toEqual({
       type: 'ready',

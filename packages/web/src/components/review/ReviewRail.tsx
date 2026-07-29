@@ -39,6 +39,7 @@ export function ReviewRail({
   onCreateVoice,
   onChanged,
   onFocusAnchor,
+  onHoverThread,
   onStartComment,
   getCurrentTime,
   focusThreadId,
@@ -57,6 +58,8 @@ export function ReviewRail({
   onCreateVoice: (blob: Blob) => void | Promise<void>
   onChanged: () => void
   onFocusAnchor: (thread: Thread) => void
+  // Mirrors BadgeOverlay's onHoverChange, threaded down to each ThreadCard (B3b-hard).
+  onHoverThread: (ids: string[] | null) => void
   // A notification deep-link's target thread (S11): reveal it regardless of the open/resolved
   // filter (switch to its tab) and scroll its card into view, once, when it lands in `threads`.
   focusThreadId?: string | null
@@ -198,7 +201,15 @@ export function ReviewRail({
           </p>
         )}
         {active.map((t) => (
-          <ThreadCard key={t.id} site={site} me={me} thread={t} onChanged={onChanged} onFocusAnchor={onFocusAnchor} />
+          <ThreadCard
+            key={t.id}
+            site={site}
+            me={me}
+            thread={t}
+            onChanged={onChanged}
+            onFocusAnchor={onFocusAnchor}
+            onHoverThread={onHoverThread}
+          />
         ))}
       </div>
     </aside>

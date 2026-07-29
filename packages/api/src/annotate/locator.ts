@@ -200,7 +200,9 @@ export function findRange(quote: string, doc: Document, context?: TextContext): 
   const hits: [number, number][] = []
   for (let m = re.exec(acc); m; m = re.exec(acc)) hits.push([m.index, m.index + m[0].length])
   if (hits.length === 0) return null
-  const [lo, hi] = bestHit(hits, acc, context)
+  const hit = bestHit(hits, acc, context)
+  if (!hit) return null
+  const [lo, hi] = hit
 
   const at = (pos: number): [Text, number] | null => {
     for (let i = segs.length - 1; i >= 0; i--) if (pos >= segs[i].start) return [segs[i].node, rawOffset(segs[i], pos - segs[i].start)]
@@ -237,9 +239,14 @@ function rawOffset(seg: TextIndex['segs'][number], pos: number): number {
 }
 
 /** Score every occurrence by how much of the stored context it reproduces and take the best; ties
- *  (including "no context at all" and "context matches nothing") keep the EARLIEST hit, which is
- *  exactly the pre-context behaviour every already-stored thread was anchored under. */
-function bestHit(hits: [number, number][], acc: string, context?: TextContext): [number, number] {
+ *  when there's nothing to compare (no context stored, or only ONE occurrence exists) keep the
+ *  EARLIEST hit, which is exactly the pre-context behaviour every already-stored thread was anchored
+ *  under. But when the quote is genuinely ambiguous (2+ hits) AND a context WAS stored AND it
+ *  reproduces NOTHING at any occurrence (best score 0 everywhere), hits[0] would be a silent guess —
+ *  a redeploy that both duplicates a sentence and rewrites its surroundings would confidently badge
+ *  text its author never selected. Return null instead so the caller orphans the anchor (rail-only)
+ *  rather than mispoint it. */
+function bestHit(hits: [number, number][], acc: string, context?: TextContext): [number, number] | null {
   const wantPrefix = collapseWhitespace(context?.prefix ?? '').toLowerCase()
   const wantSuffix = collapseWhitespace(context?.suffix ?? '').toLowerCase()
   if (!wantPrefix && !wantSuffix) return hits[0]
@@ -254,6 +261,7 @@ function bestHit(hits: [number, number][], acc: string, context?: TextContext): 
       best = hit
     }
   }
+  if (hits.length > 1 && bestScore === 0) return null
   return best
 }
 

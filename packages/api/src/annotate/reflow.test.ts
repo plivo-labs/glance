@@ -1,7 +1,15 @@
 import { describe, expect, test } from 'bun:test'
 import { Window } from 'happy-dom'
 import { currentEpoch, findRange, newEpoch } from './locator'
-import { createRectEmitter, installIndexInvalidation, measurableRect, type RectsMessage, textRectBatch } from './reflow'
+import {
+  createRectEmitter,
+  highlightRanges,
+  installIndexInvalidation,
+  measurableRect,
+  paintTextAnchors,
+  type RectsMessage,
+  textRectBatch,
+} from './reflow'
 
 // reflow.ts is global-free, so we drive it under a constructed happy-dom window and inject the
 // document / window / emitter — no GlobalRegistrator, so nothing leaks into the other (server-side)
@@ -104,6 +112,91 @@ describe('textRectBatch — one rect per resolving anchor, tagged with the epoch
       win.document,
     )
     expect(batch.rects).toEqual([{ id: 't3', rect: BOX }])
+  })
+
+  test('a duplicated quote with dead context resolves to null → no rect, while a sibling anchor still gets one', () => {
+    // Two occurrences of the same sentence, neither of which the stored context describes: findRange
+    // now refuses (ambiguous + unmatched context) rather than guessing the first. That refusal must
+    // fall out here as "no rect", not a thrown error or a rect for the wrong occurrence.
+    const win = windowWith('<p>Alpha lead. Same quote here. tail</p><p>Beta lead. Same quote here. tail</p><p>unique sentence.</p>')
+    stubRangeRects(win, () => BOX)
+    const batch = textRectBatch(
+      [
+        { id: 'dead', quote: 'Same quote here.', context: { prefix: 'Nowhere near9', suffix: '' } },
+        { id: 'sibling', quote: 'unique sentence.' },
+      ],
+      win.document,
+    )
+    expect(batch.rects).toEqual([{ id: 'sibling', rect: BOX }])
+  })
+})
+
+describe('highlightRanges — the hover-only paint set, never the persistent one', () => {
+  test('an empty id list highlights nothing', () => {
+    const win = windowWith('<p>alpha sentence.</p>')
+    const anchors = [{ id: 't1', quote: 'alpha sentence.' }]
+    expect(highlightRanges(anchors, [], win.document)).toEqual([])
+  })
+
+  test('one matching id yields one Range over that quote', () => {
+    const win = windowWith('<p>alpha sentence.</p>')
+    const anchors = [{ id: 't1', quote: 'alpha sentence.' }]
+    const ranges = highlightRanges(anchors, ['t1'], win.document)
+    expect(ranges).toHaveLength(1)
+    expect(ranges[0]?.toString()).toBe('alpha sentence.')
+  })
+
+  test('preserves the ORDER of ids, not the order anchors were declared in', () => {
+    const win = windowWith('<p>alpha sentence.</p><p>beta sentence.</p>')
+    const anchors = [
+      { id: 't1', quote: 'alpha sentence.' },
+      { id: 't2', quote: 'beta sentence.' },
+    ]
+    const ranges = highlightRanges(anchors, ['t2', 't1'], win.document)
+    expect(ranges.map((r) => r.toString())).toEqual(['beta sentence.', 'alpha sentence.'])
+  })
+
+  test('an id matching no anchor is skipped, not thrown', () => {
+    const win = windowWith('<p>alpha sentence.</p>')
+    const anchors = [{ id: 't1', quote: 'alpha sentence.' }]
+    const ranges = highlightRanges(anchors, ['ghost', 't1'], win.document)
+    expect(ranges.map((r) => r.toString())).toEqual(['alpha sentence.'])
+  })
+
+  test('an anchor whose quote no longer resolves is skipped — same drop rule as textRectBatch', () => {
+    const win = windowWith('<p>alpha sentence.</p>')
+    const anchors = [{ id: 't1', quote: 'vanished sentence.' }]
+    expect(highlightRanges(anchors, ['t1'], win.document)).toEqual([])
+  })
+})
+
+describe('paintTextAnchors — the ONLY seam client.ts is allowed to decide a paint from (kills mutation 1)', () => {
+  // These tests only pin what THIS function returns — a paint producing no ranges. They do NOT
+  // guard against `client.ts`'s `paintTexts` calling CSS.highlights.set(...) itself and ignoring
+  // this seam entirely: that restoration compiles, returns nothing new here, and every assertion
+  // below stays green (mutation 1 proved exactly that). The actual guard against mutation 1 is
+  // client.test.ts, which drives client.ts's real wiring end-to-end and asserts the DOM highlight
+  // stays unset after a paint.
+  test('a paint NEVER produces a highlight range, no matter how many anchors resolve', () => {
+    const win = windowWith('<p>alpha sentence.</p><p>beta sentence.</p>')
+    const anchors = [
+      { id: 't1', quote: 'alpha sentence.' },
+      { id: 't2', quote: 'beta sentence.' },
+    ]
+    const result = paintTextAnchors(anchors)
+    expect(result.ranges).toEqual([])
+  })
+
+  test('it still hands back the anchors for rect emission — recording is not dropped', () => {
+    const anchors = [{ id: 't1', quote: 'alpha sentence.' }]
+    expect(paintTextAnchors(anchors).anchors).toEqual(anchors)
+  })
+
+  test('only an explicit id list (highlightRanges) produces ranges — never the paint seam', () => {
+    const win = windowWith('<p>alpha sentence.</p>')
+    const anchors = [{ id: 't1', quote: 'alpha sentence.' }]
+    expect(paintTextAnchors(anchors).ranges).toEqual([])
+    expect(highlightRanges(anchors, ['t1'], win.document)).toHaveLength(1)
   })
 })
 

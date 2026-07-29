@@ -4,11 +4,14 @@
 //
 // Trust model (COMMENTS_PLAN constraint 1): this runs in the HOSTILE uploaded-HTML context. It
 // may only OPEN UI or SUGGEST an anchor — it emits intent-only messages and computes NO persisted
-// status. Paint/mode/focus commands are accepted only from the trusted parent origin. A suggested
+// status. Paint/mode/focus/highlight commands are accepted only from the trusted parent origin. A suggested
 // element selector is only ever `querySelector`'d (never eval'd).
 //
 // Two anchor kinds are painted against the RENDERED DOM (the server no longer resolves anchors):
-//   • text    — re-find the stored quote (whitespace-flexible, case-insensitive) → CSS Highlight.
+//   • text    — re-find the stored quote (whitespace-flexible, case-insensitive) and report its
+//               rect so the parent can place a badge. The CSS Highlight itself is a HOVER
+//               affordance (B3b): a paint never touches it — only an explicit glance:highlight
+//               command, sent while a badge is hovered or a rail card is focused, does.
 //   • element — re-resolve the stored CSS selector → an absolutely-positioned overlay box that
 //               tracks scroll/resize/DOM-mutation. Unresolved selectors aren't painted and are
 //               reported back so the parent can flag them orphaned.
@@ -16,7 +19,7 @@
 import { withAnnotateParam } from './linkRewrite'
 import type { TextContext } from '../lib/anchor'
 import { computeSelector, describeElement, findRange, isPageSpanning, resolveSelector } from './locator'
-import { createRectEmitter, installIndexInvalidation, type TextAnchor } from './reflow'
+import { createRectEmitter, highlightRanges, installIndexInvalidation, paintTextAnchors, type TextAnchor } from './reflow'
 import { installSelectionCapture, type Rect } from './selection'
 
 type Boot = { siteId: string; filePath: string; appOrigin: string }
@@ -252,7 +255,7 @@ function setPending(selector: string | null): void {
   reposition()
 }
 
-// --- painting text anchors (CSS Custom Highlight) ----------------------------------------
+// --- painting text anchors (rects only — the CSS Custom Highlight is a HOVER affordance) -------
 
 const supportsHighlight = typeof CSS !== 'undefined' && 'highlights' in CSS
 
@@ -262,18 +265,33 @@ let textAnchors: TextAnchor[] = []
  *  shape, the epoch tag and the empty-batch rule are reflow.ts's; this is the wiring. */
 const emitTextRects = createRectEmitter(toParent)
 
+/** Apply a computed Range set to the registered Highlight — the one place client.ts touches
+ *  CSS.highlights, shared verbatim by paintTexts and highlight below so neither can decide its own
+ *  highlight independently of what reflow.ts computed. An empty result DELETES the registered
+ *  Highlight rather than setting an empty one — CSS leaves a registered empty Highlight painting
+ *  nothing but still resident, which is observably different from no highlight at all (e.g. to
+ *  devtools/extensions inspecting registered highlights), so "nothing to show" must mean "not
+ *  registered". */
+function applyRanges(ranges: Range[]): void {
+  if (!supportsHighlight) return
+  if (ranges.length === 0) CSS.highlights.delete('glance-comment')
+  else CSS.highlights.set('glance-comment', new Highlight(...ranges))
+}
+
+/** Record which anchors exist for rect emission, and apply reflow.ts's paint decision — which is
+ *  always "no highlight" (paintTextAnchors's contract, tested in reflow.test.ts). Routing through
+ *  it rather than computing ranges here is what keeps the persistent-markup bug B3b replaced: the
+ *  highlight only ever comes from an explicit glance:highlight command (badge hover / rail focus),
+ *  handled below. */
 function paintTexts(anchors: PaintAnchor[]): void {
-  textAnchors = anchors.filter((a) => a.quote)
-  if (!supportsHighlight) return // span-wrap fallback is intentionally omitted in v1
-  const highlight = new Highlight()
-  for (const a of anchors) {
-    if (!a.quote) continue
-    // `context` (absent on threads stored before it existed) picks the occurrence the commenter
-    // actually selected; without it findRange keeps its first-match behaviour.
-    const range = findRange(a.quote, document, a.context)
-    if (range) highlight.add(range)
-  }
-  CSS.highlights.set('glance-comment', highlight)
+  const painted = paintTextAnchors(anchors.filter((a) => a.quote))
+  textAnchors = painted.anchors
+  applyRanges(painted.ranges)
+}
+
+/** Show (or clear) the hover highlight for exactly the ids the parent names. */
+function highlight(ids: string[]): void {
+  applyRanges(highlightRanges(textAnchors, ids, document))
 }
 
 // --- command dispatch (parent-driven) ----------------------------------------------------
@@ -299,15 +317,16 @@ function setMode(next: Mode): void {
   if (next !== 'annotate') clearHover()
 }
 
-// Paint/mode/focus commands are trusted ONLY from the parent app origin (the inverse of the
-// hostile-iframe rule: here the parent is the trusted side).
+// Paint/mode/focus/highlight commands are trusted ONLY from the parent app origin (the inverse of
+// the hostile-iframe rule: here the parent is the trusted side).
 window.addEventListener('message', (e: MessageEvent) => {
   if (!boot || e.origin !== boot.appOrigin) return
-  const d = e.data as { type?: string; anchors?: PaintAnchor[]; quote?: string; selector?: string; mode?: Mode; context?: TextContext }
+  const d = e.data as { type?: string; anchors?: PaintAnchor[]; quote?: string; selector?: string; mode?: Mode; context?: TextContext; ids?: string[] }
   if (d?.type === 'glance:paint' && Array.isArray(d.anchors)) paint(d.anchors)
   else if (d?.type === 'glance:focus') focus({ quote: d.quote, selector: d.selector, context: d.context })
   else if (d?.type === 'glance:mode' && (d.mode === 'read' || d.mode === 'annotate')) setMode(d.mode)
   else if (d?.type === 'glance:pending') setPending(typeof d.selector === 'string' ? d.selector : null)
+  else if (d?.type === 'glance:highlight' && Array.isArray(d.ids)) highlight(d.ids)
 })
 
 // Boot handshake: tell the parent which file is mounted (intent-only; parent re-validates).

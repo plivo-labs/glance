@@ -4,18 +4,22 @@ import { toast } from 'sonner'
 import { api, ApiError } from '@/lib/api'
 import { isAudioFile } from '@/lib/audio'
 import { attachDbBroker } from '@/lib/dbBroker'
+import { buildBadges, initialBadges, stepBadges } from '@/lib/badges'
 import { comments, type PendingAnchor, pendingToInput, type TextContext, type Thread } from '@/lib/comments'
 import { initialPopover, stepPopover } from '@/lib/commentPopover'
+import { type HighlightEvent, initialHighlight, stepHighlight } from '@/lib/highlightTarget'
 import { type Intent, parseIntent } from '@/lib/parseIntent'
 import { encodePathSegments } from '@/lib/paths'
 import { type ArbiterEvent, type ArbiterState, type Decision, initialArbiter, stepArbiter } from '@/lib/prefetchArbiter'
 import { recordVisit } from '@/lib/recents'
 import type { Me } from '@/lib/types'
+import { badgeOpenTarget, frameViewport, highlightCommand } from '@/lib/viewerCommands'
 import { loadViewer, PREFETCH_FAILED, type PrefetchResult, type ViewerLoaderData } from '@/lib/viewerLoader'
 import { AudioView } from '@/components/AudioView'
 import { Spinner } from '@/components/states'
 import { CommandPalette } from '@/components/CommandPalette'
 import { ViewerTopBar } from '@/components/ViewerTopBar'
+import { BadgeOverlay } from '@/components/review/BadgeOverlay'
 import { CommentPopover } from '@/components/review/CommentPopover'
 import { ReviewRail, type ReviewMode } from '@/components/review/ReviewRail'
 import { ViewerSidebar } from '@/components/ViewerSidebar'
@@ -89,6 +93,10 @@ function Viewer() {
   // whole chip → composer → save lifecycle and this only executes it. Held with useReducer rather
   // than the arbiter's ref, because unlike the arbiter every transition here IS the UI.
   const [popover, dispatchPopover] = useReducer(stepPopover, undefined, initialPopover)
+  // The overlay's badge model (slice B2b): the latest anchorRects batch, stepped through the pure
+  // reducer in lib/badges. Held separately from `threads` because a batch's epoch race is about
+  // POSITIONS, not thread content — buildBadges combines the two only at render time (below).
+  const [badges, setBadges] = useState(initialBadges)
   // `dirty` is a reducer INPUT, read at dispatch time from a ref: the draft stays inside the
   // Composer (Composer.onDirtyChange), and a re-render per keystroke would buy nothing.
   const dirtyRef = useRef(false)
@@ -198,6 +206,10 @@ function Viewer() {
   // Actionable count for the toolbar badge: open threads (mirrors the rail's default "open" list).
   const openCount = useMemo(() => threads.filter((t) => t.status === 'open').length, [threads])
 
+  // The overlay's drawable chips: combines the latest rect batch with the current threads (for
+  // visibility/author/count), recomputed only when either input actually changes.
+  const badgeList = useMemo(() => buildBadges(badges, threads), [badges, threads])
+
   // Per-site tab title: without this the shell's static <title> ("Glance — …") shows for EVERY
   // site. site.title is owner-set or deploy-derived from the entry HTML's <title>; fall back to
   // the slug. Restored on unmount so back-navigation to the dashboard keeps the shell default.
@@ -263,6 +275,12 @@ function Viewer() {
       else if (review && intent.type === 'clickAway') dispatchPopover({ type: 'clickAway', dirty: dirtyRef.current })
       else if (review && intent.type === 'escape') dispatchPopover({ type: 'dismiss' })
       else if (review && intent.type === 'pinpoint') setComposing({ kind: 'element', anchor: intent.anchor })
+      // The iframe's own box IS the frame viewport (the overlay is mounted as its sibling in that
+      // same wrapper) — measuring it HERE, in the event handler, is what keeps lib/badges pure and
+      // avoids a ResizeObserver just to learn a size the DOM already hands us for free.
+      else if (review && intent.type === 'anchorRects') {
+        setBadges((s) => stepBadges(s, intent, frameViewport(iframeRef.current)))
+      }
     }
     window.addEventListener('message', onMsg)
     return () => window.removeEventListener('message', onMsg)
@@ -302,6 +320,8 @@ function Viewer() {
       setThreads([])
       setComposing(null)
       dispatchPopover({ type: 'dismiss' }) // a chip/popover pinned to the OLD document's rect
+      setBadges(initialBadges()) // badges pinned to the OLD document's rects too
+      dispatchHighlight({ type: 'navigate' }) // a highlight lit in the OLD document too
       setLoaded(false)
     }
     if (commentsPromise && commentsPromise !== consumedPrefetch.current && entryPath !== null) {
@@ -339,8 +359,35 @@ function Viewer() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  // Focus an anchor in the iframe: element → scroll its selector into view; text → its quote.
-  const focusAnchor = useCallback(
+  // B3b-hard: which thread ids are lit RIGHT NOW is a pure decision (lib/highlightTarget),
+  // extracted for the same reason lib/badges and lib/commentPopover were — so hover-replaces-not-
+  // unions, and every clear (leave/exitReview/navigate), are unit-tested instead of living inline
+  // in callbacks. This component only dispatches events and posts whatever the reducer says.
+  const [highlightState, dispatchHighlight] = useReducer(stepHighlight, undefined, initialHighlight)
+
+  // Post the current highlight to the iframe whenever the reducer's output actually changes —
+  // `stepHighlight` returns the SAME state object for a no-op event, so an unrelated re-render
+  // never re-sends it. Guarded by `loaded` like the other parent→child posts below (the client's
+  // message listener isn't wired until then).
+  useEffect(() => {
+    const win = iframeRef.current?.contentWindow
+    if (!win || !loaded) return
+    win.postMessage(highlightCommand(highlightState), contentOrigin)
+  }, [highlightState, loaded, contentOrigin])
+
+  // Shared entry point for every "hover" source (badge pointer/focus, rail-card pointer/focus):
+  // a null or empty id list is a leave, otherwise the ids REPLACE whatever was lit before — never
+  // a union across two hovered chips.
+  const hoverHighlight = useCallback((ids: string[] | null) => {
+    const event: HighlightEvent = ids && ids.length > 0 ? { type: 'hover', ids } : { type: 'leave' }
+    dispatchHighlight(event)
+  }, [])
+
+  // Scroll an anchor into view in the iframe: element → its selector; text → its quote. Deliberately
+  // the ONLY thing a rail-card/badge CLICK does — B3b-hard's fix is that lighting the highlight is
+  // never a side effect of scrolling: it comes exclusively from hoverHighlight (pointer/focus) and
+  // must clear on leave/blur, which a click has no matching event for.
+  const scrollAnchor = useCallback(
     (thread: Thread) => {
       const win = iframeRef.current?.contentWindow
       if (!win) return
@@ -371,9 +418,12 @@ function Viewer() {
     if (!target) return
     deepLinkFocused.current = true
     // Scroll the iframe to the anchor; the rail reveals + scrolls the thread card itself (ReviewRail
-    // owns the open/resolved filter, so it can un-hide a resolved target).
-    focusAnchor(target)
-  }, [deepLinkThreadId, review, loaded, threads, focusAnchor])
+    // owns the open/resolved filter, so it can un-hide a resolved target). scrollAnchor only —
+    // landing here is a page load, not a click or hover, so `navigate` is dispatched too (a
+    // deep-link mount lights NOTHING; see lib/highlightTarget's 'navigate' case).
+    scrollAnchor(target)
+    dispatchHighlight({ type: 'navigate' })
+  }, [deepLinkThreadId, review, loaded, threads, scrollAnchor])
 
   // The one create path, text and voice alike, rail and popover alike — hence the anchor is an
   // ARGUMENT: the rail's page/element anchor and the popover's text anchor drive the same write.
@@ -458,6 +508,7 @@ function Viewer() {
     setReview(false)
     setComposing(null)
     dispatchPopover({ type: 'dismiss' })
+    dispatchHighlight({ type: 'exitReview' })
   }
 
   return (
@@ -526,6 +577,19 @@ function Viewer() {
                 onDirtyChange={onDirtyChange}
               />
             )}
+            {review && !isAudio && (
+              <BadgeOverlay
+                badges={badgeList}
+                // The rail is ALREADY open whenever review is on — a badge click only needs to
+                // scroll the iframe + rail to the first matching thread, never filter the rail.
+                // Unfiltered-reveal-by-id for a specific thread id is slice C1's job, not this one.
+                onOpen={(threadIds) => {
+                  const target = badgeOpenTarget(threadIds, threads)
+                  if (target) scrollAnchor(target)
+                }}
+                onHoverChange={hoverHighlight}
+              />
+            )}
             {!isAudio && !loaded && (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background text-muted-foreground">
                 <Spinner className="size-6" />
@@ -547,7 +611,8 @@ function Viewer() {
             onCreate={createThread}
             onCreateVoice={createVoiceThread}
             onChanged={() => filePath && refresh(filePath)}
-            onFocusAnchor={focusAnchor}
+            onFocusAnchor={scrollAnchor}
+            onHoverThread={hoverHighlight}
             onStartComment={isAudio ? startPageComment : undefined}
             getCurrentTime={isAudio ? getCurrentTime : undefined}
             focusThreadId={deepLinkThreadId}

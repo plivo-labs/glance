@@ -42,6 +42,36 @@ export function textRectBatch(anchors: TextAnchor[], doc: Document): RectsMessag
   return { type: 'glance:anchor-rects', epoch: currentEpoch(), rects }
 }
 
+/** The Ranges to paint into the `glance-comment` CSS Custom Highlight RIGHT NOW — the hover/focus
+ *  set the parent asks for, in the order it asks for it, never the full anchor list. Painting every
+ *  anchor unconditionally (the bug this replaces) marks up every commented sentence on the page
+ *  PERMANENTLY; the ruling is that the highlight is a hover affordance, so the parent must be able
+ *  to ask for exactly the ids it wants lit and nothing else. An id with no matching anchor, or an
+ *  anchor whose quote no longer resolves (the page changed under it), silently contributes no
+ *  Range — same drop rule as textRectBatch, for the same reason: a badge/highlight for text that
+ *  isn't there anymore is worse than no highlight. */
+export function highlightRanges(anchors: TextAnchor[], ids: string[], doc: Document): Range[] {
+  const byId = new Map(anchors.map((a) => [a.id, a]))
+  const ranges: Range[] = []
+  for (const id of ids) {
+    const anchor = byId.get(id)
+    const range = anchor?.quote ? findRange(anchor.quote, doc, anchor.context) : null
+    if (range) ranges.push(range)
+  }
+  return ranges
+}
+
+/** What a `glance:paint` command decides for the highlight, and nothing else: record the anchors
+ *  (for `textRectBatch` to place badges from) and hand back ZERO Ranges, always. `paintTexts` in
+ *  client.ts calls this and applies whatever it returns verbatim, never computing its own Ranges —
+ *  client.test.ts drives that wiring for real (happy-dom has no CSS Custom Highlight API, so it
+ *  can't be exercised HERE) and is what actually catches the persistent-markup bug this file's
+ *  header describes: this function alone being pinned to always-empty proves nothing if client.ts
+ *  is free to bypass it, which is exactly what survived until that test existed. */
+export function paintTextAnchors(anchors: TextAnchor[]): { anchors: TextAnchor[]; ranges: Range[] } {
+  return { anchors, ranges: [] }
+}
+
 /** Emit a batch on every reflow frame. Deliberately NOT guarded by a change key the way
  *  `glance:pinpoint-resolved` is: rects move on EVERY scroll frame and the badges have to follow, so
  *  a "only when the SET changes" guard would freeze them at their first position. The one thing

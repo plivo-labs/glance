@@ -189,10 +189,55 @@ describe('findRange — context disambiguates a REPEATED quote', () => {
     expect(range.endContainer.parentElement?.textContent).toContain('beta')
   })
 
-  test('context that matches NO occurrence falls back to the first match', () => {
+  // Deliberately does NOT end in ". " (the last two chars every occurrence's lead-in shares) — that
+  // coincidence would let a "dead" prefix still score 2 by accident, masking the very case this rule
+  // targets. Ending in a digit guarantees zero shared trailing characters.
+  const DEAD_PREFIX = 'Nowhere at all9'
+
+  test('THREE occurrences + context that matches NONE → null, not a silent first-occurrence guess', () => {
+    // The quote is genuinely ambiguous (3 hits) and the stored surroundings survive nowhere (score 0
+    // everywhere) — painting hits[0] here would confidently badge text its author never selected.
     const doc = docFrom(repeated)
-    const range = findRange('Revenue is up.', doc, { prefix: 'Nowhere at all. ', suffix: '' })!
+    expect(findRange('Revenue is up.', doc, { prefix: DEAD_PREFIX, suffix: '' })).toBeNull()
+  })
+
+  test('a SINGLE occurrence still anchors even when its context matches nothing (nothing to be ambiguous about)', () => {
+    const doc = docFrom('<p>Alpha section. Revenue is up. tail</p>')
+    const range = findRange('Revenue is up.', doc, { prefix: DEAD_PREFIX, suffix: '' })!
+    expect(range).not.toBeNull()
+    expect(range.toString()).toBe('Revenue is up.')
+  })
+
+  test('TWO occurrences + dead context (score 0 at both) → null', () => {
+    const doc = docFrom('<p>Alpha section. Revenue is up. tail</p><p>Beta section. Revenue is up. tail</p>')
+    expect(findRange('Revenue is up.', doc, { prefix: DEAD_PREFIX, suffix: '' })).toBeNull()
+  })
+
+  test('TWO occurrences + NO context (undefined) → the FIRST occurrence (unchanged — nothing to compare)', () => {
+    const doc = docFrom('<p>Alpha section. Revenue is up. tail</p><p>Beta section. Revenue is up. tail</p>')
+    const range = findRange('Revenue is up.', doc)!
     expect(range.startContainer.parentElement?.textContent).toContain('Alpha')
+  })
+
+  test('TWO occurrences + an empty stored context ({prefix:"",suffix:""}) → the FIRST occurrence (a pre-context thread)', () => {
+    const doc = docFrom('<p>Alpha section. Revenue is up. tail</p><p>Beta section. Revenue is up. tail</p>')
+    const range = findRange('Revenue is up.', doc, { prefix: '', suffix: '' })!
+    expect(range.startContainer.parentElement?.textContent).toContain('Alpha')
+  })
+
+  test('TWO occurrences + a context matching with a score of only 1 character → that occurrence, not null', () => {
+    // No separating space, so the char right before the quote IS the lead-in's last char: 'z' shares
+    // it with the SECOND occurrence ("...xyz") and shares nothing with the first's ("...xyq") — a
+    // score of 1 is still a match, not a guess.
+    const doc = docFrom('<p>xyqRevenue is up. tail</p><p>xyzRevenue is up. tail</p>')
+    const range = findRange('Revenue is up.', doc, { prefix: 'z', suffix: '' })!
+    expect(range).not.toBeNull()
+    expect(range.startContainer.parentElement?.textContent).toContain('xyz')
+  })
+
+  test('THREE occurrences + dead context is still null (the rule is not accidentally two-specific)', () => {
+    const doc = docFrom(repeated)
+    expect(findRange('Revenue is up.', doc, { prefix: 'Totally absent9', suffix: '' })).toBeNull()
   })
 
   test('context matching is whitespace-flexible (stored context is collapsed, the DOM is not)', () => {
