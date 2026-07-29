@@ -1,4 +1,4 @@
-import { Check, ChevronRight, Command, GitFork, History, Menu, MessageSquare, Share2, Sparkles, Star } from 'lucide-react'
+import { ChevronRight, Command, GitFork, History, Menu, MessageSquare, Share2, Sparkles, Star } from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { useForkSite } from '@/hooks/useForkSite'

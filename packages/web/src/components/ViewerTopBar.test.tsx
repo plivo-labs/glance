@@ -2,7 +2,7 @@
 // always present (not gated on `!railOpen`) with the open-count badge riding along either way.
 import { describe, expect, mock, test } from 'bun:test'
 import { fireEvent, render, screen } from '@testing-library/react'
-import { MemoryRouter } from 'react-router'
+import { createMemoryRouter, RouterProvider } from 'react-router'
 import type { ViewerSite } from '@/lib/types'
 import { ViewerTopBar } from './ViewerTopBar'
 
@@ -18,21 +18,27 @@ const SITE: ViewerSite = {
   indexPath: 'index.html',
 }
 
+// A DATA router, not MemoryRouter: the star control (useStar) calls useRevalidator, which throws
+// outside one — the top bar cannot be rendered bare any more.
 function renderTopBar(overrides: Partial<{ railOpen: boolean; commentCount: number; onToggleRail: () => void }> = {}) {
   const onToggleRail = overrides.onToggleRail ?? mock(() => {})
-  render(
-    <MemoryRouter>
-      <ViewerTopBar
-        site={SITE}
-        sitePath=""
-        railOpen={overrides.railOpen ?? false}
-        commentCount={overrides.commentCount ?? 0}
-        onToggleRail={onToggleRail}
-        onToggleSidebar={() => {}}
-        onSearch={() => {}}
-      />
-    </MemoryRouter>,
-  )
+  const router = createMemoryRouter([
+    {
+      path: '/',
+      element: (
+        <ViewerTopBar
+          site={SITE}
+          sitePath=""
+          railOpen={overrides.railOpen ?? false}
+          commentCount={overrides.commentCount ?? 0}
+          onToggleRail={onToggleRail}
+          onToggleSidebar={() => {}}
+          onSearch={() => {}}
+        />
+      ),
+    },
+  ])
+  render(<RouterProvider router={router} />)
   return { onToggleRail }
 }
 
