@@ -9,7 +9,7 @@ import { HelpButton } from '@/components/HelpButton'
 import { BrandMark } from '@/components/states'
 import { NotificationsBell } from '@/components/NotificationsBell'
 import { WhatsNewButton } from '@/components/WhatsNewButton'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { UserAvatar } from '@/components/UserAvatar'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -48,8 +48,6 @@ export function AppShell() {
       window.location.href = '/login'
     }
   }
-
-  const initials = (user?.name || user?.email || '?').trim().slice(0, 1).toUpperCase()
 
   return (
     <div ref={bindHotkeys} className="bp-app-bg min-h-screen">
@@ -94,11 +92,13 @@ export function AppShell() {
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="icon" className="rounded-full" aria-label="Account menu">
-                    <Avatar className="size-7">
-                      <AvatarFallback className="bg-primary/15 text-xs font-semibold text-primary">
-                        {initials}
-                      </AvatarFallback>
-                    </Avatar>
+                    <UserAvatar
+                      userId={user.id}
+                      name={user.name}
+                      email={user.email}
+                      className="size-7"
+                      fallbackClassName="text-xs"
+                    />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56">

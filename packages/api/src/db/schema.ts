@@ -8,6 +8,11 @@ export const users = sqliteTable('users', {
   email: text('email').notNull().unique(),
   name: text('name'),
   googleId: text('googleId').unique(),
+  // Google profile photo URL from the OAuth id_token's `picture` claim, refreshed on every login.
+  // Never rendered directly by the browser — the avatar route proxies it same-origin (see
+  // routes/avatars.ts), so this column is the ONLY place a googleusercontent URL is held.
+  // Null for users who predate this column until their next Google login, and for bootstrap users.
+  avatarUrl: text('avatarUrl'),
   role: text('role', { enum: ['member', 'superadmin'] }).notNull().default('member'),
   createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
   // "What's New" read watermark: the ISO-8601 UTC date through which this user has seen release
@@ -67,7 +72,14 @@ export const sites = sqliteTable(
     // site at its creation slot). Renames/moves/visibility changes do NOT bump it — content only.
     updatedAt: text('updatedAt').notNull().$defaultFn(() => new Date().toISOString()),
   },
-  (t) => [unique('sites_space_slug_unq').on(t.spaceId, t.slug), index('sites_owner').on(t.ownerId)],
+  (t) => [
+    unique('sites_space_slug_unq').on(t.spaceId, t.slug),
+    index('sites_owner').on(t.ownerId),
+    // Serves the team feed's `status = ? AND visibility = ? ORDER BY updatedAt DESC LIMIT n`:
+    // equality on the leading pair, `updatedAt` last so the ORDER BY is a reverse index scan and
+    // the LIMIT stops it early — otherwise the feed's correlated EXISTS columns run once per SITE.
+    index('sites_status_visibility_updated').on(t.status, t.visibility, t.updatedAt),
+  ],
 )
 
 export const files = sqliteTable(

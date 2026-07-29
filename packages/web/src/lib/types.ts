@@ -52,6 +52,7 @@ export interface SiteSummary {
 }
 
 export interface TeamUpload extends SiteSummary {
+  uploaderId: string
   uploaderName: string | null
   uploaderEmail: string
 }
@@ -61,6 +62,7 @@ export interface CommentFeedItem {
   kind: 'mention' | 'authored' | 'owned'
   id: string
   snippet: string | null
+  actorId: string | null
   actorName: string | null
   spaceSlug: string
   siteSlug: string

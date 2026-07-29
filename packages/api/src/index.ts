@@ -10,6 +10,7 @@ import { trackCliUsage } from './middleware/analytics'
 import { requireSameOrigin } from './middleware/auth'
 import { admin } from './routes/admin'
 import { auth } from './routes/auth'
+import { avatars } from './routes/avatars'
 import { commentFeed } from './routes/comment-feed'
 import { comments } from './routes/comments'
 import { summary } from './routes/summary'
@@ -114,6 +115,9 @@ app.route('/api/upload', upload)
 // Session-authenticated mint for shared-backend data tokens (owner → read+write, viewer → read).
 app.route('/api/data-token', dataToken)
 app.route('/api/users', users)
+// Same-origin proxy for Google profile photos — keeps googleusercontent URLs (and viewer IPs)
+// off the browser, so the CSP above stays `img-src 'self'`.
+app.route('/api/avatars', avatars)
 app.route('/api/notifications', notifications)
 app.route('/api/whats-new', whatsNew)
 app.route('/api/admin', admin)
