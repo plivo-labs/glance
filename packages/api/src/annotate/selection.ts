@@ -23,11 +23,16 @@ import { selectionContext } from './locator'
 export type Rect = { top: number; left: number; width: number; height: number }
 export type SelectMessage = { type: 'glance:select'; quote: string; context: TextContext; rect: Rect }
 export type ClearMessage = { type: 'glance:select-clear' }
+/** The user touched the page — the parent should consider closing whatever popover it has open. The
+ *  parent CANNOT see this for itself: clicks inside a cross-origin iframe are invisible to it. */
+export type ClickAwayMessage = { type: 'glance:click-away' }
+/** Escape pressed inside the iframe, forwarded for the same reason. */
+export type EscapeMessage = { type: 'glance:escape' }
 
 export type SelectionDeps = {
   doc: Document
   getSelection: () => Selection | null
-  emit: (msg: SelectMessage | ClearMessage) => void
+  emit: (msg: SelectMessage | ClearMessage | ClickAwayMessage | EscapeMessage) => void
 }
 
 /** Keys a keyup commits on. A BARE keyup is too wide: it would re-walk the whole document text index
@@ -83,13 +88,29 @@ export function installSelectionCapture({ doc, getSelection, emit }: SelectionDe
     if (isSelectionKey(e)) commit()
   }
 
+  /** Fires on EVERY pointerdown, including the one that begins the next drag-selection: pointerdown
+   *  precedes the pointerup that commits, so an ordinary drag emits click-away THEN select, in that
+   *  order, and the parent must tolerate it. That is intended — this is a raw signal, and the PARENT
+   *  decides whether it should close anything. */
+  const onClickAway = (): void => emit({ type: 'glance:click-away' })
+
+  // keydown, not keyup: Escape must reach the parent BEFORE the page's own handlers act on it. No
+  // drag-commit concern here, so nothing is gained by waiting for the key to come back up.
+  const onKeyDown = (e: KeyboardEvent): void => {
+    if (e.key === 'Escape') emit({ type: 'glance:escape' })
+  }
+
   doc.addEventListener('pointerup', commit)
   doc.addEventListener('keyup', onKeyUp)
   doc.addEventListener('selectionchange', clearIfGone)
+  doc.addEventListener('pointerdown', onClickAway)
+  doc.addEventListener('keydown', onKeyDown)
 
   return () => {
     doc.removeEventListener('pointerup', commit)
     doc.removeEventListener('keyup', onKeyUp)
     doc.removeEventListener('selectionchange', clearIfGone)
+    doc.removeEventListener('pointerdown', onClickAway)
+    doc.removeEventListener('keydown', onKeyDown)
   }
 }

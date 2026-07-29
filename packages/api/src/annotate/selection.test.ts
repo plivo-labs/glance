@@ -1,7 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 import { Window } from 'happy-dom'
 import { findRange } from './locator'
-import { type ClearMessage, installSelectionCapture, type SelectMessage } from './selection'
+import {
+  type ClearMessage,
+  type ClickAwayMessage,
+  type EscapeMessage,
+  installSelectionCapture,
+  type SelectMessage,
+} from './selection'
 
 // Seam S3: the capture policy takes its document, selection getter and emitter as arguments, so it
 // runs under a constructed happy-dom window — no GlobalRegistrator, nothing leaks into the other
@@ -22,7 +28,7 @@ function setup(html = HTML) {
   const window = new Window()
   window.document.body.innerHTML = html
   const doc = window.document as unknown as Document
-  const emitted: (SelectMessage | ClearMessage)[] = []
+  const emitted: (SelectMessage | ClearMessage | ClickAwayMessage | EscapeMessage)[] = []
   let selection: Selection | null = doc.getSelection()
 
   const dispose = installSelectionCapture({
@@ -137,6 +143,43 @@ describe('installSelectionCapture — the clear is a transition, not a state rep
 
     expect(emitted.map((m) => m.type)).toEqual(['glance:select', 'glance:select-clear', 'glance:select'])
     expect((emitted[2] as SelectMessage).quote).toBe('Alpha lead in.')
+  })
+})
+
+describe('installSelectionCapture — dismissal signals the parent cannot see for itself', () => {
+  test('a pointerdown on the document emits exactly one click-away', () => {
+    const { emitted, doc, window } = setup()
+    doc.dispatchEvent(new window.Event('pointerdown') as unknown as Event)
+    expect(emitted).toEqual([{ type: 'glance:click-away' }])
+  })
+
+  test('an Escape keydown emits exactly one escape; other keys emit neither signal', () => {
+    const { emitted, fire } = setup()
+    fire('keydown', { key: 'Escape' })
+    expect(emitted).toEqual([{ type: 'glance:escape' }])
+
+    fire('keydown', { key: 'x' })
+    fire('keydown', { key: 'ArrowRight' })
+    expect(emitted).toEqual([{ type: 'glance:escape' }])
+  })
+
+  test('an ordinary drag emits click-away BEFORE the select it precedes', () => {
+    // pointerdown starts the drag, pointerup commits it — the parent must tolerate this ordering.
+    const { emitted, select, doc, window } = setup()
+    doc.dispatchEvent(new window.Event('pointerdown') as unknown as Event)
+    select('Revenue is up.')
+    doc.dispatchEvent(new window.Event('pointerup') as unknown as Event)
+
+    expect(emitted.map((m) => m.type)).toEqual(['glance:click-away', 'glance:select'])
+  })
+
+  test('after dispose neither signal is emitted', () => {
+    const { emitted, dispose, doc, window, fire } = setup()
+    dispose()
+    doc.dispatchEvent(new window.Event('pointerdown') as unknown as Event)
+    fire('keydown', { key: 'Escape' })
+
+    expect(emitted).toEqual([])
   })
 })
 

@@ -21,6 +21,7 @@ export function Composer({
   className,
   timestampButton,
   loadMentions,
+  onDirtyChange,
 }: {
   placeholder: string
   submitLabel: string
@@ -40,6 +41,10 @@ export function Composer({
   // Lazily fetch the users this composer may @-mention (called once, on the first `@`). Absent →
   // no mention UI (e.g. contexts with no site scope). Text-only feature; the voice path ignores it.
   loadMentions?: () => Promise<MentionUser[]>
+  // Report whether the draft has text — additive, and the ONLY thing that leaves this component:
+  // the popover reducer needs `dirty` as an input (it decides whether a new selection may re-anchor
+  // an open composer), while the draft itself stays owned here.
+  onDirtyChange?: (dirty: boolean) => void
 }) {
   const [body, setBody] = useState('')
   const [busy, setBusy] = useState(false)
@@ -49,6 +54,17 @@ export function Composer({
   // text and voice are one-or-the-other for a single submit.
   const recording = rec.state === 'recording' || rec.state === 'paused'
   const recorded = rec.state === 'stopped'
+
+  // An effect, not a call inside onChange: every path that rewrites the body (mention insert,
+  // timestamp prefix, the clear after a successful submit) then reports through this one place.
+  const dirty = trimmed.length > 0
+  useEffect(() => {
+    onDirtyChange?.(dirty)
+    // A composer that unmounts has no draft, and nothing else will ever say so: a successful save
+    // closes this component in the SAME commit that clears the body, so the trailing `false` would
+    // never be reported and the parent would keep guarding against a draft that is gone.
+    return () => onDirtyChange?.(false)
+  }, [dirty, onDirtyChange])
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   // Caret to restore after a mention insertion re-renders the textarea (React won't preserve it).

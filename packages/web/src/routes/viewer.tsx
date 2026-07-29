@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { type LoaderFunctionArgs, useLoaderData, useParams, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import { api, ApiError } from '@/lib/api'
 import { isAudioFile } from '@/lib/audio'
 import { attachDbBroker } from '@/lib/dbBroker'
 import { comments, type PendingAnchor, pendingToInput, type TextContext, type Thread } from '@/lib/comments'
+import { initialPopover, stepPopover } from '@/lib/commentPopover'
 import { type Intent, parseIntent } from '@/lib/parseIntent'
 import { encodePathSegments } from '@/lib/paths'
 import { type ArbiterEvent, type ArbiterState, type Decision, initialArbiter, stepArbiter } from '@/lib/prefetchArbiter'
@@ -15,6 +16,7 @@ import { AudioView } from '@/components/AudioView'
 import { Spinner } from '@/components/states'
 import { CommandPalette } from '@/components/CommandPalette'
 import { ViewerTopBar } from '@/components/ViewerTopBar'
+import { CommentPopover } from '@/components/review/CommentPopover'
 import { ReviewRail, type ReviewMode } from '@/components/review/ReviewRail'
 import { ViewerSidebar } from '@/components/ViewerSidebar'
 
@@ -83,6 +85,17 @@ function Viewer() {
   const [resolvedFilePath, setResolvedFilePath] = useState<string | null>(null)
   const filePath = isAudio ? entryPath : resolvedFilePath
   const [threads, setThreads] = useState<Thread[]>([])
+  // A TEXT selection now comments in place, not in the rail: lib/commentPopover (slice A1) owns the
+  // whole chip → composer → save lifecycle and this only executes it. Held with useReducer rather
+  // than the arbiter's ref, because unlike the arbiter every transition here IS the UI.
+  const [popover, dispatchPopover] = useReducer(stepPopover, undefined, initialPopover)
+  // `dirty` is a reducer INPUT, read at dispatch time from a ref: the draft stays inside the
+  // Composer (Composer.onDirtyChange), and a re-render per keystroke would buy nothing.
+  const dirtyRef = useRef(false)
+  const onDirtyChange = useCallback((d: boolean) => {
+    dirtyRef.current = d
+  }, [])
+  // The rail composer, now only ever the page (audio) or element (pinpoint) anchor.
   const [composing, setComposing] = useState<PendingAnchor | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [cmdOpen, setCmdOpen] = useState(false)
@@ -231,11 +244,24 @@ function Viewer() {
         // Me resolves, so a 'ready' that beats the /api/auth/me fetch on a fresh load isn't dropped.
         if (me) recordVisit(me.id, { spaceSlug: site.spaceSlug, siteSlug: site.siteSlug, title: site.title, filePath: intent.filePath })
       }
-      // One click, one select: outside review these are no-ops (nothing to stash without a rail to
-      // open into); in review each intent opens the composer directly on its anchor, replacing
-      // whatever was already being composed but leaving its typed draft alone (ReviewRail renders
+      // Outside review these are all no-ops (nothing to stash without any comment UI to open into).
+      // In review, a text selection feeds the popover reducer — chip first, composer only on an
+      // explicit click — while a pinpoint still opens the rail composer directly on its anchor,
+      // replacing whatever was being composed but leaving its typed draft alone (ReviewRail renders
       // Composer unkeyed, so swapping `composing` reparents the anchor without remounting the text).
-      else if (review && intent.type === 'select') setComposing({ kind: 'text', quote: intent.quote, context: intent.context })
+      else if (review && intent.type === 'select')
+        dispatchPopover({
+          type: 'select',
+          // A rect is what the chip is pinned to. parseIntent leaves it optional (our own annotate
+          // client always sends one), so a message without one still gets a chip — at the frame's
+          // top-left, clickable — rather than silently losing the selection.
+          anchor: { quote: intent.quote, context: intent.context, rect: intent.rect ?? { top: 0, left: 0, width: 0, height: 0 } },
+          dirty: dirtyRef.current,
+        })
+      else if (review && intent.type === 'clear') dispatchPopover({ type: 'clear' })
+      // Neither of these is observable from the parent: they happen inside a cross-origin document.
+      else if (review && intent.type === 'clickAway') dispatchPopover({ type: 'clickAway', dirty: dirtyRef.current })
+      else if (review && intent.type === 'escape') dispatchPopover({ type: 'dismiss' })
       else if (review && intent.type === 'pinpoint') setComposing({ kind: 'element', anchor: intent.anchor })
     }
     window.addEventListener('message', onMsg)
@@ -275,6 +301,7 @@ function Viewer() {
       dispatch({ type: 'navReset', expected: entryPath })
       setThreads([])
       setComposing(null)
+      dispatchPopover({ type: 'dismiss' }) // a chip/popover pinned to the OLD document's rect
       setLoaded(false)
     }
     if (commentsPromise && commentsPromise !== consumedPrefetch.current && entryPath !== null) {
@@ -348,39 +375,89 @@ function Viewer() {
     focusAnchor(target)
   }, [deepLinkThreadId, review, loaded, threads, focusAnchor])
 
-  // The one create path, text and voice alike. It REJECTS on every failure — no anchor yet, or the
-  // write itself failing. The composer treats a resolved onSubmit as success and clears the draft,
-  // so anything that resolves without having written destroys what the user typed (or recorded).
-  // Toast for the human, rethrow for the composer. `filePath` is null until the iframe reports ready.
-  async function submitThread(failMsg: string, write: (path: string, anchor: PendingAnchor) => Promise<unknown>) {
-    if (!filePath || !composing) {
+  // The one create path, text and voice alike, rail and popover alike — hence the anchor is an
+  // ARGUMENT: the rail's page/element anchor and the popover's text anchor drive the same write.
+  // It REJECTS on every failure — no anchor yet, or the write itself failing. The composer treats a
+  // resolved onSubmit as success and clears the draft, so anything that resolves without having
+  // written destroys what the user typed (or recorded). Toast for the human, rethrow for the
+  // composer. `onWritten` closes whichever composer started it, before the list refresh it awaits.
+  // `filePath` is null until the iframe reports ready.
+  async function submitThread(
+    failMsg: string,
+    anchor: PendingAnchor | null,
+    write: (path: string, anchor: PendingAnchor) => Promise<unknown>,
+    onWritten: () => void,
+  ) {
+    if (!filePath || !anchor) {
       toast.error('This page is still loading — try again in a moment')
       throw new Error('no anchor to comment on yet')
     }
     try {
-      await write(filePath, composing)
+      await write(filePath, anchor)
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : failMsg)
       throw err
     }
-    setComposing(null)
+    onWritten()
     await refresh(filePath)
   }
 
   const createThread = (body: string, mentions: string[]) =>
-    submitThread('Failed to add comment', (path, anchor) => comments.create(site, pendingToInput(path, body, anchor), mentions))
+    submitThread('Failed to add comment', composing, (path, anchor) => comments.create(site, pendingToInput(path, body, anchor), mentions), () =>
+      setComposing(null),
+    )
 
   // Voice sibling: the anchor fields come from the same pending anchor (body is the server-side
   // transcript, so it's dropped from the multipart payload).
   const createVoiceThread = (blob: Blob) =>
-    submitThread('Failed to add voice comment', (path, anchor) => {
-      const { body: _body, ...fields } = pendingToInput(path, '', anchor)
-      return comments.createVoice(site, blob, fields)
-    })
+    submitThread(
+      'Failed to add voice comment',
+      composing,
+      (path, anchor) => {
+        const { body: _body, ...fields } = pendingToInput(path, '', anchor)
+        return comments.createVoice(site, blob, fields)
+      },
+      () => setComposing(null),
+    )
+
+  // The popover's half of the same path: its anchor is the open composer's text anchor, and the
+  // reducer — not this — decides what a settle closes, so both outcomes are reported to it.
+  async function popoverWrite(run: (anchor: PendingAnchor, onWritten: () => void) => Promise<void>) {
+    const open = popover.composer
+    if (!open) return
+    dispatchPopover({ type: 'submit' })
+    try {
+      await run({ kind: 'text', quote: open.anchor.quote, context: open.anchor.context }, () =>
+        dispatchPopover({ type: 'saveSettled', id: open.id, ok: true }),
+      )
+    } catch (err) {
+      dispatchPopover({ type: 'saveSettled', id: open.id, ok: false })
+      throw err // a failed write keeps the popover open on its draft — see submitThread
+    }
+  }
+
+  const createPopoverThread = (body: string, mentions: string[]) =>
+    popoverWrite((anchor, onWritten) =>
+      submitThread('Failed to add comment', anchor, (path, a) => comments.create(site, pendingToInput(path, body, a), mentions), onWritten),
+    )
+
+  const createPopoverVoiceThread = (blob: Blob) =>
+    popoverWrite((anchor, onWritten) =>
+      submitThread(
+        'Failed to add voice comment',
+        anchor,
+        (path, a) => {
+          const { body: _body, ...fields } = pendingToInput(path, '', a)
+          return comments.createVoice(site, blob, fields)
+        },
+        onWritten,
+      ),
+    )
 
   function exitReview() {
     setReview(false)
     setComposing(null)
+    dispatchPopover({ type: 'dismiss' })
   }
 
   return (
@@ -433,6 +510,20 @@ function Viewer() {
                 // links (other origins) to target=_blank; these two flags let that click open a REAL
                 // new tab that isn't itself sandboxed, so the destination site loads normally.
                 sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms allow-top-navigation-by-user-activation"
+              />
+            )}
+            {/* Sibling of the iframe ON PURPOSE: this wrapper is the iframe's own box, so the rect
+                the frame reports needs no translation to position the chip/popover over it. */}
+            {review && !isAudio && (
+              <CommentPopover
+                chip={popover.chip}
+                composer={popover.composer}
+                onActivate={() => dispatchPopover({ type: 'activate' })}
+                onDismiss={() => dispatchPopover({ type: 'dismiss' })}
+                onSubmit={createPopoverThread}
+                onSubmitVoice={createPopoverVoiceThread}
+                loadMentions={() => comments.mentionable(site)}
+                onDirtyChange={onDirtyChange}
               />
             )}
             {!isAudio && !loaded && (

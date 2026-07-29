@@ -15,7 +15,12 @@ export type ClearIntent = { type: 'clear' }
  *  into a pending element anchor + composer. Untrusted: selector is only ever querySelector'd. */
 export type ElementAnchorIntent = { selector: string; tag: string; preview: string; textFallback: string }
 export type PinpointIntent = { type: 'pinpoint'; anchor: ElementAnchorIntent; rect?: DOMRectLike }
-export type Intent = SelectIntent | ReadyIntent | ClearIntent | PinpointIntent
+/** Dismissal signals forwarded from inside the iframe: the parent cannot observe a click or a
+ *  keydown in a cross-origin document, so a popover it owns would otherwise never learn about
+ *  either. Payload-free — the parent decides what (if anything) they close. */
+export type ClickAwayIntent = { type: 'clickAway' }
+export type EscapeIntent = { type: 'escape' }
+export type Intent = SelectIntent | ReadyIntent | ClearIntent | PinpointIntent | ClickAwayIntent | EscapeIntent
 
 export type DOMRectLike = { top: number; left: number; width: number; height: number }
 
@@ -84,6 +89,10 @@ export function parseIntent(event: MessageEvent, expected: ExpectedSource): Inte
     }
     case 'glance:select-clear':
       return { type: 'clear' }
+    case 'glance:click-away':
+      return { type: 'clickAway' }
+    case 'glance:escape':
+      return { type: 'escape' }
     case 'glance:ready': {
       const filePath = str((data as { filePath?: unknown }).filePath)
       return filePath ? { type: 'ready', filePath } : null

@@ -62,6 +62,18 @@ describe('parseIntent', () => {
     expect(parseIntent(ev({ data: { type: 'glance:select-clear' } }), expected)).toEqual({ type: 'clear' })
   })
 
+  test('parses the dismissal intents the parent cannot observe inside the iframe', () => {
+    expect(parseIntent(ev({ data: { type: 'glance:click-away' } }), expected)).toEqual({ type: 'clickAway' })
+    expect(parseIntent(ev({ data: { type: 'glance:escape' } }), expected)).toEqual({ type: 'escape' })
+  })
+
+  test('dismissal intents are rejected on a wrong origin or wrong source, like every other intent', () => {
+    for (const type of ['glance:click-away', 'glance:escape']) {
+      expect(parseIntent(ev({ origin: 'https://evil.com', data: { type } }), expected)).toBeNull()
+      expect(parseIntent(ev({ source: otherWin, data: { type } }), expected)).toBeNull()
+    }
+  })
+
   test('parseintent-carries-occurrence-context', () => {
     const res = parseIntent(ev({ data: { ...validSelect, context: { prefix: 'lead in ', suffix: ' tail' } } }), expected)
     expect(res).toMatchObject({ type: 'select', context: { prefix: 'lead in ', suffix: ' tail' } })

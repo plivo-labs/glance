@@ -90,3 +90,23 @@ describe('A — Composer text submit', () => {
     })
   })
 })
+
+describe('A — onDirtyChange', () => {
+  test('a composer that goes away reports itself clean on the way out', () => {
+    // The popover reducer reads `dirty` from the LAST report. A successful save closes the composer
+    // in the same commit that would have reported the cleared draft, so without an unmount report
+    // the parent is left believing a draft that no longer exists is still dirty — and every
+    // dirty-guarded transition after that (click-away, re-anchoring) silently does nothing.
+    const onDirtyChange = mock((_: boolean) => {})
+    const { unmount } = render(
+      <Composer placeholder="Add a comment" submitLabel="Comment" onSubmit={() => {}} onDirtyChange={onDirtyChange} />,
+    )
+    const textarea = screen.getByPlaceholderText('Add a comment') as HTMLTextAreaElement
+
+    type(textarea, DRAFT)
+    expect(onDirtyChange.mock.calls.at(-1)).toEqual([true])
+
+    unmount()
+    expect(onDirtyChange.mock.calls.at(-1)).toEqual([false])
+  })
+})
