@@ -240,6 +240,41 @@ describe('findRange — context disambiguates a REPEATED quote', () => {
     expect(findRange('Revenue is up.', doc, { prefix: 'Totally absent9', suffix: '' })).toBeNull()
   })
 
+  // REGRESSION (B3a shipped a guard that could not fire): `selectionContext` ALWAYS captures a
+  // prefix ending in whitespace and a suffix starting with whitespace (the separator between the
+  // quote and its neighbour), and so does the real DOM text on either side of any occurrence. Scored
+  // on the raw (untrimmed) strings, that shared boundary space alone was worth 1 point per side — a
+  // context that reproduces NOTHING else still scored 2, never the 0 the "orphan it" guard checked
+  // for. Two occurrences here share ONLY that boundary space with a gibberish context: on the OLD
+  // scoring this resolves (non-null, occurrence #1) — that is the bug, proved live in a browser at
+  // /samuel-lawerence/b4-badges. Comparing `.trimEnd()`/`.trimStart()` scores the shared space 0 on
+  // both sides, so the guard finally sees the 0 it was always meant to and orphans the anchor.
+  test('REGRESSION: sharing ONLY the boundary whitespace must not anchor a dead context', () => {
+    const doc = docFrom('<p>Alpha lead. The duplicated sentence appears twice. Alpha tail.</p><p>Beta lead. The duplicated sentence appears twice. Beta tail.</p>')
+    const ctx = { prefix: 'zzzz nothing like this exists zzzz ', suffix: ' qqqq neither does this qqqq' }
+    expect(findRange('The duplicated sentence appears twice.', doc, ctx)).toBeNull()
+  })
+
+  test('a genuine context match still wins over a dead-gibberish sibling and lands on the correct (second) occurrence', () => {
+    // Mirrors the real-browser repro: two threads anchored to the same duplicated sentence, one with
+    // a context that genuinely describes the SECOND occurrence, the other pure gibberish.
+    const doc = docFrom('<p>Alpha lead. The duplicated sentence appears twice. Alpha tail.</p><p>Beta lead. The duplicated sentence appears twice. Beta tail.</p>')
+    const range = findRange('The duplicated sentence appears twice.', doc, { prefix: 'Beta lead. ', suffix: ' Beta tail.' })!
+    expect(range).not.toBeNull()
+    expect(range.startContainer.parentElement?.textContent).toContain('Beta')
+  })
+
+  test('a whitespace-only stored context ({prefix:" ",suffix:" "}) is NO context — first occurrence, not null', () => {
+    // collapseWhitespace(' ') is ' ', which is truthy, so this must be decided on the TRIMMED value:
+    // a context that carries no positional information keeps first-match behaviour like any
+    // pre-context thread, rather than scoring 0 (now that boundary whitespace is trimmed away) and
+    // being wrongly orphaned.
+    const doc = docFrom('<p>Alpha section. Revenue is up. tail</p><p>Beta section. Revenue is up. tail</p>')
+    const range = findRange('Revenue is up.', doc, { prefix: ' ', suffix: ' ' })!
+    expect(range).not.toBeNull()
+    expect(range.startContainer.parentElement?.textContent).toContain('Alpha')
+  })
+
   test('context matching is whitespace-flexible (stored context is collapsed, the DOM is not)', () => {
     const doc = docFrom('<p>Alpha section. Revenue is up.</p><p>Beta\n   section.   Revenue is up.</p>')
     const range = findRange('Revenue is up.', doc, { prefix: 'Beta section. ', suffix: '' })!

@@ -249,13 +249,25 @@ function rawOffset(seg: TextIndex['segs'][number], pos: number): number {
 function bestHit(hits: [number, number][], acc: string, context?: TextContext): [number, number] | null {
   const wantPrefix = collapseWhitespace(context?.prefix ?? '').toLowerCase()
   const wantSuffix = collapseWhitespace(context?.suffix ?? '').toLowerCase()
-  if (!wantPrefix && !wantSuffix) return hits[0]
+  // A context whose ONLY content is the boundary whitespace (e.g. { prefix: ' ', suffix: ' ' }, or a
+  // context.prefix/suffix that came through untrimmed) carries no positional information at all — it
+  // must read as "no context stored", not as a context that happens to score 0 everywhere. Deciding
+  // this on the TRIMMED value (not the raw, still-truthy ' ') is what keeps such a thread on the same
+  // first-match behaviour a pre-context thread has always had, instead of being ORPHANED below.
+  if (!wantPrefix.trim() && !wantSuffix.trim()) return hits[0]
   let best = hits[0]
   let bestScore = -1
   for (const hit of hits) {
     const before = collapseWhitespace(acc.slice(Math.max(0, hit[0] - CONTEXT_WINDOW), hit[0])).toLowerCase()
     const after = collapseWhitespace(acc.slice(hit[1], hit[1] + CONTEXT_WINDOW)).toLowerCase()
-    const score = commonSuffixLen(before, wantPrefix) + commonPrefixLen(after, wantSuffix)
+    // Score across the boundary whitespace, not ON it. `selectionContext` always hands back a prefix
+    // ending in a space and a suffix starting with one (the separator it snapped inward over between
+    // the quote and its neighbour) — and so does the real DOM text either side of ANY occurrence. Left
+    // untrimmed, that shared space alone is worth 1 point per side: a context that reproduces nothing
+    // else still scores 2 (not the 0 the orphan check below looks for), so the guard could never fire
+    // for real data. trimEnd/trimStart drop only that one always-shared character; a genuine match
+    // loses nothing it didn't already have to spare, and a dead one finally shows its true score of 0.
+    const score = commonSuffixLen(before.trimEnd(), wantPrefix.trimEnd()) + commonPrefixLen(after.trimStart(), wantSuffix.trimStart())
     if (score > bestScore) {
       bestScore = score
       best = hit
