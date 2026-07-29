@@ -625,13 +625,102 @@ describe('comments routes — voice (multipart) create + reply (Step 6)', () => 
     expect(missing.status).toBe(400)
   })
 
-  test('W2-7 malformed element JSON in multipart create → 400', async () => {
+  // Malformed `element` JSON is rejected on its own terms — BEFORE anchorType is read, and with its
+  // own error body. Both halves are observable contract for a client, and both are easy to lose by
+  // "simplifying" the parse into the anchor validator: that relabels the element case and turns the
+  // text case into a 201 that silently discards the field. Hence status AND body, at both anchorTypes.
+  /** Multipart create with a malformed `element` JSON string, at the given anchorType. */
+  const malformedElementCreate = async (extra: Record<string, string>) => {
     const { app, env, db, r2, kv } = await setup()
     const owner = await mintUser(db, kv, { id: 'owner' })
     await seedSiteWithFile(db, r2, owner)
-    const fd = audioForm(new Uint8Array([1, 2]), { filePath: 'index.html', anchorType: 'element', element: '{not json' })
+    const before = r2.store.size
+    const fd = audioForm(new Uint8Array([1, 2]), { filePath: 'index.html', element: '{not json', ...extra })
     const res = await app.request(url(), voice(owner, fd), env)
-    expect(res.status).toBe(400)
+    const list = await (await app.request(url('?filePath=index.html'), { headers: auth(owner) }, env)).json()
+    return { status: res.status, body: await res.json(), list, storedAudio: r2.store.size - before }
+  }
+
+  test('W2-7 malformed element JSON, anchorType element → 400 invalid element', async () => {
+    const { status, body, list, storedAudio } = await malformedElementCreate({ anchorType: 'element' })
+    expect(status).toBe(400)
+    // The body identifies the malformed FIELD, not a downstream complaint about the anchor it never
+    // became — a client distinguishes "your JSON is broken" from "your selector is missing".
+    expect(body).toEqual({ error: 'invalid element' })
+    expect(list).toHaveLength(0)
+    expect(storedAudio).toBe(0) // rejected before ingest: no R2 object either
+  })
+
+  test('W2-7a malformed element JSON, anchorType text → 400 (not a 201 that discards the field)', async () => {
+    // No anchorType ⇒ text. The parse has never been gated on anchorType, so this is the same 400:
+    // a malformed field is a malformed request, not an absent field.
+    const { status, body, list, storedAudio } = await malformedElementCreate({ quote: 'fox' })
+    expect(status).toBe(400)
+    expect(body).toEqual({ error: 'invalid element' })
+    expect(list).toHaveLength(0)
+    expect(storedAudio).toBe(0)
+  })
+
+  // The multipart path serializes `context` as a JSON string of its own (the JSON create path takes
+  // it as a nested object), so the voice wire has to be walked end to end or nothing checks that the
+  // hint survives the FormData round trip — a voice comment on a repeated quote would just paint on
+  // the first occurrence, which looks like a painter bug rather than a dropped field.
+  test('W2-7b multipart create carries `context` end to end into the stored anchor', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    await seedSiteWithFile(db, r2, owner)
+    const context = { prefix: 'the quick brown ', suffix: ' jumps over' }
+    const fd = audioForm(new Uint8Array([1, 2, 3]), {
+      filePath: 'index.html',
+      quote: 'fox',
+      context: JSON.stringify(context), // exactly how comments.createVoice serializes it
+    })
+
+    const res = await app.request(url(), voice(owner, fd), aiEnv(env, async () => ({ text: 'this one' })))
+    expect(res.status).toBe(201)
+
+    const list = await (await app.request(url('?filePath=index.html'), { headers: auth(owner) }, env)).json()
+    expect(list[0].anchorType).toBe('text')
+    // Non-null only if the versioned payload actually reached the anchor column: reads gate on `v`.
+    expect(list[0].context).toEqual(context)
+  })
+
+  // The mirror of W2-7b. `element` and `context` are the two halves of one rewiring, and only the
+  // context half was walked end to end — so the route could silently drop a valid element anchor
+  // with the whole suite still green. An element thread that loses its selector reads as a page
+  // comment: the badge never paints and nothing errors.
+  test('W2-7d multipart create carries `element` end to end into the stored anchor', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    await seedSiteWithFile(db, r2, owner)
+    const element = { selector: '#chart > svg', tag: 'svg', preview: 'Bar chart', textFallback: 'Revenue' }
+    const fd = audioForm(new Uint8Array([1, 2, 3]), {
+      filePath: 'index.html',
+      anchorType: 'element',
+      element: JSON.stringify(element), // exactly how comments.createVoice serializes it
+    })
+
+    const res = await app.request(url(), voice(owner, fd), aiEnv(env, async () => ({ text: 'on the chart' })))
+    expect(res.status).toBe(201)
+
+    const list = await (await app.request(url('?filePath=index.html'), { headers: auth(owner) }, env)).json()
+    expect(list[0].anchorType).toBe('element')
+    // Non-null only if the selector payload actually reached the anchor column.
+    expect(list[0].anchor).toMatchObject({ selector: element.selector, tag: element.tag })
+  })
+
+  test('W2-7c malformed `context` JSON in multipart create is dropped, not rejected', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    await seedSiteWithFile(db, r2, owner)
+    const fd = audioForm(new Uint8Array([1, 2, 3]), { filePath: 'index.html', quote: 'fox', context: '{not json' })
+
+    const res = await app.request(url(), voice(owner, fd), aiEnv(env, async () => ({ text: 'still fine' })))
+    expect(res.status).toBe(201) // a hint, not an identifier: losing it costs anchoring, not the comment
+
+    const list = await (await app.request(url('?filePath=index.html'), { headers: auth(owner) }, env)).json()
+    expect(list[0].context).toBeNull()
+    expect(list[0].comments[0].body).toBe('still fine')
   })
 })
 

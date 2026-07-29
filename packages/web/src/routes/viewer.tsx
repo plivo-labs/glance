@@ -4,8 +4,8 @@ import { toast } from 'sonner'
 import { api, ApiError } from '@/lib/api'
 import { isAudioFile } from '@/lib/audio'
 import { attachDbBroker } from '@/lib/dbBroker'
-import { comments, type PendingAnchor, pendingToInput, type Thread } from '@/lib/comments'
-import { type Intent, type TextContext, parseIntent } from '@/lib/parseIntent'
+import { comments, type PendingAnchor, pendingToInput, type TextContext, type Thread } from '@/lib/comments'
+import { type Intent, parseIntent } from '@/lib/parseIntent'
 import { encodePathSegments } from '@/lib/paths'
 import { type ArbiterEvent, type ArbiterState, type Decision, initialArbiter, stepArbiter } from '@/lib/prefetchArbiter'
 import { recordVisit } from '@/lib/recents'
@@ -348,43 +348,35 @@ function Viewer() {
     focusAnchor(target)
   }, [deepLinkThreadId, review, loaded, threads, focusAnchor])
 
-  // Both create paths REJECT on every failure — no anchor yet, or the write itself failing. The
-  // composer treats a resolved onSubmit as success and clears the draft, so anything that resolves
-  // without having written destroys what the user typed (or recorded). Toast for the human, rethrow
-  // for the composer. `filePath` is null until the iframe reports ready.
-  async function createThread(body: string, mentions: string[]) {
+  // The one create path, text and voice alike. It REJECTS on every failure — no anchor yet, or the
+  // write itself failing. The composer treats a resolved onSubmit as success and clears the draft,
+  // so anything that resolves without having written destroys what the user typed (or recorded).
+  // Toast for the human, rethrow for the composer. `filePath` is null until the iframe reports ready.
+  async function submitThread(failMsg: string, write: (path: string, anchor: PendingAnchor) => Promise<unknown>) {
     if (!filePath || !composing) {
       toast.error('This page is still loading — try again in a moment')
       throw new Error('no anchor to comment on yet')
     }
     try {
-      await comments.create(site, pendingToInput(filePath, body, composing), mentions)
+      await write(filePath, composing)
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to add comment')
+      toast.error(err instanceof ApiError ? err.message : failMsg)
       throw err
     }
     setComposing(null)
     await refresh(filePath)
   }
 
-  // Voice sibling of createThread: the anchor fields come from the same pending anchor (body is the
-  // server-side transcript, so it's dropped from the multipart payload). A lost recording can't be
-  // retyped, so this rejects on failure exactly like the text path.
-  async function createVoiceThread(blob: Blob) {
-    if (!filePath || !composing) {
-      toast.error('This page is still loading — try again in a moment')
-      throw new Error('no anchor to comment on yet')
-    }
-    try {
-      const { body: _body, ...fields } = pendingToInput(filePath, '', composing)
-      await comments.createVoice(site, blob, fields)
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to add voice comment')
-      throw err
-    }
-    setComposing(null)
-    await refresh(filePath)
-  }
+  const createThread = (body: string, mentions: string[]) =>
+    submitThread('Failed to add comment', (path, anchor) => comments.create(site, pendingToInput(path, body, anchor), mentions))
+
+  // Voice sibling: the anchor fields come from the same pending anchor (body is the server-side
+  // transcript, so it's dropped from the multipart payload).
+  const createVoiceThread = (blob: Blob) =>
+    submitThread('Failed to add voice comment', (path, anchor) => {
+      const { body: _body, ...fields } = pendingToInput(path, '', anchor)
+      return comments.createVoice(site, blob, fields)
+    })
 
   function exitReview() {
     setReview(false)

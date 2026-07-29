@@ -6,10 +6,9 @@
 // constraint 1): an iframe message may only OPEN UI or SUGGEST an anchor; every mutation is
 // parent-initiated after an explicit user action, and all anchor resolution is server-side.
 
+import type { TextContext } from '@/lib/comments'
+
 export type SelectIntent = { type: 'select'; quote: string; context?: TextContext; rect?: DOMRectLike }
-/** Text on either side of the selection, captured in the iframe. Untrusted and advisory: it only
- *  steers WHICH occurrence of a repeated quote gets painted, never whether a comment may exist. */
-export type TextContext = { prefix: string; suffix: string }
 export type ReadyIntent = { type: 'ready'; filePath: string }
 export type ClearIntent = { type: 'clear' }
 /** A suggested element ("pinpoint") anchor — the iframe proposes a selector; the parent turns it
@@ -25,7 +24,7 @@ export type ExpectedSource = { origin: string; source: MessageEventSource | Wind
 const MAX_FIELD = 2000 // chars per text field, bounds a single message
 // Mirrors the api's TEXT_CONTEXT_LIMIT: the client captures at that width and the server stores at
 // most that, so anything longer is noise the server would trim anyway.
-const MAX_CONTEXT = 64
+export const MAX_CONTEXT = 64
 
 const str = (v: unknown, max = MAX_FIELD): string | null =>
   typeof v === 'string' && v.length <= max ? v : null
@@ -35,6 +34,9 @@ const str = (v: unknown, max = MAX_FIELD): string | null =>
 // the quote) instead of being silently dropped. Selectors, by contrast, must never be truncated.
 const clamp = (v: unknown, max = MAX_FIELD): string | null => (typeof v === 'string' ? v.slice(0, max) : null)
 
+// Prefix context carries signal at the end nearest the quote, so it clamps from the opposite side.
+const clampTail = (v: unknown, max = MAX_FIELD): string | null => (typeof v === 'string' ? v.slice(-max) : null)
+
 const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
 
 /** Best-effort occurrence context. Each side is clamped, not rejected — an over-long side would
@@ -43,7 +45,7 @@ const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v)
 const context = (v: unknown): TextContext | undefined => {
   if (!v || typeof v !== 'object') return undefined
   const c = v as Record<string, unknown>
-  const prefix = clamp(c.prefix, MAX_CONTEXT) ?? ''
+  const prefix = clampTail(c.prefix, MAX_CONTEXT) ?? ''
   const suffix = clamp(c.suffix, MAX_CONTEXT) ?? ''
   return prefix || suffix ? { prefix, suffix } : undefined
 }

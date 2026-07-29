@@ -1,6 +1,5 @@
 import { api } from '@/lib/api'
 import type { MentionUser } from '@/lib/mentions'
-import type { TextContext } from '@/lib/parseIntent'
 import { extForMime } from '@/lib/recorder'
 import type { ViewerSite } from '@/lib/types'
 
@@ -9,6 +8,10 @@ import type { ViewerSite } from '@/lib/types'
 // paints each quote by re-finding it in the rendered DOM.
 
 export type ThreadStatus = 'open' | 'resolved'
+
+/** Text on either side of a selection. Untrusted and advisory: it only steers which occurrence of
+ *  a repeated quote gets painted, never whether a comment may exist. */
+export type TextContext = { prefix: string; suffix: string }
 
 // An element ("pinpoint") anchor: a client-suggested CSS selector for a whole element (chart,
 // table, image) plus a short preview + text fallback. Mirrors the api ElementAnchor; the annotate
@@ -75,7 +78,7 @@ export function pendingToInput(filePath: string, body: string, pending: PendingA
   if (pending.kind === 'page') return { filePath, body, anchorType: 'page' }
   // `context` is omitted entirely when absent — the server treats an absent key and an unusable one
   // identically, but sending `undefined` would put a null in the JSON body for no reason.
-  return pending.context ? { filePath, body, quote: pending.quote, context: pending.context } : { filePath, body, quote: pending.quote }
+  return { filePath, body, quote: pending.quote, ...(pending.context ? { context: pending.context } : {}) }
 }
 
 /** Attach an explicit mentions list to a JSON payload, but ONLY when there are ids to send — an

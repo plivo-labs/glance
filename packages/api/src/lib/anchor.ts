@@ -5,10 +5,18 @@
 // client. The quote is normalized so formatting-only edits (whitespace runs, NBSP, ligatures,
 // accents) don't change what we store.
 
+/** Read an untrusted JSON field as a string, defaulting a non-string (or absent) one to ''. Shared
+ *  by every parse/read shim below so "missing" and "wrong type" always degrade the same way. */
+const str = (v: unknown): string => (typeof v === 'string' ? v : '')
+
+/** Collapse whitespace runs WITHOUT trimming. Kept separate from Unicode folding because the
+ *  annotate index is already NFKC-folded before it applies the same edge-preserving policy. */
+export const collapseWhitespace = (s: string): string => s.replace(/\s+/g, ' ')
+
 /** NFKC fold (ligatures/NBSP/full-width → canonical form, composes accents) + collapse whitespace
  *  runs to a single space + trim. The one normalizer for a stored quote. */
 export function normalizeText(s: string): string {
-  return s.normalize('NFKC').replace(/\s+/g, ' ').trim()
+  return normalizeEdges(s).trim()
 }
 
 // --- Element ("pinpoint") anchors -------------------------------------------------------------
@@ -46,7 +54,6 @@ export function buildElementAnchor(input: { selector: string; tag?: string; prev
  *  field list lives in exactly one place. */
 export function parseElementAnchor(raw: unknown): { anchor: ElementAnchor } | { error: string } {
   const a = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
-  const str = (v: unknown): string => (typeof v === 'string' ? v : '')
   if (!str(a.selector).trim()) return { error: 'element anchor requires a selector' }
   for (const [field, cap] of Object.entries(ELEMENT_ANCHOR_LIMITS))
     if (str(a[field]).length > cap) return { error: 'element anchor field too long' }
@@ -68,8 +75,7 @@ export type TextContext = { prefix: string; suffix: string }
 export type StoredTextContext = TextContext & { v: typeof TEXT_CONTEXT_VERSION }
 
 export const TEXT_CONTEXT_VERSION = 2
-/** Chars stored per side. Mirrors the annotate client's CONTEXT_CHARS — the client captures at that
- *  width, so a lower cap here would silently truncate what the painter then tries to match. */
+/** Chars captured, stored, and matched per side of a text quote. */
 export const TEXT_CONTEXT_LIMIT = 64
 
 /** Parse an UNTRUSTED context payload. Unlike an element anchor (whose selector is REQUIRED, so a
@@ -78,18 +84,16 @@ export const TEXT_CONTEXT_LIMIT = 64
  *  not rejected, for the same reason. */
 export function parseTextContext(raw: unknown): StoredTextContext | null {
   const c = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
-  const side = (v: unknown): string =>
-    typeof v === 'string' ? normalizeEdges(v).slice(0, TEXT_CONTEXT_LIMIT) : ''
-  const prefix = side(c.prefix)
-  const suffix = side(c.suffix)
+  const prefix = normalizeEdges(str(c.prefix)).slice(-TEXT_CONTEXT_LIMIT)
+  const suffix = normalizeEdges(str(c.suffix)).slice(0, TEXT_CONTEXT_LIMIT)
   if (!prefix.trim() && !suffix.trim()) return null
   return { v: TEXT_CONTEXT_VERSION, prefix, suffix }
 }
 
 /** Like `normalizeText` but WITHOUT the trim: the space separating the quote from its neighbours is
  *  part of what distinguishes one occurrence from another, so the edges must survive. */
-function normalizeEdges(s: string): string {
-  return s.normalize('NFKC').replace(/\s+/g, ' ')
+export function normalizeEdges(s: string): string {
+  return collapseWhitespace(s.normalize('NFKC'))
 }
 
 /** Read shim: surface a stored text context ONLY for versioned text rows. Every other shape —
@@ -99,7 +103,6 @@ export function readTextContext(anchorType: string, anchor: unknown): TextContex
   if (anchorType !== 'text' || anchor == null || typeof anchor !== 'object') return null
   const a = anchor as Record<string, unknown>
   if (a.v !== TEXT_CONTEXT_VERSION) return null
-  const str = (v: unknown): string => (typeof v === 'string' ? v : '')
   return { prefix: str(a.prefix), suffix: str(a.suffix) }
 }
 
@@ -111,6 +114,5 @@ export function readElementAnchor(anchorType: string, anchor: unknown): ElementA
   if (anchorType !== 'element' || anchor == null || typeof anchor !== 'object') return null
   const a = anchor as Record<string, unknown>
   if (typeof a.selector !== 'string' || !a.selector) return null
-  const str = (v: unknown): string => (typeof v === 'string' ? v : '')
   return { selector: a.selector, tag: str(a.tag), preview: str(a.preview), textFallback: str(a.textFallback) }
 }

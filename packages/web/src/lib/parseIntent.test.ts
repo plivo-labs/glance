@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import { parseIntent } from './parseIntent'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { MAX_CONTEXT, parseIntent } from './parseIntent'
 
 // parseIntent is a pure filter (writable today, no DOM needed): construct plain event-shaped
 // objects. It is NOT a trust guard — these only prove obviously-bogus messages are dropped.
@@ -15,6 +17,18 @@ const expected = { origin: CONTENT, source: iframeWin }
 const validSelect = { type: 'glance:select', quote: 'the quick brown fox' }
 
 describe('parseIntent', () => {
+  test('text context cap tracks the API storage contract', () => {
+    // packages/web has no dependency/tsconfig path onto packages/api (and must not gain one — that
+    // would drag worker-side code into the browser bundle), so the only way to pin this against
+    // drift is to read the api's source at test time and compare the live values.
+    const anchorPath = join(import.meta.dir, '../../../api/src/lib/anchor.ts')
+    const anchorSrc = readFileSync(anchorPath, 'utf8')
+    const match = anchorSrc.match(/TEXT_CONTEXT_LIMIT\s*=\s*(\d+)/)
+    if (!match) throw new Error(`could not find TEXT_CONTEXT_LIMIT in ${anchorPath}`)
+    const apiLimit = Number(match[1])
+    expect(MAX_CONTEXT, `MAX_CONTEXT (parseIntent.ts) = ${MAX_CONTEXT} must equal TEXT_CONTEXT_LIMIT (${anchorPath}) = ${apiLimit}`).toBe(apiLimit)
+  })
+
   test('parseintent-rejects-wrong-origin', () => {
     expect(parseIntent(ev({ origin: 'https://evil.com', data: validSelect }), expected)).toBeNull()
   })
@@ -55,9 +69,21 @@ describe('parseIntent', () => {
 
   test('parseintent-clamps-context-instead-of-dropping-the-selection', () => {
     // Over-cap context must not cost the comment — the side is truncated, the quote survives.
-    const res = parseIntent(ev({ data: { ...validSelect, context: { prefix: 'p'.repeat(500), suffix: '' } } }), expected)
+    const tail = 'quote-adjacent'
+    const prefix = `${'p'.repeat(500 - tail.length)}${tail}`
+    const res = parseIntent(ev({ data: { ...validSelect, context: { prefix, suffix: '' } } }), expected)
     expect(res).toMatchObject({ type: 'select', quote: 'the quick brown fox' })
-    expect((res as { context?: { prefix: string } }).context?.prefix.length).toBe(64)
+    expect((res as { context?: { prefix: string } }).context?.prefix).toBe(prefix.slice(-MAX_CONTEXT))
+  })
+
+  test('parseintent-clamps-oversize-suffix-from-the-tail-keeping-the-quote-adjacent-head', () => {
+    // Suffix carries signal at its START (nearest the quote), so an over-cap suffix must clamp from
+    // the opposite end — mirror of the prefix tail-clamp above, pinning the suffix's OWN clamp side.
+    const head = 'quote-adjacent'
+    const suffix = `${head}${'s'.repeat(500 - head.length)}`
+    const res = parseIntent(ev({ data: { ...validSelect, context: { prefix: '', suffix } } }), expected)
+    expect(res).toMatchObject({ type: 'select', quote: 'the quick brown fox' })
+    expect((res as { context?: { suffix: string } }).context?.suffix).toBe(suffix.slice(0, MAX_CONTEXT))
   })
 
   test('parseintent-omits-unusable-context', () => {

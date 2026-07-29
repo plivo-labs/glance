@@ -103,10 +103,12 @@ describe('parseTextContext — the untrusted side of a text anchor', () => {
     })
   })
 
-  test('caps each side rather than rejecting (context is a hint, never authority)', () => {
-    const ctx = parseTextContext({ prefix: 'a'.repeat(500), suffix: 'b'.repeat(500) })!
-    expect(ctx.prefix.length).toBe(TEXT_CONTEXT_LIMIT)
-    expect(ctx.suffix.length).toBe(TEXT_CONTEXT_LIMIT)
+  test('caps each side toward the quote rather than rejecting (context is a hint, never authority)', () => {
+    const prefix = `${'a'.repeat(490)}0123456789`
+    const suffix = `0123456789${'b'.repeat(490)}`
+    const ctx = parseTextContext({ prefix, suffix })!
+    expect(ctx.prefix).toBe(prefix.slice(-TEXT_CONTEXT_LIMIT))
+    expect(ctx.suffix).toBe(suffix.slice(0, TEXT_CONTEXT_LIMIT))
   })
 
   test('keeps the side that IS present when the other is empty', () => {

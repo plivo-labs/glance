@@ -155,12 +155,17 @@ export function Composer({
     }
   }
 
+  // Same contract as `submit` for the recording: kept on a rejection (it can't be retyped), and the
+  // rejection is absorbed here because this is an onClick handler — the submit handler already
+  // toasted, so re-raising would only surface as an unhandled rejection.
   async function sendVoice() {
     if (!rec.blob || busy) return
     setBusy(true)
     try {
       await onSubmitVoice?.(rec.blob)
       rec.reset()
+    } catch {
+      /* recording preserved */
     } finally {
       setBusy(false)
     }

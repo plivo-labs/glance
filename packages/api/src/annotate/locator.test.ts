@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { Window } from 'happy-dom'
-import { CONTEXT_CHARS, computeSelector, describeElement, findRange, isPageSpanning, resolveSelector, selectionContext } from './locator'
+import { TEXT_CONTEXT_LIMIT } from '../lib/anchor'
+import { computeSelector, describeElement, findRange, isPageSpanning, resolveSelector, selectionContext } from './locator'
 
 // Seam S1: the locator is global-free, so we drive it under a constructed happy-dom document and
 // pass nodes in — no GlobalRegistrator, so nothing leaks into the other (server-side) api tests.
@@ -136,6 +137,25 @@ describe('findRange — re-find a stored quote in the rendered DOM', () => {
     const doc = docFrom('<p>nothing to see here</p>')
     expect(findRange('a phrase that is not present', doc)).toBeNull()
   })
+
+  // The index is NFKC-folded, so inside a node that folding CHANGED the folded offsets no longer
+  // line up with the raw offsets a Range needs. Both drift directions are painted wrong if the
+  // folded offset is used raw: an expanding char (ﬁ → fi) runs the highlight past the quote, a
+  // composing one (e + ◌́ → é) stops it short.
+  test('an expanding character earlier in the node does not shift the painted range', () => {
+    const doc = docFrom('<p>ﬁle then TARGET here</p>') // ﬁ is U+FB01: one raw char, two folded
+    expect(findRange('TARGET', doc)!.toString()).toBe('TARGET')
+  })
+
+  test('an expanding character inside the quote does not over-extend the painted range', () => {
+    const doc = docFrom('<p>ﬁrst word</p>')
+    expect(findRange('first', doc)!.toString()).toBe('ﬁrst')
+  })
+
+  test('a composing sequence inside the quote does not truncate the painted range', () => {
+    const doc = docFrom('<p>e\u0301xyz end</p>') // e + combining acute: two raw chars, one folded
+    expect(findRange('\u00e9xyz', doc)!.toString()).toBe('e\u0301xyz')
+  })
 })
 
 describe('findRange — context disambiguates a REPEATED quote', () => {
@@ -208,8 +228,8 @@ describe('selectionContext — capture the text around a live selection', () => 
   test('is bounded on both sides', () => {
     const doc = docFrom(`<p>${'a '.repeat(200)}Revenue is up.${' b'.repeat(200)}</p>`)
     const ctx = selectionContext(rangeOver(doc, 'Revenue is up.'), doc)
-    expect(ctx.prefix.length).toBeLessThanOrEqual(CONTEXT_CHARS)
-    expect(ctx.suffix.length).toBeLessThanOrEqual(CONTEXT_CHARS)
+    expect(ctx.prefix.length).toBeLessThanOrEqual(TEXT_CONTEXT_LIMIT)
+    expect(ctx.suffix.length).toBeLessThanOrEqual(TEXT_CONTEXT_LIMIT)
   })
 
   test('an edge-of-document selection yields empty context on that side', () => {
@@ -227,6 +247,120 @@ describe('selectionContext — capture the text around a live selection', () => 
     const reopened = docFrom(html)
     const found = findRange('three. Revenue is up. z', reopened, ctx)!
     expect(found.toString()).toContain('three.')
+  })
+
+  test('an end boundary after a block keeps only text after the quote in the suffix', () => {
+    const doc = docFrom('<p>lead in text. Revenue is up.</p><p>after words here.</p>')
+    const p = doc.querySelector('p')!
+    const range = rangeOver(doc, 'Revenue is up.')
+    range.setEnd(p, p.childNodes.length)
+
+    const ctx = selectionContext(range, doc)
+    expect(ctx).toEqual({ prefix: 'lead in text. ', suffix: 'after words here.' })
+    expect(ctx.suffix).not.toContain('Revenue is up.')
+  })
+
+  test('an inline-child start boundary captures the adjacent prefix and round-trips a repeated quote', () => {
+    const filler = 'x'.repeat(TEXT_CONTEXT_LIMIT + 1)
+    const html = `<p>Alpha lead <em>Revenue is up.</em> tail</p><div>${filler}</div><p>Beta lead <em>Revenue is up.</em> tail</p>`
+    const doc = docFrom(html)
+    const target = doc.querySelectorAll('p')[1]!
+    const quote = target.querySelector('em')!.firstChild!
+    const range = doc.createRange()
+    range.setStart(target, 1)
+    range.setEnd(quote, quote.textContent!.length)
+
+    const ctx = selectionContext(range, doc)
+    expect(ctx.prefix.endsWith('Beta lead ')).toBe(true)
+    const reopened = docFrom(html)
+    const found = findRange('Revenue is up.', reopened, ctx)!
+    expect(found.startContainer.parentElement?.parentElement).toBe(reopened.querySelectorAll('p')[1])
+  })
+
+  test('a multi-element selection maps both element boundaries around the selected quote', () => {
+    const filler = 'x'.repeat(TEXT_CONTEXT_LIMIT + 1)
+    const html = `<p>Alpha lead <em>Revenue is </em></p><p><strong>up.</strong> tail</p><div>${filler}</div><p>Beta lead <em>Revenue is </em></p><p><strong>up.</strong> after words here.</p>`
+    const doc = docFrom(html)
+    const paragraphs = doc.querySelectorAll('p')
+    const range = doc.createRange()
+    range.setStart(paragraphs[2]!, 1)
+    range.setEnd(paragraphs[3]!, 1)
+
+    const ctx = selectionContext(range, doc)
+    expect(ctx.suffix.startsWith(' after words here.')).toBe(true)
+    expect(ctx.suffix).not.toContain('Revenue is up.')
+    const reopened = docFrom(html)
+    const found = findRange('Revenue is up.', reopened, ctx)!
+    expect(found.startContainer.parentElement?.parentElement).toBe(reopened.querySelectorAll('p')[2])
+  })
+})
+
+describe('selectionContext — a selection whose edges are not exactly the quote', () => {
+  // The stored quote is TRIMMED (`normalizeText`), but the range a drag hands us — or a Chrome
+  // double-click, which routinely grabs the adjacent space — is not. Context sliced from those raw
+  // edges puts the separating space on the wrong side of the boundary, so at paint time NO
+  // occurrence shares a single character with the stored prefix/suffix, every score ties at 0, and
+  // the FIRST occurrence wins — the exact bug this feature exists to prevent.
+  const QUOTE = 'Revenue is up.'
+  const filler = 'x'.repeat(200)
+
+  /** A range over `QUOTE` inside `node`, widened by whole characters on each side. */
+  function padded(node: Text, pad: { before?: number; after?: number }): Range {
+    const i = node.data.indexOf(QUOTE)
+    const range = (node.ownerDocument as Document).createRange()
+    range.setStart(node, i - (pad.before ?? 0))
+    range.setEnd(node, i + QUOTE.length + (pad.after ?? 0))
+    return range
+  }
+
+  /** Capture context from the SECOND paragraph of `html`, then re-find the quote in a fresh copy of
+   *  the same document — the paint-time path. Returns the paragraph index it landed on. */
+  function reFoundParagraph(html: string, pad: { before?: number; after?: number }): number {
+    const doc = docFrom(html)
+    const target = doc.querySelectorAll('p')[1]!.firstChild as Text
+    const ctx = selectionContext(padded(target, pad), doc)
+    const reopened = docFrom(html)
+    const found = findRange(QUOTE, reopened, ctx)!
+    return Array.from(reopened.querySelectorAll('p')).indexOf(found.startContainer.parentElement as Element)
+  }
+
+  test('a trailing-space edge still lands on the selected occurrence (suffix decides)', () => {
+    // Identical lead-ins, so ONLY the suffix can tell the two occurrences apart.
+    const html = `<div>${filler}</div><p>same lead ${QUOTE} alpha tail</p><div>${filler}</div><p>same lead ${QUOTE} beta tail</p>`
+    expect(reFoundParagraph(html, { after: 1 })).toBe(1)
+  })
+
+  test('a leading-space edge still lands on the selected occurrence (prefix decides)', () => {
+    // Identical tails, so ONLY the prefix can tell the two occurrences apart.
+    const html = `<p>alpha lead ${QUOTE} same tail</p><div>${filler}</div><p>beta lead ${QUOTE} same tail</p>`
+    expect(reFoundParagraph(html, { before: 1 })).toBe(1)
+  })
+
+  test('spaces on BOTH edges still land on the selected occurrence', () => {
+    const html = `<p>alpha lead ${QUOTE} alpha tail</p><div>${filler}</div><p>beta lead ${QUOTE} beta tail</p>`
+    expect(reFoundParagraph(html, { before: 1, after: 1 })).toBe(1)
+  })
+
+  test('the captured context is the same whether or not the edges include the spaces', () => {
+    const html = `<p>alpha lead ${QUOTE} alpha tail</p><div>${filler}</div><p>beta lead ${QUOTE} beta tail</p>`
+    const doc = docFrom(html)
+    const target = doc.querySelectorAll('p')[1]!.firstChild as Text
+    const exact = selectionContext(padded(target, {}), doc)
+    expect(selectionContext(padded(target, { before: 1, after: 1 }), doc)).toEqual(exact)
+  })
+})
+
+describe('selectionContext — boundaries that map to no indexed text', () => {
+  test('a selection inside non-rendered text yields no context at all', () => {
+    // A <script>'s text is never indexed, so neither boundary has a folded position. Degrading to
+    // an empty context is what makes the thread anchor the way it did before context existed;
+    // treating the missing offset as 0 would store the START of the document as its suffix.
+    const doc = docFrom('<script>hidden words</script><p>visible text</p>')
+    const script = doc.querySelector('script')!.firstChild as Text
+    const range = doc.createRange()
+    range.setStart(script, 0)
+    range.setEnd(script, script.data.length)
+    expect(selectionContext(range, doc)).toEqual({ prefix: '', suffix: '' })
   })
 })
 

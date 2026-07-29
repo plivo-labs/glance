@@ -208,20 +208,26 @@ export type CreateThreadInput = {
   body: string
   anchorType?: 'text' | 'page' | 'element'
   quote?: string
-  // A built element anchor (required when anchorType='element'), or — for a text anchor — the
-  // versioned {prefix,suffix} context. Both live in the one JSON `anchor` column, discriminated by
-  // `anchorType`; a text anchor with no context simply stores null there, as it always did.
-  anchor?: ElementAnchor | StoredTextContext
+  element?: ElementAnchor
+  context?: StoredTextContext
   // Voice comments (S-B): the route pre-generates the comment id so it can name the R2 audio object
   // BEFORE the D1 insert, then stores that key here — one id ties the row to its recording.
   commentId?: string
   audioKey?: string
 }
 
-/** A text thread's `anchor` input is its occurrence context; anything else (an element anchor
- *  passed on a text row, a legacy shape) stores nothing rather than being written to a text row. */
-function readContextInput(anchor: CreateThreadInput['anchor']): StoredTextContext | null {
-  return anchor && 'v' in anchor && anchor.v === TEXT_CONTEXT_VERSION ? anchor : null
+/** RUNTIME version gate on the write path. `StoredTextContext` is a compile-time shape and TS types
+ *  are erased, so the declared field constrains only the callers the compiler can see — the param is
+ *  typed `unknown` to say exactly that. Two reasons a mis-versioned payload must never be persisted:
+ *  `readTextContext` gates READS on the same `v`, so an unversioned row would list back as
+ *  `context: null` and silently revert to first-occurrence painting with no error anywhere; and the
+ *  `anchor` column still holds a DIFFERENT legacy `{quote,prefix,suffix}` model on rows already in
+ *  the production database, so the version is also what keeps that stale, differently-normalized
+ *  context from re-anchoring an old thread. Anything unversioned stores null — the pre-context
+ *  behaviour, which is a complete answer. */
+function versionedContext(context: unknown): StoredTextContext | null {
+  const c = context as StoredTextContext | null | undefined
+  return c != null && c.v === TEXT_CONTEXT_VERSION ? c : null
 }
 
 /** Create a thread + its opening comment atomically. An element anchor stores its built selector
@@ -232,13 +238,13 @@ export async function createThread(
   db: DrizzleD1Database,
   input: CreateThreadInput,
 ): Promise<{ threadId: string; openingCommentId: string }> {
-  const isElement = input.anchorType === 'element' && input.anchor != null
+  const isElement = input.anchorType === 'element' && input.element != null
   const wantsText = !isElement && (input.anchorType ?? 'text') === 'text' && Boolean(input.quote)
   const anchorType: 'text' | 'page' | 'element' = isElement ? 'element' : wantsText ? 'text' : 'page'
   const quote = wantsText ? normalizeText(input.quote as string) : null
   // The one JSON column carries whichever payload this anchorType owns — an element's selector, or
   // a text anchor's occurrence context. A page thread (and a text thread with no context) stores null.
-  const anchor = isElement ? (input.anchor as ElementAnchor) : wantsText ? (readContextInput(input.anchor) ?? null) : null
+  const anchor = anchorType === 'element' ? (input.element ?? null) : anchorType === 'text' ? versionedContext(input.context) : null
 
   const threadId = crypto.randomUUID()
   const openingCommentId = input.commentId ?? crypto.randomUUID()

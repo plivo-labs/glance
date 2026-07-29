@@ -10,6 +10,8 @@
 // a sibling shifted into its slot resolves to the WRONG node — which is why we also capture a
 // textFallback + preview describing the element (describeElement).
 
+import { TEXT_CONTEXT_LIMIT, collapseWhitespace, type TextContext } from '../lib/anchor'
+
 const PREVIEW_MAX = 120
 const FALLBACK_MAX = 400
 
@@ -84,7 +86,7 @@ export function resolveSelector(selector: string, root: ParentNode): Element | n
  *  (aria-label / alt / title / text / tag, in that order), and a bounded text fallback. Pure. */
 export function describeElement(el: Element): { tag: string; preview: string; textFallback: string } {
   const tag = el.tagName.toLowerCase()
-  const text = (el.textContent ?? '').replace(/\s+/g, ' ').trim()
+  const text = collapseWhitespace(el.textContent ?? '').trim()
   const labelled = el.getAttribute?.('aria-label') || el.getAttribute?.('alt') || el.getAttribute?.('title') || ''
   const preview = (labelled || text || tag).trim().slice(0, PREVIEW_MAX)
   return { tag, preview, textFallback: text.slice(0, FALLBACK_MAX) }
@@ -116,17 +118,11 @@ function escapeRegExp(s: string): string {
 // a thread stored before this existed (or one selected at the very start/end of a document) simply
 // scores every occurrence equally and keeps the first, which is what it has always resolved to.
 
-/** Chars of surrounding text stored per side. Long enough to separate repeated boilerplate, short
- *  enough that an edit near the anchor doesn't invalidate the whole context. */
-export const CONTEXT_CHARS = 64
+/** Raw chars read per side before collapsing whitespace. Collapsing only ever shortens, so reading
+ *  twice the stored cap still yields at least TEXT_CONTEXT_LIMIT of comparable text. */
+const CONTEXT_WINDOW = TEXT_CONTEXT_LIMIT * 2
 
-export type TextContext = { prefix: string; suffix: string }
-
-type TextIndex = { acc: string; segs: { node: Text; start: number }[] }
-
-/** Collapse whitespace runs WITHOUT trimming — the index and the stored context must agree on the
- *  space that separates the quote from its neighbours, so the edges are load-bearing. */
-const collapse = (s: string): string => s.replace(/\s+/g, ' ')
+type TextIndex = { acc: string; segs: { node: Text; start: number; end: number; folded: boolean }[] }
 
 /** Walk every RENDERED text node once and concatenate it (NFKC-folded), remembering where each node
  *  landed. One index serves both re-finding a quote and capturing a selection's context, so the two
@@ -142,8 +138,9 @@ function buildTextIndex(doc: Document): TextIndex {
     const t = n as Text
     // Fold NFKC (only) so both sides match on the same axis; whitespace flex is the `\s*` join in
     // findRange. Offsets stay in this folded space.
-    segs.push({ node: t, start: acc.length })
-    acc += t.data.normalize('NFKC')
+    const data = t.data.normalize('NFKC')
+    segs.push({ node: t, start: acc.length, end: acc.length + data.length, folded: data !== t.data })
+    acc += data
   }
   return { acc, segs }
 }
@@ -174,15 +171,12 @@ export function findRange(quote: string, doc: Document, context?: TextContext): 
   // EVERY occurrence, not just the first: an identical quote can appear many times (a repeated
   // table cell, a nav label, a boilerplate sentence) and `context` is what tells them apart.
   const hits: [number, number][] = []
-  for (let m = re.exec(acc); m; m = re.exec(acc)) {
-    hits.push([m.index, m.index + m[0].length])
-    if (m[0].length === 0) break // zero-width match can't advance — guard the loop
-  }
+  for (let m = re.exec(acc); m; m = re.exec(acc)) hits.push([m.index, m.index + m[0].length])
   if (hits.length === 0) return null
-  const [lo, hi] = hits.length === 1 ? hits[0] : bestHit(hits, acc, context)
+  const [lo, hi] = bestHit(hits, acc, context)
 
   const at = (pos: number): [Text, number] | null => {
-    for (let i = segs.length - 1; i >= 0; i--) if (pos >= segs[i].start) return [segs[i].node, Math.min(pos - segs[i].start, segs[i].node.data.length)]
+    for (let i = segs.length - 1; i >= 0; i--) if (pos >= segs[i].start) return [segs[i].node, rawOffset(segs[i], pos - segs[i].start)]
     return null
   }
   const s = at(lo)
@@ -194,20 +188,33 @@ export function findRange(quote: string, doc: Document, context?: TextContext): 
   return range
 }
 
+/** An offset inside a seg, folded-index space → the RAW offset a Range needs. The two spaces drift
+ *  INSIDE any node NFKC changed, in BOTH directions: an expanding char (ﬁ → fi) makes the folded
+ *  offset run past the character it names, a composing one (e + ◌́ → é) leaves it short — and a raw
+ *  offset past `data.length` is an IndexSizeError, not a clamp. So for a folded node walk raw
+ *  prefixes for the shortest one whose folded length reaches `pos`, re-folding exactly the way
+ *  `offsetOf` does in the other direction so the two can't disagree. Untouched nodes (nearly all of
+ *  them) are index-identical and skip the scan. */
+function rawOffset(seg: TextIndex['segs'][number], pos: number): number {
+  if (!seg.folded) return pos
+  const raw = seg.node.data
+  let k = 0
+  while (k < raw.length && raw.slice(0, k).normalize('NFKC').length < pos) k++
+  return k
+}
+
 /** Score every occurrence by how much of the stored context it reproduces and take the best; ties
  *  (including "no context at all" and "context matches nothing") keep the EARLIEST hit, which is
  *  exactly the pre-context behaviour every already-stored thread was anchored under. */
 function bestHit(hits: [number, number][], acc: string, context?: TextContext): [number, number] {
-  const wantPrefix = collapse(context?.prefix ?? '').toLowerCase()
-  const wantSuffix = collapse(context?.suffix ?? '').toLowerCase()
+  const wantPrefix = collapseWhitespace(context?.prefix ?? '').toLowerCase()
+  const wantSuffix = collapseWhitespace(context?.suffix ?? '').toLowerCase()
   if (!wantPrefix && !wantSuffix) return hits[0]
   let best = hits[0]
   let bestScore = -1
   for (const hit of hits) {
-    // Read a raw window twice the stored cap: collapsing whitespace only ever shortens it, so this
-    // still yields at least CONTEXT_CHARS of comparable text on each side.
-    const before = collapse(acc.slice(Math.max(0, hit[0] - CONTEXT_CHARS * 2), hit[0])).toLowerCase()
-    const after = collapse(acc.slice(hit[1], hit[1] + CONTEXT_CHARS * 2)).toLowerCase()
+    const before = collapseWhitespace(acc.slice(Math.max(0, hit[0] - CONTEXT_WINDOW), hit[0])).toLowerCase()
+    const after = collapseWhitespace(acc.slice(hit[1], hit[1] + CONTEXT_WINDOW)).toLowerCase()
     const score = commonSuffixLen(before, wantPrefix) + commonPrefixLen(after, wantSuffix)
     if (score > bestScore) {
       bestScore = score
@@ -231,24 +238,50 @@ const commonSuffixLen = (a: string, b: string): number => {
 
 /** The text surrounding a live selection, for storing alongside the quote. Read from the SAME
  *  filtered index the painter matches against, so a <script> sitting next to the selection can
- *  never poison the context (and thus never steer a later re-find). */
+ *  never poison the context (and thus never steer a later re-find).
+ *
+ *  The boundaries are snapped INWARD over whitespace first, because the quote stored beside this
+ *  context is TRIMMED (`normalizeText`) while the range is not: a drag — or a Chrome double-click,
+ *  which routinely grabs the adjacent space — hands us edges one character outside the quote. Slice
+ *  from those and the space separating the quote from its neighbour lands on the wrong side of the
+ *  cut, so at paint time `bestHit` compares a prefix ending "…Beta lead" against a `before` ending
+ *  "…Beta lead " — no shared character, EVERY occurrence scores 0, and the first one wins. That is
+ *  first-occurrence painting again, i.e. the whole feature silently off for most real selections. */
 export function selectionContext(range: Range, doc: Document): TextContext {
   const { acc, segs } = buildTextIndex(doc)
-  const lo = offsetOf(segs, range.startContainer, range.startOffset)
-  const hi = offsetOf(segs, range.endContainer, range.endOffset)
+  let lo = offsetOf(segs, range.startContainer, range.startOffset, 'start')
+  let hi = offsetOf(segs, range.endContainer, range.endOffset, 'end')
   if (lo === null || hi === null) return { prefix: '', suffix: '' }
+  while (lo < hi && /\s/.test(acc[lo])) lo++
+  while (hi > lo && /\s/.test(acc[hi - 1])) hi--
   return {
-    prefix: collapse(acc.slice(Math.max(0, lo - CONTEXT_CHARS * 2), lo)).slice(-CONTEXT_CHARS),
-    suffix: collapse(acc.slice(hi, hi + CONTEXT_CHARS * 2)).slice(0, CONTEXT_CHARS),
+    prefix: collapseWhitespace(acc.slice(Math.max(0, lo - CONTEXT_WINDOW), lo)).slice(-TEXT_CONTEXT_LIMIT),
+    suffix: collapseWhitespace(acc.slice(hi, hi + CONTEXT_WINDOW)).slice(0, TEXT_CONTEXT_LIMIT),
   }
 }
 
 /** A range boundary (node + raw offset) → its offset in the folded index. The node's own text is
  *  NFKC-folded up to the boundary so the delta a ligature/full-width char introduces is exact,
- *  not clamped. A boundary on an ELEMENT resolves to its first indexed descendant text node. */
-function offsetOf(segs: TextIndex['segs'], node: Node, offset: number): number | null {
+ *  not clamped. For an element boundary, `offset` indexes CHILD NODES, so START resolves to the
+ *  first indexed text at-or-after that child and END to the last indexed text before it — dropping
+ *  `offset` would put an END boundary before the quote and swallow it into the suffix. When the
+ *  chosen side holds no indexed text the other side's edge is used: the skipped children contribute
+ *  nothing to the index, so it is the SAME position — which is also why an ordered range can never
+ *  come back with its end before its start, and why `selectionContext` needs no crossing guard. */
+function offsetOf(segs: TextIndex['segs'], node: Node, offset: number, side: 'start' | 'end'): number | null {
   const seg = segs.find((s) => s.node === node)
   if (seg) return seg.start + seg.node.data.slice(0, offset).normalize('NFKC').length
-  const inside = segs.find((s) => node.contains?.(s.node))
-  return inside ? inside.start : null
+  const children = Array.from(node.childNodes)
+  const before = children.slice(0, offset)
+  const after = children.slice(offset)
+  const contains = (roots: Node[], text: Text): boolean => roots.some((root) => root === text || root.contains?.(text))
+  const next = segs.find((s) => contains(after, s.node))
+  let previous: TextIndex['segs'][number] | undefined
+  for (let i = segs.length - 1; i >= 0; i--) {
+    if (contains(before, segs[i].node)) {
+      previous = segs[i]
+      break
+    }
+  }
+  return side === 'start' ? (next?.start ?? previous?.end ?? null) : (previous?.end ?? next?.start ?? null)
 }

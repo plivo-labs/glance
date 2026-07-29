@@ -14,7 +14,8 @@
 //               reported back so the parent can flag them orphaned.
 
 import { withAnnotateParam } from './linkRewrite'
-import { type TextContext, computeSelector, describeElement, findRange, isPageSpanning, resolveSelector, selectionContext } from './locator'
+import type { TextContext } from '../lib/anchor'
+import { computeSelector, describeElement, findRange, isPageSpanning, resolveSelector, selectionContext } from './locator'
 
 type Boot = { siteId: string; filePath: string; appOrigin: string }
 type Mode = 'read' | 'annotate'
