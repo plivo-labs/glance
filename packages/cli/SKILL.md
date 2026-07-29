@@ -273,13 +273,8 @@ Worth knowing:
 - **Reconnects replay.** Connections drop (a Glance deploy restarts them); the SDK reconnects and
   replays everything missed from its last position before delivering anything live, so a page left
   open overnight is not silently stale. You get each change once, in order.
-- **`shared-…` is what makes a dashboard multi-viewer.** On a default collection each viewer only
-  ever sees their own rows, so their pushes are their own writes. For a page where everyone watches
-  the same data, name the collection `shared-…`.
-- **You are pushed only what you may read** — the same rule as `list()`, so subscriptions never leak
-  another viewer's rows.
-- Same constraint as the rest of `glance.db`: it works when the page is opened **through the Glance
-  app**, not from the raw content URL.
+- **A push obeys the read rules above, unchanged** — so on a default collection you are only pushed
+  your OWN writes. A dashboard everyone watches together needs a `shared-…` collection.
 
 ## Diagrams & flowcharts — default to mermaid
 
