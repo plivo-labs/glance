@@ -14,9 +14,10 @@ import {
   sharedSiteRoles,
 } from '../db/repo'
 import type { Visibility } from '../db/schema'
-import { files as filesTable, sites as sitesTable, spaces, users } from '../db/schema'
+import { files as filesTable, siteStars, sites as sitesTable, spaces, users } from '../db/schema'
 import { canReplace, checkAccess } from '../lib/access'
-import { batchAll, chunk, D1_MAX_IN } from '../lib/d1'
+import { batchAll, chunk, D1_MAX_BOUND_PARAMETERS, D1_MAX_IN } from '../lib/d1'
+import { AUDIO_EXTENSIONS } from '../lib/mime'
 import { resolveIndexPath } from '../lib/extract'
 import { siteFeedColumns, toFeedRow } from '../lib/site-feed'
 import { readSessionOrBearer } from '../lib/session'
@@ -42,6 +43,20 @@ export const sites = new Hono<AppEnv>()
 // Over-fetch a little past the result cap so the in-memory checkAccess pass can drop a few
 // non-openable candidates and still fill the cap.
 const SEARCH_SCAN_CAP = 200
+
+// --- /shared's bind budget -------------------------------------------------------------------
+// /shared is the only feed whose statement binds an id LIST *and* the correlated scalars in
+// siteFeedColumns, so it is where D1's 100-parameter ceiling actually bites. Spend it explicitly:
+//   ids  +  pureAudioSql (one LIKE pattern per audio extension)  +  isStarredSql (the caller's id)
+// At D1_MAX_IN the sum was 90 + 8 + 1 = 99 — under the cap, but only by one, so the next scalar
+// fold would have failed in production rather than here. The margin is the whole point: it buys
+// room for one more fold of the audio kind, and the spec in sites-shared.test.ts measures it.
+export const FEED_BIND_MARGIN = 10
+const FEED_SCALAR_BINDS = AUDIO_EXTENSIONS.size + 1 // pureAudioSql + isStarredSql
+export const SHARED_FEED_CHUNK = Math.min(
+  D1_MAX_IN,
+  D1_MAX_BOUND_PARAMETERS - FEED_SCALAR_BINDS - FEED_BIND_MARGIN,
+)
 
 // Escape LIKE metacharacters (`%`, `_`, and the `\` escape char itself) so a user's literal
 // `%`/`_` can't act as wildcards. Pair the bound value with `ESCAPE '\'` in the query.
@@ -212,7 +227,7 @@ sites.get('/mine', requireAuth, async (c) => {
   const user = c.get('user')
   const db = c.get('db')
   const rows = await db
-    .select(siteFeedColumns())
+    .select(siteFeedColumns(user.id))
     .from(sitesTable)
     .innerJoin(spaces, eq(sitesTable.spaceId, spaces.id))
     .where(eq(sitesTable.ownerId, user.id))
@@ -241,10 +256,10 @@ sites.get('/shared', requireAuth, async (c) => {
   // spaceSlug carries an explicit SQL alias: spaces.slug and sites.slug both emit a result
   // column named `slug`, and real D1 `.batch()` maps rows BY NAME, collapsing duplicates —
   // which shifted every later field and emptied this feed in production.
-  const rowStmts = chunk(ids, D1_MAX_IN).map((batch) =>
+  const rowStmts = chunk(ids, SHARED_FEED_CHUNK).map((batch) =>
     db
       .select({
-        ...siteFeedColumns(),
+        ...siteFeedColumns(user.id),
         ownerId: sitesTable.ownerId,
       })
       .from(sitesTable)
@@ -267,10 +282,11 @@ sites.get('/shared', requireAuth, async (c) => {
 // the feed stays live. Visible to any signed-in member (the team tier is already visible team-wide).
 // Capped — this is an at-a-glance activity feed, not a full log.
 sites.get('/team', requireAuth, async (c) => {
+  const user = c.get('user')
   const db = c.get('db')
   const rows = await db
     .select({
-      ...siteFeedColumns(),
+      ...siteFeedColumns(user.id),
       uploaderName: users.name,
       uploaderEmail: users.email,
     })
@@ -351,17 +367,29 @@ sites.get('/:spaceSlug/:siteSlug', async (c) => {
     .innerJoin(sitesTable, eq(filesTable.siteId, sitesTable.id))
     .innerJoin(spaces, eq(sitesTable.spaceId, spaces.id))
     .where(and(eq(spaces.slug, spaceSlug), eq(sitesTable.slug, siteSlug)))
+  // The viewer's own star, slug-keyed like every other facts statement (no site id exists before
+  // the batch runs) and non-failing — an absent star is an empty result, never a throw, so it
+  // cannot disturb the 404/403/410 precedence decided below.
+  const starStmt = user
+    ? db
+        .select({ siteId: siteStars.siteId })
+        .from(siteStars)
+        .innerJoin(sitesTable, eq(siteStars.siteId, sitesTable.id))
+        .innerJoin(spaces, eq(sitesTable.spaceId, spaces.id))
+        .where(and(eq(spaces.slug, spaceSlug), eq(sitesTable.slug, siteSlug), eq(siteStars.userId, user.id)))
+        .limit(1)
+    : null
   // The manifest rides the batch only for an AUTHED caller — an anonymous probe 401s below and
   // must not burn up-to-200 manifest row reads per request on this cookie-less endpoint.
-  const { facts, extras } = await (user
-    ? fetchAccessFacts(db, spaceSlug, siteSlug, user.id, filesStmt)
+  const { facts, extras } = await (user && starStmt
+    ? fetchAccessFacts(db, spaceSlug, siteSlug, user.id, filesStmt, starStmt)
     : fetchAccessFacts(db, spaceSlug, siteSlug, null))
   const site = facts.site
   // Existence (404) is still decided before any auth-dependent branch, so a missing site never
   // leaks — the site row rides the same batch.
   if (!site) return c.json({ error: 'not found' }, 404)
 
-  const [siteFiles = []] = extras
+  const [siteFiles = [], starRows = []] = extras
   const role = facts.directRole
   const access = checkAccess(site, user, facts.isMember, isSharedFromFacts(facts))
   if (!access.ok) return c.json({ error: 'forbidden' }, access.status)
@@ -390,6 +418,7 @@ sites.get('/:spaceSlug/:siteSlug', async (c) => {
     status: site.status,
     isOwner: user.id === site.ownerId,
     canReplace: replaceable,
+    starred: starRows.length > 0,
     ...(role ? { role } : {}),
     contentUrl,
     indexPath: resolveIndexPath(siteFiles.map((f) => f.path)),

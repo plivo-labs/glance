@@ -97,13 +97,15 @@ app.get('/api/config', async (c) =>
 app.route('/api/auth', auth)
 app.route('/api/spaces', spaces)
 app.route('/api/sites', sites)
+// Stars (GET /starred, POST|DELETE /:space/:site/star) mount BEFORE comments/summary: those two
+// groups each register `use('*', requireAuth)` across /api/sites/*, and Hono runs middleware in
+// registration order — anything mounted after them pays their auth reads on top of its own.
+app.route('/api/sites', stars)
 // Comments live under /api/sites/:space/:site/comments — three segments, so no collision with
 // the two-segment site routes above. Mounted separately to keep the comments surface isolated.
 app.route('/api/sites', comments)
 // Summaries share the same three-segment isolation as comments and cannot shadow site routes.
 app.route('/api/sites', summary)
-// Same three-segment isolation for the star toggle (/api/sites/:space/:site/star).
-app.route('/api/sites', stars)
 app.route('/api/comments', commentFeed)
 app.route('/api/upload', upload)
 // Session-authenticated mint for shared-backend data tokens (owner → read+write, viewer → read).

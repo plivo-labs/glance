@@ -117,7 +117,7 @@ spaces.get('/:slug/sites', requireAuth, async (c) => {
     memberOfSlugStmt(db, slug, user.id),
     db
       .select({
-        ...siteFeedColumns(),
+        ...siteFeedColumns(user.id),
         ownerId: sites.ownerId,
       })
       .from(sites)
