@@ -73,7 +73,7 @@ export async function verifyDataToken(secret: string, token: string | null | und
   return claims
 }
 
-/** True iff the verified claims grant `cap`. */
-export function hasCap(claims: DataClaims, cap: DataCapability): boolean {
+/** True iff the verified claims grant `cap`. Takes only `caps` so a claims SNAPSHOT works too. */
+export function hasCap(claims: Pick<DataClaims, 'caps'>, cap: DataCapability): boolean {
   return claims.caps.includes(cap)
 }

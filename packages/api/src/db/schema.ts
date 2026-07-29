@@ -207,6 +207,36 @@ export const documents = sqliteTable(
   ],
 )
 
+// Append-only per-site change stream for `glance.db` realtime push. Every documents mutation
+// writes exactly one row here in the SAME db.batch, so a client that reconnects — or notices a
+// gap — replays from a cursor instead of going permanently stale (Cloudflare terminates every
+// WebSocket on a DO shutdown, INCLUDING each code deploy, so replay is not optional).
+// INVARIANTS: `createdBy` is the DOCUMENT's creator captured at mutation time, NOT the writer —
+// an owner moderating someone else's row must fan out against the row's identity or the push
+// becomes an IDOR. `seq` is per SITE, never global: a site-wide counter is what a cursor is
+// expressed in, and one site's traffic must not be derivable from another's.
+export const changeLog = sqliteTable(
+  'change_log',
+  {
+    siteId: text('siteId').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+    // Assigned in-SQL as max(seq)+1 over this siteId inside the mutation's own batch — no
+    // read-modify-write round trip, the same trick as `sql\`${sites.contentVersion} + 1\``. There is
+    // no autoincrement/rowid PK anywhere in this schema and this is deliberately not the first:
+    // the counter must restart per site, and the composite PK below makes it unique and gap-free.
+    seq: integer('seq').notNull(),
+    collection: text('collection').notNull(),
+    docId: text('docId').notNull(),
+    // Denormalized, with NO users FK on purpose (unlike documents.createdBy): `cascade` would
+    // delete the very replay rows a reconnecting client needs, and `set null` would erase the
+    // identity the fan-out visibility filter reads. Durability beats referential tidiness here.
+    createdBy: text('createdBy').notNull(),
+    type: text('type', { enum: ['create', 'update', 'delete'] }).notNull(),
+    at: text('at').notNull(),
+  },
+  // Doubles as the catch-up scan index: WHERE siteId = ? AND seq > cursor ORDER BY seq.
+  (t) => [primaryKey({ columns: [t.siteId, t.seq] })],
+)
+
 // Usage-analytics event stream. Append-only; one row per tracked action:
 //   type 'view' — a top-level HTML page served by the content worker (action = file path).
 //   type 'cli'  — a Bearer-authenticated API call from the CLI (action = route, e.g. 'upload').
@@ -308,6 +338,8 @@ export type Comment = typeof comments.$inferSelect
 export type NewComment = typeof comments.$inferInsert
 export type DocumentRow = typeof documents.$inferSelect
 export type NewDocumentRow = typeof documents.$inferInsert
+export type ChangeLogRow = typeof changeLog.$inferSelect
+export type ChangeType = ChangeLogRow['type']
 export type Event = typeof events.$inferSelect
 export type NewEvent = typeof events.$inferInsert
 export type EventType = Event['type']

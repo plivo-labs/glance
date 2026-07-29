@@ -21,7 +21,9 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': { target: 'http://localhost:8787', changeOrigin: true },
+      // ws: the glance.db realtime socket upgrades on /api/_data/_sync/socket; without this the
+      // upgrade is answered by vite itself and the stream silently never connects in dev.
+      '/api': { target: 'http://localhost:8787', changeOrigin: true, ws: true },
     },
   },
 })

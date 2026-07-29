@@ -12,9 +12,20 @@
 //
 // The global is __GLANCE_DB__, not __GLANCE__ — that one belongs to the annotate overlay.
 
+import { WS_PROTOCOL } from '../realtime/protocol'
+import { type ChangeEvent, type Frame, type StreamHandlers, type Transport, createSubscriptions } from './subscriptions'
+
 type Boot = { appOrigin?: string; space?: string; site?: string }
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }
-type BrokerReq = { id: number; op: string; collection: string; docId?: string; data?: unknown; limit?: number }
+type BrokerReq = {
+  id: number
+  op: string
+  collection?: string
+  docId?: string
+  data?: unknown
+  limit?: number
+  cursor?: string
+}
 
 const HELLO_TIMEOUT_MS = 5000
 const REQUEST_TIMEOUT_MS = 15000
@@ -27,6 +38,8 @@ let port: MessagePort | null = null
 let connecting: Promise<MessagePort> | null = null
 const pending = new Map<number, Pending>()
 let seq = 0
+// Set once the page subscribes: the parent owns the socket here and pushes frames down the port.
+let stream: StreamHandlers | null = null
 
 function settle(id: number, fn: 'resolve' | 'reject', v: unknown): void {
   const p = pending.get(id)
@@ -56,6 +69,12 @@ function connect(appOrigin: string): Promise<MessagePort> {
         clearTimeout(timer)
         connecting = null
         reject(new Error(d.error || 'glance.db: broker refused the connection'))
+      } else if (d?.type === 'glance:db-event') {
+        // A pushed frame, NOT a reply — it carries no `id`, so it can never settle a request.
+        stream?.onFrame(e.data as Frame)
+      } else if (d?.type === 'glance:db-open') {
+        // The parent's socket (re)connected; replay whatever the dead one missed.
+        stream?.onOpen()
       } else if (typeof d?.id === 'number') {
         if (d.ok) settle(d.id, 'resolve', d.body)
         else settle(d.id, 'reject', new Error((d.body as { error?: string })?.error || `glance: ${d.status}`))
@@ -107,6 +126,102 @@ async function directCall(space: string, site: string, method: string, path: str
   return data
 }
 
+// --- realtime (same-origin transport) --------------------------------------------------------
+
+const RECONNECT_MS = 3000
+const PING_MS = 30_000
+
+/** A socket to the site's room, re-dialled forever. Browsers cannot set `Authorization` on
+ *  `new WebSocket()`, so the token rides the subprotocol list — the one channel the upgrade route
+ *  reads. Every dial mints a FRESH token: a socket may not outlive the 300s that authorized it, and
+ *  the room drops it on the first wake past expiry. That drop is harmless — the reconnect below
+ *  replays the window from the last cursor, so nothing is lost, only re-fetched. */
+function directTransport(space: string, site: string): Transport {
+  // The redial loop is otherwise unstoppable — every close schedules the next dial — so a page
+  // that unsubscribes everything would keep reconnecting forever. `stopped` is the only brake.
+  let socket: WebSocket | null = null
+  let stopped = false
+  return {
+    open(h) {
+      stopped = false
+      const url = `${location.origin.replace(/^http/, 'ws')}/api/_data/_sync/socket`
+      const dial = () =>
+        mint(space, site)
+          .then((t) => {
+            if (stopped) return
+            const ws = new WebSocket(url, [WS_PROTOCOL, t])
+            socket = ws
+            // Answered by the runtime's auto-response, so a keepalive never wakes the room.
+            const ping = setInterval(() => ws.readyState === 1 && ws.send('ping'), PING_MS)
+            ws.onopen = () => h.onOpen()
+            ws.onmessage = (e: MessageEvent) => {
+              try {
+                const f = JSON.parse(e.data as string) as Frame
+                if (Array.isArray(f?.events)) h.onFrame(f)
+              } catch {
+                // 'pong' and anything else unparseable: not a frame.
+              }
+            }
+            ws.onclose = () => {
+              clearInterval(ping)
+              if (!stopped) setTimeout(dial, RECONNECT_MS)
+            }
+          })
+          .catch(() => {
+            if (!stopped) setTimeout(dial, RECONNECT_MS)
+          })
+      dial()
+    },
+    close() {
+      stopped = true
+      socket?.close()
+      socket = null
+    },
+    catchUp: (cursor) =>
+      directCall(
+        space,
+        site,
+        'GET',
+        `/_sync/changes${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`,
+      ) as Promise<Frame>,
+  }
+}
+
+/** Hosted pages hold no credential, so the PARENT opens the socket with its own token and relays
+ *  frames over the port we already have. Catch-up is a port op for the same reason. */
+function brokerTransport(appOrigin: string): Transport {
+  return {
+    open(h) {
+      stream = h
+      connect(appOrigin).then(
+        () => h.onOpen(),
+        () => {
+          // No broker answered; nothing to listen to. The page's ops report the same failure.
+        },
+      )
+    },
+    close() {
+      stream = null
+      // The parent owns the socket, so only it can drop one — this is the op `dbBroker.closeStream`
+      // has always implemented and nothing ever sent.
+      void brokerCall(appOrigin, { op: 'unsubscribe' }).catch(() => {})
+    },
+    catchUp: (cursor) => brokerCall(appOrigin, { op: 'subscribe', cursor: cursor ?? undefined }) as Promise<Frame>,
+  }
+}
+
+let subs: ReturnType<typeof createSubscriptions> | null = null
+
+function subscriptions() {
+  if (!subs) {
+    if (boot?.space && boot?.site) subs = createSubscriptions(directTransport(boot.space, boot.site))
+    else if (boot?.appOrigin && window.parent !== window) subs = createSubscriptions(brokerTransport(boot.appOrigin))
+    else
+      throw new Error('glance.db: not connected — open this site through the Glance app, or set window.__GLANCE_DB__')
+  }
+  return subs
+}
+
 // --- public surface -------------------------------------------------------------------------
 
 function call(op: string, collection: string, docId?: string, data?: unknown): Promise<unknown> {
@@ -130,6 +245,12 @@ function collection(name: string) {
     list: () => call('list', name),
     put: (id: string, data: unknown) => call('put', name, id, data),
     delete: (id: string) => call('delete', name, id),
+    // Each returns its own unsubscribe. A callback is handed the change, not the document: ask
+    // `get(id)` for the contents. Subscriptions are keyed by collection NAME inside the core, not
+    // held on this literal — `collection('x')` builds a fresh object on every call.
+    onCreate: (cb: (e: ChangeEvent) => void) => subscriptions().on(name, 'create', cb),
+    onUpdate: (cb: (e: ChangeEvent) => void) => subscriptions().on(name, 'update', cb),
+    onDelete: (cb: (e: ChangeEvent) => void) => subscriptions().on(name, 'delete', cb),
   }
 }
 
