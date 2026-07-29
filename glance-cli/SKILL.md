@@ -1,6 +1,6 @@
 ---
 name: glance-cli
-description: Use the `glance` CLI to build a self-contained HTML explainer/dashboard for a codebase or system and publish it — "explain with html", "make an html dashboard", "visualize this architecture", "a simple HTML summary for my boss" — or to deploy any file/folder to a Glance instance and get a URL, manage sites (list, delete, move, fork), and close the review loop from the terminal (pull a site's review comments, reply to a thread, then redeploy). Also hosts no-build React SPAs (import-map recipe included) and mermaid diagrams.
+description: Use the `glance` CLI to build a self-contained HTML explainer/dashboard for a codebase or system and publish it — "explain with html", "make an html dashboard", "create a dashboard", "visualize this architecture", "a simple HTML summary for my boss" — or to deploy any file/folder to a Glance instance and get a URL, manage sites (list, delete, move, fork), and close the review loop from the terminal (pull a site's review comments, reply to a thread, then redeploy). Also covers `glance.db`, the built-in per-site document store with REALTIME subscriptions — reach for this on "realtime page", "live dashboard", "page that updates itself", "push updates from my backend/script/cron to a page", a form/poll/board that collects submissions, or any page whose data changes after deploy. Also hosts no-build React SPAs (import-map recipe included) and mermaid diagrams.
 ---
 
 # Glance CLI
@@ -230,6 +230,16 @@ curl -H "Authorization: Bearer $TOKEN" -X POST -d '{"text":"hi"}' \
 # also: GET /api/_data/notes (list) · GET/PUT/DELETE /api/_data/notes/<id>
 ```
 
+Two things bite when the writer is a server rather than a person:
+
+- **Write to a `shared-…` collection, or you are the only one who will ever see it.** A document
+  belongs to whoever wrote it, and the token above is *yours* — so a cron job writing to `metrics`
+  fills a collection only you can read, and every teammate's dashboard sits empty. `shared-metrics`
+  is readable by every viewer of the site. This is the single most common way a server-fed page
+  looks broken.
+- **Mint per run, not once.** The token lives 5 minutes; a long job or a daemon must re-mint (a
+  401 means it aged out). Don't bake one into an env var or a config file.
+
 Rules of thumb: documents are JSON objects up to 100KB, grouped into named collections ·
 **anyone viewing the site can add** documents (attributed to them) — so forms and surveys just
 work · by default you only see documents **you** created; name a collection `shared-…` and every
@@ -237,6 +247,47 @@ viewer sees all of it (polls, boards) · the site **owner** sees everything and 
 any document (moderation); other viewers can never change existing documents · access follows
 the site's sharing — lose access to the site, lose access to its data. If it errors with "not
 enabled", ask your Glance admin to turn the feature on.
+
+## Live pages — subscribe instead of polling
+
+A page can be **pushed** changes as they happen. Do not write a `setInterval` that re-`list()`s;
+subscribe:
+
+```js
+const c = glance.db.collection('shared-metrics')
+
+const off = c.onCreate(e => addRow(e))   // e = {type, collection, id, createdBy, at}
+c.onUpdate(e => refresh(e.id))
+c.onDelete(e => removeRow(e.id))
+
+off()   // every subscribe returns its own unsubscribe; the connection itself
+        // closes only once the LAST subscription on the page is gone
+```
+
+**The event tells you WHAT changed, not the new contents** — there is no document body on it. Call
+`c.get(e.id)` when you need the data. That is deliberate: a push carrying bodies would be a third
+read path, and a replayed backlog would fetch every row.
+
+This is a live dashboard end to end: a backend writes with the `curl` recipe above and every open
+page reacts — no polling, no refresh button. Delivery is fast (sub-second on a warm site) but it is
+not a latency guarantee: a first connection, a viewer far from the site's region, or a reconnect
+after a deploy all cost more. Build pages that react to an event whenever it lands, not ones that
+assume it already has.
+
+```bash
+# from a cron job / CI / any server — the page updates itself
+curl -H "Authorization: Bearer $TOKEN" -X POST -d '{"deploys":42,"ok":true}' \
+  "$GLANCE_API_URL/api/_data/shared-metrics"
+```
+
+Worth knowing:
+
+- **Subscriptions are lazy** — a page that never subscribes never opens a connection.
+- **Reconnects replay.** Connections drop (a Glance deploy restarts them); the SDK reconnects and
+  replays everything missed from its last position before delivering anything live, so a page left
+  open overnight is not silently stale. You get each change once, in order.
+- **A push obeys the read rules above, unchanged** — so on a default collection you are only pushed
+  your OWN writes. A dashboard everyone watches together needs a `shared-…` collection.
 
 ## Diagrams & flowcharts — default to mermaid
 
