@@ -5,6 +5,7 @@ import { ApiError } from '@/lib/api'
 import { comments, type Thread } from '@/lib/comments'
 import type { Me, ViewerSite } from '@/lib/types'
 import { AudioPlayer } from '@/components/audio/AudioPlayer'
+import { UserAvatar } from '@/components/UserAvatar'
 import { AnchorChip } from '@/components/review/AnchorChip'
 import { Composer } from '@/components/review/Composer'
 import { Badge } from '@/components/ui/badge'
@@ -80,6 +81,7 @@ export function ThreadCard({
         {thread.comments.map((c) => (
           <li key={c.id} className="group text-sm">
             <div className="flex items-center gap-2 text-muted-foreground text-xs">
+              <UserAvatar userId={c.authorId} name={c.author} className="size-5" fallbackClassName="text-[0.6rem]" />
               <span className="font-medium text-foreground">{c.authorId === me?.id ? 'You' : (c.author ?? 'Reviewer')}</span>
               <span>{fmt(c.createdAt)}</span>
               {c.hasAudio && !c.deleted && (

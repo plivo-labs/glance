@@ -7,6 +7,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
+import { UserAvatar } from '@/components/UserAvatar'
 import { notificationHref } from '@/lib/mentions'
 import { type Notification, type NotificationList, notificationLabel, notifications } from '@/lib/notifications'
 import { timeAgo } from '@/lib/time'
@@ -96,6 +97,7 @@ function BellMenu({ initial }: { initial: NotificationList }) {
                     )}
                   >
                     <span className={cn('mt-1.5 size-1.5 shrink-0 rounded-full', n.read ? 'bg-transparent' : 'bg-primary')} />
+                    <UserAvatar userId={n.actorId} name={n.actorName} className="mt-0.5 size-6" />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate">
                         <span className="font-medium">{label.actor}</span> {label.verb}

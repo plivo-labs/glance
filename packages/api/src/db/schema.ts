@@ -8,6 +8,11 @@ export const users = sqliteTable('users', {
   email: text('email').notNull().unique(),
   name: text('name'),
   googleId: text('googleId').unique(),
+  // Google profile photo URL from the OAuth id_token's `picture` claim, refreshed on every login.
+  // Never rendered directly by the browser — the avatar route proxies it same-origin (see
+  // routes/avatars.ts), so this column is the ONLY place a googleusercontent URL is held.
+  // Null for users who predate this column until their next Google login, and for bootstrap users.
+  avatarUrl: text('avatarUrl'),
   role: text('role', { enum: ['member', 'superadmin'] }).notNull().default('member'),
   createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
   // "What's New" read watermark: the ISO-8601 UTC date through which this user has seen release
@@ -67,7 +72,14 @@ export const sites = sqliteTable(
     // site at its creation slot). Renames/moves/visibility changes do NOT bump it — content only.
     updatedAt: text('updatedAt').notNull().$defaultFn(() => new Date().toISOString()),
   },
-  (t) => [unique('sites_space_slug_unq').on(t.spaceId, t.slug), index('sites_owner').on(t.ownerId)],
+  (t) => [
+    unique('sites_space_slug_unq').on(t.spaceId, t.slug),
+    index('sites_owner').on(t.ownerId),
+    // Serves the team feed's `status = ? AND visibility = ? ORDER BY updatedAt DESC LIMIT n`:
+    // equality on the leading pair, `updatedAt` last so the ORDER BY is a reverse index scan and
+    // the LIMIT stops it early — otherwise the feed's correlated EXISTS columns run once per SITE.
+    index('sites_status_visibility_updated').on(t.status, t.visibility, t.updatedAt),
+  ],
 )
 
 export const files = sqliteTable(
@@ -119,6 +131,25 @@ export const siteGroupShares = sqliteTable(
     spaceId: text('spaceId').notNull().references(() => spaces.id, { onDelete: 'cascade' }),
   },
   (t) => [primaryKey({ columns: [t.siteId, t.spaceId] }), index('site_group_shares_space').on(t.spaceId)],
+)
+
+// Per-user "starred" pins on a site — the backing store for the dashboard's Starred tab. The
+// composite PK makes the toggle idempotent BY CONSTRUCTION (a double-click can't double-star), and
+// the userId index serves the feed's own scan (WHERE userId = ? ORDER BY createdAt DESC). Both FKs
+// cascade: a star is a pointer, worthless once either end is gone, so there is no durability case
+// for keeping it the way comments/events keep history. A star row carries NO access meaning —
+// `checkAccess` stays the only authority, re-run at READ time, so a site that later flips to
+// private (or whose share is revoked) drops out of the feed while its row survives for a flip back.
+export const siteStars = sqliteTable(
+  'site_stars',
+  {
+    siteId: text('siteId').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+    userId: text('userId').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    // Orders the Starred feed newest-STAR-first (not newest-site-first) — the whole point of the
+    // tab is "what I pinned most recently", which the site's own createdAt cannot express.
+    createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [primaryKey({ columns: [t.siteId, t.userId] }), index('site_stars_user').on(t.userId)],
 )
 
 // Anchored, threaded review comments on a deployed site's files. A thread anchors to a quote
@@ -331,6 +362,7 @@ export type FileRow = typeof files.$inferSelect
 export type NewFileRow = typeof files.$inferInsert
 export type SiteUserShare = typeof siteUserShares.$inferSelect
 export type SiteGroupShare = typeof siteGroupShares.$inferSelect
+export type SiteStar = typeof siteStars.$inferSelect
 
 export type CommentThread = typeof commentThreads.$inferSelect
 export type NewCommentThread = typeof commentThreads.$inferInsert

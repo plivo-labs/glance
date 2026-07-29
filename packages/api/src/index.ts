@@ -10,6 +10,7 @@ import { trackCliUsage } from './middleware/analytics'
 import { requireSameOrigin } from './middleware/auth'
 import { admin } from './routes/admin'
 import { auth } from './routes/auth'
+import { avatars } from './routes/avatars'
 import { commentFeed } from './routes/comment-feed'
 import { comments } from './routes/comments'
 import { summary } from './routes/summary'
@@ -19,6 +20,7 @@ import { whatsNew } from './routes/whats-new'
 import { sites } from './routes/sites'
 import { slackEvents } from './routes/slack-events'
 import { spaces } from './routes/spaces'
+import { stars } from './routes/stars'
 import { upload } from './routes/upload'
 import { users } from './routes/users'
 import type { AppEnv } from './types'
@@ -96,6 +98,13 @@ app.get('/api/config', async (c) =>
 app.route('/api/auth', auth)
 app.route('/api/spaces', spaces)
 app.route('/api/sites', sites)
+// Stars (GET /starred, POST|DELETE /:space/:site/star) mount BEFORE comments/summary: those two
+// groups each register `use('*', requireAuth)` across /api/sites/*, and Hono runs middleware in
+// registration order — anything mounted after them pays their auth reads on top of its own. The
+// zero-star spec in sites-starred.test.ts pins /starred at ONE post-auth D1 request, but it runs
+// against test/route-fixtures.ts, which MIRRORS this order rather than importing it — so a reorder
+// here must be made there too, or the spec keeps passing while production regresses.
+app.route('/api/sites', stars)
 // Comments live under /api/sites/:space/:site/comments — three segments, so no collision with
 // the two-segment site routes above. Mounted separately to keep the comments surface isolated.
 app.route('/api/sites', comments)
@@ -106,6 +115,9 @@ app.route('/api/upload', upload)
 // Session-authenticated mint for shared-backend data tokens (owner → read+write, viewer → read).
 app.route('/api/data-token', dataToken)
 app.route('/api/users', users)
+// Same-origin proxy for Google profile photos — keeps googleusercontent URLs (and viewer IPs)
+// off the browser, so the CSP above stays `img-src 'self'`.
+app.route('/api/avatars', avatars)
 app.route('/api/notifications', notifications)
 app.route('/api/whats-new', whatsNew)
 app.route('/api/admin', admin)

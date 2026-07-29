@@ -9,31 +9,19 @@ import {
   FolderOpen,
   HardDrive,
   MessageSquare,
-  Terminal,
   Trash2,
   UserCheck,
   Users2,
 } from 'lucide-react'
-import {
-  type LoaderFunctionArgs,
-  redirect,
-  useLoaderData,
-  useRevalidator,
-  useSearchParams,
-} from 'react-router'
+import { type LoaderFunctionArgs, redirect, useLoaderData, useRevalidator, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { EmptyState, PageHeader, SectionHeader, Spinner } from '@/components/states'
+import { UserAvatar } from '@/components/UserAvatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { VisibilityBadge } from '@/components/visibility'
@@ -87,11 +75,10 @@ interface StatsData {
     storageBytes: number
     comments: number
     views: number
-    cliInvocations: number
     uniqueViewers: number
   }
   activeViewers30d: number
-  series: { date: string; signups: number; sites: number; views: number; comments: number; cli: number }[]
+  series: { date: string; signups: number; sites: number; views: number; comments: number }[]
   topSites: { siteId: string | null; siteLabel: string | null; views: number }[]
   windowDays: number
 }
@@ -289,7 +276,7 @@ function TrendCard({
 
 function StatsPanel({ data }: { data: StatsData }) {
   const { totals, series, topSites, activeViewers30d, windowDays } = data
-  const sum = (key: 'signups' | 'views' | 'cli' | 'comments') => series.reduce((acc, d) => acc + d[key], 0)
+  const sum = (key: 'signups' | 'views' | 'comments') => series.reduce((acc, d) => acc + d[key], 0)
 
   return (
     <div className="space-y-6">
@@ -317,7 +304,6 @@ function StatsPanel({ data }: { data: StatsData }) {
           sub={`last ${windowDays} days`}
         />
         <StatCard icon={MessageSquare} label="Comments" value={formatCount(totals.comments)} />
-        <StatCard icon={Terminal} label="CLI invocations" value={formatCount(totals.cliInvocations)} />
       </div>
 
       {/* 30-day trends. */}
@@ -325,7 +311,7 @@ function StatsPanel({ data }: { data: StatsData }) {
         <SectionHeader title={`Last ${windowDays} days`}>
           <span className="text-sm text-muted-foreground">Daily activity</span>
         </SectionHeader>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <TrendCard icon={Eye} label="Views" total={sum('views')} values={series.map((d) => d.views)} />
           <TrendCard icon={Users2} label="Signups" total={sum('signups')} values={series.map((d) => d.signups)} />
           <TrendCard
@@ -334,7 +320,6 @@ function StatsPanel({ data }: { data: StatsData }) {
             total={sum('comments')}
             values={series.map((d) => d.comments)}
           />
-          <TrendCard icon={Terminal} label="CLI" total={sum('cli')} values={series.map((d) => d.cli)} />
         </div>
       </div>
 
@@ -490,11 +475,7 @@ function SitesPanel({ data }: { data: SitesData }) {
                           title="Archive this site?"
                           description={`/${s.spaceSlug}/${s.siteSlug} will be hidden from listings but can be restored.`}
                           confirmLabel="Archive"
-                          onConfirm={() =>
-                            mutate('Site archived', () =>
-                              api.patch(`/api/admin/sites/${s.id}/archive`),
-                            )
-                          }
+                          onConfirm={() => mutate('Site archived', () => api.patch(`/api/admin/sites/${s.id}/archive`))}
                         >
                           <Button variant="outline" size="sm">
                             <Archive className="size-3.5" />
@@ -509,9 +490,7 @@ function SitesPanel({ data }: { data: SitesData }) {
                         description={`Hard delete /${s.spaceSlug}/${s.siteSlug} and all its files. This cannot be undone.`}
                         confirmLabel="Delete"
                         destructive
-                        onConfirm={() =>
-                          mutate('Site deleted', () => api.delete(`/api/admin/sites/${s.id}`))
-                        }
+                        onConfirm={() => mutate('Site deleted', () => api.delete(`/api/admin/sites/${s.id}`))}
                       >
                         <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive">
                           <Trash2 className="size-3.5" />
@@ -532,20 +511,10 @@ function SitesPanel({ data }: { data: SitesData }) {
           Page {data.page} of {totalPages} · {data.total} site{data.total === 1 ? '' : 's'}
         </p>
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={data.page <= 1}
-            onClick={() => setPage(data.page - 1)}
-          >
+          <Button variant="outline" size="sm" disabled={data.page <= 1} onClick={() => setPage(data.page - 1)}>
             Prev
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={data.page >= totalPages}
-            onClick={() => setPage(data.page + 1)}
-          >
+          <Button variant="outline" size="sm" disabled={data.page >= totalPages} onClick={() => setPage(data.page + 1)}>
             Next
           </Button>
         </div>
@@ -595,9 +564,7 @@ function SpacesPanel({ spaces }: { spaces: AdminSpace[] }) {
                       description={`Delete the "${s.name}" space (/${s.slug}). This cannot be undone.`}
                       confirmLabel="Delete"
                       destructive
-                      onConfirm={() =>
-                        mutate('Space deleted', () => api.delete(`/api/spaces/${s.slug}`))
-                      }
+                      onConfirm={() => mutate('Space deleted', () => api.delete(`/api/spaces/${s.slug}`))}
                     >
                       <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive">
                         <Trash2 className="size-3.5" />
@@ -637,8 +604,13 @@ function UsersPanel({ users }: { users: AdminUser[] }) {
           {users.map((u) => (
             <TableRow key={u.id}>
               <TableCell>
-                <div className="font-medium">{u.name ?? u.email}</div>
-                <div className="font-mono text-xs text-muted-foreground">{u.email}</div>
+                <div className="flex items-center gap-2.5">
+                  <UserAvatar userId={u.id} name={u.name} email={u.email} className="size-8" />
+                  <div>
+                    <div className="font-medium">{u.name ?? u.email}</div>
+                    <div className="font-mono text-xs text-muted-foreground">{u.email}</div>
+                  </div>
+                </div>
               </TableCell>
               <TableCell>
                 {u.role === 'superadmin' ? (

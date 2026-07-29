@@ -148,6 +148,27 @@
       "when": 1784600000000,
       "tag": "0020_change_log",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1785600000000,
+      "tag": "0021_user_avatar",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1785700000000,
+      "tag": "0022_sites_feed_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1785800000000,
+      "tag": "0023_site_stars",
+      "breakpoints": true
     }
   ]
 }

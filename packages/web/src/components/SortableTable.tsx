@@ -9,6 +9,10 @@ export type SortDir = 'asc' | 'desc'
 export type Column<T> = {
   key: string
   label: string
+  // Screen-reader name for a column with no visible label. Defaults to 'Actions' — the trailing
+  // button cell every table has. Set it when a second unlabelled column exists (the star cell),
+  // or two columns announce the same name.
+  srLabel?: string
   render: (row: T) => ReactNode
   // Provide `compare` to make the column sortable; omit for a static column (URL, actions).
   compare?: (a: T, b: T) => number
@@ -73,7 +77,7 @@ export function SortableTable<T>({
                 />
               ) : (
                 <TableHead key={c.key} className={c.headClassName}>
-                  {c.label ? c.label : <span className="sr-only">Actions</span>}
+                  {c.label ? c.label : <span className="sr-only">{c.srLabel ?? 'Actions'}</span>}
                 </TableHead>
               ),
             )}

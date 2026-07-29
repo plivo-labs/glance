@@ -6,6 +6,7 @@ import { api } from '@/lib/api'
 import { newSpaceHref } from '@/lib/nav'
 import { buildSharePayload } from '@/lib/shares'
 import type { ShareRole, ShareSet, SpaceSummary, UserLite } from '@/lib/types'
+import { UserAvatar } from '@/components/UserAvatar'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -244,6 +245,7 @@ export function PeoplePicker({
                 onToggle={() => onToggle(u)}
                 label={u.name ?? u.email}
                 sub={u.name ? u.email : undefined}
+                user={u}
               />
               {trailing?.(u)}
             </div>
@@ -261,12 +263,15 @@ export function PickerRow({
   label,
   sub,
   className,
+  user,
 }: {
   checked: boolean
   onToggle: () => void
   label: string
   sub?: string
   className?: string
+  // A person row shows their photo; the group rows that share this component pass nothing.
+  user?: UserLite
 }) {
   return (
     <button
@@ -283,6 +288,7 @@ export function PickerRow({
       >
         {checked && <Check className="size-3" />}
       </span>
+      {user && <UserAvatar userId={user.id} name={user.name} email={user.email} />}
       <span className="min-w-0">
         <span className="block truncate text-sm">{label}</span>
         {sub && <span className="block truncate text-xs text-muted-foreground">{sub}</span>}

@@ -8,7 +8,7 @@ import {
   useRouteLoaderData,
   useSearchParams,
 } from 'react-router'
-import { ChevronDown, Download, Mic, Plus, Rocket, Terminal, Upload, Users } from 'lucide-react'
+import { ChevronDown, Download, Mic, Plus, Rocket, Star, Terminal, Upload, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import { CopyButton } from '@/components/CopyButton'
 import { DeployCard } from '@/components/DeployCard'
@@ -18,6 +18,7 @@ import {
   actionsColumn,
   CopyOpenActions,
   feedColumns,
+  starColumn,
   nameColumn,
   OpenLinkButton,
   updatedColumn,
@@ -26,6 +27,7 @@ import {
 } from '@/components/siteColumns'
 import { SitesTable } from '@/components/SitesTable'
 import { SortableTable, type Column } from '@/components/SortableTable'
+import { UserAvatar } from '@/components/UserAvatar'
 import { EmptyState, Spinner } from '@/components/states'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -83,6 +85,7 @@ function observed<T>(p: Promise<T>): Promise<T> {
 export function loader() {
   return {
     sites: observed(api.get<SiteSummary[]>('/api/sites/mine')),
+    starred: observed(api.get<SiteSummary[]>('/api/sites/starred')),
     shared: observed(api.get<SiteSummary[]>('/api/sites/shared')),
     spaces: observed(api.get<SpaceSummary[]>('/api/spaces/mine')),
     team: observed(api.get<TeamUpload[]>('/api/sites/team')),
@@ -125,14 +128,15 @@ function useSetTabParam(staleTab: boolean): (t: TabId) => void {
   }
 }
 
-// Sites shared with me — same table shell as Your sites, minus the owner-only actions.
-const SHARED_COLUMNS = feedColumns<SiteSummary>((s) => <CopyOpenActions url={s.url} />)
+// The read-only feed table — same shell as Your sites, minus the owner-only actions. Shared by
+// the Shared-with-me and Starred tabs; neither owns the rows, so neither gets owner actions.
+const FEED_COLUMNS = feedColumns<SiteSummary>((s) => <CopyOpenActions url={s.url} />)
 
-function SharedSitesTable({ sites }: { sites: SiteSummary[] }) {
+function FeedSitesTable({ sites }: { sites: SiteSummary[] }) {
   return (
     <SortableTable
       rows={sites}
-      columns={SHARED_COLUMNS}
+      columns={FEED_COLUMNS}
       getRowKey={(s) => s.id}
       initialSort={{ key: 'created', dir: 'desc' }}
     />
@@ -167,12 +171,14 @@ function useFeedSlot<T>(promise: Promise<T>): FeedSlot<T> {
 export function Component() {
   const loaded = useLoaderData() as {
     sites: Promise<SiteSummary[]>
+    starred: Promise<SiteSummary[]>
     shared: Promise<SiteSummary[]>
     spaces: Promise<SpaceSummary[]>
     team: Promise<TeamUpload[]>
     comments: Promise<CommentFeedItem[]>
   }
   const sites = useFeedSlot(loaded.sites)
+  const starred = useFeedSlot(loaded.starred)
   const shared = useFeedSlot(loaded.shared)
   const spaces = useFeedSlot(loaded.spaces)
   const team = useFeedSlot(loaded.team)
@@ -187,10 +193,10 @@ export function Component() {
   const state = useMemo(
     () =>
       deriveFeedState(
-        { sites, shared, spaces, team, comments },
+        { sites, starred, shared, spaces, team, comments },
         { requestedTab: tabFromParam(searchParams.get('tab')) },
       ),
-    [sites, shared, spaces, team, comments, searchParams],
+    [sites, starred, shared, spaces, team, comments, searchParams],
   )
   const setTab = useSetTabParam(state.staleTab)
 
@@ -268,10 +274,26 @@ function TabBody({ tab }: { tab: DashboardTab }) {
           }
         </TabPanel>
       )
+    case 'starred':
+      return (
+        <TabPanel content={tab.content} what="starred pages">
+          {(rows) =>
+            rows.length === 0 ? (
+              <EmptyState
+                icon={Star}
+                title="Nothing starred yet"
+                description="Star any team, group or shared page to pin it here."
+              />
+            ) : (
+              <FeedSitesTable sites={rows} />
+            )
+          }
+        </TabPanel>
+      )
     // Shared and Spaces exist only resolved-with-rows (feedState), so they render rows directly —
     // no loading/error states to handle. New space lives in the top New menu.
     case 'shared':
-      return <SharedSitesTable sites={tab.rows} />
+      return <FeedSitesTable sites={tab.rows} />
     case 'spaces':
       return <SpacesTable spaces={tab.rows} />
     case 'team':
@@ -363,6 +385,7 @@ function TabCount({ n }: { n: number }) {
 const who = (u: TeamUpload) => u.uploaderName ?? u.uploaderEmail
 
 const TEAM_COLUMNS: Column<TeamUpload>[] = [
+  starColumn(),
   nameColumn(),
   urlColumn(),
   visibilityBadgeColumn(),
@@ -371,7 +394,12 @@ const TEAM_COLUMNS: Column<TeamUpload>[] = [
     label: 'Shipped by',
     compare: (a, b) => who(a).localeCompare(who(b)),
     cellClassName: 'max-w-[12rem]',
-    render: (u) => <span className="block truncate text-sm">{who(u)}</span>,
+    render: (u) => (
+      <span className="flex items-center gap-2">
+        <UserAvatar userId={u.uploaderId} name={u.uploaderName} email={u.uploaderEmail} className="size-5" />
+        <span className="truncate text-sm">{who(u)}</span>
+      </span>
+    ),
   },
   updatedColumn('when', 'Updated'),
   actionsColumn((u) => <OpenLinkButton url={u.url} />),
@@ -417,6 +445,7 @@ function CommentsFeed({ comments }: { comments: CommentFeedItem[] }) {
               <span className="mt-0.5 w-16 shrink-0 rounded bg-muted px-1.5 py-0.5 text-center font-mono text-[10px] text-muted-foreground">
                 {item.kind}
               </span>
+              <UserAvatar userId={item.actorId} name={item.actorName} className="size-6" />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm">
                   <span className="font-medium">{v.author}</span>

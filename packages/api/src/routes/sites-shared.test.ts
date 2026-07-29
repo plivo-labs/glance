@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm'
 import { describe, expect, test } from 'bun:test'
 import type { Hono } from 'hono'
 import { siteUserShares } from '../db/schema'
+import { D1_MAX_BOUND_PARAMETERS, FEED_BIND_MARGIN, FEED_ID_CHUNK } from '../lib/d1'
 import { seedFile, seedGroupShare, seedMember, seedSite, seedSpace, seedUser, seedUserShare } from '../test/harness'
 import { at, auth, makeRouteApp, mintUser, postAuthRequests, type RouteApp } from '../test/route-fixtures'
 import type { AppEnv } from '../types'
@@ -209,5 +210,45 @@ describe('GET /api/sites/shared — 91-candidate chunk boundary (S5 T5.6)', () =
     // Still 2 post-auth requests: 91 ids → 2 row-chunk statements in ONE batch.
     expect(db.counters.loose).toBe(1)
     expect(db.counters.batches).toBe(2)
+  })
+})
+
+// S4 — /shared is the one feed that binds an id LIST, so it is the only place where folding another
+// correlated scalar into siteFeedColumns can walk into D1's 100-bind ceiling. Before the starred
+// flag the statement sat at 90 ids + 8 audio binds = 98 of 100; +1 for the caller's id put it at 99
+// — passing, but by accident. These pin the budget as a measured property with explicit headroom,
+// so the NEXT fold fails here instead of at 101 in production.
+describe('GET /api/sites/shared — D1 bind budget (S4)', () => {
+  /** `n` sites in a fresh space, every one directly shared with `viewer`. */
+  async function seedSharedSites(db: RouteApp['db'], viewer: string, n: number) {
+    await seedUser(db, { id: 'many-owner', email: 'many-owner@e.com' })
+    await seedSpace(db, { id: 'many', slug: 'many', createdBy: 'many-owner' })
+    for (let i = 0; i < n; i++) {
+      const id = await seedSite(db, {
+        spaceId: 'many',
+        ownerId: 'many-owner',
+        slug: `s${i}`,
+        visibility: 'private',
+        createdAt: at(i),
+      })
+      await seedUserShare(db, id, viewer)
+    }
+  }
+
+  test('a full chunk of shared sites keeps every statement under the cap WITH headroom', async () => {
+    const { app, env, db, kv } = makeRouteApp()
+    await mintUser(db, kv, 'me', { email: 'me@e.com' })
+    // One more than a chunk, so the chunking path itself runs (2 statements, one of them full).
+    await seedSharedSites(db, 'me', FEED_ID_CHUNK + 1)
+    db.resetCounters()
+
+    const rows = (await app.request('/api/sites/shared', { headers: auth('me') }, env).then((r) => r.json())) as {
+      id: string
+    }[]
+    expect(rows).toHaveLength(FEED_ID_CHUNK + 1)
+    // The hard cap is a throw in the harness; this is the SOFT budget — room left for one more
+    // correlated scalar of the audio kind, which is exactly what ran out here.
+    expect(db.peakBinds()).toBeLessThanOrEqual(D1_MAX_BOUND_PARAMETERS - FEED_BIND_MARGIN)
+    expect(postAuthRequests(db)).toBe(2)
   })
 })

@@ -4,6 +4,14 @@ import type { Release } from './bake'
 
 export const RELEASES: Release[] = [
   {
+    "slug": "star-a-page",
+    "title": "Star a page",
+    "image": "star-a-page.png",
+    "date": "2026-07-29T18:00:00.000Z",
+    "featured": true,
+    "bodyHtml": "<p>The page you keep hunting for in search is now one click away. Hit the <strong>star</strong> on any page — from a row on your dashboard or from the top bar while you&#39;re reading it — and it pins to a new <strong>Starred</strong> tab.</p>\n<ul>\n<li><strong>Star from wherever you are</strong> — the row on the dashboard, or the top bar of the page you&#39;re already reading</li>\n<li><strong>Starred is always there</strong>, second tab along, so you can find it before you&#39;ve starred anything</li>\n<li><strong>Newest star first</strong> — the tab is ordered by when <em>you</em> pinned each page, not when it was created</li>\n<li><strong>Your stars are yours.</strong> Nobody can see what you&#39;ve starred, and starring never changes who can open a page</li>\n<li><strong>If you can open it, you can star it</strong> — including your own private pages and private pages someone shared with you</li>\n</ul>\n<p>Star a page you later lose access to and it quietly drops out of the tab — if you get access again, it comes right back.</p>\n"
+  },
+  {
     "slug": "live-data",
     "title": "Live data on any page",
     "image": "live-data.png",
@@ -53,4 +61,4 @@ export const RELEASES: Release[] = [
   }
 ]
 
-export const NEWEST_RELEASE_DATE: string | null = "2026-07-29T09:00:00.000Z"
+export const NEWEST_RELEASE_DATE: string | null = "2026-07-29T18:00:00.000Z"

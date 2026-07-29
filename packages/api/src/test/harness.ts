@@ -22,6 +22,7 @@ import {
   files,
   notifications,
   siteGroupShares,
+  siteStars,
   siteUserShares,
   sites,
   spaceMembers,
@@ -51,6 +52,9 @@ const MIGRATIONS = [
   'drizzle/0018_site_description.sql',
   'drizzle/0019_files_etag.sql',
   'drizzle/0020_change_log.sql',
+  'drizzle/0021_user_avatar.sql',
+  'drizzle/0022_sites_feed_index.sql',
+  'drizzle/0023_site_stars.sql',
 ]
 
 // --- S0 recorder: one shared, ordered timeline across D1/R2/cache mocks so perf specs can
@@ -90,7 +94,16 @@ export type D1Counters = {
   update: number
   delete: number
 }
-export type HarnessDb = DrizzleD1Database & { counters: D1Counters; resetCounters: () => void }
+/** `peakBinds()` is the largest bound-parameter count any single statement has used since the last
+ *  `resetCounters()`. The cap below is a hard throw; this is what lets a spec assert HEADROOM —
+ *  that a feed folding correlated scalars into a chunked `inArray` still has room for the next one,
+ *  instead of discovering it at 101 in production. Kept OFF `counters` so it can't disturb the
+ *  exact-shape assertions specs make on the op counts. */
+export type HarnessDb = DrizzleD1Database & {
+  counters: D1Counters
+  resetCounters: () => void
+  peakBinds: () => number
+}
 
 // D1 rejects statements binding more than 100 parameters; bun:sqlite happily accepts them,
 // which would let an over-wide `inArray` pass in tests and blow up in production. Enforced
@@ -218,10 +231,12 @@ export function makeDb(recorder?: Recorder): HarnessDb {
   }
 
   const counters = newD1Counters()
+  let peakBinds = 0
   let inBatch = false
 
   const observe = (sql: string, args: unknown[]) => {
     const bound = bindCount(args)
+    peakBinds = Math.max(peakBinds, bound)
     if (bound > D1_BIND_CAP)
       throw new Error(`D1 bind-parameter cap exceeded: statement binds ${bound} values (D1 max is ${D1_BIND_CAP})`)
     const verb = WRITE_VERB_RE.exec(sql)?.[1]?.toLowerCase() as 'insert' | 'update' | 'delete' | undefined
@@ -271,7 +286,11 @@ export function makeDb(recorder?: Recorder): HarnessDb {
     }
   }
   db.counters = counters
-  db.resetCounters = () => Object.assign(counters, newD1Counters())
+  db.resetCounters = () => {
+    Object.assign(counters, newD1Counters())
+    peakBinds = 0
+  }
+  db.peakBinds = () => peakBinds
   return db
 }
 
@@ -284,7 +303,9 @@ const nextId = (prefix: string) => `${prefix}-${++seedSeq}`
 /** Insert a user; returns its id. Defaults: member role, derived email. */
 export async function seedUser(db: DrizzleD1Database, o: Partial<NewUser> = {}): Promise<string> {
   const id = o.id ?? nextId('u')
-  await db.insert(users).values({ id, email: o.email ?? `${id}@example.com`, name: o.name ?? null, role: o.role ?? 'member' })
+  await db
+    .insert(users)
+    .values({ id, email: o.email ?? `${id}@example.com`, name: o.name ?? null, role: o.role ?? 'member', avatarUrl: o.avatarUrl ?? null })
   return id
 }
 
@@ -334,6 +355,17 @@ export async function seedUserShare(
   role: 'viewer' | 'editor' = 'viewer',
 ): Promise<void> {
   await db.insert(siteUserShares).values({ siteId, userId, role })
+}
+
+/** Star a site as a user. `createdAt` is passable so feed-ordering specs can pin an exact
+ *  star timeline (the Starred feed orders by star time, not site time). */
+export async function seedStar(
+  db: DrizzleD1Database,
+  siteId: string,
+  userId: string,
+  createdAt?: string,
+): Promise<void> {
+  await db.insert(siteStars).values({ siteId, userId, ...(createdAt !== undefined && { createdAt }) })
 }
 
 /** Grant every member of a (group) space a share on a site. */
