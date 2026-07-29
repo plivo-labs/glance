@@ -19,6 +19,7 @@ import { whatsNew } from './routes/whats-new'
 import { sites } from './routes/sites'
 import { slackEvents } from './routes/slack-events'
 import { spaces } from './routes/spaces'
+import { stars } from './routes/stars'
 import { upload } from './routes/upload'
 import { users } from './routes/users'
 import type { AppEnv } from './types'
@@ -101,6 +102,8 @@ app.route('/api/sites', sites)
 app.route('/api/sites', comments)
 // Summaries share the same three-segment isolation as comments and cannot shadow site routes.
 app.route('/api/sites', summary)
+// Same three-segment isolation for the star toggle (/api/sites/:space/:site/star).
+app.route('/api/sites', stars)
 app.route('/api/comments', commentFeed)
 app.route('/api/upload', upload)
 // Session-authenticated mint for shared-backend data tokens (owner → read+write, viewer → read).

@@ -22,6 +22,7 @@ import {
   files,
   notifications,
   siteGroupShares,
+  siteStars,
   siteUserShares,
   sites,
   spaceMembers,
@@ -51,6 +52,7 @@ const MIGRATIONS = [
   'drizzle/0018_site_description.sql',
   'drizzle/0019_files_etag.sql',
   'drizzle/0020_change_log.sql',
+  'drizzle/0021_site_stars.sql',
 ]
 
 // --- S0 recorder: one shared, ordered timeline across D1/R2/cache mocks so perf specs can
@@ -334,6 +336,17 @@ export async function seedUserShare(
   role: 'viewer' | 'editor' = 'viewer',
 ): Promise<void> {
   await db.insert(siteUserShares).values({ siteId, userId, role })
+}
+
+/** Star a site as a user. `createdAt` is passable so feed-ordering specs can pin an exact
+ *  star timeline (the Starred feed orders by star time, not site time). */
+export async function seedStar(
+  db: DrizzleD1Database,
+  siteId: string,
+  userId: string,
+  createdAt?: string,
+): Promise<void> {
+  await db.insert(siteStars).values({ siteId, userId, ...(createdAt !== undefined && { createdAt }) })
 }
 
 /** Grant every member of a (group) space a share on a site. */

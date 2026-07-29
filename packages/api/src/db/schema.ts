@@ -121,6 +121,25 @@ export const siteGroupShares = sqliteTable(
   (t) => [primaryKey({ columns: [t.siteId, t.spaceId] }), index('site_group_shares_space').on(t.spaceId)],
 )
 
+// Per-user "starred" pins on a site — the backing store for the dashboard's Starred tab. The
+// composite PK makes the toggle idempotent BY CONSTRUCTION (a double-click can't double-star), and
+// the userId index serves the feed's own scan (WHERE userId = ? ORDER BY createdAt DESC). Both FKs
+// cascade: a star is a pointer, worthless once either end is gone, so there is no durability case
+// for keeping it the way comments/events keep history. A star row carries NO access meaning —
+// `checkAccess` stays the only authority, re-run at READ time, so a site that later flips to
+// private (or whose share is revoked) drops out of the feed while its row survives for a flip back.
+export const siteStars = sqliteTable(
+  'site_stars',
+  {
+    siteId: text('siteId').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+    userId: text('userId').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    // Orders the Starred feed newest-STAR-first (not newest-site-first) — the whole point of the
+    // tab is "what I pinned most recently", which the site's own createdAt cannot express.
+    createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [primaryKey({ columns: [t.siteId, t.userId] }), index('site_stars_user').on(t.userId)],
+)
+
 // Anchored, threaded review comments on a deployed site's files. A thread anchors to a quote
 // in one file (or to the page); comments are FLAT (one level — no parentId). User FKs are
 // SET NULL so deleting a user never nukes review history; only site/thread deletes cascade.
@@ -331,6 +350,7 @@ export type FileRow = typeof files.$inferSelect
 export type NewFileRow = typeof files.$inferInsert
 export type SiteUserShare = typeof siteUserShares.$inferSelect
 export type SiteGroupShare = typeof siteGroupShares.$inferSelect
+export type SiteStar = typeof siteStars.$inferSelect
 
 export type CommentThread = typeof commentThreads.$inferSelect
 export type NewCommentThread = typeof commentThreads.$inferInsert

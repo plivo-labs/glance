@@ -148,6 +148,13 @@
       "when": 1784600000000,
       "tag": "0020_change_log",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1784700000000,
+      "tag": "0021_site_stars",
+      "breakpoints": true
     }
   ]
 }
