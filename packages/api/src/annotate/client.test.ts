@@ -190,6 +190,17 @@ describe('client.ts — element (pinpoint) capture deleted; ordinary clicks, lin
     expect(elementBox('e1')).toBeNull()
   })
 
+  test('a hover posts no rect batch — nothing moved, so the parent gets no redundant redraw', () => {
+    send({ type: 'glance:paint', anchors: [{ id: 'e1', anchorType: 'element', selector: '#chart' }] })
+    const before = posted.filter((m) => (m as AnyRecord).type === 'glance:anchor-rects').length
+
+    send({ type: 'glance:highlight', ids: ['e1'] })
+    send({ type: 'glance:highlight', ids: [] })
+
+    expect(posted.filter((m) => (m as AnyRecord).type === 'glance:anchor-rects')).toHaveLength(before)
+    expect(elementBox('e1')).toBeNull() // and the hover still took effect (drawn, then cleared)
+  })
+
   test('a repaint while an element anchor is hovered keeps its box — the hover set is not reflow state', () => {
     send({ type: 'glance:paint', anchors: [{ id: 'e1', anchorType: 'element', selector: '#chart' }] })
     send({ type: 'glance:highlight', ids: ['e1'] })

@@ -131,11 +131,15 @@ let lastResolutionKey = ''
 /** Re-resolve every element anchor and lay a box over each; report resolved vs orphaned so the
  *  parent can flag anchors whose element is gone. Runs on every reflow frame (repositioning boxes),
  *  but the resolution message is posted ONLY when the resolved/orphaned SET changes — otherwise a
- *  scroll would spam the parent with an identical message every frame. */
-function reposition(): void {
+ *  scroll would spam the parent with an identical message every frame.
+ *
+ *  `emit` is false for the one caller that changes what is DRAWN without moving anything: a hover.
+ *  Nothing has reflowed, so re-sending the rects would post a byte-identical batch (and re-render
+ *  the parent's badge overlay) on every pointerenter and every pointerleave. */
+function reposition(emit = true): void {
   const root = ensureOverlayRoot()
   repositionPending(root)
-  emitRects(textAnchors, elementAnchors, document)
+  if (emit) emitRects(textAnchors, elementAnchors, document)
   for (const b of Array.from(root.querySelectorAll('[data-glance-anchor]'))) b.remove()
   if (elementAnchors.length === 0) {
     lastResolutionKey = ''
@@ -251,7 +255,7 @@ function paintTexts(anchors: PaintAnchor[]): void {
 function highlight(ids: string[]): void {
   applyRanges(highlightRanges(textAnchors, ids, document))
   outlinedIds = ids
-  reposition()
+  reposition(false)
 }
 
 // --- command dispatch (parent-driven) ----------------------------------------------------
