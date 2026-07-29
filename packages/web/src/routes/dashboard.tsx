@@ -26,6 +26,7 @@ import {
 } from '@/components/siteColumns'
 import { SitesTable } from '@/components/SitesTable'
 import { SortableTable, type Column } from '@/components/SortableTable'
+import { UserAvatar } from '@/components/UserAvatar'
 import { EmptyState, Spinner } from '@/components/states'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -371,7 +372,12 @@ const TEAM_COLUMNS: Column<TeamUpload>[] = [
     label: 'Shipped by',
     compare: (a, b) => who(a).localeCompare(who(b)),
     cellClassName: 'max-w-[12rem]',
-    render: (u) => <span className="block truncate text-sm">{who(u)}</span>,
+    render: (u) => (
+      <span className="flex items-center gap-2">
+        <UserAvatar userId={u.uploaderId} name={u.uploaderName} email={u.uploaderEmail} className="size-5" />
+        <span className="truncate text-sm">{who(u)}</span>
+      </span>
+    ),
   },
   updatedColumn('when', 'Updated'),
   actionsColumn((u) => <OpenLinkButton url={u.url} />),
@@ -417,6 +423,7 @@ function CommentsFeed({ comments }: { comments: CommentFeedItem[] }) {
               <span className="mt-0.5 w-16 shrink-0 rounded bg-muted px-1.5 py-0.5 text-center font-mono text-[10px] text-muted-foreground">
                 {item.kind}
               </span>
+              <UserAvatar userId={item.actorId} name={item.actorName} className="size-6" />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm">
                   <span className="font-medium">{v.author}</span>

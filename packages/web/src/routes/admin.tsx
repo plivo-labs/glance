@@ -24,6 +24,7 @@ import {
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { EmptyState, PageHeader, SectionHeader, Spinner } from '@/components/states'
+import { UserAvatar } from '@/components/UserAvatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -637,8 +638,13 @@ function UsersPanel({ users }: { users: AdminUser[] }) {
           {users.map((u) => (
             <TableRow key={u.id}>
               <TableCell>
-                <div className="font-medium">{u.name ?? u.email}</div>
-                <div className="font-mono text-xs text-muted-foreground">{u.email}</div>
+                <div className="flex items-center gap-2.5">
+                  <UserAvatar userId={u.id} name={u.name} email={u.email} className="size-8" />
+                  <div>
+                    <div className="font-medium">{u.name ?? u.email}</div>
+                    <div className="font-mono text-xs text-muted-foreground">{u.email}</div>
+                  </div>
+                </div>
               </TableCell>
               <TableCell>
                 {u.role === 'superadmin' ? (

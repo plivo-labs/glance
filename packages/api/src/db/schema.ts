@@ -8,6 +8,11 @@ export const users = sqliteTable('users', {
   email: text('email').notNull().unique(),
   name: text('name'),
   googleId: text('googleId').unique(),
+  // Google profile photo URL from the OAuth id_token's `picture` claim, refreshed on every login.
+  // Never rendered directly by the browser — the avatar route proxies it same-origin (see
+  // routes/avatars.ts), so this column is the ONLY place a googleusercontent URL is held.
+  // Null for users who predate this column until their next Google login, and for bootstrap users.
+  avatarUrl: text('avatarUrl'),
   role: text('role', { enum: ['member', 'superadmin'] }).notNull().default('member'),
   createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
   // "What's New" read watermark: the ISO-8601 UTC date through which this user has seen release

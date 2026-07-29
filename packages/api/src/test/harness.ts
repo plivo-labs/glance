@@ -51,6 +51,7 @@ const MIGRATIONS = [
   'drizzle/0018_site_description.sql',
   'drizzle/0019_files_etag.sql',
   'drizzle/0020_change_log.sql',
+  'drizzle/0021_user_avatar.sql',
 ]
 
 // --- S0 recorder: one shared, ordered timeline across D1/R2/cache mocks so perf specs can
@@ -284,7 +285,9 @@ const nextId = (prefix: string) => `${prefix}-${++seedSeq}`
 /** Insert a user; returns its id. Defaults: member role, derived email. */
 export async function seedUser(db: DrizzleD1Database, o: Partial<NewUser> = {}): Promise<string> {
   const id = o.id ?? nextId('u')
-  await db.insert(users).values({ id, email: o.email ?? `${id}@example.com`, name: o.name ?? null, role: o.role ?? 'member' })
+  await db
+    .insert(users)
+    .values({ id, email: o.email ?? `${id}@example.com`, name: o.name ?? null, role: o.role ?? 'member', avatarUrl: o.avatarUrl ?? null })
   return id
 }
 

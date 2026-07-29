@@ -352,6 +352,7 @@ describe('owned comment feed', () => {
         kind: 'owned',
         id: commentId,
         snippet: 'A comment for the owner',
+        actorId: 'author',
         actorName: 'Other Author',
         spaceSlug: 'owned-space',
         siteSlug: 'owned-site',
