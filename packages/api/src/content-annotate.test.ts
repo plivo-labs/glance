@@ -83,14 +83,37 @@ describe('annotate injection', () => {
     expect(res.headers.get('cache-control')).toBe('no-store')
   })
 
-  test('markdown-not-injected: markdown keeps script-src none, no annotate script', async () => {
+  test('markdown-injected-with-flag: rendered markdown gets the client under a nonce CSP', async () => {
     const { app, db, r2, env } = setup()
     const { token } = await gatedSite(db, r2, { path: 'index.md', text: '# Title\n\nbody', mimeType: 'text/markdown' })
     const res = await app.request(`/_t/${token}/sam/site/?glance_annotate=1`, {}, env)
     const body = await res.text()
+    expect(body).toContain('/_glance/annotate.js')
+    expect(body).toContain('"filePath":"index.md"')
+    expect(body).toContain('<h1>Title</h1>') // still the RENDERED doc, not raw source
+    // The two injected tags carry the response nonce; the CSP admits that nonce and nothing else,
+    // so any script the markdown itself tried to smuggle in stays blocked.
+    const csp = res.headers.get('content-security-policy') ?? ''
+    const nonce = /script-src 'nonce-([a-f0-9]+)'/.exec(csp)?.[1]
+    expect(nonce).toBeDefined()
+    expect(body).toContain(`<script nonce="${nonce}" src="/_glance/annotate.js`)
+    expect(body).toContain(`<script nonce="${nonce}">window.__GLANCE__=`)
+    expect(csp).not.toContain("'unsafe-inline'; script") // no blanket inline-script escape hatch
+    expect(csp).toContain("style-src 'self' 'unsafe-inline'") // the annotate stylesheet loads
+    // #54: the markdown branch must also send nosniff (parity with the html branch).
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff')
+    // Per-request nonce → these bytes must never be cached or revalidated.
+    expect(res.headers.get('cache-control')).toBe('no-store')
+    expect(res.headers.get('etag')).toBeNull()
+  })
+
+  test('markdown-without-flag-stays-strict: no flag → script-src none, nothing injected', async () => {
+    const { app, db, r2, env } = setup()
+    const { token } = await gatedSite(db, r2, { path: 'index.md', text: '# Title\n\nbody', mimeType: 'text/markdown' })
+    const res = await app.request(`/_t/${token}/sam/site/`, {}, env)
+    const body = await res.text()
     expect(body).not.toContain('/_glance/annotate.js')
     expect(res.headers.get('content-security-policy')).toContain("script-src 'none'")
-    // #54: the markdown branch must also send nosniff (parity with the html branch).
     expect(res.headers.get('x-content-type-options')).toBe('nosniff')
   })
 

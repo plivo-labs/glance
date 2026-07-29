@@ -46,6 +46,10 @@ export interface Bindings {
   // Distinct from CONTENT_TOKEN_SECRET so a leaked content (view) token can't verify as a data
   // token. When unset, the /api/_data surface is inert (404) — the feature is opt-in per deploy.
   DATA_TOKEN_SECRET?: string
+  // Optional: one hibernating Durable Object per site, fanning out glance.db change events to
+  // subscribed pages. Typed optional (like AI) so a binding-less deploy — and every test — still
+  // serves mutations: the change_log is written either way, only the live push is skipped.
+  SITE_ROOM?: DurableObjectNamespace
   APP_URL: string
   CONTENT_URL: string
   ALLOWED_HD: string

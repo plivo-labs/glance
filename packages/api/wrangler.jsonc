@@ -35,6 +35,13 @@
       "migrations_dir": "drizzle"
     }
   ],
+  // One hibernating Durable Object per site, fanning out glance.db change events to subscribed
+  // pages (src/realtime/site-room.ts, re-exported from src/index.ts so class_name resolves).
+  // new_sqlite_classes, NOT new_classes: KV-backed Durable Objects are not on the free plan.
+  "durable_objects": {
+    "bindings": [{ "name": "SITE_ROOM", "class_name": "SiteRoom" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SiteRoom"] }],
   "r2_buckets": [{ "binding": "GLANCE_FILES", "bucket_name": "glance-files" }],
   "kv_namespaces": [{ "binding": "GLANCE_SESSIONS", "id": "YOUR_KV_NAMESPACE_ID" }], // EDIT: replace with your own (see README)
   // Workers AI: server-side voice-comment transcription (Whisper). Optional at runtime (AI?: Ai) —

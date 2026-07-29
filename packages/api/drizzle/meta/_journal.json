@@ -145,8 +145,15 @@
     {
       "idx": 20,
       "version": "6",
+      "when": 1784600000000,
+      "tag": "0020_change_log",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
       "when": 1785600000000,
-      "tag": "0020_user_avatar",
+      "tag": "0021_user_avatar",
       "breakpoints": true
     }
   ]
