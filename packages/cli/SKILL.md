@@ -230,6 +230,16 @@ curl -H "Authorization: Bearer $TOKEN" -X POST -d '{"text":"hi"}' \
 # also: GET /api/_data/notes (list) · GET/PUT/DELETE /api/_data/notes/<id>
 ```
 
+Two things bite when the writer is a server rather than a person:
+
+- **Write to a `shared-…` collection, or you are the only one who will ever see it.** A document
+  belongs to whoever wrote it, and the token above is *yours* — so a cron job writing to `metrics`
+  fills a collection only you can read, and every teammate's dashboard sits empty. `shared-metrics`
+  is readable by every viewer of the site. This is the single most common way a server-fed page
+  looks broken.
+- **Mint per run, not once.** The token lives 5 minutes; a long job or a daemon must re-mint (a
+  401 means it aged out). Don't bake one into an env var or a config file.
+
 Rules of thumb: documents are JSON objects up to 100KB, grouped into named collections ·
 **anyone viewing the site can add** documents (attributed to them) — so forms and surveys just
 work · by default you only see documents **you** created; name a collection `shared-…` and every
