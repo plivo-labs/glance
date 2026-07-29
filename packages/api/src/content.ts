@@ -232,10 +232,21 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
     if (!read) return notFound(c)
     await view()
     const html = await markdown.parse(await new Response(read.body).text())
-    const res = c.html(renderMarkdownDoc(path, html), 200, {
-      'content-security-policy': markdownCsp(frameAncestors),
+    // Annotate mode applies to rendered markdown too — select-to-comment and element pinpointing
+    // work against the rendered DOM exactly like uploaded HTML. Markdown's baseline CSP forbids
+    // scripts outright, so the injected pair runs under a PER-RESPONSE nonce: our two tags are
+    // admitted by name and nothing else is (raw HTML in the source is escaped anyway). Nonce'd
+    // bytes differ per request, hence no-store and no ETag.
+    const annotate = c.req.query('glance_annotate') === '1'
+    const nonce = annotate ? crypto.randomUUID().replace(/-/g, '') : null
+    const doc = nonce
+      ? injectAnnotate(renderMarkdownDoc(path, html), { siteId: siteRow.id, filePath: path, appOrigin: c.env.APP_URL }, nonce)
+      : renderMarkdownDoc(path, html)
+    const res = c.html(doc, 200, {
+      'content-security-policy': markdownCsp(frameAncestors, nonce),
       'x-content-type-options': 'nosniff',
       'referrer-policy': 'no-referrer',
+      ...(nonce ? { 'cache-control': 'no-store' } : {}),
     })
     return openExternalLinksInNewTab(res, selfOrigin)
   }
@@ -437,13 +448,20 @@ export function isHtmlFile(path: string): boolean {
 
 /** Inject the annotate client + boot payload into an HTML document. The payload is the trusted
  *  server-resolved context (siteId, resolved files.path, parent origin); `<` is escaped so a
- *  path can't break out of the inline script. Inserted before </body> (else </head>, else end). */
-export function injectAnnotate(html: string, payload: { siteId: string; filePath: string; appOrigin: string }): string {
+ *  path can't break out of the inline script. Inserted before </body> (else </head>, else end).
+ *  `nonce` (rendered markdown only) stamps both script tags so they pass that branch's
+ *  script-src 'nonce-…' CSP; uploaded HTML passes null and keeps its permissive policy. */
+export function injectAnnotate(
+  html: string,
+  payload: { siteId: string; filePath: string; appOrigin: string },
+  nonce: string | null = null,
+): string {
   const json = JSON.stringify(payload).replace(/</g, '\\u003c')
+  const n = nonce ? ` nonce="${nonce}"` : ''
   const tags =
     `<link rel="stylesheet" href="/_glance/annotate.css?v=${ANNOTATE_VERSION}">` +
-    `<script>window.__GLANCE__=${json}</script>` +
-    `<script src="/_glance/annotate.js?v=${ANNOTATE_VERSION}" defer></script>`
+    `<script${n}>window.__GLANCE__=${json}</script>` +
+    `<script${n} src="/_glance/annotate.js?v=${ANNOTATE_VERSION}" defer></script>`
   // Replacement FUNCTIONS, not strings: `tags` embeds a user-controlled filePath, and `$&`/`$1`/`$$`
   // in a replacement STRING are special (they'd corrupt output). A function's return is used verbatim.
   if (html.includes('</body>')) return html.replace('</body>', () => `${tags}</body>`)
@@ -526,13 +544,16 @@ export { escapeHtml, markdown } from './lib/markdown'
 // styles are allowed because renderMarkdownDoc inlines its stylesheet; images may be
 // self-hosted or data: (markdown can embed both). frame-ancestors is preserved so the
 // app can still iframe the rendered doc.
-function markdownCsp(frameAncestors: string): string {
+// In annotate mode a `nonce` is supplied: script-src then admits EXACTLY the two injected tags
+// (never 'unsafe-inline' — an unnonced script in the document still can't run), and style-src
+// additionally allows 'self' so /_glance/annotate.css loads alongside the inlined shell styles.
+function markdownCsp(frameAncestors: string, nonce: string | null = null): string {
   return [
     "default-src 'none'",
     "img-src 'self' data:",
-    "style-src 'unsafe-inline'",
+    nonce ? "style-src 'self' 'unsafe-inline'" : "style-src 'unsafe-inline'",
     "font-src 'self'",
-    "script-src 'none'",
+    nonce ? `script-src 'nonce-${nonce}'` : "script-src 'none'",
     "object-src 'none'",
     "base-uri 'none'",
     frameAncestors,
