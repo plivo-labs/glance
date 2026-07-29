@@ -2,6 +2,7 @@
 // helper every multi-statement round trip goes through.
 import type { BatchItem, BatchResponse } from 'drizzle-orm/batch'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
+import { AUDIO_EXTENSIONS } from './mime'
 
 // D1 caps a single statement at 100 bound parameters, so an `inArray` over a large id list must
 // be split into chunks and the per-chunk results unioned — otherwise a large member-space /
@@ -9,6 +10,17 @@ import type { DrizzleD1Database } from 'drizzle-orm/d1'
 // (e.g. pureAudioSql's per-audio-extension binds).
 export const D1_MAX_BOUND_PARAMETERS = 100
 export const D1_MAX_IN = 90
+
+// Chunk size for a SITE FEED that binds an id list — the feeds whose statement carries BOTH an
+// `inArray` and the correlated scalars in siteFeedColumns (/shared, /starred). That combination is
+// the only place D1's cap actually bites, so the budget is spent explicitly here rather than
+// discovered at 101 in production:
+//   ids  +  pureAudioSql (one LIKE pattern per audio extension)  +  isStarredSql (the caller's id)
+// At D1_MAX_IN the sum was 90 + 8 + 1 = 99 — under the cap, but only by one. The margin is the
+// point: it buys room for the next scalar fold, and a spec measures the peak (sites-shared.test.ts).
+export const FEED_BIND_MARGIN = 10
+const FEED_SCALAR_BINDS = AUDIO_EXTENSIONS.size + 1 // pureAudioSql + isStarredSql
+export const FEED_ID_CHUNK = Math.min(D1_MAX_IN, D1_MAX_BOUND_PARAMETERS - FEED_SCALAR_BINDS - FEED_BIND_MARGIN)
 
 /** Split xs into runs of at most `size` (the last run may be shorter). */
 export function chunk<T>(xs: T[], size: number): T[][] {

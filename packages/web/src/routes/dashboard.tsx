@@ -127,14 +127,15 @@ function useSetTabParam(staleTab: boolean): (t: TabId) => void {
   }
 }
 
-// Sites shared with me — same table shell as Your sites, minus the owner-only actions.
-const SHARED_COLUMNS = feedColumns<SiteSummary>((s) => <CopyOpenActions url={s.url} />)
+// The read-only feed table — same shell as Your sites, minus the owner-only actions. Shared by
+// the Shared-with-me and Starred tabs; neither owns the rows, so neither gets owner actions.
+const FEED_COLUMNS = feedColumns<SiteSummary>((s) => <CopyOpenActions url={s.url} />)
 
-function SharedSitesTable({ sites }: { sites: SiteSummary[] }) {
+function FeedSitesTable({ sites }: { sites: SiteSummary[] }) {
   return (
     <SortableTable
       rows={sites}
-      columns={SHARED_COLUMNS}
+      columns={FEED_COLUMNS}
       getRowKey={(s) => s.id}
       initialSort={{ key: 'created', dir: 'desc' }}
     />
@@ -283,7 +284,7 @@ function TabBody({ tab }: { tab: DashboardTab }) {
                 description="Star any team, group or shared page to pin it here."
               />
             ) : (
-              <SharedSitesTable sites={rows} />
+              <FeedSitesTable sites={rows} />
             )
           }
         </TabPanel>
@@ -291,7 +292,7 @@ function TabBody({ tab }: { tab: DashboardTab }) {
     // Shared and Spaces exist only resolved-with-rows (feedState), so they render rows directly —
     // no loading/error states to handle. New space lives in the top New menu.
     case 'shared':
-      return <SharedSitesTable sites={tab.rows} />
+      return <FeedSitesTable sites={tab.rows} />
     case 'spaces':
       return <SpacesTable spaces={tab.rows} />
     case 'team':

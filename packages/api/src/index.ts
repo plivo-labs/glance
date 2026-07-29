@@ -99,7 +99,10 @@ app.route('/api/spaces', spaces)
 app.route('/api/sites', sites)
 // Stars (GET /starred, POST|DELETE /:space/:site/star) mount BEFORE comments/summary: those two
 // groups each register `use('*', requireAuth)` across /api/sites/*, and Hono runs middleware in
-// registration order — anything mounted after them pays their auth reads on top of its own.
+// registration order — anything mounted after them pays their auth reads on top of its own. The
+// zero-star spec in sites-starred.test.ts pins /starred at ONE post-auth D1 request, but it runs
+// against test/route-fixtures.ts, which MIRRORS this order rather than importing it — so a reorder
+// here must be made there too, or the spec keeps passing while production regresses.
 app.route('/api/sites', stars)
 // Comments live under /api/sites/:space/:site/comments — three segments, so no collision with
 // the two-segment site routes above. Mounted separately to keep the comments surface isolated.

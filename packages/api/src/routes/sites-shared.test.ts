@@ -2,8 +2,7 @@ import { and, eq } from 'drizzle-orm'
 import { describe, expect, test } from 'bun:test'
 import type { Hono } from 'hono'
 import { siteUserShares } from '../db/schema'
-import { D1_MAX_BOUND_PARAMETERS } from '../lib/d1'
-import { FEED_BIND_MARGIN, SHARED_FEED_CHUNK } from './sites'
+import { D1_MAX_BOUND_PARAMETERS, FEED_BIND_MARGIN, FEED_ID_CHUNK } from '../lib/d1'
 import { seedFile, seedGroupShare, seedMember, seedSite, seedSpace, seedUser, seedUserShare } from '../test/harness'
 import { at, auth, makeRouteApp, mintUser, postAuthRequests, type RouteApp } from '../test/route-fixtures'
 import type { AppEnv } from '../types'
@@ -240,13 +239,13 @@ describe('GET /api/sites/shared — D1 bind budget (S4)', () => {
     const { app, env, db, kv } = makeRouteApp()
     await mintUser(db, kv, 'me', { email: 'me@e.com' })
     // One more than a chunk, so the chunking path itself runs (2 statements, one of them full).
-    await seedSharedSites(db, 'me', SHARED_FEED_CHUNK + 1)
+    await seedSharedSites(db, 'me', FEED_ID_CHUNK + 1)
     db.resetCounters()
 
     const rows = (await app.request('/api/sites/shared', { headers: auth('me') }, env).then((r) => r.json())) as {
       id: string
     }[]
-    expect(rows).toHaveLength(SHARED_FEED_CHUNK + 1)
+    expect(rows).toHaveLength(FEED_ID_CHUNK + 1)
     // The hard cap is a throw in the harness; this is the SOFT budget — room left for one more
     // correlated scalar of the audio kind, which is exactly what ran out here.
     expect(db.peakBinds()).toBeLessThanOrEqual(D1_MAX_BOUND_PARAMETERS - FEED_BIND_MARGIN)

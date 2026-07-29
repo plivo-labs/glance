@@ -1,25 +1,24 @@
-import { and, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 import { foldMemberSpaceIds, foldSharedSiteRoles, memberSpaceIdsStmt, sharedSiteRoleStmts } from '../db/repo'
 import { siteStars, sites as sitesTable, spaces } from '../db/schema'
 import { checkAccess } from '../lib/access'
-import { batchAll, chunk } from '../lib/d1'
+import { batchAll, chunk, FEED_ID_CHUNK } from '../lib/d1'
 import { siteFeedColumns, toFeedRow } from '../lib/site-feed'
+import { isStarrable } from '../lib/site-star'
 import type { ResolvedSite } from '../lib/site-access'
 import { fetchAccessFacts, siteAccessFromFacts } from '../lib/site-access'
 import { requireAuth } from '../middleware/auth'
 import type { AppEnv } from '../types'
-import { SHARED_FEED_CHUNK } from './sites'
 
 // Star toggle. Mounted at /api/sites alongside comments/summary, so the 3-segment
 // `/:space/:site/star` path falls through the site routes' own 2-segment matchers.
 
 export const stars = new Hono<AppEnv>()
 
-/** Resolve the site and authorize the caller, or hand back the response to return. The route adds
- *  exactly ONE rule to `checkAccess`: a `private` site is not starrable, not even by its owner — a
- *  star pins something you come back to through a shared surface, and private has none. Everything
- *  else (404 before 403, archived → 410) is checkAccess's precedence, inherited not re-implemented. */
+/** Resolve the site and authorize the caller, or hand back the response to return. `checkAccess`'s
+ *  precedence (404 before 403, archived → 410) is inherited, not re-implemented; the only rule this
+ *  route adds is `isStarrable`. */
 async function starrable(c: Context<AppEnv>): Promise<ResolvedSite | Response> {
   const user = c.get('user')
   const { space, site: siteSlug } = c.req.param()
@@ -27,7 +26,7 @@ async function starrable(c: Context<AppEnv>): Promise<ResolvedSite | Response> {
   const { site, access } = siteAccessFromFacts(facts, user)
   if (!site) return c.json({ error: 'not found' }, 404)
   if (!access.ok) return c.json({ error: 'forbidden' }, access.status)
-  if (site.visibility === 'private') return c.json({ error: 'private sites cannot be starred' }, 400)
+  if (!isStarrable(site)) return c.json({ error: 'private sites cannot be starred' }, 400)
   return site
 }
 
@@ -37,15 +36,17 @@ async function starrable(c: Context<AppEnv>): Promise<ResolvedSite | Response> {
 // A star row grants NOTHING. Reach is re-decided HERE, at read time, by the same `checkAccess`
 // every other surface runs — over membership/share sets precomputed in the first batch, so the
 // pass stays O(rows) rather than a per-row lookup. That is what lets a site you starred and then
-// lost access to simply vanish from the feed while its row waits for a flip back. `private` is
-// excluded on top of checkAccess: the toggle refuses to create such a star, and an owner's own
-// private site would otherwise pass the check and reappear here after a visibility flip.
+// lost access to simply vanish from the feed while its row waits for a flip back. `isStarrable`
+// is applied on top of checkAccess — see its docstring for why an owner's own private site needs
+// it here as well as on the toggle.
 stars.get('/starred', requireAuth, async (c) => {
   const user = c.get('user')
   const db = c.get('db')
   const [starRows, memberRows, direct, viaGroup] = await batchAll(db, [
     db
-      .select({ siteId: siteStars.siteId, starredAt: sql<string>`${siteStars.createdAt}`.as('starredAt') })
+      // Only the id is read: the ORDER BY puts the rows in star order and the row INDEX carries it
+      // forward, so selecting the timestamp too would just be a wider read for the same answer.
+      .select({ siteId: siteStars.siteId })
       .from(siteStars)
       .where(eq(siteStars.userId, user.id))
       .orderBy(desc(siteStars.createdAt)),
@@ -59,7 +60,7 @@ stars.get('/starred', requireAuth, async (c) => {
   const shared = new Set(foldSharedSiteRoles(direct, viaGroup).keys())
   const rowChunks = await batchAll(
     db,
-    chunk([...order.keys()], SHARED_FEED_CHUNK).map((ids) =>
+    chunk([...order.keys()], FEED_ID_CHUNK).map((ids) =>
       db
         .select({ ...siteFeedColumns(user.id), spaceId: sitesTable.spaceId, ownerId: sitesTable.ownerId })
         .from(sitesTable)
@@ -70,9 +71,7 @@ stars.get('/starred', requireAuth, async (c) => {
   const visible = rowChunks
     .flat()
     .filter(
-      (r) =>
-        r.visibility !== 'private' &&
-        checkAccess(r, user, memberSpaces.has(r.spaceId), shared.has(r.id)).ok,
+      (r) => isStarrable(r) && checkAccess(r, user, memberSpaces.has(r.spaceId), shared.has(r.id)).ok,
     )
     // Per-chunk order is lost on flatten; re-impose the STAR order (newest star first).
     .sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0))
