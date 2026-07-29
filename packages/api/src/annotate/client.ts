@@ -15,14 +15,12 @@
 
 import { withAnnotateParam } from './linkRewrite'
 import type { TextContext } from '../lib/anchor'
-import { computeSelector, describeElement, findRange, isPageSpanning, resolveSelector, selectionContext } from './locator'
+import { computeSelector, describeElement, findRange, isPageSpanning, resolveSelector } from './locator'
+import { installSelectionCapture, type Rect } from './selection'
 
 type Boot = { siteId: string; filePath: string; appOrigin: string }
 type Mode = 'read' | 'annotate'
 type PaintAnchor = { id: string; anchorType?: 'text' | 'page' | 'element'; quote?: string; selector?: string; context?: TextContext }
-type Rect = { top: number; left: number; width: number; height: number }
-
-const DEBOUNCE = 150
 
 const boot = (window as unknown as { __GLANCE__?: Boot }).__GLANCE__
 
@@ -42,33 +40,12 @@ const rectOf = (el: Element): Rect => {
   return { top: r.top, left: r.left, width: r.width, height: r.height }
 }
 
-// --- selection capture: emit an intent the parent turns into a composer ------------------
-// Text capture always fires; the parent decides (review-gated) whether to open a composer.
+// --- selection capture: emit an intent the parent turns into a chip -----------------------
+// The capture POLICY (which events commit a selection, when a clear is a transition) lives in
+// selection.ts so it is testable; this is only the wiring. The intent always fires; the parent
+// decides (review-gated) what to do with it.
 
-function captureSelection(): void {
-  const sel = window.getSelection()
-  const quote = sel && !sel.isCollapsed && sel.rangeCount > 0 ? sel.toString().trim() : ''
-  if (!sel || !quote) {
-    toParent({ type: 'glance:select-clear' })
-    return
-  }
-  const range = sel.getRangeAt(0)
-  const box = range.getBoundingClientRect()
-  // The text on either side, captured NOW: the quote alone can't say which occurrence of a
-  // repeated phrase the user meant, and by paint time the selection is long gone.
-  toParent({
-    type: 'glance:select',
-    quote,
-    context: selectionContext(range, document),
-    rect: { top: box.top, left: box.left, width: box.width, height: box.height },
-  })
-}
-
-let debounceTimer = 0
-document.addEventListener('selectionchange', () => {
-  clearTimeout(debounceTimer)
-  debounceTimer = window.setTimeout(captureSelection, DEBOUNCE)
-})
+installSelectionCapture({ doc: document, getSelection: () => window.getSelection(), emit: toParent })
 
 // --- annotate mode: hover-outline + click → suggest an element anchor ---------------------
 // Only active in 'annotate' mode. A live text selection wins over an element click, so quoting a
