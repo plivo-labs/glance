@@ -31,6 +31,9 @@ export function starColumn<T extends SiteSummary>(): Column<T> {
   }
 }
 
+// A starred row should read as the emphasized state, so the UNstarred icon is dimmed rather than
+// the starred one brightened — it sits in the first column of every row and would otherwise pull
+// the eye across a whole table of pages nobody has starred.
 function StarCell({ site }: { site: SiteSummary }) {
   const { starred, toggle } = useStar(site)
   return (
@@ -42,7 +45,7 @@ function StarCell({ site }: { site: SiteSummary }) {
       aria-pressed={starred}
       onClick={toggle}
     >
-      <Star className={starred ? 'fill-primary text-primary' : undefined} />
+      <Star className={starred ? 'fill-primary text-primary' : 'opacity-60'} />
     </Button>
   )
 }

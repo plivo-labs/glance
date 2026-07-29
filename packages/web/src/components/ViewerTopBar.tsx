@@ -106,7 +106,7 @@ export function ViewerTopBar({
             aria-pressed={starred}
             onClick={() => void toggleStar()}
           >
-            <Star className={starred ? 'fill-primary text-primary' : undefined} />
+            <Star className={starred ? 'fill-primary text-primary' : 'opacity-60'} />
           </Button>
         )}
         {/* Fork is deliberately NOT gated on site.isOwner (unlike Share): anyone who can read a
