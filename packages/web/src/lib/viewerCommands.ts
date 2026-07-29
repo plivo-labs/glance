@@ -23,12 +23,11 @@ export function frameViewport(el: { clientWidth: number; clientHeight: number } 
 
 /** Deep-link URL → rail-open decision (slice C1a). `review=1` is baked into ALREADY-SENT Slack
  *  messages and notification-bell links — it must open the rail forever, so it's a permanent
- *  alias here, not a migration. `rail=1` is the newer name matching the split-out `railOpen`
- *  state; either truthy form opens it, so introducing a new param name never silently drops the
- *  old one. Anything else (missing, `review=0`, `review=yes`, …) is not truthy-coerced — only the
- *  documented `1` counts, everything else means "don't open". */
+ *  alias here, not a migration — the param outlived the mode it was named after. Anything else
+ *  (missing, `review=0`, `review=yes`, …) is not truthy-coerced — only the documented `1` counts,
+ *  everything else means "don't open". */
 export function railFromSearch(params: URLSearchParams): boolean {
-  return params.get('review') === '1' || params.get('rail') === '1'
+  return params.get('review') === '1'
 }
 
 /** Which thread a badge click reveals: the FIRST member id that still matches a live thread — not

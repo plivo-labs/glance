@@ -64,17 +64,15 @@ export interface NewThreadInput {
 }
 
 // A pending anchor the viewer holds between "user picked an anchor" and "user submitted the
-// comment" — a text selection, an element pinpoint, or (audio view — no DOM to select in) a bare
-// page anchor. Kept generic so the composer + create path don't branch on anchor kind everywhere.
-export type PendingAnchor =
-  | { kind: 'text'; quote: string; context?: TextContext }
-  | { kind: 'element'; anchor: ElementAnchor }
-  | { kind: 'page' }
+// comment": a text selection (from the popover), or a bare page anchor (the audio view, which has
+// no DOM to select in). No 'element' variant — element comments are dropped as a creation path
+// (RULING, C2a), so existing element THREADS still paint and badge, but nothing composes a new one
+// and a payload for it would be unreachable.
+export type PendingAnchor = { kind: 'text'; quote: string; context?: TextContext } | { kind: 'page' }
 
 /** Pure map: a pending anchor + body → the create payload. Unit-tested (seam S2) so the viewer's
  *  create path needs no browser to verify. */
 export function pendingToInput(filePath: string, body: string, pending: PendingAnchor): NewThreadInput {
-  if (pending.kind === 'element') return { filePath, body, anchorType: 'element', element: pending.anchor }
   if (pending.kind === 'page') return { filePath, body, anchorType: 'page' }
   // `context` is omitted entirely when absent — the server treats an absent key and an unusable one
   // identically, but sending `undefined` would put a null in the JSON body for no reason.

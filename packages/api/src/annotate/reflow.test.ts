@@ -262,7 +262,8 @@ describe('paintTextAnchors — the ONLY seam client.ts is allowed to decide a pa
   // client.test.ts, which drives client.ts's real wiring end-to-end and asserts the DOM highlight
   // stays unset after a paint.
   test('a paint NEVER produces a highlight range, no matter how many anchors resolve', () => {
-    const win = windowWith('<p>alpha sentence.</p><p>beta sentence.</p>')
+    // No document needed: paintTextAnchors' whole contract is that it resolves nothing and returns
+    // no ranges — the DOM it would have searched is beside the point.
     const anchors = [
       { id: 't1', quote: 'alpha sentence.' },
       { id: 't2', quote: 'beta sentence.' },

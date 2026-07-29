@@ -3,9 +3,9 @@
 // BadgeOverlay.test.tsx's mirror-image cases). A click is unchanged — it still scrolls
 // (onFocusAnchor) — but must NEVER be the thing that lights a highlight; that's the bug this
 // slice fixes (a rail-card click used to post glance:highlight([id]) with nothing to clear it).
-import { describe, expect, mock, test } from 'bun:test'
-import { fireEvent, render, screen } from '@testing-library/react'
-import type { Thread } from '@/lib/comments'
+import { describe, expect, mock, spyOn, test } from 'bun:test'
+import { act, fireEvent, render, screen } from '@testing-library/react'
+import { comments, type Thread } from '@/lib/comments'
 import type { Me, ViewerSite } from '@/lib/types'
 import { ThreadCard } from './ThreadCard'
 
@@ -100,5 +100,54 @@ describe('ThreadCard — a click still scrolls, and never lights a persistent hi
     // onHoverThread(['t1']) — the 'focus fires onHoverThread' case above already covers that. In
     // happy-dom, fireEvent.click never moves focus, so asserting "not called" here would only be
     // testing the test harness's lack of focus-follows-click, not the component.
+  })
+})
+
+// GF — A-FAILED-WRITE-PRESERVES-THE-DRAFT, reply path. Composer's own test pins the TEXT half at the
+// component level (a rejected onSubmit keeps the draft); this pins the half ThreadCard owns: `run`
+// toasts and RETHROWS, and the reply handler awaits it, so `setReplying(false)` never runs on a
+// failure. Resolve-on-error here would unmount the composer with the typed reply inside it — the
+// draft would be gone with nothing to retry, and Composer alone cannot prevent that.
+describe('ThreadCard — a failed reply keeps the composer open on its draft', () => {
+  const REPLY = 'the second paragraph contradicts this'
+
+  function openReplyComposer() {
+    const { thread } = renderCard()
+    fireEvent.click(screen.getByRole('button', { name: 'Reply' })) // the low-emphasis text action
+    const textarea = screen.getByPlaceholderText('Reply…') as HTMLTextAreaElement
+    fireEvent.change(textarea, { target: { value: REPLY } })
+    // Both the trigger and the composer's submit are named "Reply"; the trigger is gone once the
+    // composer is open, so the remaining one is the submit.
+    const submit = screen.getByRole('button', { name: 'Reply' }) as HTMLButtonElement
+    return { thread, textarea, submit }
+  }
+
+  test('a rejected reply leaves the composer mounted with the text intact, and retryable', async () => {
+    const { textarea, submit } = openReplyComposer()
+    const reply = spyOn(comments, 'reply').mockImplementation(() => Promise.reject(new Error('write failed')))
+
+    await act(async () => {
+      fireEvent.click(submit)
+    })
+
+    expect(reply).toHaveBeenCalledTimes(1)
+    expect(textarea.isConnected).toBe(true) // setReplying(false) must NOT have run
+    expect(textarea.value).toBe(REPLY)
+    expect(submit.disabled).toBe(false) // busy latch released — the same draft can be sent again
+    reply.mockRestore()
+  })
+
+  test('a resolved reply closes the composer (the other half — proves the test above is not vacuous)', async () => {
+    const { textarea } = openReplyComposer()
+    const submit = screen.getByRole('button', { name: 'Reply' })
+    const reply = spyOn(comments, 'reply').mockImplementation(() => Promise.resolve({ ok: true } as never))
+
+    await act(async () => {
+      fireEvent.click(submit)
+    })
+
+    expect(reply).toHaveBeenCalledTimes(1)
+    expect(textarea.isConnected).toBe(false)
+    reply.mockRestore()
   })
 })

@@ -6,7 +6,6 @@ import type { Me, ViewerSite } from '@/lib/types'
 import { type RevealRequest, shouldReveal } from '@/lib/viewerCommands'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
-import { AnchorChip } from '@/components/review/AnchorChip'
 import { Composer } from '@/components/review/Composer'
 import { ThreadCard } from '@/components/review/ThreadCard'
 
@@ -102,6 +101,7 @@ export function ReviewRail({
   // dropping the scroll. Keying on the primitives makes this effect immune to caller identity
   // churn instead of relying on every current and future caller (e.g. a badge click) to memoize.
   const revealedNonceRef = useRef<number | null>(null)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the primitive deps ARE the fix (above) — depending on the focusRequest object re-runs this on every caller re-render and cancels the pending rAF scroll.
   useEffect(() => {
     const target = focusRequest ? threads.find((t) => t.id === focusRequest.id) : undefined
     if (!focusRequest || !shouldReveal(focusRequest, revealedNonceRef.current, !!target)) return
@@ -144,17 +144,11 @@ export function ReviewRail({
         </Button>
       </header>
 
+      {/* The rail composes PAGE comments only (audio's "Add comment"). A text selection composes in
+          the popover over the content, and element comments no longer exist as a creation path — so
+          there is no anchor preview to draw here, only the composer. */}
       {composing ? (
         <div className="border-b bg-muted/40 p-3">
-          {composing.kind !== 'page' && (
-            <div className="mb-2">
-              {composing.kind === 'element' ? (
-                <AnchorChip tag={composing.anchor.tag} preview={composing.anchor.preview} />
-              ) : (
-                <p className="line-clamp-2 border-primary/40 border-l-2 pl-2 text-muted-foreground text-xs italic">“{composing.quote}”</p>
-              )}
-            </div>
-          )}
           <Composer
             autoFocus
             focusOn={composing}

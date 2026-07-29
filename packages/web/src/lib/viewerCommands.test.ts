@@ -85,11 +85,6 @@ describe('railFromSearch — the ONLY place the deep-link URL→rail decision is
     expect(railFromSearch(new URLSearchParams('review=0'))).toBe(false)
     expect(railFromSearch(new URLSearchParams('review=yes'))).toBe(false)
   })
-
-  test('a newer `rail=1` param also opens it — legacy review=1 keeps working alongside it', () => {
-    expect(railFromSearch(new URLSearchParams('rail=1'))).toBe(true)
-    expect(railFromSearch(new URLSearchParams('review=1'))).toBe(true)
-  })
 })
 
 describe('deepLinkReady — content-kind readiness gate for the ?thread deep link (slice C1b, kills the audio bug)', () => {

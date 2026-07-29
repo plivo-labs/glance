@@ -13,16 +13,6 @@ describe('pendingToInput — pending anchor → NewThreadInput', () => {
     })
   })
 
-  test('an element pending → an element payload', () => {
-    const anchor = { selector: '#chart > svg', tag: 'svg', preview: 'Bar chart', textFallback: 'Revenue' }
-    expect(pendingToInput('index.html', 'wrong axis', { kind: 'element', anchor })).toEqual({
-      filePath: 'index.html',
-      body: 'wrong axis',
-      anchorType: 'element',
-      element: anchor,
-    })
-  })
-
   test('a page pending (audio view — no DOM to anchor to) → a bare page payload, no quote/element', () => {
     expect(pendingToInput('song.mp3', 'love this bridge', { kind: 'page' })).toEqual({
       filePath: 'song.mp3',
@@ -86,6 +76,44 @@ describe('paintAnchors — which threads the viewer paints into the iframe, and 
     const anchor = { selector: '#chart > svg', tag: 'svg', preview: 'Bar chart', textFallback: 'Revenue' }
     const threads = [mkThread({ id: 't1', anchorType: 'element', quote: null, anchor })]
     expect(paintAnchors(threads)).toEqual([{ id: 't1', anchorType: 'element', selector: '#chart > svg' }])
+  })
+
+  // The whole reason badges are drawn by the PARENT and not by the annotate client: the iframe runs
+  // hostile uploaded HTML, and paintAnchors is the only thread data that crosses into it. Whoever
+  // wrote a comment, whoever resolved it, and what any of it says must stay on this side of the
+  // boundary — the client needs a locator and an id, nothing else. Asserted on the SERIALIZED form,
+  // because postMessage is what actually crosses and a nested field is just as leaked as a top-level
+  // one (a spread of the thread would pass a key-set check on the parent object alone).
+  test('no author identity — or comment text — ever crosses into the iframe', () => {
+    const threads = [
+      mkThread({
+        id: 't1',
+        quote: 'the quick brown fox',
+        createdBy: 'user_sam',
+        createdByName: 'Sam Lawerence',
+        resolvedBy: 'user_riya',
+        resolvedByName: 'Riya Kapoor',
+        comments: [
+          {
+            id: 'c1',
+            authorId: 'user_sam',
+            author: 'Sam Lawerence',
+            body: 'this margin is wrong',
+            deleted: false,
+            createdAt: '2024-01-01',
+            editedAt: null,
+          },
+        ],
+      }),
+    ]
+
+    const serialized = JSON.stringify(paintAnchors(threads))
+    for (const secret of ['user_sam', 'Sam Lawerence', 'user_riya', 'Riya Kapoor', 'this margin is wrong']) {
+      expect(serialized).not.toContain(secret)
+    }
+    // Exhaustive, not just a denylist: the payload IS the locator and nothing more, so a future
+    // field added to Thread can't ride along unnoticed.
+    expect(paintAnchors(threads)).toEqual([{ id: 't1', anchorType: 'text', quote: 'the quick brown fox', context: null }])
   })
 
   test('a text thread with no quote, or an element thread with no anchor, is dropped rather than painted empty', () => {

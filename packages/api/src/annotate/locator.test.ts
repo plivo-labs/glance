@@ -1,16 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { Window } from 'happy-dom'
 import { TEXT_CONTEXT_LIMIT } from '../lib/anchor'
-import {
-  computeSelector,
-  describeElement,
-  findRange,
-  isPageSpanning,
-  newEpoch,
-  resolveSelector,
-  selectionContext,
-  sharedTextIndex,
-} from './locator'
+import { findRange, newEpoch, resolveSelector, selectionContext, sharedTextIndex } from './locator'
 
 // Seam S1: the locator is global-free, so we drive it under a constructed happy-dom document and
 // pass nodes in — no GlobalRegistrator, so nothing leaks into the other (server-side) api tests.
@@ -21,61 +12,19 @@ function docFrom(html: string): Document {
   return window.document as unknown as Document
 }
 
-/** Every element under `root` must round-trip: computeSelector then resolveSelector finds ITSELF. */
-function assertRoundTrips(doc: Document) {
-  const all = doc.body.querySelectorAll('*')
-  expect(all.length).toBeGreaterThan(0)
-  for (const el of all) {
-    const sel = computeSelector(el)
-    expect(resolveSelector(sel, doc)).toBe(el)
-  }
-}
-
-describe('computeSelector ∘ resolveSelector — round-trips on a stable DOM', () => {
-  test('unique id → short id-anchored selector', () => {
-    const doc = docFrom('<div id="chart"><svg></svg></div>')
-    const svg = doc.querySelector('#chart svg')!
-    expect(computeSelector(doc.querySelector('#chart')!)).toBe('[id="chart"]')
-    expect(computeSelector(svg)).toBe('[id="chart"] > svg:nth-of-type(1)')
-    expect(resolveSelector(computeSelector(svg), doc)).toBe(svg)
-  })
-
-  test('no id → body-anchored nth-of-type child path', () => {
-    const doc = docFrom('<section><p>a</p><p>b</p></section>')
-    const second = doc.querySelectorAll('p')[1]!
-    expect(computeSelector(second)).toBe('body > section:nth-of-type(1) > p:nth-of-type(2)')
-    expect(resolveSelector(computeSelector(second), doc)).toBe(second)
-  })
-
-  test('repeated siblings are disambiguated by nth-of-type', () => {
-    const doc = docFrom('<ul><li>1</li><li>2</li><li>3</li></ul>')
-    const items = doc.querySelectorAll('li')
-    for (const li of items) expect(resolveSelector(computeSelector(li), doc)).toBe(li)
-  })
-
-  test('property: every element in a mixed tree round-trips to itself', () => {
-    const doc = docFrom(
-      '<header><h1>t</h1></header><main id="m"><figure><img alt="x"/><figcaption>c</figcaption></figure><table><tr><td>1</td><td>2</td></tr></table></main>',
-    )
-    assertRoundTrips(doc)
-  })
-})
-
 describe('resolveSelector — mutated DOM', () => {
-  test('a removed target resolves to null (orphaned → fallback)', () => {
+  // Selectors are no longer computed at runtime (the capture path is gone); every one of these is a
+  // literal, the way a thread stored back when its element WAS pinpointable now arrives from the DB.
+  test('a removed target resolves to null (orphaned → the parent flags the thread)', () => {
     const doc = docFrom('<div id="chart"><svg></svg></div>')
-    const svg = doc.querySelector('#chart svg')!
-    const sel = computeSelector(svg)
-    svg.remove()
-    expect(resolveSelector(sel, doc)).toBeNull()
+    doc.querySelector('#chart svg')!.remove()
+    expect(resolveSelector('[id="chart"] > svg:nth-of-type(1)', doc)).toBeNull()
   })
 
   test('an id-less reordered sibling resolves to the WRONG node (the fragility textFallback covers)', () => {
     const doc = docFrom('<section><p>a</p><p>b</p></section>') // no ids → nth-of-type path
-    const first = doc.querySelectorAll('p')[0]!
-    const sel = computeSelector(first) // body > section:nth-of-type(1) > p:nth-of-type(1)
-    first.remove() // the "b" paragraph is now nth-of-type(1)
-    const resolved = resolveSelector(sel, doc)
+    doc.querySelectorAll('p')[0]!.remove() // the "b" paragraph is now nth-of-type(1)
+    const resolved = resolveSelector('body > section:nth-of-type(1) > p:nth-of-type(1)', doc)
     expect(resolved).not.toBeNull()
     expect((resolved as Element).textContent).toBe('b') // resolves, but to the wrong element
   })
@@ -84,24 +33,6 @@ describe('resolveSelector — mutated DOM', () => {
     const doc = docFrom('<div></div>')
     expect(resolveSelector('>>>bad(', doc)).toBeNull()
     expect(resolveSelector('', doc)).toBeNull()
-  })
-})
-
-describe('isPageSpanning — a full-viewport wrapper is not an anchor', () => {
-  const vp = { width: 1000, height: 800 }
-
-  test('an element covering (nearly) the whole viewport in both dims spans the page', () => {
-    expect(isPageSpanning({ width: 1000, height: 800 }, vp)).toBe(true)
-    expect(isPageSpanning({ width: 1000, height: 4000 }, vp)).toBe(true) // taller than the fold
-    expect(isPageSpanning({ width: 920, height: 740 }, vp)).toBe(true) // within the 90% cover
-  })
-
-  test('a full-width but short block (paragraph, code line) is still anchorable', () => {
-    expect(isPageSpanning({ width: 1000, height: 60 }, vp)).toBe(false)
-  })
-
-  test('a tall but narrow column is still anchorable', () => {
-    expect(isPageSpanning({ width: 300, height: 4000 }, vp)).toBe(false)
   })
 })
 
@@ -512,33 +443,5 @@ describe('sharedTextIndex — ONE index per DOM version', () => {
     expect(range!.toString()).toBe('') // clamped to the end of what is actually there
     newEpoch()
     expect(findRange('gamma', doc)).toBeNull() // and the next version has the truth
-  })
-})
-
-describe('describeElement — tag + human preview + bounded fallback', () => {
-  test('prefers aria-label / alt / title over text', () => {
-    const doc = docFrom('<button aria-label="Close dialog">X</button>')
-    expect(describeElement(doc.querySelector('button')!)).toEqual({
-      tag: 'button',
-      preview: 'Close dialog',
-      textFallback: 'X',
-    })
-  })
-
-  test('falls back to collapsed text, then to the tag', () => {
-    const doc = docFrom('<p>  hello   world  </p><svg></svg>')
-    expect(describeElement(doc.querySelector('p')!)).toEqual({
-      tag: 'p',
-      preview: 'hello world',
-      textFallback: 'hello world',
-    })
-    expect(describeElement(doc.querySelector('svg')!)).toEqual({ tag: 'svg', preview: 'svg', textFallback: '' })
-  })
-
-  test('bounds a huge preview / fallback', () => {
-    const doc = docFrom(`<p>${'x'.repeat(1000)}</p>`)
-    const d = describeElement(doc.querySelector('p')!)
-    expect(d.preview.length).toBe(120)
-    expect(d.textFallback.length).toBe(400)
   })
 })
