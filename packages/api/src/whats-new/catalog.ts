@@ -4,6 +4,13 @@ import type { Release } from './bake'
 
 export const RELEASES: Release[] = [
   {
+    "slug": "live-data",
+    "title": "Live data on any page",
+    "date": "2026-07-29T09:00:00.000Z",
+    "featured": true,
+    "bodyHtml": "<p>A page you deploy can now <strong>store data and update itself</strong> — no backend to run, nothing to host. Ask for a form, a poll, a board or a dashboard, and it gets a real data store: <code>glance.db</code>.</p>\n<ul>\n<li><strong>Anyone who can open the site can add to it</strong>, attributed to them — so forms and surveys just work</li>\n<li><strong>Changes are pushed, not polled.</strong> Every open page updates the moment something lands, with no refresh button</li>\n<li><strong>Your scripts can write too</strong> — a cron job or CI step posts to the site and every dashboard watching it reacts</li>\n<li>By default you only see what <strong>you</strong> added; a <code>shared-…</code> collection is one everybody watching sees together</li>\n<li>The site <strong>owner</strong> can edit or remove any entry, so a public board stays moderatable</li>\n</ul>\n<p>Leave a page open overnight and it catches up on whatever it missed — no stale tab, no reload.</p>\n"
+  },
+  {
     "slug": "tldr-summaries",
     "title": "TL;DR any site",
     "date": "2026-07-14T18:00:00.000Z",
@@ -40,4 +47,4 @@ export const RELEASES: Release[] = [
   }
 ]
 
-export const NEWEST_RELEASE_DATE: string | null = "2026-07-14T18:00:00.000Z"
+export const NEWEST_RELEASE_DATE: string | null = "2026-07-29T09:00:00.000Z"
