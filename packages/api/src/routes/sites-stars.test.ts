@@ -1,14 +1,14 @@
 import { describe, expect, test } from 'bun:test'
 import { eq } from 'drizzle-orm'
 import { siteStars, users } from '../db/schema'
-import { seedMember, seedSite, seedSpace, seedStar } from '../test/harness'
+import { seedMember, seedSite, seedSpace, seedStar, seedUserShare } from '../test/harness'
 import { auth, makeRouteApp, mintUser, type RouteApp } from '../test/route-fixtures'
 
 // Star toggle — POST/DELETE /api/sites/:space/:site/star. The route owns no access model of its
-// own: it re-runs the same fetchAccessFacts + checkAccess pair every other site route uses, so
-// 404/403/410 precedence is inherited rather than re-implemented. The ONE rule it adds is that a
-// `private` site is never starrable — not even by its owner (a star is a pin on something you can
-// come back to through a shared surface; a private site has no such surface).
+// own and adds NO rule of its own: it re-runs the same fetchAccessFacts + checkAccess pair every
+// other site route uses, so if you can open a page you can star it. A star is a private, per-user
+// bookmark — invisible to everyone else and granting nothing — so a page's visibility tier has
+// nothing to protect here. Private pages you own, and private pages shared with you, are starrable.
 
 /** App + an 'acme' group space owned by `owner`, with `me` signed in as a plain member. */
 async function setup() {
@@ -54,12 +54,31 @@ describe('POST/DELETE /api/sites/:space/:site/star', () => {
     expect(await noop.json()).toEqual({ starred: false })
   })
 
-  test('a private site is not starrable — not even by its own owner', async () => {
+  test('your OWN private page is starrable', async () => {
     const ctx = await setup()
     await seedSite(ctx.db, { id: 'draft', spaceId: 'acme', ownerId: 'owner', slug: 'draft', visibility: 'private' })
 
     const res = await star(ctx, 'acme', 'draft', 'owner', 'POST')
-    expect(res.status).toBe(400)
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ starred: true })
+  })
+
+  test('a private page SHARED with you is starrable — the case an explicit share exists for', async () => {
+    const ctx = await setup()
+    await seedSite(ctx.db, { id: 'hush', spaceId: 'acme', ownerId: 'owner', slug: 'hush', visibility: 'private' })
+    // 'me' is not an acme member: the direct share is the only thing admitting them.
+    await seedUserShare(ctx.db, 'hush', 'me')
+
+    const res = await star(ctx, 'acme', 'hush', 'me', 'POST')
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ starred: true })
+  })
+
+  test('a private page you cannot reach is still 403 — checkAccess, not the star rule, is the gate', async () => {
+    const ctx = await setup()
+    await seedSite(ctx.db, { id: 'walled', spaceId: 'acme', ownerId: 'owner', slug: 'walled', visibility: 'private' })
+
+    expect((await star(ctx, 'acme', 'walled', 'me', 'POST')).status).toBe(403)
     expect(await ctx.db.select().from(siteStars)).toHaveLength(0)
   })
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { eq } from 'drizzle-orm'
-import { siteStars, sites as sitesTable } from '../db/schema'
+import { siteStars, siteUserShares, sites as sitesTable } from '../db/schema'
 import { seedMember, seedSite, seedSpace, seedStar, seedUserShare } from '../test/harness'
 import { at, auth, makeRouteApp, mintUser, postAuthRequests, type RouteApp } from '../test/route-fixtures'
 
@@ -90,18 +90,29 @@ describe('GET /api/sites/starred', () => {
     expect((await starred(ctx)).map((r) => r.id).sort()).toEqual(['hidden', 'keep'])
   })
 
-  test('an OWNER’s own site that flips to private also vanishes — checkAccess alone would keep it', async () => {
+  test('your OWN page flipping to private KEEPS its place — visibility is not a star rule', async () => {
     const ctx = await setup()
     const { db } = ctx
     await seedSite(db, { id: 'draft', spaceId: 'acme', ownerId: 'me', slug: 'draft', createdAt: at(1) })
     await seedStar(db, 'draft', 'me', at(2))
     expect((await starred(ctx)).map((r) => r.id)).toEqual(['draft'])
 
-    // checkAccess admits an owner to their own private site, so only the feed's explicit
-    // non-private rule can drop this row — and it must, or the tab contradicts the toggle.
+    // checkAccess still admits the owner, and that is the whole gate — the feed must not add one.
     await db.update(sitesTable).set({ visibility: 'private' }).where(eq(sitesTable.id, 'draft'))
+    expect((await starred(ctx)).map((r) => r.id)).toEqual(['draft'])
+  })
+
+  test('a private page shared with you stays in the feed until the share is revoked', async () => {
+    const ctx = await setup()
+    const { db } = ctx
+    await seedSite(db, { id: 'hush', spaceId: 'acme', ownerId: 'owner', slug: 'hush', visibility: 'private', createdAt: at(1) })
+    await seedUserShare(db, 'hush', 'me')
+    await seedStar(db, 'hush', 'me', at(2))
+    expect((await starred(ctx)).map((r) => r.id)).toEqual(['hush'])
+
+    await db.delete(siteUserShares).where(eq(siteUserShares.siteId, 'hush'))
     expect(await starred(ctx)).toEqual([])
-    expect(await db.select().from(siteStars)).toHaveLength(1)
+    expect(await db.select().from(siteStars)).toHaveLength(1) // the row waits for a re-share
   })
 
   test('zero stars → [] without issuing the row-fetch statement', async () => {

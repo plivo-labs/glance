@@ -60,7 +60,7 @@ describe('C6 route.auth.401 — unauthenticated GET and POST both 401, watermark
 })
 
 describe('C7 route.get.exactJSON — exact ordered items, unreadCount, throughDate', () => {
-  test('mid watermark → exact slugs/dates/bodies + unreadCount 5 + throughDate===newest', async () => {
+  test('mid watermark → exact slugs/dates/bodies + unreadCount 6 + throughDate===newest', async () => {
     const { app, db, kv, env } = setup()
     const id = await seedUser(db, { id: 'u1' })
     await db.update(users).set({ lastSeenReleaseAt: MID }).where(eq(users.id, id))
@@ -69,7 +69,7 @@ describe('C7 route.get.exactJSON — exact ordered items, unreadCount, throughDa
     // Whole-response deep-equal, not key-presence: a dropped item field or an extra top-level key fails.
     expect(await res.json()).toEqual({
       items: JSON.parse(JSON.stringify(RELEASES)),
-      unreadCount: 5,
+      unreadCount: 6,
       throughDate: NEWEST_RELEASE_DATE,
     })
   })
@@ -144,6 +144,6 @@ describe('B3 relogin.noReset — the existing-user branch must not clear an exis
     await findOrCreateUser(db, { SUPERADMIN_EMAIL: 'boss@example.com' } as never, { sub: 'g1', name: 'A2' } as never, 'a@example.com')
     expect(await getWatermark(db, first.id)).toBe(before as string)
     const res = await app.request('/api/whats-new', { headers: await mintBearer(kv, first.id) }, env)
-    expect(((await res.json()) as { unreadCount: number }).unreadCount).toBe(5)
+    expect(((await res.json()) as { unreadCount: number }).unreadCount).toBe(6)
   })
 })
