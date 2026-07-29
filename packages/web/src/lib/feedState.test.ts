@@ -55,6 +55,7 @@ const rejected = (error: unknown): FeedSlot<never> => ({ status: 'rejected', err
 
 const allPending = (): FeedSlots => ({
   sites: pending,
+  starred: pending,
   shared: pending,
   spaces: pending,
   team: pending,
@@ -80,6 +81,7 @@ describe('deriveFeedState', () => {
 
     expect(state.tabs).toEqual([
       { id: 'sites', label: 'Your sites', count: 2, content: { kind: 'rows', rows: mine } },
+      { id: 'starred', label: 'Starred', count: null, content: { kind: 'loading' } },
       { id: 'team', label: 'Team activity', count: null, content: { kind: 'loading' } },
       { id: 'comments', label: 'Comments', count: null, content: { kind: 'loading' } },
     ])
@@ -95,6 +97,7 @@ describe('deriveFeedState', () => {
 
     expect(state.tabs).toEqual([
       { id: 'sites', label: 'Your sites', count: null, content: { kind: 'loading' } },
+      { id: 'starred', label: 'Starred', count: null, content: { kind: 'loading' } },
       { id: 'shared', label: 'Shared with me', count: 3, rows: theirs },
       { id: 'team', label: 'Team activity', count: null, content: { kind: 'loading' } },
       { id: 'comments', label: 'Comments', count: null, content: { kind: 'loading' } },
@@ -103,7 +106,7 @@ describe('deriveFeedState', () => {
 
   test('T10.2 shared resolves empty: tab stays absent', () => {
     const state = deriveFeedState({ ...allPending(), shared: resolved([]) }, onSites)
-    expect(state.tabs.map((t) => t.id)).toEqual(['sites', 'team', 'comments'])
+    expect(state.tabs.map((t) => t.id)).toEqual(['sites', 'starred', 'team', 'comments'])
   })
 
   // T10.3 — one failed feed degrades only its own tab; the rest render from their own slots.
@@ -112,6 +115,7 @@ describe('deriveFeedState', () => {
     const state = deriveFeedState(
       {
         sites: resolved(mine),
+        starred: pending,
         shared: resolved([site('s')]),
         spaces: resolved([space('g', 'group')]),
         team: rejected(new ApiError(500, 'D1 exploded')),
@@ -122,6 +126,7 @@ describe('deriveFeedState', () => {
 
     expect(state.tabs).toEqual([
       { id: 'sites', label: 'Your sites', count: 1, content: { kind: 'rows', rows: mine } },
+      { id: 'starred', label: 'Starred', count: null, content: { kind: 'loading' } },
       { id: 'shared', label: 'Shared with me', count: 1, rows: [site('s')] },
       { id: 'spaces', label: 'Your spaces', count: 1, rows: [space('g', 'group')] },
       { id: 'team', label: 'Team activity', count: null, content: { kind: 'error', message: 'D1 exploded' } },
@@ -144,7 +149,7 @@ describe('deriveFeedState', () => {
     // A non-401 shared failure means we cannot prove it has rows — the tab stays absent.
     const broken = deriveFeedState({ ...allPending(), shared: rejected(new ApiError(500, 'boom')) }, onSites)
     expect(broken.unauthorized).toBe(false)
-    expect(broken.tabs.map((t) => t.id)).toEqual(['sites', 'team', 'comments'])
+    expect(broken.tabs.map((t) => t.id)).toEqual(['sites', 'starred', 'team', 'comments'])
   })
 
   // T10.4 — the Spaces tab mirrors Shared: it exists only once its feed resolves with at least
@@ -154,10 +159,10 @@ describe('deriveFeedState', () => {
     const absent = (slot: FeedSlot<SpaceSummary[]>) =>
       deriveFeedState({ ...allPending(), spaces: slot }, onSites).tabs.map((t) => t.id)
 
-    expect(absent(pending)).toEqual(['sites', 'team', 'comments'])
-    expect(absent(rejected(new Error('boom')))).toEqual(['sites', 'team', 'comments'])
-    expect(absent(resolved([]))).toEqual(['sites', 'team', 'comments'])
-    expect(absent(resolved([space('personal', 'personal')]))).toEqual(['sites', 'team', 'comments'])
+    expect(absent(pending)).toEqual(['sites', 'starred', 'team', 'comments'])
+    expect(absent(rejected(new Error('boom')))).toEqual(['sites', 'starred', 'team', 'comments'])
+    expect(absent(resolved([]))).toEqual(['sites', 'starred', 'team', 'comments'])
+    expect(absent(resolved([space('personal', 'personal')]))).toEqual(['sites', 'starred', 'team', 'comments'])
 
     // Group spaces present → tab pops in, counting and listing ONLY the group spaces.
     const groups = [space('g1', 'group'), space('g2', 'group')]
@@ -217,6 +222,7 @@ describe('deriveFeedState', () => {
   test('T10.5 re-derive with new slot identities + same data: identical model, stable active tab', () => {
     const build = (): FeedSlots => ({
       sites: resolved([site('a'), site('b')]),
+      starred: resolved([site('a')]),
       shared: resolved([site('x')]),
       spaces: resolved([space('g', 'group')]),
       team: resolved([upload('t')]),
@@ -228,7 +234,7 @@ describe('deriveFeedState', () => {
     const second = deriveFeedState(build(), view)
 
     expect(second).toEqual(first)
-    expect(second.tabs.map((t) => t.id)).toEqual(['sites', 'shared', 'spaces', 'team', 'comments'])
+    expect(second.tabs.map((t) => t.id)).toEqual(['sites', 'starred', 'shared', 'spaces', 'team', 'comments'])
     expect(second.activeTab).toBe('team')
   })
 
@@ -236,10 +242,10 @@ describe('deriveFeedState', () => {
     const view = { requestedTab: 'team' } as const
     const before = deriveFeedState(allPending(), view)
     expect(before.activeTab).toBe('team')
-    expect(before.tabs.map((t) => t.id)).toEqual(['sites', 'team', 'comments'])
+    expect(before.tabs.map((t) => t.id)).toEqual(['sites', 'starred', 'team', 'comments'])
 
     const after = deriveFeedState({ ...allPending(), shared: resolved([site('x')]) }, view)
-    expect(after.tabs.map((t) => t.id)).toEqual(['sites', 'shared', 'team', 'comments'])
+    expect(after.tabs.map((t) => t.id)).toEqual(['sites', 'starred', 'shared', 'team', 'comments'])
     expect(after.activeTab).toBe('team')
   })
 
@@ -255,7 +261,7 @@ describe('deriveFeedState', () => {
   test('C5.1 comments tab is always present across every slot state', () => {
     for (const comments of commentSlotStates) {
       const state = deriveFeedState({ ...allPending(), comments }, onSites)
-      expect(state.tabs.map((tab) => tab.id)).toEqual(['sites', 'team', 'comments'])
+      expect(state.tabs.map((tab) => tab.id)).toEqual(['sites', 'starred', 'team', 'comments'])
     }
   })
 
@@ -284,10 +290,10 @@ describe('deriveFeedState', () => {
       { ...allPending(), shared: resolved([site('shared')]) },
       onSites,
     )
-    expect(withShared.tabs.map((tab) => tab.id)).toEqual(['sites', 'shared', 'team', 'comments'])
+    expect(withShared.tabs.map((tab) => tab.id)).toEqual(['sites', 'starred', 'shared', 'team', 'comments'])
 
     const withoutShared = deriveFeedState({ ...allPending(), shared: resolved([]) }, onSites)
-    expect(withoutShared.tabs.map((tab) => tab.id)).toEqual(['sites', 'team', 'comments'])
+    expect(withoutShared.tabs.map((tab) => tab.id)).toEqual(['sites', 'starred', 'team', 'comments'])
   })
 
   test('C5.2 five-wide derivation preserves representative four-feed goldens', () => {
@@ -298,6 +304,7 @@ describe('deriveFeedState', () => {
         expected: {
           tabs: [
             { id: 'sites', label: 'Your sites', count: null, content: { kind: 'loading' } },
+            { id: 'starred', label: 'Starred', count: null, content: { kind: 'loading' } },
             { id: 'team', label: 'Team activity', count: null, content: { kind: 'loading' } },
           ],
           activeTab: 'sites',
@@ -311,6 +318,7 @@ describe('deriveFeedState', () => {
         expected: {
           tabs: [
             { id: 'sites', label: 'Your sites', count: null, content: { kind: 'loading' } },
+            { id: 'starred', label: 'Starred', count: null, content: { kind: 'loading' } },
             { id: 'shared', label: 'Shared with me', count: 1, rows: [site('shared')] },
             { id: 'team', label: 'Team activity', count: null, content: { kind: 'loading' } },
           ],
@@ -325,6 +333,7 @@ describe('deriveFeedState', () => {
         expected: {
           tabs: [
             { id: 'sites', label: 'Your sites', count: null, content: { kind: 'loading' } },
+            { id: 'starred', label: 'Starred', count: null, content: { kind: 'loading' } },
             { id: 'team', label: 'Team activity', count: null, content: { kind: 'loading' } },
           ],
           activeTab: 'sites',
@@ -339,6 +348,7 @@ describe('deriveFeedState', () => {
         expected: {
           tabs: [
             { id: 'sites', label: 'Your sites', count: null, content: { kind: 'loading' } },
+            { id: 'starred', label: 'Starred', count: null, content: { kind: 'loading' } },
             { id: 'team', label: 'Team activity', count: null, content: { kind: 'loading' } },
           ],
           activeTab: 'sites',
@@ -403,5 +413,62 @@ describe('C5.4 — feedRowPath: hide redundant root-file paths', () => {
     expect(notificationHref({ siteLabel: 'docs/report', filePath: item.filePath, threadId: 't1' })).toBe(
       '/docs/report/report.html?thread=t1&review=1',
     )
+  })
+})
+
+// S10 — the Starred tab is UNCONDITIONAL, unlike Shared/Spaces. That was the explicit product call:
+// a feature nobody can find before their first star is a feature nobody uses, so the tab (and its
+// empty state) must be there at zero stars. Three consequences follow and are pinned here.
+describe('deriveFeedState — the Starred tab is always present (S10)', () => {
+  const starredSlotStates: FeedSlot<SiteSummary[]>[] = [
+    pending,
+    resolved([]),
+    resolved([site('pinned')]),
+    rejected(new Error('boom')),
+  ]
+
+  test('starred sits at index 1 in EVERY slot state — pending, empty, populated, rejected', () => {
+    for (const starred of starredSlotStates) {
+      const state = deriveFeedState({ ...allPending(), starred }, onSites)
+      expect(state.tabs[1]?.id).toBe('starred')
+      expect(state.tabs.map((t) => t.id)).toEqual(['sites', 'starred', 'team', 'comments'])
+    }
+  })
+
+  test('?tab=starred activates while the feed is still pending and never goes stale', () => {
+    const state = deriveFeedState(allPending(), { requestedTab: 'starred' })
+    expect(state.activeTab).toBe('starred')
+    // An unconditional tab cannot be missing, so the #38 fallback path must never fire for it —
+    // not while pending, and not on an empty resolve either.
+    expect(state.staleTab).toBe(false)
+    expect(
+      deriveFeedState({ ...allPending(), starred: resolved([]) }, { requestedTab: 'starred' }).staleTab,
+    ).toBe(false)
+    expect(tabFromParam('starred')).toBe('starred')
+  })
+
+  test('a rejected starred feed shows a contained error and leaves the other tabs untouched', () => {
+    const state = deriveFeedState(
+      {
+        ...allPending(),
+        sites: resolved([site('a')]),
+        starred: rejected(new Error('starred feed exploded')),
+        shared: resolved([site('s')]),
+      },
+      { requestedTab: 'starred' },
+    )
+    expect(state.tabs.find((t) => t.id === 'starred')).toEqual({
+      id: 'starred',
+      label: 'Starred',
+      count: null,
+      content: { kind: 'error', message: 'starred feed exploded' },
+    })
+    expect(state.tabs.map((t) => t.id)).toEqual(['sites', 'starred', 'shared', 'team', 'comments'])
+    expect(state.activeTab).toBe('starred')
+  })
+
+  test('a 401 from the starred feed still signals an expired session', () => {
+    const state = deriveFeedState({ ...allPending(), starred: rejected(new ApiError(401, 'nope')) }, onSites)
+    expect(state.unauthorized).toBe(true)
   })
 })

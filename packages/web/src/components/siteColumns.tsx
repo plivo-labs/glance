@@ -1,10 +1,11 @@
 import type { ReactNode } from 'react'
-import { ExternalLink, Mic, Sparkles } from 'lucide-react'
+import { ExternalLink, Mic, Sparkles, Star } from 'lucide-react'
 import { CopyButton } from '@/components/CopyButton'
 import type { Column } from '@/components/SortableTable'
 import { VisibilityBadge } from '@/components/visibility'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { useStar } from '@/hooks/useStar'
 import { timeAgo } from '@/lib/time'
 import type { SiteSummary, Visibility } from '@/lib/types'
 
@@ -14,6 +15,37 @@ import type { SiteSummary, Visibility } from '@/lib/types'
 
 const VIS_RANK: Record<Visibility, number> = { private: 0, members: 1, team: 2 }
 export const visRank = (v: Visibility): number => VIS_RANK[v]
+
+// Leading star cell — defined here, beside nameColumn, so all five site tables get the identical
+// control rather than five near-copies. A PRIVATE row renders no control at all (not a disabled
+// one): the server refuses to star a private site, and an inert button would only invite the click.
+// Sorting by star is deliberately not offered — the Starred tab is the "show me these" affordance.
+export function starColumn<T extends SiteSummary>(): Column<T> {
+  return {
+    key: 'star',
+    label: '',
+    srLabel: 'Star',
+    headClassName: 'w-8',
+    cellClassName: 'w-8',
+    render: (s) => (s.visibility === 'private' ? null : <StarCell site={s} />),
+  }
+}
+
+function StarCell({ site }: { site: SiteSummary }) {
+  const { starred, toggle } = useStar(site)
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="size-7 text-muted-foreground hover:text-foreground"
+      aria-label={starred ? 'Remove star' : 'Star this page'}
+      aria-pressed={starred}
+      onClick={toggle}
+    >
+      <Star className={starred ? 'fill-primary text-primary' : undefined} />
+    </Button>
+  )
+}
 
 export function nameColumn<T extends SiteSummary>(): Column<T> {
   return {
@@ -89,7 +121,7 @@ export function actionsColumn<T>(render: (row: T) => ReactNode): Column<T> {
 // The read-only feed table — Name / URL / Visibility / Created plus caller-supplied trailing
 // actions. Shared by the dashboard's "Shared with me" tab and the space page's sites table.
 export function feedColumns<T extends SiteSummary>(actions: (row: T) => ReactNode): Column<T>[] {
-  return [nameColumn(), urlColumn(), visibilityBadgeColumn(), createdColumn(), actionsColumn(actions)]
+  return [starColumn(), nameColumn(), urlColumn(), visibilityBadgeColumn(), createdColumn(), actionsColumn(actions)]
 }
 
 /** Copy + Open trailing cell; `children` appends row-specific extras (e.g. an owner's Share). */

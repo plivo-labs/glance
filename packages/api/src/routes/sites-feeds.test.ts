@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import type { Hono } from 'hono'
 import { eq } from 'drizzle-orm'
 import { sites, siteSummaries } from '../db/schema'
-import { seedFile, seedMember, seedSite, seedSpace, seedUserShare } from '../test/harness'
+import { seedFile, seedMember, seedSite, seedSpace, seedStar, seedUserShare } from '../test/harness'
 import { APP_URL, at, auth, makeRouteApp, mintUser, postAuthRequests, type RouteApp } from '../test/route-fixtures'
 import type { AppEnv } from '../types'
 
@@ -57,6 +57,7 @@ describe('C31 — site feed characterization before summary badge', () => {
         status: 'active',
         audio: true,
         hasSummary: false,
+        starred: false,
         url: `${APP_URL}/acme/voice`,
         createdAt: at(7),
         updatedAt: at(7),
@@ -75,6 +76,7 @@ describe('C31 — site feed characterization before summary badge', () => {
         status: 'active',
         audio: true,
         hasSummary: false,
+        starred: false,
         role: 'editor',
         url: `${APP_URL}/acme/voice`,
         createdAt: at(7),
@@ -94,6 +96,7 @@ describe('C31 — site feed characterization before summary badge', () => {
         status: 'active',
         audio: true,
         hasSummary: false,
+        starred: false,
         url: `${APP_URL}/acme/voice`,
         createdAt: at(7),
         updatedAt: at(7),
@@ -116,6 +119,7 @@ describe('C31 — site feed characterization before summary badge', () => {
         isOwner: false,
         audio: true,
         hasSummary: false,
+        starred: false,
         url: `${APP_URL}/acme/voice`,
         createdAt: at(7),
         updatedAt: at(7),
@@ -174,8 +178,8 @@ describe('feeds — audio badge pins (S5b T5.4)', () => {
 
     // Hand-coded: one row PER SITE (30 files must not explode the feed), newest first.
     expect(await getJson(app, env, '/api/sites/mine', 'owner')).toEqual([
-      { id: 'voice', spaceSlug: 'acme', siteSlug: 'voice', title: null, visibility: 'private', status: 'active', audio: true, hasSummary: true, url: `${APP_URL}/acme/voice`, createdAt: at(2), updatedAt: at(2) },
-      { id: 'doc', spaceSlug: 'acme', siteSlug: 'doc', title: null, visibility: 'team', status: 'active', audio: false, hasSummary: false, url: `${APP_URL}/acme/doc`, createdAt: at(1), updatedAt: at(1) },
+      { id: 'voice', spaceSlug: 'acme', siteSlug: 'voice', title: null, visibility: 'private', status: 'active', audio: true, hasSummary: true, starred: false, url: `${APP_URL}/acme/voice`, createdAt: at(2), updatedAt: at(2) },
+      { id: 'doc', spaceSlug: 'acme', siteSlug: 'doc', title: null, visibility: 'team', status: 'active', audio: false, hasSummary: false, starred: false, url: `${APP_URL}/acme/doc`, createdAt: at(1), updatedAt: at(1) },
     ])
   })
 
@@ -195,7 +199,7 @@ describe('feeds — audio badge pins (S5b T5.4)', () => {
     // The 30-file site is pure audio; the file-less rest are not. Full payload on the head row.
     expect(rows[0]).toEqual({
       id: 's51', spaceSlug: 'acme', siteSlug: 's51', title: null, visibility: 'team', status: 'active',
-      audio: true, hasSummary: false, url: `${APP_URL}/acme/s51`, createdAt: at(51), updatedAt: at(51), uploaderId: 'owner', uploaderName: null, uploaderEmail: 'owner@e.com',
+      audio: true, hasSummary: false, starred: false, url: `${APP_URL}/acme/s51`, createdAt: at(51), updatedAt: at(51), uploaderId: 'owner', uploaderName: null, uploaderEmail: 'owner@e.com',
     })
     expect(rows.slice(1).every((r) => r.audio === false)).toBe(true)
     expect(rows.every((r) => r.hasSummary === false)).toBe(true)
@@ -310,6 +314,50 @@ describe('feeds — post-auth D1 request budget (S5b T5.3)', () => {
       { id: 'mixed', audio: false },
     ])
     expect(postAuthRequests(db)).toBe(1)
+    expect(db.counters).toMatchObject({ loose: 2, batches: 0 })
+  })
+})
+
+// S3 — the starred flag rides the SAME site select as the audio/summary badges (one correlated
+// EXISTS scalar, aliased), so no feed grows a request. The flag is per-CALLER: the scalar binds the
+// requesting user's id, and the bug it invites is binding nothing (or the row's owner) and leaking
+// somebody else's stars into everyone's feed.
+describe('STARRED-FLAG — starred is the caller’s own star, folded into every site feed', () => {
+  test('/mine, /shared and /team mark starred only for the caller — another user’s star reads false', async () => {
+    const { app, env, db, kv } = await setup()
+    await mintUser(db, kv, 'me', { email: 'me@e.com' })
+    await seedSite(db, { id: 'deck', spaceId: 'acme', ownerId: 'owner', slug: 'deck', createdAt: at(2) })
+    await seedSite(db, { id: 'notes', spaceId: 'acme', ownerId: 'owner', slug: 'notes', createdAt: at(1) })
+    await seedUserShare(db, 'deck', 'me', 'viewer')
+    await seedUserShare(db, 'notes', 'me', 'viewer')
+    // Only 'me' stars 'deck'. 'owner' stars nothing, and must see starred:false on their own site.
+    await seedStar(db, 'deck', 'me')
+
+    const starredBy = async (path: string, id: string) =>
+      (await getJson<{ id: string; starred: boolean }[]>(app, env, path, id)).map((r) => [r.id, r.starred])
+
+    expect(await starredBy('/api/sites/shared', 'me')).toEqual([['deck', true], ['notes', false]])
+    expect(await starredBy('/api/sites/team', 'me')).toEqual([['deck', true], ['notes', false]])
+    expect(await starredBy('/api/sites/mine', 'owner')).toEqual([['deck', false], ['notes', false]])
+    expect(await starredBy('/api/sites/team', 'owner')).toEqual([['deck', false], ['notes', false]])
+    expect(await starredBy('/api/spaces/acme/sites', 'owner')).toEqual([['deck', false], ['notes', false]])
+  })
+
+  test('perf: the flag stays folded in — /mine and /team still cost exactly 1 post-auth D1 request', async () => {
+    const { app, env, db } = await setup()
+    await seedSite(db, { id: 'deck', spaceId: 'acme', ownerId: 'owner', slug: 'deck', createdAt: at(2) })
+    await seedStar(db, 'deck', 'owner')
+
+    db.resetCounters()
+    expect(await getJson<{ starred: boolean }[]>(app, env, '/api/sites/mine', 'owner')).toMatchObject([
+      { starred: true },
+    ])
+    expect(db.counters).toMatchObject({ loose: 2, batches: 0 })
+
+    db.resetCounters()
+    expect(await getJson<{ starred: boolean }[]>(app, env, '/api/sites/team', 'owner')).toMatchObject([
+      { starred: true },
+    ])
     expect(db.counters).toMatchObject({ loose: 2, batches: 0 })
   })
 })

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { Hono } from 'hono'
-import { seedFile, seedGroupShare, seedMember, seedSite, seedSpace, seedUser, seedUserShare } from '../test/harness'
+import { seedFile, seedGroupShare, seedMember, seedSite, seedSpace, seedStar, seedUser, seedUserShare } from '../test/harness'
 import { makeRouteApp, mintUser as mintFixtureUser } from '../test/route-fixtures'
 import type { AppEnv } from '../types'
 
@@ -231,11 +231,12 @@ describe('GET /api/sites/:space/:site — share-reach role resolution (S7 pins)'
 
     const res = await view(app, env, 'docs', 'report', { Authorization: 'Bearer tok-dv' })
     expect(res.status).toBe(200)
-    // FCP hotpath: the WHOLE metadata read is one fused batch (access facts + file manifest) —
-    // zero loose D1 statements. Stmts: site + user + membership + direct-role + group-reach + files.
+    // FCP hotpath: the WHOLE metadata read is one fused batch (access facts + file manifest +
+    // the viewer's own star) — zero loose D1 statements. Stmts: site + user + membership +
+    // direct-role + group-reach + files + star.
     expect(db.counters.batches).toBe(1)
     expect(db.counters.loose).toBe(0)
-    expect(db.counters.batchStmts).toBe(6)
+    expect(db.counters.batchStmts).toBe(7)
   })
 
   test('meta.superadmin: 200 with canReplace:true, manifest present, NO role field (no direct share)', async () => {
@@ -268,5 +269,37 @@ describe('GET /api/sites/mine — audio flag (W4-2)', () => {
     const bySlug = Object.fromEntries(((await res.json()) as { siteSlug: string; audio: boolean }[]).map((s) => [s.siteSlug, s.audio]))
     expect(bySlug.take).toBe(true)
     expect(bySlug.mixed).toBe(false)
+  })
+})
+
+// S6 — the viewer's own star state rides the SAME slug-keyed access batch as the site row and the
+// manifest. This is the FCP hotpath: the star button must be correct on first paint without buying
+// a second round trip for it.
+describe('GET /api/sites/:space/:site — starred (S6)', () => {
+  test('reports the CALLER’s star and stays inside the one existing batch', async () => {
+    const { db, kv, app, env } = await setup()
+    await mintUser(db, kv, 'me')
+    await mintUser(db, kv, 'other')
+    // Owned by a THIRD user: binding the star lookup to the site's owner instead of the caller
+    // would otherwise read identically, and that is exactly the per-user leak this pins.
+    await mintUser(db, kv, 'owner')
+    const sp = await seedSpace(db, { createdBy: 'owner', slug: 'docs' })
+    const site = await seedSite(db, { spaceId: sp, ownerId: 'owner', slug: 'report', visibility: 'team' })
+    await seedStar(db, site, 'other')
+
+    // Somebody else's star must not read as mine.
+    db.resetCounters()
+    const before = await view(app, env, 'docs', 'report', { Authorization: 'Bearer tok-me' })
+    expect(await before.json()).toMatchObject({ starred: false })
+    const batchesBefore = db.counters.batches
+    const stmtsBefore = db.counters.batchStmts
+
+    await seedStar(db, site, 'me')
+    db.resetCounters()
+    const after = await view(app, env, 'docs', 'report', { Authorization: 'Bearer tok-me' })
+    expect(await after.json()).toMatchObject({ starred: true })
+    // One round trip either way — the star fact is fused, not fetched.
+    expect(db.counters).toMatchObject({ batches: batchesBefore, loose: 0, batchStmts: stmtsBefore })
+    expect(batchesBefore).toBe(1)
   })
 })

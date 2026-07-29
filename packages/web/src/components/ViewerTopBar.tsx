@@ -1,7 +1,8 @@
-import { Check, ChevronRight, Command, GitFork, History, Menu, MessageSquare, Share2, Sparkles } from 'lucide-react'
+import { Check, ChevronRight, Command, GitFork, History, Menu, MessageSquare, Share2, Sparkles, Star } from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { useForkSite } from '@/hooks/useForkSite'
+import { useStar } from '@/hooks/useStar'
 import type { ViewerSite } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -45,6 +46,10 @@ export function ViewerTopBar({
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
   const { fork, forking } = useForkSite(site)
+  // Same shared-state shape as Fork/TL;DR/Share: ONE action, rendered twice (button + menu item).
+  // A private site is never starrable, so it gets no control at all — matching the table rows.
+  const { starred, toggle: toggleStar } = useStar(site)
+  const starrable = site.visibility !== 'private'
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-background px-3 md:gap-3">
       <Link to="/dashboard" className="flex shrink-0 items-center gap-2 font-mono font-semibold text-sm tracking-tight">
@@ -91,6 +96,19 @@ export function ViewerTopBar({
             ⌘K
           </kbd>
         </Button>
+        {starrable && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="hidden size-8 rounded-full md:inline-flex"
+            title={starred ? 'Remove star' : 'Star this page'}
+            aria-label={starred ? 'Remove star' : 'Star this page'}
+            aria-pressed={starred}
+            onClick={() => void toggleStar()}
+          >
+            <Star className={starred ? 'fill-primary text-primary' : undefined} />
+          </Button>
+        )}
         {/* Fork is deliberately NOT gated on site.isOwner (unlike Share): anyone who can read a
             site can fork it, so a plain viewer gets this too. */}
         <Button
@@ -165,6 +183,12 @@ export function ViewerTopBar({
               <Command />
               Search
             </DropdownMenuItem>
+            {starrable && (
+              <DropdownMenuItem onSelect={() => void toggleStar()}>
+                <Star />
+                {starred ? 'Remove star' : 'Star this page'}
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem disabled={forking} onSelect={() => void fork()}>
               <GitFork />
               Fork

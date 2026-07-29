@@ -10,6 +10,7 @@ import { summary } from '../routes/summary'
 import { sites } from '../routes/sites'
 import { slackEvents } from '../routes/slack-events'
 import { spaces } from '../routes/spaces'
+import { stars } from '../routes/stars'
 import type { AppEnv } from '../types'
 import { makeDb, makeKv, makeR2, seedUser } from './harness'
 
@@ -35,6 +36,8 @@ export function makeRouteApp() {
     await next()
   })
   app.route('/api/sites', sites)
+  // Before comments/summary — see index.ts: their wildcard requireAuth would otherwise run first.
+  app.route('/api/sites', stars)
   app.route('/api/spaces', spaces)
   // Same order as index.ts: sites first, then comments on the same mount (3-segment paths).
   app.route('/api/sites', comments)

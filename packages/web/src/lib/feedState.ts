@@ -17,13 +17,14 @@ export type FeedSlot<T> =
 
 export interface FeedSlots {
   sites: FeedSlot<SiteSummary[]>
+  starred: FeedSlot<SiteSummary[]>
   shared: FeedSlot<SiteSummary[]>
   spaces: FeedSlot<SpaceSummary[]>
   team: FeedSlot<TeamUpload[]>
   comments: FeedSlot<CommentFeedItem[]>
 }
 
-export const TAB_IDS = ['sites', 'shared', 'spaces', 'team', 'comments'] as const
+export const TAB_IDS = ['sites', 'starred', 'shared', 'spaces', 'team', 'comments'] as const
 export type TabId = (typeof TAB_IDS)[number]
 
 /** Parse a ?tab= URL value: a known tab id passes through, anything else means 'sites'. */
@@ -40,6 +41,7 @@ export type TabContent<T> =
 // directly — a conditional tab being "loading" or "errored" is unrepresentable.
 export type DashboardTab =
   | { id: 'sites'; label: 'Your sites'; count: number | null; content: TabContent<SiteSummary[]> }
+  | { id: 'starred'; label: 'Starred'; count: number | null; content: TabContent<SiteSummary[]> }
   | { id: 'shared'; label: 'Shared with me'; count: number; rows: SiteSummary[] }
   | { id: 'spaces'; label: 'Your spaces'; count: number; rows: SpaceSummary[] }
   | { id: 'team'; label: 'Team activity'; count: null; content: TabContent<TeamUpload[]> }
@@ -93,6 +95,16 @@ export function deriveFeedState(slots: FeedSlots, view: { requestedTab: TabId })
       label: 'Your sites',
       count: slots.sites.status === 'resolved' ? slots.sites.data.length : null,
       content: contentOf(slots.sites),
+    },
+    // UNCONDITIONAL, unlike Shared/Spaces below: the tab (and its empty state) is how someone
+    // discovers stars before they have any, so it renders at zero stars and a failed feed
+    // degrades to a contained error inside it rather than removing the tab — which also means a
+    // ?tab=starred deep link can never go stale.
+    {
+      id: 'starred',
+      label: 'Starred',
+      count: slots.starred.status === 'resolved' ? slots.starred.data.length : null,
+      content: contentOf(slots.starred),
     },
     ...(slots.shared.status === 'resolved' && slots.shared.data.length > 0
       ? [{ id: 'shared', label: 'Shared with me', count: slots.shared.data.length, rows: slots.shared.data } as const]
