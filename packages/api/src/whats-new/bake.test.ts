@@ -137,3 +137,18 @@ describe('A9 empty.newestNull', () => {
     expect(newestDate).toBeNull()
   })
 })
+
+describe('A10 image.optional — header art rides the frontmatter, absent stays absent', () => {
+  test('image: <file> is carried through to the release', async () => {
+    const { releases } = await buildCatalog([note({ title: 'I', slug: 'i', date: NEW, image: 'i.png' })])
+    expect(releases[0].image).toBe('i.png')
+  })
+  test('no image key → undefined, so a note without art renders exactly as before', async () => {
+    const { releases } = await buildCatalog([note({ title: 'N', slug: 'n', date: NEW })])
+    expect(releases[0].image).toBeUndefined()
+  })
+  test('empty image value → undefined, not an empty src that would request the directory', async () => {
+    const { releases } = await buildCatalog([note({ title: 'E', slug: 'e', date: NEW, image: '' })])
+    expect(releases[0].image).toBeUndefined()
+  })
+})

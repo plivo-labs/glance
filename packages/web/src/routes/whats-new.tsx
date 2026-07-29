@@ -1,7 +1,7 @@
 import { Sparkles } from 'lucide-react'
 import { useEffect } from 'react'
 import { type LoaderFunctionArgs, useLoaderData } from 'react-router'
-import { ReleaseBody, formatReleaseDate } from '@/components/ReleaseBody'
+import { ReleaseBody, ReleaseImage, formatReleaseDate } from '@/components/ReleaseBody'
 import { ApiError } from '@/lib/api'
 import { toLogin } from '@/lib/nav'
 import { type Release, type WhatsNewList, whatsNew } from '@/lib/whatsNew'
@@ -51,6 +51,7 @@ export function Component() {
 function ArchiveEntry({ release }: { release: Release }) {
   return (
     <article>
+      {release.image && <ReleaseImage src={release.image} className="mb-4" />}
       <div className="flex items-center gap-2">
         {release.featured && (
           <span className="rounded-full bg-primary/10 px-2 py-0.5 font-medium text-[10px] text-primary uppercase tracking-wide">

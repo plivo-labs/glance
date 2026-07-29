@@ -1,7 +1,7 @@
 import { Sparkles } from 'lucide-react'
 import { Suspense, useState } from 'react'
 import { Await, Link } from 'react-router'
-import { ReleaseBody, formatReleaseDate } from '@/components/ReleaseBody'
+import { ReleaseBody, ReleaseImage, formatReleaseDate } from '@/components/ReleaseBody'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
@@ -155,6 +155,7 @@ function WhatsNewSheet({ data, onOpen }: { data: WhatsNewList; onOpen: () => voi
 function ReleaseEntry({ release }: { release: Release }) {
   return (
     <article>
+      {release.image && <ReleaseImage src={release.image} />}
       <div className="flex items-center gap-2">
         {release.featured && (
           <span className="rounded-full bg-primary/10 px-2 py-0.5 font-medium text-[10px] text-primary uppercase tracking-wide">

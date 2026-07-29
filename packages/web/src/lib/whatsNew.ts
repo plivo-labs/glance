@@ -9,6 +9,7 @@ export interface Release {
   title: string
   subtitle?: string
   version?: string
+  image?: string // basename of a static asset under public/whats-new/; optional
   date: string
   featured: boolean
   bodyHtml: string // pre-escaped at build time; injected via dangerouslySetInnerHTML
