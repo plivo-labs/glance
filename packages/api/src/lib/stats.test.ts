@@ -43,17 +43,19 @@ describe('computeStats totals', () => {
     expect(s.totals.comments).toBe(1) // soft-deleted not counted
   })
 
-  test('views vs cli events, and unique viewers (distinct userId)', async () => {
+  test('cli events never inflate views, and unique viewers counts a user once', async () => {
     const { db, u1, u2, siteA } = await fixture()
     await seedEvent(db, { type: 'view', userId: u1, siteId: siteA, siteLabel: 'acme/a' })
     await seedEvent(db, { type: 'view', userId: u1, siteId: siteA, siteLabel: 'acme/a' })
     await seedEvent(db, { type: 'view', userId: u2, siteId: siteA, siteLabel: 'acme/a' })
+    // A cli row is still WRITTEN (auth's hasUsedCli probe reads one) — it must not be counted here.
     await seedEvent(db, { type: 'cli', action: 'upload', userId: u1, cliVersion: '1.0.0' })
 
     const s = await computeStats(db, NOW)
     expect(s.totals.views).toBe(3)
-    expect(s.totals.cliInvocations).toBe(1)
     expect(s.totals.uniqueViewers).toBe(2) // u1 counted once
+    // The CLI rollups were dropped: they cost 40% of the dashboard's D1 rows for two unused figures.
+    expect('cliInvocations' in s.totals).toBe(false)
   })
 })
 
@@ -78,7 +80,9 @@ describe('computeStats window + series', () => {
     expect(s.series[0].date < s.series[29].date).toBe(true) // oldest → newest
     expect(s.series[29].date).toBe('2026-07-03') // today
     expect(s.series[29].views).toBe(2)
-    expect(s.series[24].cli).toBe(1) // 5 days ago = index 24
+    // 5 days ago (index 24) saw ONLY a cli event — no series line may pick it up.
+    expect(s.series[24]).toMatchObject({ views: 0, signups: 0, sites: 0, comments: 0 })
+    expect('cli' in s.series[24]).toBe(false)
   })
 })
 
