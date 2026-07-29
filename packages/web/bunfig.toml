@@ -1,0 +1,4 @@
+# Scoped to packages/web ON PURPOSE. A root-level bunfig would preload the DOM globals into
+# packages/api too, where worker code must keep proving it never touches a browser API.
+[test]
+preload = ["./src/test/dom.ts"]

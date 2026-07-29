@@ -34,8 +34,12 @@ jobs:
       - name: Build web
         run: bun run build:web
 
+      # `bun run test` (the root script), not a bare root `bun test`: the web package's DOM tests
+      # need packages/web/bunfig.toml's preload, and bun reads bunfig from the cwd — only the
+      # per-workspace fan-out gives each package its own. A root `bun test` would also run every
+      # package in one process, which is exactly what keeps the api suite free of DOM globals.
       - name: Test
-        run: bun test
+        run: bun run test
 
       - name: Lint
         run: bun run lint
