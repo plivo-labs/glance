@@ -148,6 +148,63 @@ export async function computeStats(db: DrizzleD1Database, now: Date = new Date()
   }
 }
 
+// --- Cache front for the admin dashboard ----------------------------------------------------
+//
+// `computeStats` is 13 aggregates and most of them are unavoidable FULL SCANS (all-time counts,
+// `count(distinct userId)`, `sum(files.size)`, the 30-day group-bys) — ~45k D1 rows read per call
+// against a database whose largest table is ~10k rows. The admin page is a React Router loader,
+// so every navigation, back button, and tab switch re-ran the whole thing: measured at ~73% of
+// the account's ENTIRE D1 rows-read budget. Nothing here is real-time by nature (the window is
+// per-DAY buckets), so a short shared TTL costs nothing in usefulness.
+
+// SUBSTRATE — KV, deliberately NOT the Workers Cache API. `caches.default` is only documented as
+// functional for Workers on CUSTOM DOMAINS (and Pages on `*.pages.dev`); `*.workers.dev` is
+// conspicuously absent from that list, and cache ops there are widely reported as silent no-ops —
+// `put` resolves, `match` never hits, and the fix would look applied while changing nothing. This
+// deploy runs on `glance.<subdomain>.workers.dev`, so the Cache API is not a safe bet here. KV is
+// unambiguously functional on workers.dev, and its TTL is a server-side `expirationTtl` rather
+// than a Cache-Control the runtime may or may not honour. It is also GLOBAL, not per-colo, so one
+// compute serves every region instead of one per colo.
+
+/** KV key for the single account-wide rollup entry. Namespaced under `stats:` alongside the
+ *  namespace's `session:`/`cli:` keys. */
+export const STATS_CACHE_KEY = 'stats:admin'
+
+/** Freshness window for the cached rollup, in seconds. */
+export const STATS_CACHE_SECONDS = 300
+
+/** Minimal KV surface this layer uses — the real KVNamespace binding satisfies it structurally,
+ *  as does the harness mock. */
+export type StatsCacheKv = {
+  get(key: string): Promise<string | null>
+  put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>
+}
+
+/** `computeStats` fronted by KV. Hit → the stored JSON, ZERO D1 reads. Miss (or a KV that throws —
+ *  a broken cache must never break the dashboard) → compute, then write the entry off the critical
+ *  path via `defer`. NOT an authorization boundary: this returns the whole account rollup to whoever
+ *  calls it, so it must stay behind the superadmin gate its only caller (routes/admin.ts) sits under.
+ *  `kv` may be null, which degrades to computing every call — today's exact behaviour. */
+export async function cachedStats(
+  kv: StatsCacheKv | null,
+  db: DrizzleD1Database,
+  defer: (p: Promise<unknown>) => Promise<void>,
+): Promise<Stats> {
+  if (kv) {
+    try {
+      const hit = await kv.get(STATS_CACHE_KEY)
+      if (hit) return JSON.parse(hit) as Stats
+    } catch {
+      // fall through and compute — an unreadable or malformed entry is a miss, never an error
+    }
+  }
+  const stats = await computeStats(db)
+  if (kv) {
+    await defer(kv.put(STATS_CACHE_KEY, JSON.stringify(stats), { expirationTtl: STATS_CACHE_SECONDS }).catch(() => {}))
+  }
+  return stats
+}
+
 type DayRows = { date: string; n: number }[]
 
 /** Zero-fill the window: one row per day (oldest → newest), merging each metric's sparse counts. */

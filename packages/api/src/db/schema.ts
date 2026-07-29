@@ -72,7 +72,14 @@ export const sites = sqliteTable(
     // site at its creation slot). Renames/moves/visibility changes do NOT bump it — content only.
     updatedAt: text('updatedAt').notNull().$defaultFn(() => new Date().toISOString()),
   },
-  (t) => [unique('sites_space_slug_unq').on(t.spaceId, t.slug), index('sites_owner').on(t.ownerId)],
+  (t) => [
+    unique('sites_space_slug_unq').on(t.spaceId, t.slug),
+    index('sites_owner').on(t.ownerId),
+    // Serves the team feed's `status = ? AND visibility = ? ORDER BY updatedAt DESC LIMIT n`:
+    // equality on the leading pair, `updatedAt` last so the ORDER BY is a reverse index scan and
+    // the LIMIT stops it early — otherwise the feed's correlated EXISTS columns run once per SITE.
+    index('sites_status_visibility_updated').on(t.status, t.visibility, t.updatedAt),
+  ],
 )
 
 export const files = sqliteTable(
