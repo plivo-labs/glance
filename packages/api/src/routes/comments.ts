@@ -1,6 +1,6 @@
 import { type Context, Hono } from 'hono'
 import type { BatchItem, BatchResponse } from 'drizzle-orm/batch'
-import { type ElementAnchor, normalizeText, parseElementAnchor } from '../lib/anchor'
+import { type ElementAnchor, type StoredTextContext, normalizeText, parseElementAnchor, parseTextContext } from '../lib/anchor'
 import {
   addComment,
   assembleThreadViews,
@@ -320,18 +320,21 @@ type ThreadFields = {
   filePath: string
   quote: string | undefined
   anchorType: 'text' | 'page' | 'element'
-  anchor: ElementAnchor | undefined
+  anchor: ElementAnchor | StoredTextContext | undefined
 }
 
 /** Validate the anchor-shaping fields shared by the JSON and multipart create paths: filePath
  *  (required, capped), quote (folded + control-stripped + capped), anchorType, and — for an element
  *  anchor — the parsed+validated element payload. Returns an error+status to return as-is, or the
- *  normalized fields. `element` must already be a PARSED object (parseElementAnchor expects one). */
+ *  normalized fields. `element` must already be a PARSED object (parseElementAnchor expects one).
+ *  A TEXT anchor may carry `context` ({prefix,suffix} around the selection); it shares the same
+ *  stored column and, being a hint rather than an identifier, degrades to undefined instead of 400. */
 function parseThreadFields(raw: {
   filePath?: unknown
   quote?: unknown
   anchorType?: unknown
   element?: unknown
+  context?: unknown
 }): { error: string } | ThreadFields {
   if (typeof raw.filePath !== 'string' || !raw.filePath || tooLong(raw.filePath, MAX_PATH))
     return { error: 'filePath required' }
@@ -344,13 +347,25 @@ function parseThreadFields(raw: {
 
   // An element anchor is validated + built in the canonical layer; the route only maps its error to
   // a 400 (element without a selector must NOT silently coerce to text).
-  let anchor: ElementAnchor | undefined
+  let anchor: ElementAnchor | StoredTextContext | undefined
   if (anchorType === 'element') {
     const parsed = parseElementAnchor(raw.element)
     if ('error' in parsed) return { error: parsed.error }
     anchor = parsed.anchor
+  } else if (anchorType === 'text') {
+    anchor = parseTextContext(raw.context) ?? undefined
   }
   return { filePath: raw.filePath, quote, anchorType, anchor }
+}
+
+/** A FormData value that should hold JSON, parsed leniently — anything unusable reads as absent. */
+function jsonOrUndefined(raw: File | string | null): unknown {
+  if (typeof raw !== 'string' || !raw) return undefined
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return undefined
+  }
 }
 
 /** Shared voice-comment ingest for create + reply. Validate the `audio` part, cap its size (no R2
@@ -517,6 +532,9 @@ async function createVoiceThread(c: Context<AppEnv>, site: ResolvedSite): Promis
     quote: form.get('quote'),
     anchorType: form.get('anchorType'),
     element,
+    // Same JSON-string treatment as `element`, but unparseable context is DROPPED rather than
+    // rejected — losing the hint costs first-occurrence anchoring, not the comment.
+    context: jsonOrUndefined(form.get('context')),
   })
   if ('error' in fields) return c.json({ error: fields.error }, 400)
 

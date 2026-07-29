@@ -1,5 +1,6 @@
 import { api } from '@/lib/api'
 import type { MentionUser } from '@/lib/mentions'
+import type { TextContext } from '@/lib/parseIntent'
 import { extForMime } from '@/lib/recorder'
 import type { ViewerSite } from '@/lib/types'
 
@@ -36,6 +37,9 @@ export interface Thread {
   anchorType: 'text' | 'page' | 'element'
   quote: string | null
   anchor: ElementAnchor | null // element threads only
+  // Text threads only: the text around the selection, which tells REPEATED occurrences of the same
+  // quote apart when painting. Null on threads stored before context existed → first-match painting.
+  context: TextContext | null
   status: ThreadStatus
   resolvedBy: string | null
   resolvedByName: string | null
@@ -53,19 +57,25 @@ export interface NewThreadInput {
   anchorType?: 'text' | 'page' | 'element'
   quote?: string
   element?: ElementAnchor
+  context?: TextContext
 }
 
 // A pending anchor the viewer holds between "user picked an anchor" and "user submitted the
 // comment" — a text selection, an element pinpoint, or (audio view — no DOM to select in) a bare
 // page anchor. Kept generic so the composer + create path don't branch on anchor kind everywhere.
-export type PendingAnchor = { kind: 'text'; quote: string } | { kind: 'element'; anchor: ElementAnchor } | { kind: 'page' }
+export type PendingAnchor =
+  | { kind: 'text'; quote: string; context?: TextContext }
+  | { kind: 'element'; anchor: ElementAnchor }
+  | { kind: 'page' }
 
 /** Pure map: a pending anchor + body → the create payload. Unit-tested (seam S2) so the viewer's
  *  create path needs no browser to verify. */
 export function pendingToInput(filePath: string, body: string, pending: PendingAnchor): NewThreadInput {
   if (pending.kind === 'element') return { filePath, body, anchorType: 'element', element: pending.anchor }
   if (pending.kind === 'page') return { filePath, body, anchorType: 'page' }
-  return { filePath, body, quote: pending.quote }
+  // `context` is omitted entirely when absent — the server treats an absent key and an unusable one
+  // identically, but sending `undefined` would put a null in the JSON body for no reason.
+  return pending.context ? { filePath, body, quote: pending.quote, context: pending.context } : { filePath, body, quote: pending.quote }
 }
 
 /** Attach an explicit mentions list to a JSON payload, but ONLY when there are ids to send — an
@@ -104,6 +114,7 @@ export const comments = {
     if (fields.anchorType) form.append('anchorType', fields.anchorType)
     if (fields.quote) form.append('quote', fields.quote)
     if (fields.element) form.append('element', JSON.stringify(fields.element))
+    if (fields.context) form.append('context', JSON.stringify(fields.context))
     return api.postForm<{ threadId: string }>(base(s), form)
   },
   // Voice reply: multipart, audio only (a reply carries no anchor). Same shape as `reply`.

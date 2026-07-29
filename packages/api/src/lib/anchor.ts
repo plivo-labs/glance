@@ -1,7 +1,8 @@
 // Text normalization for stored comment quotes. No DOM, no network, no resolution — the browser
 // annotate client re-finds the quote in the RENDERED DOM to paint it (the correct coordinate
-// space). We store only the normalized quote; there is no prefix/suffix context and no server-side
-// anchoring. The quote is normalized so formatting-only edits (whitespace runs, NBSP, ligatures,
+// space). We store the normalized quote plus a bounded slice of its surrounding text (see "Text-
+// quote context" below) that tells repeated occurrences apart; all anchoring itself stays in the
+// client. The quote is normalized so formatting-only edits (whitespace runs, NBSP, ligatures,
 // accents) don't change what we store.
 
 /** NFKC fold (ligatures/NBSP/full-width → canonical form, composes accents) + collapse whitespace
@@ -50,6 +51,56 @@ export function parseElementAnchor(raw: unknown): { anchor: ElementAnchor } | { 
   for (const [field, cap] of Object.entries(ELEMENT_ANCHOR_LIMITS))
     if (str(a[field]).length > cap) return { error: 'element anchor field too long' }
   return { anchor: buildElementAnchor({ selector: str(a.selector), tag: str(a.tag), preview: str(a.preview), textFallback: str(a.textFallback) }) }
+}
+
+// --- Text-quote context -----------------------------------------------------------------------
+// A quote can't identify itself when the same words appear more than once — the painter's
+// `findRange` takes the first occurrence, so a comment on the second identical sentence would
+// paint on the first. Alongside the quote we store a bounded slice of the text on either side,
+// captured at selection time, and the painter re-finds the occurrence that best reproduces it.
+//
+// This shares the `anchor` JSON column with element anchors (`anchorType` remains the discriminant)
+// and carries an explicit `v`. The column previously held a DIFFERENT `{quote,prefix,suffix}` model
+// on rows that are still in the database; the version gate is what stops that stale, differently-
+// normalized context from silently re-anchoring an old thread.
+
+export type TextContext = { prefix: string; suffix: string }
+export type StoredTextContext = TextContext & { v: typeof TEXT_CONTEXT_VERSION }
+
+export const TEXT_CONTEXT_VERSION = 2
+/** Chars stored per side. Mirrors the annotate client's CONTEXT_CHARS — the client captures at that
+ *  width, so a lower cap here would silently truncate what the painter then tries to match. */
+export const TEXT_CONTEXT_LIMIT = 64
+
+/** Parse an UNTRUSTED context payload. Unlike an element anchor (whose selector is REQUIRED, so a
+ *  malformed one is a 400), context is a positioning hint: anything unusable degrades to null and
+ *  the thread simply anchors the way it did before context existed. Over-cap input is truncated,
+ *  not rejected, for the same reason. */
+export function parseTextContext(raw: unknown): StoredTextContext | null {
+  const c = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  const side = (v: unknown): string =>
+    typeof v === 'string' ? normalizeEdges(v).slice(0, TEXT_CONTEXT_LIMIT) : ''
+  const prefix = side(c.prefix)
+  const suffix = side(c.suffix)
+  if (!prefix.trim() && !suffix.trim()) return null
+  return { v: TEXT_CONTEXT_VERSION, prefix, suffix }
+}
+
+/** Like `normalizeText` but WITHOUT the trim: the space separating the quote from its neighbours is
+ *  part of what distinguishes one occurrence from another, so the edges must survive. */
+function normalizeEdges(s: string): string {
+  return s.normalize('NFKC').replace(/\s+/g, ' ')
+}
+
+/** Read shim: surface a stored text context ONLY for versioned text rows. Every other shape —
+ *  legacy `{quote,prefix,suffix}`, an element anchor sharing the column, a null — reads as "no
+ *  context", which is a complete answer: the painter falls back to first-occurrence matching. */
+export function readTextContext(anchorType: string, anchor: unknown): TextContext | null {
+  if (anchorType !== 'text' || anchor == null || typeof anchor !== 'object') return null
+  const a = anchor as Record<string, unknown>
+  if (a.v !== TEXT_CONTEXT_VERSION) return null
+  const str = (v: unknown): string => (typeof v === 'string' ? v : '')
+  return { prefix: str(a.prefix), suffix: str(a.suffix) }
 }
 
 /** Read shim: surface a stored element anchor ONLY for element rows. Legacy text/page rows may

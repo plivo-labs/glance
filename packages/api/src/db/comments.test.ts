@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { eq } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
+import { TEXT_CONTEXT_VERSION } from '../lib/anchor'
 import { batchAll } from '../lib/d1'
 import { makeDb, makeR2, seedComment, seedFile, seedSite, seedSpace, seedThread, seedUser } from '../test/harness'
 import { commentThreads, users } from './schema'
@@ -164,7 +165,33 @@ describe('createThread — stores the anchor', () => {
     expect(thread.anchorType).toBe('element')
     expect(thread.quote).toBeNull()
     expect(thread.anchor).toEqual({ selector: '#chart > svg', tag: 'svg', preview: 'Bar chart', textFallback: 'Revenue' })
+    expect(thread.context).toBeNull() // an element row never reads back as text context
     expect(thread.comments.map((c) => c.body)).toEqual(['this chart is wrong'])
+  })
+
+  test('create-thread-stores-text-context: a text thread round-trips its occurrence context', async () => {
+    const { db, sp, siteId, user, path } = await siteWithFile('<p>Beta section. Revenue is up.</p>')
+
+    await createThread(db, {
+      siteId,
+      filePath: path,
+      createdBy: user,
+      body: 'which one is this?',
+      quote: 'Revenue is up.',
+      anchor: { v: TEXT_CONTEXT_VERSION, prefix: 'Beta section. ', suffix: '' },
+    })
+
+    const [thread] = await listThreads(db, sp, siteId, path)
+    expect(thread.anchorType).toBe('text')
+    expect(thread.context).toEqual({ prefix: 'Beta section. ', suffix: '' })
+    expect(thread.anchor).toBeNull() // context is not an element anchor, and never surfaces as one
+  })
+
+  test('create-thread-text-context-optional: no context → null, exactly as before context existed', async () => {
+    const { db, sp, siteId, user, path } = await siteWithFile('<p>The quick brown fox jumps.</p>')
+    await createThread(db, { siteId, filePath: path, createdBy: user, body: 'x', quote: 'brown fox' })
+    const [thread] = await listThreads(db, sp, siteId, path)
+    expect(thread.context).toBeNull()
   })
 })
 

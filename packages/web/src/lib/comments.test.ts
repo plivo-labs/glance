@@ -30,6 +30,20 @@ describe('pendingToInput — pending anchor → NewThreadInput', () => {
       anchorType: 'page',
     })
   })
+
+  test('a text pending carries its occurrence context when one was captured', () => {
+    const context = { prefix: 'Beta section. ', suffix: ' tail' }
+    expect(pendingToInput('index.html', 'this one', { kind: 'text', quote: 'Revenue is up.', context })).toEqual({
+      filePath: 'index.html',
+      body: 'this one',
+      quote: 'Revenue is up.',
+      context,
+    })
+  })
+
+  test('a text pending with no context omits the key entirely (absent ≠ null)', () => {
+    expect(pendingToInput('index.html', 'x', { kind: 'text', quote: 'q' })).not.toHaveProperty('context')
+  })
 })
 
 describe('C19 — withMentions: payload carries mentions when ids present, omits when none', () => {

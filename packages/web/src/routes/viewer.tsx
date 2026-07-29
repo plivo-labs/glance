@@ -5,7 +5,7 @@ import { api, ApiError } from '@/lib/api'
 import { isAudioFile } from '@/lib/audio'
 import { attachDbBroker } from '@/lib/dbBroker'
 import { comments, type PendingAnchor, pendingToInput, type Thread } from '@/lib/comments'
-import { type Intent, parseIntent } from '@/lib/parseIntent'
+import { type Intent, type TextContext, parseIntent } from '@/lib/parseIntent'
 import { encodePathSegments } from '@/lib/paths'
 import { type ArbiterEvent, type ArbiterState, type Decision, initialArbiter, stepArbiter } from '@/lib/prefetchArbiter'
 import { recordVisit } from '@/lib/recents'
@@ -28,7 +28,9 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
 
 // The paint payload the iframe understands: a text anchor (re-find quote) or an element anchor
 // (re-resolve selector). Mirrors the annotate client's PaintAnchor.
-type PaintMsgAnchor = { id: string; anchorType: 'text'; quote: string } | { id: string; anchorType: 'element'; selector: string }
+type PaintMsgAnchor =
+  | { id: string; anchorType: 'text'; quote: string; context: TextContext | null }
+  | { id: string; anchorType: 'element'; selector: string }
 
 // The recents sidebar lets a user jump straight from one open site to another via a plain
 // react-router <Link> (no full reload) — the FIRST in-app case of navigating between two mounts of
@@ -94,7 +96,7 @@ function Viewer() {
     if (!win) return
     const anchors: PaintMsgAnchor[] = review
       ? threads.flatMap((t): PaintMsgAnchor[] => {
-          if (t.anchorType === 'text' && t.quote) return [{ id: t.id, anchorType: 'text', quote: t.quote }]
+          if (t.anchorType === 'text' && t.quote) return [{ id: t.id, anchorType: 'text', quote: t.quote, context: t.context }]
           if (t.anchorType === 'element' && t.anchor) return [{ id: t.id, anchorType: 'element', selector: t.anchor.selector }]
           return []
         })
@@ -233,7 +235,7 @@ function Viewer() {
       // open into); in review each intent opens the composer directly on its anchor, replacing
       // whatever was already being composed but leaving its typed draft alone (ReviewRail renders
       // Composer unkeyed, so swapping `composing` reparents the anchor without remounting the text).
-      else if (review && intent.type === 'select') setComposing({ kind: 'text', quote: intent.quote })
+      else if (review && intent.type === 'select') setComposing({ kind: 'text', quote: intent.quote, context: intent.context })
       else if (review && intent.type === 'pinpoint') setComposing({ kind: 'element', anchor: intent.anchor })
     }
     window.addEventListener('message', onMsg)
@@ -317,7 +319,8 @@ function Viewer() {
       if (!win) return
       if (thread.anchorType === 'element' && thread.anchor)
         win.postMessage({ type: 'glance:focus', selector: thread.anchor.selector }, contentOrigin)
-      else if (thread.quote) win.postMessage({ type: 'glance:focus', quote: thread.quote }, contentOrigin)
+      // Context rides along so focusing lands on the SAME occurrence the paint highlighted.
+      else if (thread.quote) win.postMessage({ type: 'glance:focus', quote: thread.quote, context: thread.context }, contentOrigin)
     },
     [contentOrigin],
   )
@@ -345,8 +348,14 @@ function Viewer() {
     focusAnchor(target)
   }, [deepLinkThreadId, review, loaded, threads, focusAnchor])
 
+  // THROWS rather than returning when there's nothing to anchor to: the composer treats a resolved
+  // onSubmit as success and clears the draft, so a silent early return here would swallow the
+  // comment the user just typed. `filePath` is null until the iframe reports ready.
   async function createThread(body: string, mentions: string[]) {
-    if (!filePath || !composing) return
+    if (!filePath || !composing) {
+      toast.error('This page is still loading — try again in a moment')
+      throw new Error('no anchor to comment on yet')
+    }
     try {
       await comments.create(site, pendingToInput(filePath, body, composing), mentions)
       setComposing(null)

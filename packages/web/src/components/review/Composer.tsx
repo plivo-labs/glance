@@ -137,6 +137,9 @@ export function Composer({
     return ids
   }
 
+  // The draft is cleared ONLY after onSubmit resolves. A rejection means the comment did not land,
+  // so the typed text stays exactly where it is (the submit handler owns telling the user why) —
+  // clearing on a failed submit would destroy work with no way back.
   async function submit() {
     if (!trimmed || busy) return
     setBusy(true)
@@ -145,6 +148,8 @@ export function Composer({
       setBody('')
       chosen.current.clear()
       setMenu(null)
+    } catch {
+      /* draft preserved */
     } finally {
       setBusy(false)
     }

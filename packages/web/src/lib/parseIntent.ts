@@ -6,7 +6,10 @@
 // constraint 1): an iframe message may only OPEN UI or SUGGEST an anchor; every mutation is
 // parent-initiated after an explicit user action, and all anchor resolution is server-side.
 
-export type SelectIntent = { type: 'select'; quote: string; rect?: DOMRectLike }
+export type SelectIntent = { type: 'select'; quote: string; context?: TextContext; rect?: DOMRectLike }
+/** Text on either side of the selection, captured in the iframe. Untrusted and advisory: it only
+ *  steers WHICH occurrence of a repeated quote gets painted, never whether a comment may exist. */
+export type TextContext = { prefix: string; suffix: string }
 export type ReadyIntent = { type: 'ready'; filePath: string }
 export type ClearIntent = { type: 'clear' }
 /** A suggested element ("pinpoint") anchor — the iframe proposes a selector; the parent turns it
@@ -20,6 +23,9 @@ export type DOMRectLike = { top: number; left: number; width: number; height: nu
 export type ExpectedSource = { origin: string; source: MessageEventSource | Window | null }
 
 const MAX_FIELD = 2000 // chars per text field, bounds a single message
+// Mirrors the api's TEXT_CONTEXT_LIMIT: the client captures at that width and the server stores at
+// most that, so anything longer is noise the server would trim anyway.
+const MAX_CONTEXT = 64
 
 const str = (v: unknown, max = MAX_FIELD): string | null =>
   typeof v === 'string' && v.length <= max ? v : null
@@ -30,6 +36,17 @@ const str = (v: unknown, max = MAX_FIELD): string | null =>
 const clamp = (v: unknown, max = MAX_FIELD): string | null => (typeof v === 'string' ? v.slice(0, max) : null)
 
 const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+
+/** Best-effort occurrence context. Each side is clamped, not rejected — an over-long side would
+ *  still be truncated server-side, and dropping the whole message over it would cost the comment.
+ *  Undefined when neither side carries anything, so "no context" stays a single shape. */
+const context = (v: unknown): TextContext | undefined => {
+  if (!v || typeof v !== 'object') return undefined
+  const c = v as Record<string, unknown>
+  const prefix = clamp(c.prefix, MAX_CONTEXT) ?? ''
+  const suffix = clamp(c.suffix, MAX_CONTEXT) ?? ''
+  return prefix || suffix ? { prefix, suffix } : undefined
+}
 
 /** Best-effort selection rectangle (iframe-viewport coords). Untrusted — used only to position
  *  an overlay, never as authority. */
@@ -48,10 +65,10 @@ export function parseIntent(event: MessageEvent, expected: ExpectedSource): Inte
 
   switch ((data as { type?: unknown }).type) {
     case 'glance:select': {
-      const d = data as { quote?: unknown; rect?: unknown }
+      const d = data as { quote?: unknown; context?: unknown; rect?: unknown }
       const quote = clamp(d.quote)
       if (!quote) return null
-      return { type: 'select', quote, rect: rect(d.rect) }
+      return { type: 'select', quote, context: context(d.context), rect: rect(d.rect) }
     }
     case 'glance:pinpoint': {
       const d = data as { selector?: unknown; tag?: unknown; preview?: unknown; textFallback?: unknown; rect?: unknown }

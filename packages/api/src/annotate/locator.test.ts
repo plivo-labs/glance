@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { Window } from 'happy-dom'
-import { computeSelector, describeElement, findRange, isPageSpanning, resolveSelector } from './locator'
+import { CONTEXT_CHARS, computeSelector, describeElement, findRange, isPageSpanning, resolveSelector, selectionContext } from './locator'
 
 // Seam S1: the locator is global-free, so we drive it under a constructed happy-dom document and
 // pass nodes in — no GlobalRegistrator, so nothing leaks into the other (server-side) api tests.
@@ -135,6 +135,98 @@ describe('findRange — re-find a stored quote in the rendered DOM', () => {
   test('an absent quote returns null', () => {
     const doc = docFrom('<p>nothing to see here</p>')
     expect(findRange('a phrase that is not present', doc)).toBeNull()
+  })
+})
+
+describe('findRange — context disambiguates a REPEATED quote', () => {
+  // Three identical sentences; only the surrounding text tells them apart. Without context the
+  // first wins (the historical behaviour every stored thread relies on).
+  const repeated = '<p>Alpha section. Revenue is up. tail</p><p>Beta section. Revenue is up. tail</p><p>Gamma section. Revenue is up. tail</p>'
+
+  test('no context → the FIRST occurrence (unchanged legacy behaviour)', () => {
+    const doc = docFrom(repeated)
+    expect(findRange('Revenue is up.', doc)!.startContainer.parentElement?.textContent).toContain('Alpha')
+  })
+
+  test('prefix context selects the occurrence it precedes', () => {
+    const doc = docFrom(repeated)
+    const range = findRange('Revenue is up.', doc, { prefix: 'Beta section. ', suffix: '' })!
+    expect(range.startContainer.parentElement?.textContent).toContain('Beta')
+  })
+
+  test('suffix context alone also disambiguates', () => {
+    const doc = docFrom('<p>Revenue is up. then alpha</p><p>Revenue is up. then beta</p>')
+    const range = findRange('Revenue is up.', doc, { prefix: '', suffix: ' then beta' })!
+    expect(range.endContainer.parentElement?.textContent).toContain('beta')
+  })
+
+  test('context that matches NO occurrence falls back to the first match', () => {
+    const doc = docFrom(repeated)
+    const range = findRange('Revenue is up.', doc, { prefix: 'Nowhere at all. ', suffix: '' })!
+    expect(range.startContainer.parentElement?.textContent).toContain('Alpha')
+  })
+
+  test('context matching is whitespace-flexible (stored context is collapsed, the DOM is not)', () => {
+    const doc = docFrom('<p>Alpha section. Revenue is up.</p><p>Beta\n   section.   Revenue is up.</p>')
+    const range = findRange('Revenue is up.', doc, { prefix: 'Beta section. ', suffix: '' })!
+    expect(range.startContainer.parentElement?.textContent).toContain('Beta')
+  })
+
+  test('a repeated quote still resolves when the winning occurrence moves to a new element', () => {
+    // Same context, different markup: the anchor follows the CONTENT, not the DOM shape.
+    const doc = docFrom('<div><span>Beta section. </span><em>Revenue is up.</em></div><p>Alpha section. Revenue is up.</p>')
+    const range = findRange('Revenue is up.', doc, { prefix: 'Beta section. ', suffix: '' })!
+    expect(range.startContainer.parentElement?.tagName).toBe('EM')
+  })
+})
+
+describe('selectionContext — capture the text around a live selection', () => {
+  /** A range over the FIRST occurrence of `needle` in the document's rendered text. */
+  function rangeOver(doc: Document, needle: string): Range {
+    return findRange(needle, doc)!
+  }
+
+  test('returns the collapsed text on either side of the range', () => {
+    const doc = docFrom('<p>before words here. Revenue is up. after words here.</p>')
+    const ctx = selectionContext(rangeOver(doc, 'Revenue is up.'), doc)
+    expect(ctx.prefix.endsWith('before words here. ')).toBe(true)
+    expect(ctx.suffix.startsWith(' after words here.')).toBe(true)
+  })
+
+  test('reaches across element boundaries and collapses whitespace runs', () => {
+    const doc = docFrom('<p>Beta\n   section.   </p><p><em>Revenue is up.</em></p>')
+    expect(selectionContext(rangeOver(doc, 'Revenue is up.'), doc).prefix).toContain('Beta section.')
+  })
+
+  test('skips non-rendered text (a <script> next to the selection is not context)', () => {
+    const doc = docFrom('<script>POISON CONTEXT</script><p>real lead in. Revenue is up.</p>')
+    const ctx = selectionContext(rangeOver(doc, 'Revenue is up.'), doc)
+    expect(ctx.prefix).not.toContain('POISON')
+    expect(ctx.prefix).toContain('real lead in.')
+  })
+
+  test('is bounded on both sides', () => {
+    const doc = docFrom(`<p>${'a '.repeat(200)}Revenue is up.${' b'.repeat(200)}</p>`)
+    const ctx = selectionContext(rangeOver(doc, 'Revenue is up.'), doc)
+    expect(ctx.prefix.length).toBeLessThanOrEqual(CONTEXT_CHARS)
+    expect(ctx.suffix.length).toBeLessThanOrEqual(CONTEXT_CHARS)
+  })
+
+  test('an edge-of-document selection yields empty context on that side', () => {
+    const doc = docFrom('<p>Revenue is up. trailing text</p>')
+    expect(selectionContext(rangeOver(doc, 'Revenue is up.'), doc).prefix).toBe('')
+  })
+
+  test('round-trips: context captured from occurrence N re-finds occurrence N', () => {
+    const html = '<p>one. Revenue is up. x</p><p>two. Revenue is up. y</p><p>three. Revenue is up. z</p>'
+    const doc = docFrom(html)
+    // Capture context for the THIRD occurrence by ranging over its unique surroundings.
+    const third = findRange('three. Revenue is up. z', doc)!
+    const ctx = selectionContext(third, doc)
+    // A fresh document (as if re-opened later) must land on the third occurrence from that context.
+    const reopened = docFrom(html)
+    const found = findRange('three. Revenue is up. z', reopened, ctx)!
+    expect(found.toString()).toContain('three.')
   })
 })
 

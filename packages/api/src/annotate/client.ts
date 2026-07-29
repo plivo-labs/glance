@@ -14,11 +14,11 @@
 //               reported back so the parent can flag them orphaned.
 
 import { withAnnotateParam } from './linkRewrite'
-import { computeSelector, describeElement, findRange, isPageSpanning, resolveSelector } from './locator'
+import { type TextContext, computeSelector, describeElement, findRange, isPageSpanning, resolveSelector, selectionContext } from './locator'
 
 type Boot = { siteId: string; filePath: string; appOrigin: string }
 type Mode = 'read' | 'annotate'
-type PaintAnchor = { id: string; anchorType?: 'text' | 'page' | 'element'; quote?: string; selector?: string }
+type PaintAnchor = { id: string; anchorType?: 'text' | 'page' | 'element'; quote?: string; selector?: string; context?: TextContext }
 type Rect = { top: number; left: number; width: number; height: number }
 
 const DEBOUNCE = 150
@@ -51,8 +51,16 @@ function captureSelection(): void {
     toParent({ type: 'glance:select-clear' })
     return
   }
-  const box = sel.getRangeAt(0).getBoundingClientRect()
-  toParent({ type: 'glance:select', quote, rect: { top: box.top, left: box.left, width: box.width, height: box.height } })
+  const range = sel.getRangeAt(0)
+  const box = range.getBoundingClientRect()
+  // The text on either side, captured NOW: the quote alone can't say which occurrence of a
+  // repeated phrase the user meant, and by paint time the selection is long gone.
+  toParent({
+    type: 'glance:select',
+    quote,
+    context: selectionContext(range, document),
+    rect: { top: box.top, left: box.left, width: box.width, height: box.height },
+  })
 }
 
 let debounceTimer = 0
@@ -278,7 +286,9 @@ function paintTexts(anchors: PaintAnchor[]): void {
   const highlight = new Highlight()
   for (const a of anchors) {
     if (!a.quote) continue
-    const range = findRange(a.quote, document)
+    // `context` (absent on threads stored before it existed) picks the occurrence the commenter
+    // actually selected; without it findRange keeps its first-match behaviour.
+    const range = findRange(a.quote, document, a.context)
     if (range) highlight.add(range)
   }
   CSS.highlights.set('glance-comment', highlight)
@@ -291,12 +301,15 @@ function paint(anchors: PaintAnchor[]): void {
   paintElements(anchors.filter((a) => a.anchorType === 'element'))
 }
 
-function focus(target: { quote?: string; selector?: string }): void {
+function focus(target: { quote?: string; selector?: string; context?: TextContext }): void {
   if (target.selector) {
     resolveSelector(target.selector, document)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     return
   }
-  if (target.quote) findRange(target.quote, document)?.startContainer.parentElement?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  // Same context as paint uses — otherwise focusing a thread on the second occurrence of a repeated
+  // quote would scroll to the first, away from its own highlight.
+  if (target.quote)
+    findRange(target.quote, document, target.context)?.startContainer.parentElement?.scrollIntoView({ behavior: 'smooth', block: 'center' })
 }
 
 function setMode(next: Mode): void {
@@ -308,9 +321,9 @@ function setMode(next: Mode): void {
 // hostile-iframe rule: here the parent is the trusted side).
 window.addEventListener('message', (e: MessageEvent) => {
   if (!boot || e.origin !== boot.appOrigin) return
-  const d = e.data as { type?: string; anchors?: PaintAnchor[]; quote?: string; selector?: string; mode?: Mode }
+  const d = e.data as { type?: string; anchors?: PaintAnchor[]; quote?: string; selector?: string; mode?: Mode; context?: TextContext }
   if (d?.type === 'glance:paint' && Array.isArray(d.anchors)) paint(d.anchors)
-  else if (d?.type === 'glance:focus') focus({ quote: d.quote, selector: d.selector })
+  else if (d?.type === 'glance:focus') focus({ quote: d.quote, selector: d.selector, context: d.context })
   else if (d?.type === 'glance:mode' && (d.mode === 'read' || d.mode === 'annotate')) setMode(d.mode)
   else if (d?.type === 'glance:pending') setPending(typeof d.selector === 'string' ? d.selector : null)
 })

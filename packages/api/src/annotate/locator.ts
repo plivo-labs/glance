@@ -109,6 +109,45 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
+// --- text context: which OCCURRENCE of a repeated quote was selected --------------------------
+// The quote alone can't identify itself when the same words appear more than once — `findRange`
+// would always paint the first. We also store a bounded slice of the text on either side, captured
+// at selection time, and re-find the occurrence that best reproduces it. Both sides are optional:
+// a thread stored before this existed (or one selected at the very start/end of a document) simply
+// scores every occurrence equally and keeps the first, which is what it has always resolved to.
+
+/** Chars of surrounding text stored per side. Long enough to separate repeated boilerplate, short
+ *  enough that an edit near the anchor doesn't invalidate the whole context. */
+export const CONTEXT_CHARS = 64
+
+export type TextContext = { prefix: string; suffix: string }
+
+type TextIndex = { acc: string; segs: { node: Text; start: number }[] }
+
+/** Collapse whitespace runs WITHOUT trimming — the index and the stored context must agree on the
+ *  space that separates the quote from its neighbours, so the edges are load-bearing. */
+const collapse = (s: string): string => s.replace(/\s+/g, ' ')
+
+/** Walk every RENDERED text node once and concatenate it (NFKC-folded), remembering where each node
+ *  landed. One index serves both re-finding a quote and capturing a selection's context, so the two
+ *  can never disagree about what the document says. */
+function buildTextIndex(doc: Document): TextIndex {
+  const segs: TextIndex['segs'] = []
+  let acc = ''
+  if (!doc.body) return { acc, segs }
+  const walker = doc.createTreeWalker(doc.body, SHOW_TEXT, {
+    acceptNode: (n) => (isRenderedText(n as Text) ? FILTER_ACCEPT : FILTER_REJECT),
+  })
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const t = n as Text
+    // Fold NFKC (only) so both sides match on the same axis; whitespace flex is the `\s*` join in
+    // findRange. Offsets stay in this folded space.
+    segs.push({ node: t, start: acc.length })
+    acc += t.data.normalize('NFKC')
+  }
+  return { acc, segs }
+}
+
 /** True when a text node is rendered, anchorable content: no SCRIPT/STYLE/NOSCRIPT/TEXTAREA/TEMPLATE
  *  ancestor, and a parent that occupies layout (`getClientRects` is empty for a `display:none`
  *  subtree in a real browser). happy-dom reports rects for everything, so the rect check never
@@ -126,27 +165,22 @@ function isRenderedText(node: Text): boolean {
  *  survive CSS text-transform. Only RENDERED text is walked (see isRenderedText), so the FIRST match
  *  is inside visible content — a quote that also appears in a <script> anchors to the visible one.
  *  Null if absent. */
-export function findRange(quote: string, doc: Document): Range | null {
+export function findRange(quote: string, doc: Document, context?: TextContext): Range | null {
   const tokens = quote.split(' ').filter(Boolean).map(escapeRegExp)
   if (tokens.length === 0 || !doc.body) return null
-  const re = new RegExp(tokens.join('\\s*'), 'i')
+  const re = new RegExp(tokens.join('\\s*'), 'gi')
 
-  const walker = doc.createTreeWalker(doc.body, SHOW_TEXT, {
-    acceptNode: (n) => (isRenderedText(n as Text) ? FILTER_ACCEPT : FILTER_REJECT),
-  })
-  const segs: { node: Text; start: number }[] = []
-  let acc = ''
-  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-    const t = n as Text
-    // Fold NFKC (only) so both sides match on the same axis; whitespace flex is the `\s*` join above.
-    // Offsets stay in this folded space — a per-node NFKC length delta is clamped below, never thrown.
-    segs.push({ node: t, start: acc.length })
-    acc += t.data.normalize('NFKC')
+  const { acc, segs } = buildTextIndex(doc)
+  // EVERY occurrence, not just the first: an identical quote can appear many times (a repeated
+  // table cell, a nav label, a boilerplate sentence) and `context` is what tells them apart.
+  const hits: [number, number][] = []
+  for (let m = re.exec(acc); m; m = re.exec(acc)) {
+    hits.push([m.index, m.index + m[0].length])
+    if (m[0].length === 0) break // zero-width match can't advance — guard the loop
   }
-  const m = re.exec(acc)
-  if (!m) return null
-  const lo = m.index
-  const hi = m.index + m[0].length
+  if (hits.length === 0) return null
+  const [lo, hi] = hits.length === 1 ? hits[0] : bestHit(hits, acc, context)
+
   const at = (pos: number): [Text, number] | null => {
     for (let i = segs.length - 1; i >= 0; i--) if (pos >= segs[i].start) return [segs[i].node, Math.min(pos - segs[i].start, segs[i].node.data.length)]
     return null
@@ -158,4 +192,63 @@ export function findRange(quote: string, doc: Document): Range | null {
   range.setStart(s[0], s[1])
   range.setEnd(e[0], e[1])
   return range
+}
+
+/** Score every occurrence by how much of the stored context it reproduces and take the best; ties
+ *  (including "no context at all" and "context matches nothing") keep the EARLIEST hit, which is
+ *  exactly the pre-context behaviour every already-stored thread was anchored under. */
+function bestHit(hits: [number, number][], acc: string, context?: TextContext): [number, number] {
+  const wantPrefix = collapse(context?.prefix ?? '').toLowerCase()
+  const wantSuffix = collapse(context?.suffix ?? '').toLowerCase()
+  if (!wantPrefix && !wantSuffix) return hits[0]
+  let best = hits[0]
+  let bestScore = -1
+  for (const hit of hits) {
+    // Read a raw window twice the stored cap: collapsing whitespace only ever shortens it, so this
+    // still yields at least CONTEXT_CHARS of comparable text on each side.
+    const before = collapse(acc.slice(Math.max(0, hit[0] - CONTEXT_CHARS * 2), hit[0])).toLowerCase()
+    const after = collapse(acc.slice(hit[1], hit[1] + CONTEXT_CHARS * 2)).toLowerCase()
+    const score = commonSuffixLen(before, wantPrefix) + commonPrefixLen(after, wantSuffix)
+    if (score > bestScore) {
+      bestScore = score
+      best = hit
+    }
+  }
+  return best
+}
+
+const commonPrefixLen = (a: string, b: string): number => {
+  let i = 0
+  while (i < a.length && i < b.length && a[i] === b[i]) i++
+  return i
+}
+
+const commonSuffixLen = (a: string, b: string): number => {
+  let i = 0
+  while (i < a.length && i < b.length && a[a.length - 1 - i] === b[b.length - 1 - i]) i++
+  return i
+}
+
+/** The text surrounding a live selection, for storing alongside the quote. Read from the SAME
+ *  filtered index the painter matches against, so a <script> sitting next to the selection can
+ *  never poison the context (and thus never steer a later re-find). */
+export function selectionContext(range: Range, doc: Document): TextContext {
+  const { acc, segs } = buildTextIndex(doc)
+  const lo = offsetOf(segs, range.startContainer, range.startOffset)
+  const hi = offsetOf(segs, range.endContainer, range.endOffset)
+  if (lo === null || hi === null) return { prefix: '', suffix: '' }
+  return {
+    prefix: collapse(acc.slice(Math.max(0, lo - CONTEXT_CHARS * 2), lo)).slice(-CONTEXT_CHARS),
+    suffix: collapse(acc.slice(hi, hi + CONTEXT_CHARS * 2)).slice(0, CONTEXT_CHARS),
+  }
+}
+
+/** A range boundary (node + raw offset) → its offset in the folded index. The node's own text is
+ *  NFKC-folded up to the boundary so the delta a ligature/full-width char introduces is exact,
+ *  not clamped. A boundary on an ELEMENT resolves to its first indexed descendant text node. */
+function offsetOf(segs: TextIndex['segs'], node: Node, offset: number): number | null {
+  const seg = segs.find((s) => s.node === node)
+  if (seg) return seg.start + seg.node.data.slice(0, offset).normalize('NFKC').length
+  const inside = segs.find((s) => node.contains?.(s.node))
+  return inside ? inside.start : null
 }

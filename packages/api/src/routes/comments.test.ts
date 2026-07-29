@@ -230,6 +230,51 @@ describe('comments routes — element (pinpoint) anchors', () => {
     expect(list[0].anchorType).toBe('text')
     expect(list[0].quote).toBe('fox')
     expect(list[0].anchor).toBeNull()
+    expect(list[0].context).toBeNull() // omitted context is a complete request, not a degraded one
+  })
+})
+
+// Which OCCURRENCE of a repeated quote a thread meant. The route only stores it; the annotate
+// client does the matching (see locator.findRange).
+describe('comments routes — text occurrence context', () => {
+  const post = (headers: Record<string, string>, body: unknown) =>
+    ({ method: 'POST', headers, body: JSON.stringify(body) }) as const
+
+  const createWithContext = async (context: unknown) => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    await seedSiteWithFile(db, r2, owner)
+    const res = await app.request(url(), post(auth(owner), { filePath: 'index.html', body: 'here', quote: 'fox', context }), env)
+    const list = await (await app.request(url('?filePath=index.html'), { headers: auth(owner) }, env)).json()
+    return { status: res.status, thread: list[0] }
+  }
+
+  test('context-round-trips: {prefix,suffix} is stored and listed back on the text thread', async () => {
+    const { status, thread } = await createWithContext({ prefix: 'the quick brown ', suffix: ' jumps over' })
+    expect(status).toBe(201)
+    expect(thread.context).toEqual({ prefix: 'the quick brown ', suffix: ' jumps over' })
+    expect(thread.anchor).toBeNull() // shares the column with element anchors; never leaks as one
+  })
+
+  test('context-is-a-hint-not-a-contract: junk context is dropped, the comment is still created', async () => {
+    expect(await createWithContext({ prefix: 42, suffix: null })).toMatchObject({ status: 201, thread: { context: null } })
+    expect(await createWithContext('not an object')).toMatchObject({ status: 201, thread: { context: null } })
+  })
+
+  test('context-is-capped-not-rejected: an oversize side is truncated, not a 400', async () => {
+    const { status, thread } = await createWithContext({ prefix: 'a'.repeat(5000), suffix: '' })
+    expect(status).toBe(201)
+    expect(thread.context.prefix.length).toBe(64)
+  })
+
+  test('context-ignored-off-text-anchors: a page thread stores no context', async () => {
+    const { app, env, db, r2, kv } = await setup()
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    await seedSiteWithFile(db, r2, owner)
+    await app.request(url(), post(auth(owner), { filePath: 'index.html', body: 'x', anchorType: 'page', context: { prefix: 'a', suffix: 'b' } }), env)
+    const list = await (await app.request(url('?filePath=index.html'), { headers: auth(owner) }, env)).json()
+    expect(list[0].anchorType).toBe('page')
+    expect(list[0].context).toBeNull()
   })
 })
 

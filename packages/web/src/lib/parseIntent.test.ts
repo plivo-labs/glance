@@ -48,6 +48,26 @@ describe('parseIntent', () => {
     expect(parseIntent(ev({ data: { type: 'glance:select-clear' } }), expected)).toEqual({ type: 'clear' })
   })
 
+  test('parseintent-carries-occurrence-context', () => {
+    const res = parseIntent(ev({ data: { ...validSelect, context: { prefix: 'lead in ', suffix: ' tail' } } }), expected)
+    expect(res).toMatchObject({ type: 'select', context: { prefix: 'lead in ', suffix: ' tail' } })
+  })
+
+  test('parseintent-clamps-context-instead-of-dropping-the-selection', () => {
+    // Over-cap context must not cost the comment — the side is truncated, the quote survives.
+    const res = parseIntent(ev({ data: { ...validSelect, context: { prefix: 'p'.repeat(500), suffix: '' } } }), expected)
+    expect(res).toMatchObject({ type: 'select', quote: 'the quick brown fox' })
+    expect((res as { context?: { prefix: string } }).context?.prefix.length).toBe(64)
+  })
+
+  test('parseintent-omits-unusable-context', () => {
+    // Absent, empty, and malformed all collapse to ONE shape (undefined) so callers never branch.
+    for (const context of [undefined, {}, { prefix: '', suffix: '' }, { prefix: 7 }, 'nope', null]) {
+      const res = parseIntent(ev({ data: { ...validSelect, context } }), expected)
+      expect(res).toEqual({ type: 'select', quote: 'the quick brown fox' })
+    }
+  })
+
   const validPinpoint = { type: 'glance:pinpoint', selector: '#chart > svg', tag: 'svg', preview: 'Bar chart', textFallback: 'Revenue' }
 
   test('parses a pinpoint intent (selector required, fields carried)', () => {
