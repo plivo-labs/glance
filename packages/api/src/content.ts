@@ -232,11 +232,11 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
     if (!read) return notFound(c)
     await view()
     const html = await markdown.parse(await new Response(read.body).text())
-    // Annotate mode applies to rendered markdown too — select-to-comment and element pinpointing
-    // work against the rendered DOM exactly like uploaded HTML. Markdown's baseline CSP forbids
-    // scripts outright, so the injected pair runs under a PER-RESPONSE nonce: our two tags are
-    // admitted by name and nothing else is (raw HTML in the source is escaped anyway). Nonce'd
-    // bytes differ per request, hence no-store and no ETag.
+    // Annotate mode applies to rendered markdown too — select-to-comment works against the rendered
+    // DOM exactly like uploaded HTML (element pinpointing is gone, slice C2a). Markdown's baseline
+    // CSP forbids scripts outright, so the injected pair runs under a PER-RESPONSE nonce: our two
+    // tags are admitted by name and nothing else is (raw HTML in the source is escaped anyway).
+    // Nonce'd bytes differ per request, hence no-store and no ETag.
     const annotate = c.req.query('glance_annotate') === '1'
     const nonce = annotate ? crypto.randomUUID().replace(/-/g, '') : null
     const doc = nonce

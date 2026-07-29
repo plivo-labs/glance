@@ -106,26 +106,17 @@ describe('parseIntent', () => {
     }
   })
 
-  const validPinpoint = { type: 'glance:pinpoint', selector: '#chart > svg', tag: 'svg', preview: 'Bar chart', textFallback: 'Revenue' }
-
-  test('parses a pinpoint intent (selector required, fields carried)', () => {
-    expect(parseIntent(ev({ data: validPinpoint }), expected)).toEqual({
-      type: 'pinpoint',
-      anchor: { selector: '#chart > svg', tag: 'svg', preview: 'Bar chart', textFallback: 'Revenue' },
-    })
-  })
-
-  test('pinpoint carries an optional rect and defaults missing fields to empty', () => {
-    expect(parseIntent(ev({ data: { type: 'glance:pinpoint', selector: '#x', rect: { top: 1, left: 2, width: 3, height: 4 } } }), expected)).toEqual({
-      type: 'pinpoint',
-      anchor: { selector: '#x', tag: '', preview: '', textFallback: '' },
-      rect: { top: 1, left: 2, width: 3, height: 4 },
-    })
-  })
-
-  test('pinpoint without a selector, or over-cap selector → null', () => {
+  // Element (pinpoint) comment CREATION is dropped (slice C2a) — the parent no longer turns this
+  // message into anything. A stale cached bundle may still post it (the annotate client's OWN
+  // send is gone, but an old cached copy of client.ts could still be running in someone's tab); the
+  // correct behaviour is for the parent to silently ignore it, not throw — so every shape of a
+  // glance:pinpoint message, well-formed or not, parses to null now.
+  test('a glance:pinpoint message (a stale cached bundle) is ignored, not parsed', () => {
+    expect(
+      parseIntent(ev({ data: { type: 'glance:pinpoint', selector: '#chart > svg', tag: 'svg', preview: 'Bar chart', textFallback: 'Revenue' } }), expected),
+    ).toBeNull()
+    expect(parseIntent(ev({ data: { type: 'glance:pinpoint', selector: '#x', rect: { top: 1, left: 2, width: 3, height: 4 } } }), expected)).toBeNull()
     expect(parseIntent(ev({ data: { type: 'glance:pinpoint', tag: 'svg' } }), expected)).toBeNull()
-    expect(parseIntent(ev({ data: { type: 'glance:pinpoint', selector: 'x'.repeat(9000) } }), expected)).toBeNull()
   })
 
   const validRect = { top: 1, left: 2, width: 3, height: 4 }
@@ -209,6 +200,17 @@ describe('parseIntent', () => {
     }
   })
 
+  // str()'s length cap used to be proven only by a glance:pinpoint selector test, deleted with the
+  // rest of that message type (slice C2a). Re-homed here on the field it actually still guards — an
+  // id arriving from the hostile iframe — so the cap stays load-bearing, not just present.
+  test('an entry with an over-cap id is dropped, not silently accepted at full length', () => {
+    const res = parseIntent(
+      ev({ data: anchorRectsBatch({ rects: [{ id: 'x'.repeat(2001), rect: validRect }, { id: 'good', rect: validRect }] }) }),
+      expected,
+    )
+    expect(res).toMatchObject({ type: 'anchorRects', rects: [{ id: 'good', rect: validRect }] })
+  })
+
   test('a null entry in rects is dropped, not thrown on — surviving sibling still comes through', () => {
     // A hostile or buggy iframe can post `rects: [null]`. The `typeof entry !== 'object'` guard
     // exists precisely for this: `typeof null === 'object'` in JS, so without the `!entry` half
@@ -255,5 +257,11 @@ describe('parseIntent', () => {
     })
     // When the caller cannot yet pin contentWindow, source filtering is skipped (origin still enforced).
     expect(parseIntent(ev({ source: otherWin, data: validSelect }), { origin: CONTENT, source: null })).not.toBeNull()
+  })
+
+  test('a ready handshake with an over-cap filePath is rejected, not truncated', () => {
+    // Unlike the select quote (truncated, so a long selection still opens the composer), `str()`
+    // rejects outright — a truncated filePath would misattribute comments to a path that doesn't exist.
+    expect(parseIntent(ev({ data: { type: 'glance:ready', filePath: 'x'.repeat(2001) } }), expected)).toBeNull()
   })
 })

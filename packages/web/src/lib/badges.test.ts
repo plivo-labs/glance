@@ -71,6 +71,27 @@ describe('stepBadges — epoch races', () => {
   })
 })
 
+describe('buildBadges — element threads badge exactly like text ones (C2b)', () => {
+  test('an element thread with a resolved rect gets a badge the same way a text thread does', () => {
+    const anchor = { selector: '#chart', tag: 'svg', preview: 'Bar chart', textFallback: 'Revenue' }
+    const threads = [mkThread({ id: 't1', anchorType: 'element', quote: null, anchor })]
+    const state = stepBadges(initialBadges(), { epoch: 0, rects: [rect('t1', 10, 10)] }, VP)
+    expect(buildBadges(state, threads)).toHaveLength(1)
+  })
+
+  test('a resolved element thread and a resolved text thread on the same line merge into ONE badge', () => {
+    const anchor = { selector: '#chart', tag: 'svg', preview: 'Bar chart', textFallback: 'Revenue' }
+    const threads = [
+      mkThread({ id: 't1', anchorType: 'text' }),
+      mkThread({ id: 't2', anchorType: 'element', quote: null, anchor }),
+    ]
+    const state = stepBadges(initialBadges(), { epoch: 0, rects: [rect('t1', 10, 10), rect('t2', 11, 12)] }, VP)
+    const badges = buildBadges(state, threads)
+    expect(badges).toHaveLength(1)
+    expect(badges[0]?.threadIds.sort()).toEqual(['t1', 't2'])
+  })
+})
+
 describe('buildBadges — visibility', () => {
   test('a rect whose id matches no thread produces no badge', () => {
     const state = stepBadges(initialBadges(), { epoch: 0, rects: [rect('ghost', 10, 10)] }, VP)

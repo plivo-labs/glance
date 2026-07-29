@@ -88,6 +88,27 @@ export function withMentions<T extends object>(payload: T, mentions?: string[]):
   return mentions && mentions.length > 0 ? { ...payload, mentions } : payload
 }
 
+// The paint payload the annotate client understands: a text anchor (re-find quote) or an element
+// anchor (re-resolve selector). Mirrors the annotate client's own PaintAnchor.
+export type PaintAnchor =
+  | { id: string; anchorType: 'text'; quote: string; context: TextContext | null }
+  | { id: string; anchorType: 'element'; selector: string }
+
+/** Pure map: which threads the viewer paints into the iframe, and how. UNCONDITIONAL (C2b: badges
+ *  and painting are on for anyone with access, whether or not the rail panel is open — the rail is
+ *  just a view onto the same threads, not a gate on whether they're shown). Text threads re-find
+ *  their stored quote; element threads re-resolve their stored selector — either kind the iframe
+ *  can't locate simply isn't painted (element misses come back reported as orphaned). Extracted
+ *  (not inline in viewer.tsx) so this mapping — in particular that element anchors still reach the
+ *  iframe — has its own test instead of being provable only by mutating the wiring shell by hand. */
+export function paintAnchors(threads: Thread[]): PaintAnchor[] {
+  return threads.flatMap((t): PaintAnchor[] => {
+    if (t.anchorType === 'text' && t.quote) return [{ id: t.id, anchorType: 'text', quote: t.quote, context: t.context }]
+    if (t.anchorType === 'element' && t.anchor) return [{ id: t.id, anchorType: 'element', selector: t.anchor.selector }]
+    return []
+  })
+}
+
 type SiteRef = Pick<ViewerSite, 'spaceSlug' | 'siteSlug'>
 
 // Anchor-shaping fields for a voice thread — everything a create payload carries EXCEPT the body,

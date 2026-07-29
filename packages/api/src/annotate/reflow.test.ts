@@ -2,7 +2,9 @@ import { describe, expect, test } from 'bun:test'
 import { Window } from 'happy-dom'
 import { currentEpoch, findRange, newEpoch } from './locator'
 import {
+  anchorRectBatch,
   createRectEmitter,
+  elementRectBatch,
   highlightRanges,
   installIndexInvalidation,
   measurableRect,
@@ -22,7 +24,7 @@ import {
 function windowWith(html: string) {
   const win = new Window()
   win.document.body.innerHTML = html
-  return win as unknown as Window & { document: Document; Range: typeof Range }
+  return win as unknown as Window & { document: Document; Range: typeof Range; Element: typeof Element }
 }
 
 /** Give every Range in `win` the same fabricated box, or a per-quote one. */
@@ -32,6 +34,17 @@ function stubRangeRects(
 ) {
   win.Range.prototype.getBoundingClientRect = function (this: Range) {
     return box(this.toString()) as DOMRect
+  }
+}
+
+/** Give every Element in `win` the same fabricated box, or a per-selector one (keyed on the
+ *  element's own id, since a selector isn't recoverable from the resolved Element itself). */
+function stubElementRects(
+  win: { Element: typeof Element },
+  box: (id: string) => { top: number; left: number; width: number; height: number },
+) {
+  win.Element.prototype.getBoundingClientRect = function (this: Element) {
+    return box(this.id) as DOMRect
   }
 }
 
@@ -131,6 +144,77 @@ describe('textRectBatch — one rect per resolving anchor, tagged with the epoch
   })
 })
 
+describe('elementRectBatch — the element half of the badge batch, same rejection rules as text', () => {
+  test('a resolved selector contributes its live bounding box', () => {
+    const win = windowWith('<div id="chart">chart</div>')
+    stubElementRects(win, () => BOX)
+    const rects = elementRectBatch([{ id: 'e1', selector: '#chart' }], win.document)
+    expect(rects).toEqual([{ id: 'e1', rect: BOX }])
+  })
+
+  test('a selector that resolves to nothing contributes no rect', () => {
+    const win = windowWith('<div id="chart">chart</div>')
+    stubElementRects(win, () => BOX)
+    const rects = elementRectBatch([{ id: 'e1', selector: '#does-not-exist' }], win.document)
+    expect(rects).toEqual([])
+  })
+
+  test('a resolved element whose box has no area is rejected by measurableRect, exactly like a text one', () => {
+    const win = windowWith('<div id="chart">chart</div>')
+    stubElementRects(win, () => ({ top: 0, left: 0, width: 0, height: 0 }))
+    const rects = elementRectBatch([{ id: 'e1', selector: '#chart' }], win.document)
+    expect(rects).toEqual([])
+  })
+
+  test('multiple element anchors preserve order, dropping only the ones that fail to resolve', () => {
+    const win = windowWith('<div id="chart">chart</div><div id="table">table</div>')
+    stubElementRects(win, (id) => (id === 'chart' ? BOX : { ...BOX, top: 300 }))
+    const rects = elementRectBatch(
+      [
+        { id: 'e1', selector: '#chart' },
+        { id: 'e2', selector: '#missing' },
+        { id: 'e3', selector: '#table' },
+      ],
+      win.document,
+    )
+    expect(rects).toEqual([
+      { id: 'e1', rect: BOX },
+      { id: 'e3', rect: { ...BOX, top: 300 } },
+    ])
+  })
+})
+
+describe('anchorRectBatch — one message, one epoch, covering BOTH anchor kinds', () => {
+  test('a batch with both a text and an element anchor emits both, in one message', () => {
+    const win = windowWith('<p>alpha sentence.</p><div id="chart">chart</div>')
+    stubRangeRects(win, () => BOX)
+    stubElementRects(win, () => ({ ...BOX, top: 300 }))
+    const batch = anchorRectBatch([{ id: 't1', quote: 'alpha sentence.' }], [{ id: 'e1', selector: '#chart' }], win.document)
+    expect(batch.type).toBe('glance:anchor-rects')
+    expect(batch.rects).toEqual([
+      { id: 't1', rect: BOX },
+      { id: 'e1', rect: { ...BOX, top: 300 } },
+    ])
+  })
+
+  test('the element half carries the SAME epoch as the text half', () => {
+    const win = windowWith('<p>alpha sentence.</p><div id="chart">chart</div>')
+    stubRangeRects(win, () => BOX)
+    stubElementRects(win, () => BOX)
+    newEpoch()
+    const expected = currentEpoch()
+    const batch = anchorRectBatch([{ id: 't1', quote: 'alpha sentence.' }], [{ id: 'e1', selector: '#chart' }], win.document)
+    expect(batch.epoch).toBe(expected)
+  })
+
+  test('an element anchor whose selector never resolves contributes no rect — only the text side survives', () => {
+    const win = windowWith('<p>alpha sentence.</p><div id="chart">chart</div>')
+    stubRangeRects(win, () => BOX)
+    const batch = anchorRectBatch([{ id: 't1', quote: 'alpha sentence.' }], [{ id: 'e1', selector: '#does-not-exist' }], win.document)
+    expect(batch.rects).toEqual([{ id: 't1', rect: BOX }])
+  })
+})
+
 describe('highlightRanges — the hover-only paint set, never the persistent one', () => {
   test('an empty id list highlights nothing', () => {
     const win = windowWith('<p>alpha sentence.</p>')
@@ -209,9 +293,9 @@ describe('createRectEmitter — every frame while there are rects, the empty bat
     const sent: RectsMessage[] = []
     const emitRects = createRectEmitter((m) => sent.push(m))
     const anchors = [{ id: 't1', quote: 'alpha sentence.' }]
-    emitRects(anchors, win.document)
-    emitRects(anchors, win.document)
-    emitRects(anchors, win.document)
+    emitRects(anchors, [], win.document)
+    emitRects(anchors, [], win.document)
+    emitRects(anchors, [], win.document)
     expect(sent.length).toBe(3)
     expect(sent[2].rects).toEqual([{ id: 't1', rect: BOX }])
   })
@@ -221,10 +305,10 @@ describe('createRectEmitter — every frame while there are rects, the empty bat
     stubRangeRects(win, () => BOX)
     const sent: RectsMessage[] = []
     const emitRects = createRectEmitter((m) => sent.push(m))
-    emitRects([{ id: 't1', quote: 'alpha sentence.' }], win.document)
-    emitRects([], win.document)
-    emitRects([], win.document)
-    emitRects([], win.document)
+    emitRects([{ id: 't1', quote: 'alpha sentence.' }], [], win.document)
+    emitRects([], [], win.document)
+    emitRects([], [], win.document)
+    emitRects([], [], win.document)
     expect(sent.length).toBe(2)
     expect(sent[1].rects).toEqual([])
   })
@@ -233,9 +317,32 @@ describe('createRectEmitter — every frame while there are rects, the empty bat
     const win = windowWith('<p>alpha sentence.</p>')
     const sent: RectsMessage[] = []
     const emitRects = createRectEmitter((m) => sent.push(m))
-    emitRects([], win.document)
-    emitRects([], win.document)
+    emitRects([], [], win.document)
+    emitRects([], [], win.document)
     expect(sent).toEqual([])
+  })
+
+  test('an element rect alone (no text anchors) still emits — the empty-batch suppression covers BOTH kinds', () => {
+    const win = windowWith('<div id="chart">chart</div>')
+    stubElementRects(win, () => BOX)
+    const sent: RectsMessage[] = []
+    const emitRects = createRectEmitter((m) => sent.push(m))
+    emitRects([], [{ id: 'e1', selector: '#chart' }], win.document)
+    expect(sent).toEqual([{ type: 'glance:anchor-rects', epoch: currentEpoch(), rects: [{ id: 'e1', rect: BOX }] }])
+  })
+
+  test('a text anchor and an element anchor together emit ONE message carrying both', () => {
+    const win = windowWith('<p>alpha sentence.</p><div id="chart">chart</div>')
+    stubRangeRects(win, () => BOX)
+    stubElementRects(win, () => ({ ...BOX, top: 300 }))
+    const sent: RectsMessage[] = []
+    const emitRects = createRectEmitter((m) => sent.push(m))
+    emitRects([{ id: 't1', quote: 'alpha sentence.' }], [{ id: 'e1', selector: '#chart' }], win.document)
+    expect(sent).toHaveLength(1)
+    expect(sent[0].rects).toEqual([
+      { id: 't1', rect: BOX },
+      { id: 'e1', rect: { ...BOX, top: 300 } },
+    ])
   })
 })
 

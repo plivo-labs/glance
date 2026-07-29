@@ -11,10 +11,6 @@ import type { TextContext } from '@/lib/comments'
 export type SelectIntent = { type: 'select'; quote: string; context?: TextContext; rect?: DOMRectLike }
 export type ReadyIntent = { type: 'ready'; filePath: string }
 export type ClearIntent = { type: 'clear' }
-/** A suggested element ("pinpoint") anchor — the iframe proposes a selector; the parent turns it
- *  into a pending element anchor + composer. Untrusted: selector is only ever querySelector'd. */
-export type ElementAnchorIntent = { selector: string; tag: string; preview: string; textFallback: string }
-export type PinpointIntent = { type: 'pinpoint'; anchor: ElementAnchorIntent; rect?: DOMRectLike }
 /** Dismissal signals forwarded from inside the iframe: the parent cannot observe a click or a
  *  keydown in a cross-origin document, so a popover it owns would otherwise never learn about
  *  either. Payload-free — the parent decides what (if anything) they close. */
@@ -25,7 +21,7 @@ export type EscapeIntent = { type: 'escape' }
  *  the latest it's seen, so a bad epoch must fail the whole message rather than silently become
  *  the lowest possible epoch (which would make every later, real batch look stale forever). */
 export type AnchorRectsIntent = { type: 'anchorRects'; epoch: number; rects: { id: string; rect: DOMRectLike }[] }
-export type Intent = SelectIntent | ReadyIntent | ClearIntent | PinpointIntent | ClickAwayIntent | EscapeIntent | AnchorRectsIntent
+export type Intent = SelectIntent | ReadyIntent | ClearIntent | ClickAwayIntent | EscapeIntent | AnchorRectsIntent
 
 export type DOMRectLike = { top: number; left: number; width: number; height: number }
 
@@ -104,16 +100,10 @@ export function parseIntent(event: MessageEvent, expected: ExpectedSource): Inte
       if (!quote) return null
       return { type: 'select', quote, context: context(d.context), rect: rect(d.rect) }
     }
-    case 'glance:pinpoint': {
-      const d = data as { selector?: unknown; tag?: unknown; preview?: unknown; textFallback?: unknown; rect?: unknown }
-      const selector = str(d.selector)
-      if (!selector) return null
-      return {
-        type: 'pinpoint',
-        anchor: { selector, tag: str(d.tag) ?? '', preview: str(d.preview) ?? '', textFallback: str(d.textFallback) ?? '' },
-        rect: rect(d.rect),
-      }
-    }
+    // Element ("pinpoint") comment creation is dropped (slice C2a) — this parent no longer sends
+    // glance:pending/composes on it. A STALE cached bundle (an old client.ts still running in
+    // someone's tab) may still post `glance:pinpoint`; the correct outcome is to ignore it here,
+    // same as any other unrecognised type, not to crash on it.
     case 'glance:select-clear':
       return { type: 'clear' }
     case 'glance:click-away':

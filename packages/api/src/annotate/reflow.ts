@@ -6,10 +6,11 @@
 // Bundled into client.ts by scripts/build-annotate.ts; excluded from the worker tsconfig (DOM types).
 
 import type { TextContext } from '../lib/anchor'
-import { currentEpoch, findRange, newEpoch } from './locator'
+import { currentEpoch, findRange, newEpoch, resolveSelector } from './locator'
 import type { Rect } from './selection'
 
 export type TextAnchor = { id: string; quote?: string; context?: TextContext }
+export type ElementAnchor = { id: string; selector: string }
 export type AnchorRect = { id: string; rect: Rect }
 export type RectsMessage = { type: 'glance:anchor-rects'; epoch: number; rects: AnchorRect[] }
 
@@ -40,6 +41,31 @@ export function textRectBatch(anchors: TextAnchor[], doc: Document): RectsMessag
     if (rect) rects.push({ id: a.id, rect })
   }
   return { type: 'glance:anchor-rects', epoch: currentEpoch(), rects }
+}
+
+/** Where each element ("pinpoint") anchor currently sits: its resolved selector's live bounding
+ *  box, subject to the SAME measurableRect rejection as a text anchor — an off-DOM or zero-area
+ *  box contributes nothing. An unresolved selector (the element was removed, or never existed)
+ *  contributes no rect either, mirroring an orphaned text quote — that absence is how the parent
+ *  learns to drop the badge. resolveSelector is the SAME function client.ts's overlay box is
+ *  painted from, so a badge can never disagree with where the outline box actually sits. */
+export function elementRectBatch(anchors: ElementAnchor[], doc: Document): AnchorRect[] {
+  const rects: AnchorRect[] = []
+  for (const a of anchors) {
+    const el = resolveSelector(a.selector, doc)
+    const rect = el && measurableRect(el.getBoundingClientRect())
+    if (rect) rects.push({ id: a.id, rect })
+  }
+  return rects
+}
+
+/** One rect batch covering BOTH anchor kinds, tagged with the single epoch they were measured
+ *  under — element threads must badge exactly like text ones (C2b), and riding the same message
+ *  as the text half is what keeps the two from ever landing under different epochs in the parent's
+ *  eyes. */
+export function anchorRectBatch(textAnchors: TextAnchor[], elementAnchors: ElementAnchor[], doc: Document): RectsMessage {
+  const text = textRectBatch(textAnchors, doc)
+  return { type: 'glance:anchor-rects', epoch: text.epoch, rects: [...text.rects, ...elementRectBatch(elementAnchors, doc)] }
 }
 
 /** The Ranges to paint into the `glance-comment` CSS Custom Highlight RIGHT NOW — the hover/focus
@@ -76,12 +102,16 @@ export function paintTextAnchors(anchors: TextAnchor[]): { anchors: TextAnchor[]
  *  `glance:pinpoint-resolved` is: rects move on EVERY scroll frame and the badges have to follow, so
  *  a "only when the SET changes" guard would freeze them at their first position. The one thing
  *  suppressed is the ENDLESS empty batch — the first empty one matters (it is what clears the last
- *  badge when the final text anchor is unpainted or stops resolving), but after it a page with no
- *  text anchors must not post a message every frame for the rest of the session. */
-export function createRectEmitter(emit: (msg: RectsMessage) => void): (anchors: TextAnchor[], doc: Document) => void {
+ *  badge when the final anchor, text or element, is unpainted or stops resolving), but after it a
+ *  page with no anchors of either kind must not post a message every frame for the rest of the
+ *  session. ONE emitter for both kinds (not one per kind) is what keeps a badge from ever landing
+ *  under a different epoch than the outline box it's supposed to sit beside. */
+export function createRectEmitter(
+  emit: (msg: RectsMessage) => void,
+): (textAnchors: TextAnchor[], elementAnchors: ElementAnchor[], doc: Document) => void {
   let lastCount = 0
-  return (anchors, doc) => {
-    const batch = textRectBatch(anchors, doc)
+  return (textAnchors, elementAnchors, doc) => {
+    const batch = anchorRectBatch(textAnchors, elementAnchors, doc)
     if (batch.rects.length === 0 && lastCount === 0) return
     lastCount = batch.rects.length
     emit(batch)
