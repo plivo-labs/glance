@@ -1,17 +1,5 @@
 import { type SQL, type SQLWrapper, sql } from 'drizzle-orm'
-import type { Site } from '../db/schema'
 import { siteStars } from '../db/schema'
-
-/**
- * The one rule stars add on top of `checkAccess`: a `private` site is never starrable — not even
- * by its owner. A star pins something you come back to through a shared surface, and private has
- * none. Named because it is enforced at two layers with opposite polarity — the toggle REFUSES a
- * private site (400), and the feed FILTERS one out at read time (an owner's own private site
- * passes checkAccess, so the feed would otherwise resurface it after a visibility flip).
- */
-export function isStarrable(site: Pick<Site, 'visibility'>): boolean {
-  return site.visibility !== 'private'
-}
 
 /**
  * "This CALLER has starred this site" as ONE correlated scalar a feed folds into its site SELECT,

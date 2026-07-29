@@ -5,7 +5,6 @@ import { siteStars, sites as sitesTable, spaces } from '../db/schema'
 import { checkAccess } from '../lib/access'
 import { batchAll, chunk, FEED_ID_CHUNK } from '../lib/d1'
 import { siteFeedColumns, toFeedRow } from '../lib/site-feed'
-import { isStarrable } from '../lib/site-star'
 import type { ResolvedSite } from '../lib/site-access'
 import { fetchAccessFacts, siteAccessFromFacts } from '../lib/site-access'
 import { requireAuth } from '../middleware/auth'
@@ -16,17 +15,17 @@ import type { AppEnv } from '../types'
 
 export const stars = new Hono<AppEnv>()
 
-/** Resolve the site and authorize the caller, or hand back the response to return. `checkAccess`'s
- *  precedence (404 before 403, archived → 410) is inherited, not re-implemented; the only rule this
- *  route adds is `isStarrable`. */
-async function starrable(c: Context<AppEnv>): Promise<ResolvedSite | Response> {
+/** Resolve the site and authorize the caller, or hand back the response to return. Starring adds NO
+ *  rule of its own: if `checkAccess` lets you open a page you may star it, including your own
+ *  private pages and private pages shared with you — a star is a private, per-user bookmark, so
+ *  there is nothing for a visibility tier to protect. 404/403/410 precedence is inherited. */
+async function resolveStarTarget(c: Context<AppEnv>): Promise<ResolvedSite | Response> {
   const user = c.get('user')
   const { space, site: siteSlug } = c.req.param()
   const { facts } = await fetchAccessFacts(c.get('db'), space, siteSlug, user.id)
   const { site, access } = siteAccessFromFacts(facts, user)
   if (!site) return c.json({ error: 'not found' }, 404)
   if (!access.ok) return c.json({ error: 'forbidden' }, access.status)
-  if (!isStarrable(site)) return c.json({ error: 'private sites cannot be starred' }, 400)
   return site
 }
 
@@ -36,9 +35,7 @@ async function starrable(c: Context<AppEnv>): Promise<ResolvedSite | Response> {
 // A star row grants NOTHING. Reach is re-decided HERE, at read time, by the same `checkAccess`
 // every other surface runs — over membership/share sets precomputed in the first batch, so the
 // pass stays O(rows) rather than a per-row lookup. That is what lets a site you starred and then
-// lost access to simply vanish from the feed while its row waits for a flip back. `isStarrable`
-// is applied on top of checkAccess — see its docstring for why an owner's own private site needs
-// it here as well as on the toggle.
+// lost access to simply vanish from the feed while its row waits for a flip back.
 stars.get('/starred', requireAuth, async (c) => {
   const user = c.get('user')
   const db = c.get('db')
@@ -71,7 +68,7 @@ stars.get('/starred', requireAuth, async (c) => {
   const visible = rowChunks
     .flat()
     .filter(
-      (r) => isStarrable(r) && checkAccess(r, user, memberSpaces.has(r.spaceId), shared.has(r.id)).ok,
+      (r) => checkAccess(r, user, memberSpaces.has(r.spaceId), shared.has(r.id)).ok,
     )
     // Per-chunk order is lost on flatten; re-impose the STAR order (newest star first).
     .sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0))
@@ -84,7 +81,7 @@ stars.use('/:space/:site/star', requireAuth)
 // request whose response was lost) converges instead of erroring: the composite PK absorbs the
 // second insert, and a delete of nothing is still "not starred".
 stars.post('/:space/:site/star', async (c) => {
-  const site = await starrable(c)
+  const site = await resolveStarTarget(c)
   if (site instanceof Response) return site
   await c
     .get('db')
@@ -95,7 +92,7 @@ stars.post('/:space/:site/star', async (c) => {
 })
 
 stars.delete('/:space/:site/star', async (c) => {
-  const site = await starrable(c)
+  const site = await resolveStarTarget(c)
   if (site instanceof Response) return site
   await c
     .get('db')

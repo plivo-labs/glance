@@ -27,7 +27,7 @@ export function starColumn<T extends SiteSummary>(): Column<T> {
     srLabel: 'Star',
     headClassName: 'w-8',
     cellClassName: 'w-8',
-    render: (s) => (s.visibility === 'private' ? null : <StarCell site={s} />),
+    render: (s) => <StarCell site={s} />,
   }
 }
 
@@ -45,7 +45,7 @@ function StarCell({ site }: { site: SiteSummary }) {
       aria-pressed={starred}
       onClick={toggle}
     >
-      <Star className={starred ? 'fill-primary text-primary' : 'opacity-60'} />
+      <Star className={starred ? 'fill-primary text-primary' : 'opacity-40'} />
     </Button>
   )
 }
