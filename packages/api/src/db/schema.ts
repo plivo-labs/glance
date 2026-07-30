@@ -373,6 +373,27 @@ export const siteSummaries = sqliteTable('site_summaries', {
     .$onUpdate(() => new Date().toISOString()),
 })
 
+// Control-plane API keys: a long-lived credential a user mints for CLI/CI use, distinct from the
+// GLANCE_SESSIONS browser cookie. Only `hash` (SHA-256 hex of the secret) is ever stored — the
+// secret itself is shown once at creation and never persisted. `grants` is a JSON blob (see
+// `documents.json` for the same text/json-mode idiom) holding the key's scoped permissions.
+// `revokedAt` is a manual kill switch; `expiresAt` is enforced independently at auth time.
+export const apiKeys = sqliteTable(
+  'api_keys',
+  {
+    id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: text('userId').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    hash: text('hash').notNull().unique(),
+    grants: text('grants', { mode: 'json' }).$type<unknown>().notNull(),
+    createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
+    expiresAt: text('expiresAt').notNull(),
+    revokedAt: text('revokedAt'),
+    lastUsedAt: text('lastUsedAt'),
+  },
+  (t) => [index('api_keys_user_created').on(t.userId, t.createdAt)],
+)
+
 export type User = typeof users.$inferSelect
 export type NewUser = typeof users.$inferInsert
 export type Space = typeof spaces.$inferSelect
@@ -403,6 +424,8 @@ export type Notification = typeof notifications.$inferSelect
 export type NewNotification = typeof notifications.$inferInsert
 export type NotificationType = Notification['type']
 export type SiteSummary = typeof siteSummaries.$inferSelect
+export type ApiKey = typeof apiKeys.$inferSelect
+export type NewApiKey = typeof apiKeys.$inferInsert
 
 export type Visibility = Site['visibility']
 export type SpaceType = Space['type']

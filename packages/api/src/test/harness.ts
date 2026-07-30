@@ -8,6 +8,7 @@ import { Database } from 'bun:sqlite'
 import { drizzle } from 'drizzle-orm/bun-sqlite'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import {
+  type NewApiKey,
   type NewComment,
   type NewCommentThread,
   type NewEvent,
@@ -16,6 +17,7 @@ import {
   type NewSite,
   type NewSpace,
   type NewUser,
+  apiKeys,
   comments,
   commentThreads,
   events,
@@ -56,6 +58,7 @@ const MIGRATIONS = [
   'drizzle/0022_sites_feed_index.sql',
   'drizzle/0023_site_stars.sql',
   'drizzle/0024_comment_reactions.sql',
+  'drizzle/0025_api_keys.sql',
 ]
 
 // --- S0 recorder: one shared, ordered timeline across D1/R2/cache mocks so perf specs can
@@ -481,6 +484,23 @@ export async function seedNotification(
     snippet: o.snippet ?? null,
     readAt: o.readAt ?? null,
     createdAt: o.createdAt ?? new Date().toISOString(),
+  })
+  return id
+}
+
+/** Insert an `api_keys` row; returns its id. Defaults: empty grants, far-future expiry. */
+export async function seedApiKey(db: DrizzleD1Database, o: { userId: string } & Partial<NewApiKey>): Promise<string> {
+  const id = o.id ?? nextId('ak')
+  await db.insert(apiKeys).values({
+    id,
+    userId: o.userId,
+    name: o.name ?? 'api key',
+    hash: o.hash ?? nextId('hash'),
+    grants: o.grants ?? [],
+    expiresAt: o.expiresAt ?? '2999-01-01T00:00:00.000Z',
+    revokedAt: o.revokedAt ?? null,
+    lastUsedAt: o.lastUsedAt ?? null,
+    ...(o.createdAt !== undefined && { createdAt: o.createdAt }),
   })
   return id
 }

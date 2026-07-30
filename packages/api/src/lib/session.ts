@@ -1,6 +1,8 @@
 import type { Context } from 'hono'
 import { deleteCookie, getSignedCookie, setSignedCookie } from 'hono/cookie'
-import type { AppEnv, SessionUser } from '../types'
+import { getUserById } from '../db/repo'
+import type { AppEnv, Credential, SessionUser } from '../types'
+import { API_KEY_PREFIX, apiKeyDb, resolveApiKey } from './api-key'
 
 const SESSION_COOKIE = '__Host-glance_session'
 const SESSION_TTL = 60 * 60 * 24 // 24h
@@ -92,13 +94,37 @@ export async function readCliToken(c: Context<AppEnv>, token: string): Promise<S
   }
 }
 
-// Resolve the request's user from the session cookie, falling back to a CLI Bearer token.
-// Used by `requireAuth` and by route handlers that read the user inline (rather than via the
-// middleware) so they can shape their own not-found / forbidden JSON — e.g. the viewer endpoint.
-export async function readSessionOrBearer(c: Context<AppEnv>): Promise<SessionUser | null> {
-  const user = await readSession(c)
-  if (user) return user
+// Resolve the request's credential — session cookie, then Authorization: Bearer, dispatched by
+// prefix: a `glk_`-prefixed token is a D1 control-plane API key and is resolved ONLY against D1;
+// anything else is a KV CLI token. On a failed `glk_` resolve this returns null immediately and
+// must NOT fall through to the KV CLI lookup — an attacker presenting a bad API key must not get
+// a second shot at the CLI token store (or vice versa).
+export async function readCredential(c: Context<AppEnv>): Promise<Credential | null> {
+  const sessionUser = await readSession(c)
+  if (sessionUser) return { kind: 'session', user: sessionUser }
+
   const header = c.req.header('Authorization')
-  if (header?.startsWith('Bearer ')) return readCliToken(c, header.slice(7))
-  return null
+  if (!header?.startsWith('Bearer ')) return null
+  const token = header.slice(7)
+
+  if (token.startsWith(API_KEY_PREFIX)) {
+    const db = apiKeyDb(c)
+    const resolved = await resolveApiKey(db, token)
+    if (!resolved) return null
+    const keyUser = await getUserById(db, resolved.userId)
+    if (!keyUser) return null
+    return { kind: 'key', user: keyUser, keyId: resolved.id, grants: resolved.grants }
+  }
+
+  const cliUser = await readCliToken(c, token)
+  return cliUser ? { kind: 'cli', user: cliUser } : null
+}
+
+// Resolve the request's user from the session cookie, falling back to a CLI/API-key Bearer
+// token. Used by `requireAuth` and by route handlers that read the user inline (rather than via
+// the middleware) so they can shape their own not-found / forbidden JSON — e.g. the viewer
+// endpoint. A thin projection of `readCredential` — ONE resolution path, not two that can drift.
+export async function readSessionOrBearer(c: Context<AppEnv>): Promise<SessionUser | null> {
+  const cred = await readCredential(c)
+  return cred?.user ?? null
 }

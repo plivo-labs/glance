@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import { Hono } from 'hono'
 import { events } from '../db/schema'
+import { generateApiKey, hashApiKey } from '../lib/api-key'
 import { parseCliVersion } from '../lib/events'
 import { readSessionOrBearer } from '../lib/session'
-import { makeDb, makeKv, seedUser } from '../test/harness'
+import { makeDb, makeKv, seedApiKey, seedUser } from '../test/harness'
 import type { AppEnv } from '../types'
 import { trackCliUsage } from './analytics'
 import { requireAuth } from './auth'
@@ -112,6 +113,26 @@ describe('trackCliUsage', () => {
     )
     expect(res.status).toBe(200)
     expect(await db.select().from(events)).toHaveLength(0)
+  })
+
+  test('a glk_-authenticated request records cliVersion null, not a parse of its User-Agent', async () => {
+    const { app, db, env } = setup()
+    const uid = await seedUser(db, { id: 'u1' })
+    const secret = generateApiKey()
+    await seedApiKey(db, { userId: uid, hash: await hashApiKey(secret) })
+
+    // A User-Agent that WOULD parse as a CLI version if treated like one — proving the null is
+    // from the glk_ check, not merely a missing header.
+    const res = await app.request(
+      '/api/upload/acme/site',
+      { headers: { Authorization: `Bearer ${secret}`, 'User-Agent': 'glance-cli/9.9.9' } },
+      env,
+    )
+    expect(res.status).toBe(200)
+
+    const rows = await db.select().from(events)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ type: 'cli', action: 'upload', userId: uid, cliVersion: null })
   })
 
   test('an unauthorized request (bad token) records nothing', async () => {

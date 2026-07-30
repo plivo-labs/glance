@@ -1,7 +1,7 @@
 import { getCookie } from 'hono/cookie'
 import { createMiddleware } from 'hono/factory'
 import { getUserById } from '../db/repo'
-import { readSessionOrBearer } from '../lib/session'
+import { readCredential } from '../lib/session'
 import type { AppEnv } from '../types'
 
 const SESSION_COOKIE = '__Host-glance_session'
@@ -27,18 +27,21 @@ export const requireSameOrigin = createMiddleware<AppEnv>(async (c, next) => {
   await next()
 })
 
-/** 401 unless a valid browser session OR CLI Bearer token exists; attaches the LIVE user. */
+/** 401 unless a valid browser session, CLI Bearer token, or D1 API key exists; attaches the LIVE
+ *  user plus the resolved Credential (which store authenticated the request). */
 export const requireAuth = createMiddleware<AppEnv>(async (c, next) => {
-  const session = await readSessionOrBearer(c)
-  if (!session) return c.json({ error: 'unauthorized' }, 401)
-  // The KV session is a snapshot frozen for the token's life (24h cookie / 30d CLI). Re-resolve
-  // the live row each request so a deleted user is rejected (401) and a role/email change takes
-  // effect immediately — e.g. a demoted superadmin loses privilege now (requireSuperAdmin sees
-  // the fresh role) rather than at token expiry. Single indexed PK read; the viewer hot path
-  // reads readSessionOrBearer inline (not this middleware), so FCP is unaffected.
-  const user = await getUserById(c.get('db'), session.id)
+  const credential = await readCredential(c)
+  if (!credential) return c.json({ error: 'unauthorized' }, 401)
+  // The KV session / D1 key lookup is a snapshot frozen for the token's life (24h cookie / 30d
+  // CLI / until the key is queried again). Re-resolve the live row each request so a deleted
+  // user is rejected (401) and a role/email change takes effect immediately — e.g. a demoted
+  // superadmin loses privilege now (requireSuperAdmin sees the fresh role) rather than at token
+  // expiry. Single indexed PK read; the viewer hot path reads readSessionOrBearer inline (not
+  // this middleware), so FCP is unaffected.
+  const user = await getUserById(c.get('db'), credential.user.id)
   if (!user) return c.json({ error: 'unauthorized' }, 401)
   c.set('user', user)
+  c.set('credential', credential)
   // Tag the credential for usage analytics. The CLI sends a Bearer token and never a cookie;
   // browsers always carry the cookie. Session cookie wins (mirrors readSessionOrBearer), so a
   // request is 'cli' only when there's no cookie AND a Bearer token is present.

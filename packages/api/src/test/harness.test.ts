@@ -4,8 +4,8 @@
 // a Cache-API mock, D1 statement/batch counters, and the D1 100-bound-parameter cap.
 import { describe, expect, test } from 'bun:test'
 import { eq, inArray, sql } from 'drizzle-orm'
-import { sites, spaces, users } from '../db/schema'
-import { makeCaches, makeDb, makeR2, makeRecorder, seedSite, seedSpace, seedUser } from './harness'
+import { apiKeys, sites, spaces, users } from '../db/schema'
+import { makeCaches, makeDb, makeR2, makeRecorder, seedApiKey, seedSite, seedSpace, seedUser } from './harness'
 
 describe('T0.1 makeR2 byte model', () => {
   test('binary put + ranged get slice BYTES; size is always the full byte length', async () => {
@@ -284,5 +284,32 @@ describe('T0.4 bind-cap adapter (D1 100-bound-parameter limit)', () => {
     )
     const atCap = Array.from({ length: 100 }, (_, i) => `id-${i}`)
     expect(await db.select().from(users).where(inArray(users.id, atCap))).toEqual([])
+  })
+})
+
+describe('0025_api_keys migration + seedApiKey', () => {
+  test('seedApiKey through the harness round-trips every column on read-back', async () => {
+    const db = makeDb()
+    const uid = await seedUser(db)
+    const id = await seedApiKey(db, { userId: uid, name: 'ci token', hash: 'a'.repeat(64), expiresAt: '2999-01-01T00:00:00.000Z' })
+    const [row] = await db.select().from(apiKeys).where(eq(apiKeys.id, id))
+    expect(row).toMatchObject({
+      id,
+      userId: uid,
+      name: 'ci token',
+      hash: 'a'.repeat(64),
+      expiresAt: '2999-01-01T00:00:00.000Z',
+      revokedAt: null,
+      lastUsedAt: null,
+    })
+    expect(row.createdAt).toEqual(expect.any(String))
+    expect(row.grants).toBeDefined()
+  })
+
+  test('hash is UNIQUE — a second key with the same hash rejects', async () => {
+    const db = makeDb()
+    const uid = await seedUser(db)
+    await seedApiKey(db, { userId: uid, hash: 'dupe'.repeat(16) })
+    await expect(seedApiKey(db, { userId: uid, hash: 'dupe'.repeat(16) })).rejects.toThrow()
   })
 })
