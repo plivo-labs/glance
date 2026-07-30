@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check, Mic, RotateCcw, Trash2 } from 'lucide-react'
+import { Check, FileText, Mic, RotateCcw, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/lib/api'
 import { comments, type CommentItem, type CommentReaction, type Thread } from '@/lib/comments'
@@ -96,7 +96,14 @@ export function ThreadCard({
             “{thread.quote}”
           </button>
         ) : (
-          <span className="text-muted-foreground text-xs">Page comment</span>
+          // No quote and no element: a PAGE thread, about the file as a whole. It paints nothing on
+          // the page (paintAnchors, lib/comments.ts) and has nothing to focus, so this is a static
+          // marker, not a button — but it's chip-weight like AnchorChip so the card doesn't read as
+          // an anchorless orphan beside anchored ones (#112).
+          <span className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 font-medium text-muted-foreground text-xs">
+            <FileText className="size-3" />
+            Page
+          </span>
         )}
       </div>
 

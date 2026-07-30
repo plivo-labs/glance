@@ -235,6 +235,44 @@ describe('viewer wiring — adding a comment opens the rail', () => {
   })
 })
 
+// #112 — the whole bug was one wiring line here: `onStartComment={isAudio ? startPageComment :
+// undefined}`, which handed the rail its page-comment trigger only on the audio view. SITE in this
+// file is an HTML page (index.html), so this is the non-audio case the gate excluded, driven
+// through the real rail and the real composer. Nothing below would survive re-adding the isAudio
+// gate: the button simply wouldn't render.
+describe('viewer wiring — a page comment can be written from a non-audio view (#112)', () => {
+  test('the rail\'s "Add comment" creates a page-anchored thread — anchorType page, no quote', async () => {
+    const create = spyOn(comments, 'create').mockResolvedValue(mkThread({ id: 'p1', anchorType: 'page', quote: null }))
+    const list = spyOn(comments, 'list').mockResolvedValue(THREADS)
+    const mentionable = spyOn(comments, 'mentionable').mockResolvedValue([])
+    try {
+      const { container } = renderViewer('/sp/site?review=1')
+      await waitFor(() => expect(container.querySelector('iframe')).not.toBeNull())
+      const { iframe, send } = armIframe(container)
+      loadIframe(iframe)
+      act(() => send({ type: 'glance:ready', filePath: 'index.html' })) // gives submitThread its filePath
+
+      // No text selection anywhere in this test — that is the point of a page comment.
+      fireEvent.click(await screen.findByRole('button', { name: 'Add comment' }))
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: 'this chart is wrong' } })
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Comment' }))
+      })
+
+      expect(create).toHaveBeenCalledTimes(1)
+      const input = create.mock.calls[0]![1]
+      expect(input).toEqual({ filePath: 'index.html', body: 'this chart is wrong', anchorType: 'page' })
+      // Explicit, not implied by toEqual: a page thread must carry NO quote at all — sending an
+      // empty-string quote would make the server treat it as a text anchor it can never re-find.
+      expect(input).not.toHaveProperty('quote')
+    } finally {
+      create.mockRestore()
+      list.mockRestore()
+      mentionable.mockRestore()
+    }
+  })
+})
+
 describe('viewer wiring — rail toggle (C2b: the rail is just a panel, not a review-mode gate)', () => {
   // C2b's mutation-check found `toggleRail = () => setRailOpen(true)` (never closes) and
   // `onClose={() => {}}` both survive the whole suite green: ViewerTopBar.test.tsx only asserts the
