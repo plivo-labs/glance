@@ -60,6 +60,7 @@ const MIGRATIONS = [
   'drizzle/0023_site_stars.sql',
   'drizzle/0024_comment_reactions.sql',
   'drizzle/0025_api_keys.sql',
+  'drizzle/0026_api_key_display_suffix.sql',
 ]
 
 // --- S0 recorder: one shared, ordered timeline across D1/R2/cache mocks so perf specs can
@@ -508,12 +509,15 @@ export async function seedApiKey(db: DrizzleD1Database, o: { userId: string } & 
     expiresAt: o.expiresAt ?? '2999-01-01T00:00:00.000Z',
     revokedAt: o.revokedAt ?? null,
     lastUsedAt: o.lastUsedAt ?? null,
+    displaySuffix: o.displaySuffix ?? null,
     ...(o.createdAt !== undefined && { createdAt: o.createdAt }),
   })
   return id
 }
 
-/** In-memory stand-in for the GLANCE_SESSIONS KV namespace (get/put/delete + ttl peek). */
+/** In-memory stand-in for the GLANCE_SESSIONS KV namespace (get/put/delete/list + ttl peek).
+ *  `list` returns every matching key in one page (list_complete: true, no cursor) — enough to
+ *  drive `revokeUserCliTokens`'s prefix enumeration; it never needs to exercise pagination. */
 export function makeKv() {
   const store = new Map<string, string>()
   const ttls = new Map<string, number | undefined>()
@@ -528,6 +532,11 @@ export function makeKv() {
       store.delete(key)
       ttls.delete(key)
       return Promise.resolve()
+    },
+    list: (options?: { prefix?: string; cursor?: string }) => {
+      const prefix = options?.prefix ?? ''
+      const keys = [...store.keys()].filter((k) => k.startsWith(prefix)).map((name) => ({ name }))
+      return Promise.resolve({ keys, list_complete: true, cursor: undefined })
     },
     store,
     ttls,

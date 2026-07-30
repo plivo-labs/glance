@@ -391,6 +391,11 @@ export const apiKeys = sqliteTable(
     expiresAt: text('expiresAt').notNull(),
     revokedAt: text('revokedAt'),
     lastUsedAt: text('lastUsedAt'),
+    // Non-secret display fragment for the key list UI (rendered as `${API_KEY_PREFIX}…${suffix}`,
+    // e.g. "glk_…4mR2"). ONLY the last 4 chars of the plaintext secret — nowhere near enough
+    // entropy to be useful to an attacker, and never enough to reconstruct the secret. Nullable so
+    // rows written before this column existed still read fine.
+    displaySuffix: text('displaySuffix'),
   },
   (t) => [index('api_keys_user_created').on(t.userId, t.createdAt)],
 )

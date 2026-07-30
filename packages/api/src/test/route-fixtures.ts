@@ -5,6 +5,8 @@
 import { Hono } from 'hono'
 import { generateApiKey, hashApiKey } from '../lib/api-key'
 import { requireSameOrigin } from '../middleware/auth'
+import { admin } from '../routes/admin'
+import { apiKeys } from '../routes/api-keys'
 import { commentFeed } from '../routes/comment-feed'
 import { comments } from '../routes/comments'
 import { summary } from '../routes/summary'
@@ -45,6 +47,8 @@ export function makeRouteApp() {
   app.route('/api/sites', summary)
   app.route('/api/comments', commentFeed)
   app.route('/api/slack', slackEvents)
+  app.route('/api/api-keys', apiKeys)
+  app.route('/api/admin', admin)
   return { app, env, db, kv, r2 }
 }
 
@@ -76,6 +80,11 @@ export async function mintUser(
   const email = opts.email ?? `${id}@example.com`
   await seedUser(db, { id, email, role })
   await kv.put(`cli:tok-${id}`, JSON.stringify({ id, email, name: null, role }))
+  // The per-user index entry `createCliToken` writes alongside the token. Without it the fixture
+  // looks authenticated but is invisible to `revokeUserCliTokens`, which enumerates this prefix —
+  // so the offboarding kill-switch could not be tested at all, and a regression that stopped
+  // revoking CLI tokens would have shipped green.
+  await kv.put(`cli_index:${id}:tok-${id}`, '')
   return id
 }
 

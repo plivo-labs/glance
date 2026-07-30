@@ -65,7 +65,7 @@ describe('resolveApiKey', () => {
     await seedApiKey(db, { userId: uid, hash, expiresAt })
 
     const resolved = await resolveApiKey(db, secret)
-    expect(resolved).toEqual({ id: expect.any(String), userId: uid, grants: FULL_GRANTS })
+    expect(resolved).toEqual({ id: expect.any(String), userId: uid, grants: FULL_GRANTS, lastUsedAt: null })
   })
 
   test('CASE-04: non-empty grants round-trip through resolveApiKey unchanged', async () => {
@@ -77,7 +77,7 @@ describe('resolveApiKey', () => {
     await seedApiKey(db, { userId: uid, hash, grants })
 
     const resolved = await resolveApiKey(db, secret)
-    expect(resolved).toEqual({ id: expect.any(String), userId: uid, grants })
+    expect(resolved).toEqual({ id: expect.any(String), userId: uid, grants, lastUsedAt: null })
   })
 
   test('CASE-02: a revoked key does not resolve, but its row is still readable directly (tombstone)', async () => {

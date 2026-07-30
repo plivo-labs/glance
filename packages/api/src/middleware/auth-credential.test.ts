@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
+import { eq } from 'drizzle-orm'
 import { Hono } from 'hono'
-import { API_KEY_PREFIX, generateApiKey, hashApiKey } from '../lib/api-key'
+import { apiKeys as apiKeysTable } from '../db/schema'
+import { API_KEY_PREFIX, LAST_USED_THROTTLE_MS, generateApiKey, hashApiKey } from '../lib/api-key'
 import { createSession, readSessionOrBearer } from '../lib/session'
 import { makeDb, makeKv, seedApiKey, seedUser } from '../test/harness'
 import type { AppEnv } from '../types'
@@ -131,5 +133,79 @@ describe('requireAuth credential dispatch', () => {
     )
     expect(res.status).toBe(200)
     expect(await res.json()).toMatchObject({ kind: 'session', user: { id: owner } })
+  })
+})
+
+describe('api key lastUsedAt touch', () => {
+  test('CASE-18: two authed requests inside the throttle window write lastUsedAt exactly once', async () => {
+    const { app, db, env } = setup()
+    const uid = await seedUser(db, { id: 'u1' })
+    const secret = generateApiKey()
+    await seedApiKey(db, { userId: uid, hash: await hashApiKey(secret), lastUsedAt: null })
+    db.resetCounters()
+
+    await app.request('/whoami', { headers: { Authorization: `Bearer ${secret}` } }, env)
+    await app.request('/whoami', { headers: { Authorization: `Bearer ${secret}` } }, env)
+
+    expect(db.counters.update).toBe(1)
+  })
+
+  test('a first-ever use writes lastUsedAt; a use after the window elapses writes again', async () => {
+    const { app, db, env } = setup()
+    const uid = await seedUser(db, { id: 'u1' })
+    const secret = generateApiKey()
+    const keyId = await seedApiKey(db, { userId: uid, hash: await hashApiKey(secret), lastUsedAt: null })
+    db.resetCounters()
+
+    await app.request('/whoami', { headers: { Authorization: `Bearer ${secret}` } }, env)
+    expect(db.counters.update).toBe(1)
+    const [afterFirst] = await db.select().from(apiKeysTable).where(eq(apiKeysTable.id, keyId))
+    expect(afterFirst.lastUsedAt).not.toBeNull()
+
+    // Back-date lastUsedAt past the throttle window to simulate elapsed time.
+    const stale = new Date(Date.now() - LAST_USED_THROTTLE_MS - 1000).toISOString()
+    await db.update(apiKeysTable).set({ lastUsedAt: stale }).where(eq(apiKeysTable.id, keyId))
+    db.resetCounters()
+
+    await app.request('/whoami', { headers: { Authorization: `Bearer ${secret}` } }, env)
+    expect(db.counters.update).toBe(1)
+    const [afterSecond] = await db.select().from(apiKeysTable).where(eq(apiKeysTable.id, keyId))
+    expect(afterSecond.lastUsedAt).not.toBe(stale)
+  })
+
+  test('a request whose lastUsedAt write THROWS still returns its normal authenticated response', async () => {
+    const { app, db, env } = setup()
+    const uid = await seedUser(db, { id: 'u1' })
+    const secret = generateApiKey()
+    await seedApiKey(db, { userId: uid, hash: await hashApiKey(secret), lastUsedAt: null })
+    const originalUpdate = db.update.bind(db)
+    db.update = (() => {
+      throw new Error('boom')
+    }) as typeof db.update
+
+    const res = await app.request('/whoami', { headers: { Authorization: `Bearer ${secret}` } }, env)
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ kind: 'key', user: { id: uid } })
+
+    db.update = originalUpdate
+  })
+
+  test('the CLI-token and cookie paths perform no api_keys write at all', async () => {
+    const { app, db, kv, env } = setup()
+    const uid = await seedUser(db, { id: 'u1' })
+    await kv.put(`cli:tok-${uid}`, JSON.stringify({ id: uid, email: 'u1@x.com', name: null, role: 'member' }))
+    // Registers a route on `app`, so it must happen before any app.request() call builds the
+    // matcher (Hono freezes routing on first dispatch) — same ordering the other cookie tests use.
+    const cookie = await sessionCookie(app, env, { id: uid, email: 'u1@x.com', name: null, role: 'member' })
+
+    db.resetCounters()
+    const cliRes = await app.request('/whoami', { headers: { Authorization: `Bearer tok-${uid}` } }, env)
+    expect(cliRes.status).toBe(200)
+    expect(db.counters.update).toBe(0)
+
+    db.resetCounters()
+    const cookieRes = await app.request('/whoami', { headers: { Cookie: cookie } }, env)
+    expect(cookieRes.status).toBe(200)
+    expect(db.counters.update).toBe(0)
   })
 })

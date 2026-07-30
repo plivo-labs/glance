@@ -1,6 +1,7 @@
 import { and, desc, eq, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { sites, spaceMembers, spaces as spacesTable, users } from '../db/schema'
+import { revokeUserApiKeys } from '../lib/api-key'
 import { fireAndForget } from '../lib/events'
 import { revokeUserCliTokens } from '../lib/session'
 import { cachedStats } from '../lib/stats'
@@ -125,10 +126,13 @@ admin.get('/users', async (c) => {
 })
 
 // POST /api/admin/users/:id/revoke-cli — offboarding kill-switch: revoke EVERY CLI token the user
-// holds (enumerated via the per-user `cli_index:` prefix). Idempotent — a no-op for a user with no
-// tokens (or an already-deleted one). Superadmin-only via the router-wide requireSuperAdmin above.
+// holds (enumerated via the per-user `cli_index:` prefix) AND every D1 API key they hold — a user
+// whose access is being killed keeps neither. Idempotent — a no-op for a user with no tokens/keys
+// (or already-revoked ones). Superadmin-only via the router-wide requireSuperAdmin above.
 admin.post('/users/:id/revoke-cli', async (c) => {
-  await revokeUserCliTokens(c, c.req.param('id'))
+  const userId = c.req.param('id')
+  await revokeUserCliTokens(c, userId)
+  await revokeUserApiKeys(c.get('db'), userId)
   return c.json({ ok: true })
 })
 

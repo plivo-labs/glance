@@ -2,7 +2,8 @@ import type { Context } from 'hono'
 import { deleteCookie, getSignedCookie, setSignedCookie } from 'hono/cookie'
 import { getUserById } from '../db/repo'
 import type { AppEnv, Credential, SessionUser } from '../types'
-import { API_KEY_PREFIX, apiKeyDb, resolveApiKey } from './api-key'
+import { API_KEY_PREFIX, apiKeyDb, resolveApiKey, touchApiKeyLastUsed } from './api-key'
+import { fireAndForget } from './events'
 
 const SESSION_COOKIE = '__Host-glance_session'
 const SESSION_TTL = 60 * 60 * 24 // 24h
@@ -113,6 +114,9 @@ export async function readCredential(c: Context<AppEnv>): Promise<Credential | n
     if (!resolved) return null
     const keyUser = await getUserById(db, resolved.userId)
     if (!keyUser) return null
+    // Best-effort, throttled usage touch — off the response's critical path (fireAndForget) and
+    // never allowed to fail the request (touchApiKeyLastUsed swallows its own errors).
+    await fireAndForget(c, touchApiKeyLastUsed(db, resolved.id, resolved.lastUsedAt))
     return { kind: 'key', user: keyUser, keyId: resolved.id, grants: resolved.grants }
   }
 

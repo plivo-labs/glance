@@ -11,6 +11,10 @@ const enc = new TextEncoder()
 
 export const API_KEY_PREFIX = 'glk_'
 
+// Throttle window for the lastUsedAt touch (see touchApiKeyLastUsed below): a key hammered once a
+// second would otherwise cost 86,400 D1 row-writes/day just for "last used 4m ago" in the UI.
+export const LAST_USED_THROTTLE_MS = 60 * 60 * 1000
+
 // The api_keys.grants JSON blob, now that its shape is settled. `control` may drive the control
 // plane (deploy, list, fork...) — site DELETE is denied to keys regardless (see routes/sites.ts).
 // `data: null` means the key cannot mint data tokens at all; otherwise `scope` allowlists which
@@ -37,8 +41,10 @@ function isDataScope(v: unknown): v is ApiKeyGrants['data'] & object {
 }
 
 /** Narrow runtime validator for the grants shape (not a schema library) — resolveApiKey fails
- *  closed on anything that doesn't match, same as an unparseable blob. */
-function isApiKeyGrants(v: unknown): v is ApiKeyGrants {
+ *  closed on anything that doesn't match, same as an unparseable blob. Exported so the mint route
+ *  (routes/api-keys.ts) rejects a malformed `grants` body with the SAME check, rather than a
+ *  second, driftable one. */
+export function isApiKeyGrants(v: unknown): v is ApiKeyGrants {
   if (typeof v !== 'object' || v === null) return false
   const g = v as { control?: unknown; data?: unknown }
   if (typeof g.control !== 'boolean') return false
@@ -73,7 +79,7 @@ export async function hashApiKey(secret: string): Promise<string> {
 export async function resolveApiKey(
   db: DrizzleD1Database,
   secret: string,
-): Promise<{ id: string; userId: string; grants: ApiKeyGrants } | null> {
+): Promise<{ id: string; userId: string; grants: ApiKeyGrants; lastUsedAt: string | null } | null> {
   const hash = await hashApiKey(secret)
   const now = new Date().toISOString()
   let row: typeof apiKeys.$inferSelect | undefined
@@ -89,7 +95,31 @@ export async function resolveApiKey(
   }
   if (!row) return null
   if (!isApiKeyGrants(row.grants)) return null
-  return { id: row.id, userId: row.userId, grants: row.grants }
+  return { id: row.id, userId: row.userId, grants: row.grants, lastUsedAt: row.lastUsedAt }
+}
+
+/** Best-effort `lastUsedAt` touch, throttled to LAST_USED_THROTTLE_MS: a no-op when the stored
+ *  value is already within the window, so a hot key costs one D1 write per hour rather than one
+ *  per request. NEVER throws — same "swallow it" contract as recordEvent (lib/events.ts), since
+ *  a failed touch must not turn an authenticated request into an error. Callers hand the
+ *  resulting promise to fireAndForget so the write itself rides off the response's critical path. */
+export async function touchApiKeyLastUsed(db: DrizzleD1Database, id: string, lastUsedAt: string | null): Promise<void> {
+  if (lastUsedAt !== null && Date.now() - new Date(lastUsedAt).getTime() < LAST_USED_THROTTLE_MS) return
+  try {
+    await db.update(apiKeys).set({ lastUsedAt: new Date().toISOString() }).where(eq(apiKeys.id, id))
+  } catch {
+    // Swallow — a failed touch must never surface to the caller.
+  }
+}
+
+/** Revoke every LIVE key (revokedAt IS NULL) a user holds — the D1 counterpart to
+ *  `revokeUserCliTokens` (KV), called alongside it from the offboarding kill-switch. Idempotent:
+ *  the WHERE simply matches nothing on a second call or for a user with no keys. */
+export async function revokeUserApiKeys(db: DrizzleD1Database, userId: string): Promise<void> {
+  await db
+    .update(apiKeys)
+    .set({ revokedAt: new Date().toISOString() })
+    .where(and(eq(apiKeys.userId, userId), isNull(apiKeys.revokedAt)))
 }
 
 // 'first-primary': withDb defaults to 'first-unconstrained', so a replica could still serve an
