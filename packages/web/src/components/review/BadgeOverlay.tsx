@@ -1,7 +1,9 @@
+import { AvatarGroup, AvatarGroupCount } from '@/components/ui/avatar'
+import { UserAvatar } from '@/components/UserAvatar'
 import type { Badge } from '@/lib/badges'
 
 // Slice B2c — paints the badges lib/badges computes. A dumb renderer: every prop already carries
-// the shape to draw (position, initials, count), so this owns zero state and no measuring.
+// the shape to draw (position, authors, count), so this owns zero state and no measuring.
 //
 // MOUNT POINT IS LOAD-BEARING, same as CommentPopover: a sibling of the iframe inside the SAME
 // `relative h-full w-full` wrapper, so a rect the frame reports needs no translation.
@@ -36,11 +38,17 @@ export function BadgeOverlay({
           onFocus={() => onHoverChange(badge.threadIds)}
           onBlur={() => onHoverChange([])}
           style={{ top: badge.top, left: badge.left }}
-          className="pointer-events-auto absolute inline-flex items-center gap-1 rounded-full border bg-popover px-1.5 py-0.5 font-medium text-popover-foreground text-xs shadow-md hover:bg-accent"
+          className="pointer-events-auto absolute inline-flex items-center gap-1.5 rounded-full border bg-popover py-0.5 pr-2 pl-0.5 font-medium text-popover-foreground text-xs shadow-md hover:bg-accent"
         >
-          {badge.initials.join('')}
-          {badge.extra > 0 && `+${badge.extra}`}
-          <span className="text-muted-foreground">·{badge.count}</span>
+          {/* The photo is same-origin (/api/avatars/:id, see UserAvatar) — an author with no photo,
+              or none at all, degrades to initials without the chip changing shape. */}
+          <AvatarGroup>
+            {badge.authors.map((author) => (
+              <UserAvatar key={author.id ?? author.name ?? '?'} userId={author.id} name={author.name} />
+            ))}
+            {badge.extra > 0 && <AvatarGroupCount className="size-6 text-[0.65rem]">+{badge.extra}</AvatarGroupCount>}
+          </AvatarGroup>
+          <span className="text-muted-foreground">{badge.count}</span>
         </button>
       ))}
     </div>

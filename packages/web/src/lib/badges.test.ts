@@ -4,7 +4,7 @@ import { type AnchorRect, buildBadges, initialBadges, stepBadges } from './badge
 
 // Slice B2b — the overlay's pure badge model. stepBadges owns the async-batch race (an epoch that
 // arrives late must not undo a newer one); buildBadges owns the presentation rules (visibility,
-// placement, clustering, initials). Neither touches React or the DOM — see commentPopover.ts for
+// placement, clustering, authors). Neither touches React or the DOM — see commentPopover.ts for
 // the house style this mirrors.
 
 const VP = { width: 800, height: 600 }
@@ -278,20 +278,20 @@ describe('buildBadges — count', () => {
   })
 })
 
-describe('buildBadges — initials', () => {
-  test("'Sam Lawerence' -> 'SL'", () => {
-    const threads = [mkThread({ id: 't1', createdByName: 'Sam Lawerence' })]
+describe('buildBadges — authors', () => {
+  test("the thread's own creator is its author, id paired with name for the avatar", () => {
+    const threads = [mkThread({ id: 't1', createdBy: 'u1', createdByName: 'Sam Lawerence' })]
     const state = stepBadges(initialBadges(), { epoch: 0, rects: [rect('t1', 10, 10)] }, VP)
-    expect(buildBadges(state, threads)[0]?.initials).toEqual(['SL'])
+    expect(buildBadges(state, threads)[0]?.authors).toEqual([{ id: 'u1', name: 'Sam Lawerence' }])
   })
 
-  test("single-word 'ada' -> 'A'", () => {
-    const threads = [mkThread({ id: 't1', createdByName: 'ada' })]
+  test('an unattributed creator (name, no id) still carries the name — initials, no photo', () => {
+    const threads = [mkThread({ id: 't1', createdBy: null, createdByName: 'ada' })]
     const state = stepBadges(initialBadges(), { epoch: 0, rects: [rect('t1', 10, 10)] }, VP)
-    expect(buildBadges(state, threads)[0]?.initials).toEqual(['A'])
+    expect(buildBadges(state, threads)[0]?.authors).toEqual([{ id: null, name: 'ada' }])
   })
 
-  test("null createdByName falls back to first non-deleted comment author 'Rk Roy' -> 'RR'", () => {
+  test('no creator falls back to the first non-deleted comment author, id and name from THAT comment', () => {
     const threads = [
       mkThread({
         id: 't1',
@@ -311,36 +311,47 @@ describe('buildBadges — initials', () => {
       }),
     ]
     const state = stepBadges(initialBadges(), { epoch: 0, rects: [rect('t1', 10, 10)] }, VP)
-    expect(buildBadges(state, threads)[0]?.initials).toEqual(['RR'])
+    expect(buildBadges(state, threads)[0]?.authors).toEqual([{ id: 'u1', name: 'Rk Roy' }])
   })
 
-  test('no name anywhere -> ?', () => {
+  test('nobody anywhere -> one unknown author, so the chip still paints a single ? avatar', () => {
     const threads = [mkThread({ id: 't1', createdByName: null, comments: [] })]
     const state = stepBadges(initialBadges(), { epoch: 0, rects: [rect('t1', 10, 10)] }, VP)
-    expect(buildBadges(state, threads)[0]?.initials).toEqual(['?'])
+    expect(buildBadges(state, threads)[0]?.authors).toEqual([{ id: null, name: null }])
   })
 
   test('a cluster of 5 distinct authors keeps the FIRST 3 in encounter order, extra = 2', () => {
     const names = ['Amy Adams', 'Bob Brown', 'Cara Clark', 'Dana Diaz', 'Ed Evans']
-    const threads = names.map((name, i) => mkThread({ id: `t${i}`, createdByName: name }))
+    const threads = names.map((name, i) => mkThread({ id: `t${i}`, createdBy: `u${i}`, createdByName: name }))
     const rects = threads.map((t, i) => rect(t.id, 10 + i, 10)) // all within cluster tolerance, in order
     const state = stepBadges(initialBadges(), { epoch: 0, rects }, VP)
     const [badge] = buildBadges(state, threads)
-    // Distinct per-author initials (AA/BB/CC/DD/EE) so slicing the LAST 3 or a reversed first-3
-    // would produce a different array, not just a different length.
-    expect(badge?.initials).toEqual(['AA', 'BB', 'CC'])
+    // Distinct per-author ids so slicing the LAST 3 or a reversed first-3 would produce a different
+    // array, not just a different length.
+    expect(badge?.authors.map((a) => a.id)).toEqual(['u0', 'u1', 'u2'])
     expect(badge?.extra).toBe(2)
   })
 
-  test('two threads by the SAME author in one cluster collapse to one initial, extra 0', () => {
+  test('two threads by the SAME author in one cluster collapse to one avatar, extra 0', () => {
     const threads = [
-      mkThread({ id: 't1', createdByName: 'Sam Lawerence' }),
-      mkThread({ id: 't2', createdByName: 'Sam Lawerence' }),
+      mkThread({ id: 't1', createdBy: 'u1', createdByName: 'Sam Lawerence' }),
+      mkThread({ id: 't2', createdBy: 'u1', createdByName: 'Sam Lawerence' }),
     ]
     const state = stepBadges(initialBadges(), { epoch: 0, rects: [rect('t1', 10, 10), rect('t2', 11, 12)] }, VP)
     const [badge] = buildBadges(state, threads)
-    expect(badge?.initials).toEqual(['SL'])
+    expect(badge?.authors).toEqual([{ id: 'u1', name: 'Sam Lawerence' }])
     expect(badge?.extra).toBe(0)
+  })
+
+  // Dedupe is by ID, so a shared display name is still two faces — the old name-keyed dedupe hid
+  // one of the two people behind the other's avatar.
+  test('two DIFFERENT ids sharing a display name stay two avatars', () => {
+    const threads = [
+      mkThread({ id: 't1', createdBy: 'u1', createdByName: 'Sam L' }),
+      mkThread({ id: 't2', createdBy: 'u2', createdByName: 'Sam L' }),
+    ]
+    const state = stepBadges(initialBadges(), { epoch: 0, rects: [rect('t1', 10, 10), rect('t2', 11, 12)] }, VP)
+    expect(buildBadges(state, threads)[0]?.authors.map((a) => a.id)).toEqual(['u1', 'u2'])
   })
 })
 

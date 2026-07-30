@@ -12,7 +12,7 @@ function mkBadge(overrides: Partial<Badge> & { key: string }): Badge {
     top: 10,
     left: 20,
     threadIds: ['t1'],
-    initials: ['AB'],
+    authors: [{ id: 'u1', name: 'Amy Adams' }],
     extra: 0,
     count: 1,
     ...overrides,
@@ -35,22 +35,45 @@ describe('B2c — BadgeOverlay', () => {
     expect(buttons[1]?.style.left).toBe('65px')
   })
 
-  test('a badge with extra 0 shows its initials and its count and no +N', () => {
-    const badge = mkBadge({ key: 't1', initials: ['AB', 'CD'], extra: 0, count: 3 })
-    render(<BadgeOverlay badges={[badge]} onOpen={() => {}} onHoverChange={() => {}} />)
+  test('a badge with extra 0 renders one round avatar per author, its count, and no +N', () => {
+    const badge = mkBadge({
+      key: 't1',
+      authors: [
+        { id: 'u1', name: 'Amy Adams' },
+        { id: 'u2', name: 'Bob Brown' },
+      ],
+      extra: 0,
+      count: 3,
+    })
+    const { container } = render(<BadgeOverlay badges={[badge]} onOpen={() => {}} onHoverChange={() => {}} />)
 
+    const avatars = [...container.querySelectorAll('[data-slot="avatar"]')]
+    expect(avatars).toHaveLength(2)
+    for (const avatar of avatars) expect(avatar.className).toContain('rounded-full')
+    // No photo can load under happy-dom, so every avatar sits on its initials fallback — which is
+    // also the real-world path for an author with no Google photo.
     const button = screen.getByRole('button')
-    expect(button.textContent).toContain('AB')
-    expect(button.textContent).toContain('CD')
+    expect(button.textContent).toContain('A')
+    expect(button.textContent).toContain('B')
     expect(button.textContent).toContain('3')
     expect(button.textContent).not.toContain('+')
   })
 
-  test('a badge with extra 2 renders +2', () => {
-    const badge = mkBadge({ key: 't1', initials: ['AB', 'CD', 'EF'], extra: 2, count: 5 })
-    render(<BadgeOverlay badges={[badge]} onOpen={() => {}} onHoverChange={() => {}} />)
+  test('a badge with extra 2 renders a +2 circle alongside the 3 avatars', () => {
+    const badge = mkBadge({
+      key: 't1',
+      authors: [
+        { id: 'u1', name: 'Amy Adams' },
+        { id: 'u2', name: 'Bob Brown' },
+        { id: 'u3', name: 'Cara Clark' },
+      ],
+      extra: 2,
+      count: 5,
+    })
+    const { container } = render(<BadgeOverlay badges={[badge]} onOpen={() => {}} onHoverChange={() => {}} />)
 
-    expect(screen.getByRole('button').textContent).toContain('+2')
+    expect(container.querySelectorAll('[data-slot="avatar"]')).toHaveLength(3)
+    expect(container.querySelector('[data-slot="avatar-group-count"]')?.textContent).toBe('+2')
   })
 
   test('clicking a badge calls onOpen with exactly that badge threadIds', () => {

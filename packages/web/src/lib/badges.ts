@@ -14,12 +14,16 @@ export type BadgeState = {
   viewport: { width: number; height: number }
 }
 
+// One person on a chip. The id is what the overlay's avatar proxy is keyed by (a null id has no
+// photo and renders initials); the name is only ever the initials fallback.
+export type BadgeAuthor = { id: string | null; name: string | null }
+
 export type Badge = {
   key: string
   top: number
   left: number
   threadIds: string[]
-  initials: string[]
+  authors: BadgeAuthor[]
   extra: number
   count: number
 }
@@ -57,23 +61,13 @@ function offscreen(rect: DOMRectLike, viewport: { width: number; height: number 
   )
 }
 
-// First-word + last-word initials, capped at 2 chars. A blank/missing name renders as '?' rather
-// than an empty chip so the overlay always has something to paint.
-function initialsFor(name: string | null): string {
-  const trimmed = name?.trim()
-  if (!trimmed) return '?'
-  const words = trimmed.split(/\s+/)
-  const first = words[0]?.[0] ?? ''
-  const last = words[words.length - 1]?.[0] ?? ''
-  return (first + (words.length > 1 ? last : '')).toUpperCase()
-}
-
-// The display name for a thread's author: its own createdByName, else the first non-deleted
-// comment's author, else null (renders as '?').
-function authorName(thread: Thread): string | null {
-  if (thread.createdByName) return thread.createdByName
+// The person a thread's badge shows: its own creator, else the first non-deleted comment's author,
+// else nobody (the overlay paints '?'). id and name always come from the SAME source, so a chip can
+// never pair one person's photo with another person's initial.
+function authorOf(thread: Thread): BadgeAuthor {
+  if (thread.createdBy || thread.createdByName) return { id: thread.createdBy, name: thread.createdByName }
   const comment = thread.comments.find((c) => !c.deleted)
-  return comment?.author ?? null
+  return { id: comment?.authorId ?? null, name: comment?.author ?? null }
 }
 
 export function buildBadges(state: BadgeState, threads: Thread[]): Badge[] {
@@ -109,15 +103,19 @@ export function buildBadges(state: BadgeState, threads: Thread[]): Badge[] {
     const threadIds = cluster.map((a) => a.id)
     const memberThreads = threadIds.map((id) => byId.get(id) as Thread)
 
-    // Dedupe authors by name, in encounter order, so the same person across threads in a cluster
-    // contributes one initial rather than one per thread.
-    const names: string[] = []
+    // Dedupe authors by user id, in encounter order, so the same person across threads in a cluster
+    // contributes one avatar rather than one per thread. Id, not name: two different people who
+    // share a display name are two faces, and only a null id falls back to grouping by name.
+    const authors: BadgeAuthor[] = []
+    const seen = new Set<string>()
     for (const thread of memberThreads) {
-      const name = authorName(thread) ?? '' // '' groups every unnamed author together, like initials '?'
-      if (!names.includes(name)) names.push(name)
+      const author = authorOf(thread)
+      const key = author.id ?? author.name ?? '' // '' groups every unknown author together, like '?'
+      if (seen.has(key)) continue
+      seen.add(key)
+      authors.push(author)
     }
-    const initials = names.slice(0, 3).map((n) => initialsFor(n || null))
-    const extra = Math.max(0, names.length - 3)
+    const extra = Math.max(0, authors.length - 3)
 
     // Skip soft-deleted comments, matching authorName's rule above — otherwise a thread whose
     // only comment was deleted still shows a count pointing at nothing readable.
@@ -130,7 +128,7 @@ export function buildBadges(state: BadgeState, threads: Thread[]): Badge[] {
       top: first.rect.top,
       left: first.rect.left + first.rect.width,
       threadIds,
-      initials,
+      authors: authors.slice(0, 3),
       extra,
       count,
     }
