@@ -1,12 +1,12 @@
 import { ChevronRight, Command, GitFork, History, Menu, MessageSquare, Share2, Sparkles, Star } from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router'
-import { useForkSite } from '@/hooks/useForkSite'
 import { useStar } from '@/hooks/useStar'
 import type { ViewerSite } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { ForkDialog } from '@/components/ForkDialog'
 import { ShareDialog } from '@/components/ShareDialog'
 import { SummarySheet } from '@/components/SummarySheet'
 import { BrandMark } from '@/components/states'
@@ -21,7 +21,7 @@ import { BrandMark } from '@/components/states'
 //
 // The row is the same three controls at EVERY breakpoint: only Star and Comments earn a permanent
 // slot; Recently opened / Search / Fork / TL;DR / Share live in the hamburger menu. Those menu
-// items are driven from shared state (useForkSite, SummarySheet, ShareDialog) held here, so the
+// items are driven from shared state (ForkDialog, SummarySheet, ShareDialog) held here, so the
 // menu item and the sheet/dialog it opens are one action.
 export function ViewerTopBar({
   site,
@@ -42,7 +42,7 @@ export function ViewerTopBar({
 }) {
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
-  const { fork, forking } = useForkSite(site)
+  const [forkOpen, setForkOpen] = useState(false)
   // Star has a permanent slot in the row, so it is the one action with no menu-item twin.
   const { starred, toggle: toggleStar } = useStar(site)
   return (
@@ -111,7 +111,7 @@ export function ViewerTopBar({
             </DropdownMenuItem>
             {/* Fork is deliberately NOT gated on site.isOwner (unlike Share): anyone who can read a
                 site can fork it, so a plain viewer gets this too. */}
-            <DropdownMenuItem disabled={forking} onSelect={() => void fork()}>
+            <DropdownMenuItem onSelect={() => setForkOpen(true)}>
               <GitFork />
               Fork
             </DropdownMenuItem>
@@ -128,8 +128,9 @@ export function ViewerTopBar({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-      {/* Both render through a portal, so they can live inside the header without affecting layout.
-          Controlled (no inline trigger) — their menu items drive this state. */}
+      {/* All three render through a portal, so they can live inside the header without affecting
+          layout. Controlled (no inline trigger) — their menu items drive this state. */}
+      <ForkDialog site={site} open={forkOpen} onOpenChange={setForkOpen} />
       <SummarySheet
         spaceSlug={site.spaceSlug}
         siteSlug={site.siteSlug}

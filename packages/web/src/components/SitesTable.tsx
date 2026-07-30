@@ -3,6 +3,7 @@ import { useRevalidator } from 'react-router'
 import { Copy, FolderInput, GitFork, MoreVertical, Pencil, Share2, Sparkles, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
+import { ForkDialog } from '@/components/ForkDialog'
 import { ShareDialog } from '@/components/ShareDialog'
 import { SummarySheet } from '@/components/SummarySheet'
 import {
@@ -37,7 +38,6 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { MountSensor } from '@/components/ui/mount-sensor'
-import { useForkSite } from '@/hooks/useForkSite'
 import { api } from '@/lib/api'
 import type { SiteSummary, SpaceSummary, Visibility } from '@/lib/types'
 
@@ -92,14 +92,12 @@ function OwnerVisibilityCell({ site }: { site: SiteSummary }) {
   return <VisibilityMenu trigger="chip" value={visibility} onChange={changeVisibility} />
 }
 
-type RowDialog = 'rename' | 'move' | 'share' | 'summary' | 'delete' | null
+type RowDialog = 'rename' | 'move' | 'share' | 'summary' | 'fork' | 'delete' | null
 
 // Open + a kebab that collapses Rename / Move / Share / Copy link / Fork / Delete.
 function OwnerActions({ site }: { site: SiteSummary }) {
   const revalidator = useRevalidator()
   const [dialog, setDialog] = useState<RowDialog>(null)
-  // Fork needs no dialog: it POSTs an empty body and the API picks the destination + free slug.
-  const { fork, forking } = useForkSite(site)
   const refresh = () => revalidator.revalidate()
   const close = () => setDialog(null)
 
@@ -142,7 +140,7 @@ function OwnerActions({ site }: { site: SiteSummary }) {
             <Copy />
             Copy link
           </DropdownMenuItem>
-          <DropdownMenuItem disabled={forking} onSelect={() => void fork()}>
+          <DropdownMenuItem onSelect={() => setDialog('fork')}>
             <GitFork />
             Fork
           </DropdownMenuItem>
@@ -165,6 +163,7 @@ function OwnerActions({ site }: { site: SiteSummary }) {
         open={dialog === 'share'}
         onOpenChange={(o) => !o && close()}
       />
+      <ForkDialog site={site} open={dialog === 'fork'} onOpenChange={(o) => !o && close()} />
       <SummarySheet
         spaceSlug={site.spaceSlug}
         siteSlug={site.siteSlug}
