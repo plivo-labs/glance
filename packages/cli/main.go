@@ -47,6 +47,11 @@ func dispatch(cmd string, rest []string) error {
 	case "skill":
 		return newClient("", "", os.Stdout).skillCmd(rest)
 	case "logout":
+		// Deliberately NOT apiToken(): logout is a session verb and must act on the credential
+		// `glance login` stored. Letting GLANCE_TOKEN shadow it means an exported API key gets
+		// POSTed to /api/auth/logout, which answers 400 (a key is revoked from the keys screen,
+		// not by logging out) — and logout then still removes config.json, so the user's real
+		// session token would be gone locally while staying valid server-side.
 		cfg := readConfig()
 		base, token := "", ""
 		if cfg != nil {
@@ -56,12 +61,13 @@ func dispatch(cmd string, rest []string) error {
 	case "deploy", "list", "delete", "move", "fork", "comments", "read", "reply", "notifications":
 		// Authed commands resolve the instance from the STORED config (not the env override) - the
 		// per-command requireAuth() inside each handler produces the clean "Not logged in" message.
+		// The token, like the URL, is resolved via apiToken() which still prefers GLANCE_TOKEN.
 		cfg := readConfig()
-		base, token := "", ""
+		base := ""
 		if cfg != nil {
-			base, token = cfg.ApiUrl, cfg.Token
+			base = cfg.ApiUrl
 		}
-		c := newClient(base, token, os.Stdout)
+		c := newClient(base, apiToken(), os.Stdout)
 		switch cmd {
 		case "deploy":
 			return c.deploy(rest)

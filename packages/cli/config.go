@@ -80,3 +80,15 @@ func apiBase() string {
 	}
 	return "http://localhost:8787"
 }
+
+// Token precedence: explicit env override -> persisted config. Uses the `|| not ??` semantics: a
+// blank/whitespace GLANCE_TOKEN falls through instead of yielding a bad token.
+func apiToken() string {
+	if v := strings.TrimSpace(os.Getenv("GLANCE_TOKEN")); v != "" {
+		return v
+	}
+	if c := readConfig(); c != nil {
+		return c.Token
+	}
+	return ""
+}
