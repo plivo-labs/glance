@@ -6,27 +6,23 @@ import { useStar } from '@/hooks/useStar'
 import type { ViewerSite } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { ShareDialog } from '@/components/ShareDialog'
 import { SummarySheet } from '@/components/SummarySheet'
-import { BrandMark, Spinner } from '@/components/states'
+import { BrandMark } from '@/components/states'
 
 // The persistent top chrome for the viewer: brand (→ dashboard) + a breadcrumb, then one action
-// row — Fork, TL;DR, Comments, Share. Replaces the old floating PreviewToolbar dock.
+// row — Star, Comments, hamburger. Replaces the old floating PreviewToolbar dock.
 //
 // C2b: "review mode" is gone — Comments is a plain TOGGLE for the rail panel, always present (an
 // open-count badge rides along), and there is no separate Done button; the rail's own ✕ closes it
 // too. Commenting is unconditional elsewhere (viewer.tsx) — the rail is just a
 // panel you open and close, not a gate on any of that.
 //
-// Below `md` the row doesn't fit (6 controls overlapped the breadcrumb on a phone), so everything
-// except Comments collapses into a hamburger menu. Fork/TL;DR/Share are driven from shared state
-// rather than duplicated components, so the desktop button and the menu item are one action.
+// The row is the same three controls at EVERY breakpoint: only Star and Comments earn a permanent
+// slot; Recently opened / Search / Fork / TL;DR / Share live in the hamburger menu. Those menu
+// items are driven from shared state (useForkSite, SummarySheet, ShareDialog) held here, so the
+// menu item and the sheet/dialog it opens are one action.
 export function ViewerTopBar({
   site,
   sitePath,
@@ -47,7 +43,7 @@ export function ViewerTopBar({
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
   const { fork, forking } = useForkSite(site)
-  // Same shared-state shape as Fork/TL;DR/Share: ONE action, rendered twice (button + menu item).
+  // Star has a permanent slot in the row, so it is the one action with no menu-item twin.
   const { starred, toggle: toggleStar } = useStar(site)
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-background px-3 md:gap-3">
@@ -55,17 +51,6 @@ export function ViewerTopBar({
         <BrandMark />
         glance
       </Link>
-
-      <Button
-        size="sm"
-        variant="ghost"
-        className="hidden shrink-0 px-2 md:inline-flex"
-        title="Recently opened"
-        aria-label="Recently opened"
-        onClick={onToggleSidebar}
-      >
-        <History className="size-3.5" />
-      </Button>
 
       <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-muted-foreground text-sm">
         <ChevronRight className="size-3.5 shrink-0 opacity-40" />
@@ -83,51 +68,15 @@ export function ViewerTopBar({
 
       <div className="ml-auto flex shrink-0 items-center gap-2">
         <Button
-          variant="outline"
-          size="sm"
-          className="hidden gap-2 text-muted-foreground md:inline-flex"
-          onClick={onSearch}
-          title="Search sites or run a command"
-        >
-          <Command className="size-3.5" />
-          <span className="hidden lg:inline">Search</span>
-          <kbd className="hidden rounded border bg-muted px-1.5 py-px font-mono text-[10px] text-muted-foreground lg:inline">
-            ⌘K
-          </kbd>
-        </Button>
-        <Button
           variant="ghost"
           size="icon"
-          className="hidden size-8 rounded-full md:inline-flex"
+          className="size-8 rounded-full"
           title={starred ? 'Remove star' : 'Star this page'}
           aria-label={starred ? 'Remove star' : 'Star this page'}
           aria-pressed={starred}
           onClick={() => void toggleStar()}
         >
           <Star className={starred ? 'fill-primary text-primary' : 'opacity-40'} />
-        </Button>
-        {/* Fork is deliberately NOT gated on site.isOwner (unlike Share): anyone who can read a
-            site can fork it, so a plain viewer gets this too. */}
-        <Button
-          size="sm"
-          variant="ghost"
-          className="hidden gap-1.5 md:inline-flex"
-          disabled={forking}
-          onClick={() => void fork()}
-          title="Copy this site into your own space"
-        >
-          {forking ? <Spinner className="size-3.5" /> : <GitFork className="size-3.5" />}
-          Fork
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="hidden gap-1.5 md:inline-flex"
-          title="AI summary"
-          onClick={() => setSummaryOpen(true)}
-        >
-          <Sparkles className="size-3.5" />
-          TL;DR
         </Button>
         <Button
           size="sm"
@@ -145,21 +94,9 @@ export function ViewerTopBar({
             </span>
           )}
         </Button>
-        {site.isOwner && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="hidden size-8 rounded-full md:inline-flex"
-            title="Share with people & groups"
-            aria-label="Share with people & groups"
-            onClick={() => setShareOpen(true)}
-          >
-            <Share2 />
-          </Button>
-        )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="size-8 md:hidden" aria-label="Menu">
+            <Button variant="ghost" size="icon" className="size-8" aria-label="Menu">
               <Menu />
             </Button>
           </DropdownMenuTrigger>
@@ -172,10 +109,8 @@ export function ViewerTopBar({
               <Command />
               Search
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => void toggleStar()}>
-              <Star />
-              {starred ? 'Remove star' : 'Star this page'}
-            </DropdownMenuItem>
+            {/* Fork is deliberately NOT gated on site.isOwner (unlike Share): anyone who can read a
+                site can fork it, so a plain viewer gets this too. */}
             <DropdownMenuItem disabled={forking} onSelect={() => void fork()}>
               <GitFork />
               Fork
@@ -194,8 +129,13 @@ export function ViewerTopBar({
         </DropdownMenu>
       </div>
       {/* Both render through a portal, so they can live inside the header without affecting layout.
-          Controlled (no inline trigger) — the desktop button and the menu item drive the same state. */}
-      <SummarySheet spaceSlug={site.spaceSlug} siteSlug={site.siteSlug} open={summaryOpen} onOpenChange={setSummaryOpen} />
+          Controlled (no inline trigger) — their menu items drive this state. */}
+      <SummarySheet
+        spaceSlug={site.spaceSlug}
+        siteSlug={site.siteSlug}
+        open={summaryOpen}
+        onOpenChange={setSummaryOpen}
+      />
       {site.isOwner && (
         <ShareDialog
           spaceSlug={site.spaceSlug}
