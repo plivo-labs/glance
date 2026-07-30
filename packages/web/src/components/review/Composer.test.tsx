@@ -91,6 +91,43 @@ describe('A — Composer text submit', () => {
   })
 })
 
+describe('A — emoji picker', () => {
+  // Appending to the end would be the easy implementation and the wrong one: the trigger is a click
+  // away from a textarea the user is mid-sentence in, so the glyph has to land where the caret was
+  // and the caret has to come back just past it, ready for the next word.
+  test('picking an emoji inserts it at the caret, not at the end', () => {
+    render(<Composer placeholder="Add a comment" submitLabel="Comment" onSubmit={() => {}} />)
+    const textarea = screen.getByPlaceholderText('Add a comment') as HTMLTextAreaElement
+
+    type(textarea, 'hello world')
+    textarea.setSelectionRange(5, 5)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Insert emoji' }))
+    fireEvent.change(screen.getByPlaceholderText('Search emoji'), { target: { value: 'rocket' } })
+    fireEvent.click(screen.getByText('🚀'))
+
+    expect(textarea.value).toBe('hello🚀 world')
+    expect(textarea.selectionStart).toBe(5 + '🚀'.length)
+    // The picker closed itself, so the next keystroke goes to the draft.
+    expect(screen.queryByPlaceholderText('Search emoji')).toBe(null)
+  })
+
+  test('an emoji is a draft like any other — the submit button wakes up', () => {
+    const onSubmit = mock((_body: string, _mentions: string[]) => {})
+    render(<Composer placeholder="Add a comment" submitLabel="Comment" onSubmit={onSubmit} />)
+    const submitButton = screen.getByRole('button', { name: 'Comment' }) as HTMLButtonElement
+    expect(submitButton.disabled).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Insert emoji' }))
+    fireEvent.change(screen.getByPlaceholderText('Search emoji'), { target: { value: 'fire' } })
+    fireEvent.click(screen.getByText('🔥'))
+
+    expect(submitButton.disabled).toBe(false)
+    fireEvent.click(submitButton)
+    expect(onSubmit.mock.calls[0]).toEqual(['🔥', []])
+  })
+})
+
 describe('A — onDirtyChange', () => {
   test('a composer that goes away reports itself clean on the way out', () => {
     // The popover reducer reads `dirty` from the LAST report. A successful save closes the composer

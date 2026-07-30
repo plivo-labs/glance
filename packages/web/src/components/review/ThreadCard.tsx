@@ -2,12 +2,14 @@ import { useState } from 'react'
 import { Check, Mic, RotateCcw, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/lib/api'
-import { comments, type Thread } from '@/lib/comments'
+import { comments, type CommentItem, type CommentReaction, type Thread } from '@/lib/comments'
 import type { Me, ViewerSite } from '@/lib/types'
+import { cn } from '@/lib/utils'
 import { AudioPlayer } from '@/components/audio/AudioPlayer'
 import { UserAvatar } from '@/components/UserAvatar'
 import { AnchorChip } from '@/components/review/AnchorChip'
 import { Composer } from '@/components/review/Composer'
+import { EmojiPicker } from '@/components/review/EmojiPicker'
 import { Badge } from '@/components/ui/badge'
 
 export function ThreadCard({
@@ -26,7 +28,19 @@ export function ThreadCard({
   onFocusAnchor: (thread: Thread) => void
 }) {
   const [replying, setReplying] = useState(false)
+  // Reaction lists the server has since re-stated, by comment id. The toggle endpoints answer with
+  // the comment's FRESH list, so a successful toggle is already the truth — refetching the thread
+  // (what onChanged does) would spend a request to learn what the response just said.
+  //
+  // `from` is the props array the override was computed against, and it is what EXPIRES the entry:
+  // a later `comments.list` hands this comment a brand-new array, the identities stop matching, and
+  // the server's list takes over again. Without that, the first toggle would freeze the comment —
+  // nothing polls, so every reaction anyone else added afterwards would stay invisible until a
+  // reload.
+  const [reacted, setReacted] = useState(new Map<string, { from: CommentReaction[]; value: CommentReaction[] }>())
   const canModerate = site.isOwner || me?.role === 'superadmin'
+
+  const toastError = (err: unknown) => toast.error(err instanceof ApiError ? err.message : 'Action failed')
 
   // RETHROWS after toasting: a reply that resolves on failure lets the caller close the composer
   // and Composer clear the draft, so the typed reply (or the recording) is gone with nothing to
@@ -35,10 +49,30 @@ export function ThreadCard({
     try {
       await fn()
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Action failed')
+      toastError(err)
       throw err
     }
     onChanged()
+  }
+
+  /** What to render for a comment: the override, but only while it still describes the list it was
+   *  derived from. A newer props array means a newer answer than the one held here. */
+  const reactionsOf = (c: CommentItem) => {
+    const held = reacted.get(c.id)
+    return held?.from === c.reactions ? held.value : c.reactions
+  }
+
+  // Deliberately NOT `run`: no onChanged, and nothing is written optimistically — the chips move
+  // only once the server has answered, so a rejection leaves them telling the truth they already
+  // told (including the server's own caps, which are its rules to enforce, not ours to mirror).
+  const toggle = (c: CommentItem, emoji: string, mine: boolean) => () => {
+    const call = mine ? comments.unreact : comments.react
+    // `c` is the comment as of the click. If a refetch lands while this is in flight, `c.reactions`
+    // is no longer the comment's array and the override is stale on arrival — so it is ignored and
+    // the newer server list stands, which is the right way round to lose a race.
+    void call(site, thread.id, c.id, emoji)
+      .then((fresh) => setReacted((m) => new Map(m).set(c.id, { from: c.reactions, value: fresh })))
+      .catch(toastError)
   }
 
   // onClick handler for the button actions: they have no draft to protect and their failure is
@@ -101,6 +135,37 @@ export function ThreadCard({
                 <AudioPlayer compact src={`/api/sites/${site.spaceSlug}/${site.siteSlug}/comments/audio/${c.id}`} />
               </div>
             )}
+            <div className="mt-1.5 flex flex-wrap items-center gap-1">
+              {reactionsOf(c).map((r) => (
+                <button
+                  key={r.emoji}
+                  type="button"
+                  // A toggle, so it announces as one: pressed IS `mine`, which is the same fact the
+                  // filled chip shows sighted users.
+                  aria-pressed={r.mine}
+                  aria-label={`${r.emoji} ${r.count}`}
+                  onClick={toggle(c, r.emoji, r.mine)}
+                  className={cn(
+                    'flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs transition-colors',
+                    r.mine
+                      ? 'border-primary/40 bg-primary/10 text-foreground'
+                      : 'border-transparent bg-muted text-muted-foreground hover:bg-muted/70',
+                  )}
+                >
+                  {r.emoji}
+                  <span className="tabular-nums">{r.count}</span>
+                </button>
+              ))}
+              {/* No add trigger on a soft-deleted comment: the server 404s a new reaction there, so
+                  offering one would only produce a toast. The chips it already carries stay. */}
+              {!c.deleted && (
+                <EmojiPicker
+                  label="Add reaction"
+                  className="size-6 rounded-full border-dashed px-0 text-muted-foreground"
+                  onPick={(emoji) => toggle(c, emoji, false)()}
+                />
+              )}
+            </div>
           </li>
         ))}
       </ul>

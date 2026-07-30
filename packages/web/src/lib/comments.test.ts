@@ -100,6 +100,7 @@ describe('paintAnchors — which threads the viewer paints into the iframe, and 
             author: 'Sam Lawerence',
             body: 'this margin is wrong',
             deleted: false,
+            reactions: [],
             createdAt: '2024-01-01',
             editedAt: null,
           },

@@ -63,5 +63,7 @@ export const api = {
   postForm: <T>(path: string, form: FormData) => request<T>(path, { method: 'POST', body: form }),
   put: <T>(path: string, body?: unknown) => request<T>(path, jsonInit('PUT', body)),
   patch: <T>(path: string, body?: unknown) => request<T>(path, jsonInit('PATCH', body)),
-  delete: <T>(path: string) => request<T>(path, jsonInit('DELETE')),
+  // A body is optional but real: removing a reaction says WHICH emoji, and the resource being
+  // deleted has no id of its own to put in the path.
+  delete: <T>(path: string, body?: unknown) => request<T>(path, jsonInit('DELETE', body)),
 }

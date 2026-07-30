@@ -169,6 +169,13 @@
       "when": 1785800000000,
       "tag": "0023_site_stars",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1785900000000,
+      "tag": "0024_comment_reactions",
+      "breakpoints": true
     }
   ]
 }

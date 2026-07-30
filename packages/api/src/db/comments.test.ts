@@ -13,6 +13,7 @@ import {
   commentsWithAuthorsBySlugsStmt,
   createThread,
   deleteComment,
+  reactionsBySlugsStmt,
   resolveThread,
   threadsWithUsersBySlugsStmt,
 } from './comments'
@@ -20,15 +21,16 @@ import {
 // Comments repo: create/list/reply/resolve/delete over the S-D harness. Anchors are STORED, not
 // resolved — the browser paints them — so there is no server-side reconciliation to test here.
 
-// The SHIPPED list path, composed locally: ONE batch of the two slug-keyed statements → pure
+// The SHIPPED list path, composed locally: ONE batch of the three slug-keyed statements → pure
 // assembler (the GET route fuses these same statements into its access-facts batch, S9b). The
 // harness seeds slug = id, so the seeded space/site ids double as the slug keys below.
 async function listThreads(db: DrizzleD1Database, spaceSlug: string, siteSlug: string, filePath?: string) {
-  const [threadRows, commentRows] = await batchAll(db, [
+  const [threadRows, commentRows, reactionRows] = await batchAll(db, [
     threadsWithUsersBySlugsStmt(db, spaceSlug, siteSlug, filePath),
     commentsWithAuthorsBySlugsStmt(db, spaceSlug, siteSlug, filePath),
+    reactionsBySlugsStmt(db, spaceSlug, siteSlug, filePath),
   ] as const)
-  return assembleThreadViews(threadRows, commentRows)
+  return assembleThreadViews(threadRows, commentRows, reactionRows, null)
 }
 const listSiteThreads = (db: DrizzleD1Database, spaceSlug: string, siteSlug: string) =>
   listThreads(db, spaceSlug, siteSlug)

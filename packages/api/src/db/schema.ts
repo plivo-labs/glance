@@ -214,6 +214,28 @@ export const comments = sqliteTable(
   ],
 )
 
+// Emoji reactions on a comment. Like siteStars, the composite primary key is what makes the toggle
+// idempotent BY CONSTRUCTION — one user may hold several DIFFERENT emojis on a comment but the same
+// one only once, so a double-click cannot write a second row. NO separate commentId index: unlike
+// site_stars (whose userId index exists precisely because userId is NOT the key's prefix), commentId
+// IS this key's leftmost column, so the primary key's own index already serves the read fold.
+// Both FKs cascade — a reaction is a pointer with no historical value once the comment or the
+// reactor is gone. Contrast comments.authorId, which is SET NULL so review history survives a
+// deleted user: the words are worth keeping without their author, a bare "🔥" is not.
+export const commentReactions = sqliteTable(
+  'comment_reactions',
+  {
+    commentId: text('commentId').notNull().references(() => comments.id, { onDelete: 'cascade' }),
+    userId: text('userId').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    // A unicode grapheme cluster, NOT one character — a ZWJ family sequence is 11 UTF-16 units.
+    // Stored verbatim (control chars stripped at the route boundary); never regex-validated.
+    emoji: text('emoji').notNull(),
+    // Orders each comment's set first-reacted-first, so the chips don't reshuffle between polls.
+    createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [primaryKey({ columns: [t.commentId, t.userId, t.emoji] })],
+)
+
 // Generic per-site document store backing the browser `glance.db` SDK (shared backend).
 // One flat table keyed by (siteId, collection, docId) holding an opaque JSON blob — this is
 // what gives the schemaless collection() DX without a migration per collection. INVARIANTS:
@@ -363,6 +385,8 @@ export type NewFileRow = typeof files.$inferInsert
 export type SiteUserShare = typeof siteUserShares.$inferSelect
 export type SiteGroupShare = typeof siteGroupShares.$inferSelect
 export type SiteStar = typeof siteStars.$inferSelect
+/** Row type. The WIRE shape the API returns is the aggregated `CommentReaction` in db/comments.ts. */
+export type CommentReactionRow = typeof commentReactions.$inferSelect
 
 export type CommentThread = typeof commentThreads.$inferSelect
 export type NewCommentThread = typeof commentThreads.$inferInsert

@@ -4,7 +4,13 @@ import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { batchAll } from '../lib/d1'
 import { makeDb, seedComment, seedSite, seedSpace, seedThread, seedUser } from '../test/harness'
 import { commentThreads, users } from './schema'
-import { assembleThreadViews, commentsWithAuthorsBySlugsStmt, resolveThread, threadsWithUsersBySlugsStmt } from './comments'
+import {
+  assembleThreadViews,
+  commentsWithAuthorsBySlugsStmt,
+  reactionsBySlugsStmt,
+  resolveThread,
+  threadsWithUsersBySlugsStmt,
+} from './comments'
 
 // S8 — list-path perf rewrite. This file pins today's OUTPUT shape (T8.3), then pins the new
 // D1 cost model: each list is ONE db.batch of TWO JOINed statements — no IN(threadIds) /
@@ -12,15 +18,17 @@ import { assembleThreadViews, commentsWithAuthorsBySlugsStmt, resolveThread, thr
 // (T8.1, T8.2). Golden vectors (T8.4) freeze the exact ThreadView[] as literals — pinned on the
 // SHIPPED slug-keyed statements, composed locally exactly as the GET list route ships them.
 
-// The SHIPPED list path, composed locally: ONE batch of the two slug-keyed statements → pure
+// The SHIPPED list path, composed locally: ONE batch of the three slug-keyed statements → pure
 // assembler (the route fuses these same statements into its access-facts batch, S9b). The
-// harness seeds slug = id, so the seeded space/site ids double as the slug keys below.
+// harness seeds slug = id, so the seeded space/site ids double as the slug keys below. No viewer
+// here — `mine` is the route's concern and has its own specs (routes/comments-reactions.test.ts).
 async function listThreads(db: DrizzleD1Database, spaceSlug: string, siteSlug: string, filePath?: string) {
-  const [threadRows, commentRows] = await batchAll(db, [
+  const [threadRows, commentRows, reactionRows] = await batchAll(db, [
     threadsWithUsersBySlugsStmt(db, spaceSlug, siteSlug, filePath),
     commentsWithAuthorsBySlugsStmt(db, spaceSlug, siteSlug, filePath),
+    reactionsBySlugsStmt(db, spaceSlug, siteSlug, filePath),
   ] as const)
-  return assembleThreadViews(threadRows, commentRows)
+  return assembleThreadViews(threadRows, commentRows, reactionRows, null)
 }
 const listSiteThreads = (db: DrizzleD1Database, spaceSlug: string, siteSlug: string) =>
   listThreads(db, spaceSlug, siteSlug)
@@ -103,8 +111,8 @@ describe('T8.3 pins — deleted users, cross-site isolation, empty threads', () 
   })
 })
 
-describe('T8.1 — each list is ONE db.batch of TWO statements', () => {
-  test('listThreads: 1 batch, 2 batchStmts, 0 loose', async () => {
+describe('T8.1 — each list is ONE db.batch of THREE statements', () => {
+  test('listThreads: 1 batch, 3 batchStmts, 0 loose', async () => {
     const { db, sp, siteId } = await bareSite()
     const author = await seedUser(db, { id: 'a1', name: 'Author', email: 'a1@example.com' })
     const threadId = await seedThread(db, { siteId, filePath: 'index.html', anchorType: 'page', createdBy: author })
@@ -114,10 +122,10 @@ describe('T8.1 — each list is ONE db.batch of TWO statements', () => {
     const threads = await listThreads(db, sp, siteId, 'index.html')
     expect(threads).toHaveLength(1)
     expect(threads[0].comments[0].author).toBe('Author')
-    expect(db.counters).toMatchObject({ batches: 1, batchStmts: 2, loose: 0 })
+    expect(db.counters).toMatchObject({ batches: 1, batchStmts: 3, loose: 0 })
   })
 
-  test('listSiteThreads: 1 batch, 2 batchStmts, 0 loose', async () => {
+  test('listSiteThreads: 1 batch, 3 batchStmts, 0 loose', async () => {
     const { db, sp, siteId } = await bareSite()
     const author = await seedUser(db, { id: 'a2', name: 'Author Two', email: 'a2@example.com' })
     const threadId = await seedThread(db, { siteId, filePath: 'b.html', anchorType: 'page', createdBy: author })
@@ -127,17 +135,17 @@ describe('T8.1 — each list is ONE db.batch of TWO statements', () => {
     const threads = await listSiteThreads(db, sp, siteId)
     expect(threads).toHaveLength(1)
     expect(threads[0].comments[0].author).toBe('Author Two')
-    expect(db.counters).toMatchObject({ batches: 1, batchStmts: 2, loose: 0 })
+    expect(db.counters).toMatchObject({ batches: 1, batchStmts: 3, loose: 0 })
   })
 
   test('empty site: still exactly one batch → [] (both lists)', async () => {
     const { db, sp, siteId } = await bareSite()
     db.resetCounters()
     expect(await listThreads(db, sp, siteId, 'index.html')).toEqual([])
-    expect(db.counters).toMatchObject({ batches: 1, batchStmts: 2, loose: 0 })
+    expect(db.counters).toMatchObject({ batches: 1, batchStmts: 3, loose: 0 })
     db.resetCounters()
     expect(await listSiteThreads(db, sp, siteId)).toEqual([])
-    expect(db.counters).toMatchObject({ batches: 1, batchStmts: 2, loose: 0 })
+    expect(db.counters).toMatchObject({ batches: 1, batchStmts: 3, loose: 0 })
   })
 })
 
@@ -291,6 +299,7 @@ describe('T8.4 — golden vectors (expectations frozen as literals)', () => {
         body: 'looks wrong',
         deleted: false,
         hasAudio: false,
+        reactions: [],
         createdAt: '2026-03-01T00:00:00.000Z',
         editedAt: null,
       },
@@ -301,6 +310,7 @@ describe('T8.4 — golden vectors (expectations frozen as literals)', () => {
         body: null, // redacted
         deleted: true,
         hasAudio: false, // audioKey set but deleted → never surfaces
+        reactions: [],
         createdAt: '2026-03-01T01:00:00.000Z',
         editedAt: '2026-03-01T02:00:00.000Z',
       },
@@ -330,6 +340,7 @@ describe('T8.4 — golden vectors (expectations frozen as literals)', () => {
         body: 'voice transcript',
         deleted: false,
         hasAudio: true,
+        reactions: [],
         createdAt: '2026-03-02T01:00:00.000Z',
         editedAt: null,
       },

@@ -55,6 +55,7 @@ const MIGRATIONS = [
   'drizzle/0021_user_avatar.sql',
   'drizzle/0022_sites_feed_index.sql',
   'drizzle/0023_site_stars.sql',
+  'drizzle/0024_comment_reactions.sql',
 ]
 
 // --- S0 recorder: one shared, ordered timeline across D1/R2/cache mocks so perf specs can
