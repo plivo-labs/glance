@@ -3,6 +3,7 @@ import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { type Context, Hono } from 'hono'
 import { sessionDb } from '../db/client'
 import { type ChangeLogRow, type DocumentRow, type Site, documents, sites } from '../db/schema'
+import type { ApiKeyGrants } from '../lib/api-key'
 import { type DataCapability, type DataClaims, hasCap, signDataToken, verifyDataToken } from '../lib/data-token'
 import { canViewerRead, readsEveryCreator } from '../lib/data-visibility'
 import { authorizeViewerById, fetchAccessFacts, siteAccessFromFacts } from '../lib/site-access'
@@ -327,7 +328,9 @@ dataApi.put('/:collection/:docId', async (c) => {
       await db
         .select({ createdBy: documents.createdBy, createdAt: documents.createdAt })
         .from(documents)
-        .where(and(eq(documents.siteId, claims.siteId), eq(documents.collection, collection), eq(documents.docId, docId)))
+        .where(
+          and(eq(documents.siteId, claims.siteId), eq(documents.collection, collection), eq(documents.docId, docId)),
+        )
         .limit(1)
     )[0]
     if (!existing) return null
@@ -505,6 +508,17 @@ export function dataCapsFor(user: Pick<SessionUser, 'id' | 'role'>, site: Pick<S
     : ['read', 'create']
 }
 
+// Intersect a caller's own caps ceiling (`base`, from dataCapsFor) against an API key's data-plane
+// ceiling. `grants: null` means the caller isn't key-authenticated (or the key has no ceiling to
+// apply) — base passes through UNCHANGED, byte-for-byte, so session/CLI callers are untouched.
+// Otherwise the result is the overlap: it can only ever narrow `base`, never add a cap `base`
+// didn't already have — order is `base`'s, so existing assertions on the caps array keep passing.
+export function intersectCaps(base: DataCapability[], grants: ApiKeyGrants | null): DataCapability[] {
+  if (!grants?.data) return base
+  const ceiling = grants.data.caps
+  return base.filter((c) => ceiling.includes(c))
+}
+
 export const dataToken = new Hono<AppEnv>()
 dataToken.use('*', requireAuth)
 
@@ -512,6 +526,11 @@ dataToken.use('*', requireAuth)
 // the site owner (or superadmin); any other authorized viewer — including any authenticated
 // user on a `team` site — receives READ-only. This is where "can view" is prevented from
 // implying "can write": the untrusted content page can only ever act with the caps minted here.
+//
+// A key-authenticated caller intersects with its OWN grant: the allowlist gates WHICH site it may
+// mint for at all (403 outside it, or outside its owned sites for an 'all-owned' scope), and
+// `data.caps` ceilings WHAT the minted token may carry — never widening the caller's own access,
+// never granted by the key alone if the caller's own access is narrower (see intersectCaps).
 dataToken.post('/:space/:site', async (c) => {
   if (!c.env.DATA_TOKEN_SECRET) return c.json({ error: 'not found' }, 404)
   const db = c.get('db')
@@ -522,7 +541,22 @@ dataToken.post('/:space/:site', async (c) => {
   if (!site) return c.json({ error: 'not found' }, 404)
   if (!access.ok) return c.json({ error: 'forbidden' }, access.status)
 
-  const caps = dataCapsFor(user, site)
-  const token = await signDataToken(c.env.DATA_TOKEN_SECRET, { siteId: site.id, viewerId: user.id, caps }, DATA_TOKEN_TTL_SEC)
+  const credential = c.get('credential')
+  let grants: ApiKeyGrants | null = null
+  if (credential.kind === 'key') {
+    if (!credential.grants.data) return c.json({ error: 'forbidden' }, 403)
+    const { scope } = credential.grants.data
+    const allowed = scope.kind === 'all-owned' ? site.ownerId === user.id : scope.siteIds.includes(site.id)
+    if (!allowed) return c.json({ error: 'forbidden' }, 403)
+    grants = credential.grants
+  }
+
+  const caps = intersectCaps(dataCapsFor(user, site), grants)
+  if (caps.length === 0) return c.json({ error: 'forbidden' }, 403)
+  const token = await signDataToken(
+    c.env.DATA_TOKEN_SECRET,
+    { siteId: site.id, viewerId: user.id, caps },
+    DATA_TOKEN_TTL_SEC,
+  )
   return c.json({ token, caps, expiresIn: DATA_TOKEN_TTL_SEC })
 })

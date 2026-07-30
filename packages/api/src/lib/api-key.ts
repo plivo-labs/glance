@@ -4,11 +4,46 @@ import type { Context } from 'hono'
 import { sessionDb } from '../db/client'
 import { apiKeys } from '../db/schema'
 import type { AppEnv } from '../types'
+import type { DataCapability } from './data-token'
 import { b64urlEncode } from './hmac'
 
 const enc = new TextEncoder()
 
 export const API_KEY_PREFIX = 'glk_'
+
+// The api_keys.grants JSON blob, now that its shape is settled. `control` may drive the control
+// plane (deploy, list, fork...) — site DELETE is denied to keys regardless (see routes/sites.ts).
+// `data: null` means the key cannot mint data tokens at all; otherwise `scope` allowlists which
+// sites it may mint for and `caps` ceilings what a minted token can carry (routes/data.ts
+// intersects this against the caller's own access — narrower wins on both sides).
+export type ApiKeyGrants = {
+  control: boolean
+  data: { scope: { kind: 'all-owned' } | { kind: 'sites'; siteIds: string[] }; caps: DataCapability[] } | null
+}
+
+function isDataScope(v: unknown): v is ApiKeyGrants['data'] & object {
+  if (typeof v !== 'object' || v === null) return false
+  const scope = (v as { scope?: unknown }).scope
+  const caps = (v as { caps?: unknown }).caps
+  if (!Array.isArray(caps) || !caps.every((c) => typeof c === 'string')) return false
+  if (typeof scope !== 'object' || scope === null) return false
+  const kind = (scope as { kind?: unknown }).kind
+  if (kind === 'all-owned') return true
+  if (kind === 'sites') {
+    const siteIds = (scope as { siteIds?: unknown }).siteIds
+    return Array.isArray(siteIds) && siteIds.every((id) => typeof id === 'string')
+  }
+  return false
+}
+
+/** Narrow runtime validator for the grants shape (not a schema library) — resolveApiKey fails
+ *  closed on anything that doesn't match, same as an unparseable blob. */
+function isApiKeyGrants(v: unknown): v is ApiKeyGrants {
+  if (typeof v !== 'object' || v === null) return false
+  const g = v as { control?: unknown; data?: unknown }
+  if (typeof g.control !== 'boolean') return false
+  return g.data === null || isDataScope(g.data)
+}
 
 /** Mint a fresh control-plane API key secret: 32 CSPRNG bytes, base64url (no padding), prefixed
  *  so a key is recognizable at a glance (and greppable in logs — never log the full value). The
@@ -33,11 +68,12 @@ export async function hashApiKey(secret: string): Promise<string> {
  *  the two FAILS OPEN for a key expiring later the same day, because 'T' (0x54) sorts after
  *  the space (0x20): '2026-07-31T00:00:00.000Z' > '2026-07-31 12:00:00' is true, so an
  *  already-expired-today key would still authenticate. An unparseable `grants` blob resolves to
- *  null (fail closed) rather than throwing. */
+ *  null (fail closed) rather than throwing — and so does a parseable blob that doesn't match
+ *  `ApiKeyGrants` (a shape check, since the column is untyped JSON at rest). */
 export async function resolveApiKey(
   db: DrizzleD1Database,
   secret: string,
-): Promise<{ id: string; userId: string; grants: unknown } | null> {
+): Promise<{ id: string; userId: string; grants: ApiKeyGrants } | null> {
   const hash = await hashApiKey(secret)
   const now = new Date().toISOString()
   let row: typeof apiKeys.$inferSelect | undefined
@@ -52,6 +88,7 @@ export async function resolveApiKey(
     return null
   }
   if (!row) return null
+  if (!isApiKeyGrants(row.grants)) return null
   return { id: row.id, userId: row.userId, grants: row.grants }
 }
 

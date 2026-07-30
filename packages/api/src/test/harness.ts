@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { Database } from 'bun:sqlite'
 import { drizzle } from 'drizzle-orm/bun-sqlite'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
+import type { ApiKeyGrants } from '../lib/api-key'
 import {
   type NewApiKey,
   type NewComment,
@@ -488,7 +489,14 @@ export async function seedNotification(
   return id
 }
 
-/** Insert an `api_keys` row; returns its id. Defaults: empty grants, far-future expiry. */
+// Default grants for a seeded key: full control-plane + data-plane ceiling (every cap, every
+// owned site). Tests that care about a narrower ceiling pass their own `grants`.
+export const FULL_GRANTS: ApiKeyGrants = {
+  control: true,
+  data: { scope: { kind: 'all-owned' }, caps: ['read', 'create', 'write', 'read_all'] },
+}
+
+/** Insert an `api_keys` row; returns its id. Defaults: full grants, far-future expiry. */
 export async function seedApiKey(db: DrizzleD1Database, o: { userId: string } & Partial<NewApiKey>): Promise<string> {
   const id = o.id ?? nextId('ak')
   await db.insert(apiKeys).values({
@@ -496,7 +504,7 @@ export async function seedApiKey(db: DrizzleD1Database, o: { userId: string } & 
     userId: o.userId,
     name: o.name ?? 'api key',
     hash: o.hash ?? nextId('hash'),
-    grants: o.grants ?? [],
+    grants: o.grants ?? FULL_GRANTS,
     expiresAt: o.expiresAt ?? '2999-01-01T00:00:00.000Z',
     revokedAt: o.revokedAt ?? null,
     lastUsedAt: o.lastUsedAt ?? null,

@@ -2,9 +2,10 @@ import { describe, expect, test } from 'bun:test'
 import { eq, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { apiKeys } from '../db/schema'
-import { makeDb, seedApiKey, seedUser } from '../test/harness'
+import { FULL_GRANTS, makeDb, seedApiKey, seedUser } from '../test/harness'
 import type { AppEnv } from '../types'
 import { API_KEY_PREFIX, apiKeyDb, generateApiKey, hashApiKey, resolveApiKey } from './api-key'
+import type { ApiKeyGrants } from './api-key'
 import { b64urlDecode } from './hmac'
 
 describe('generateApiKey', () => {
@@ -64,7 +65,7 @@ describe('resolveApiKey', () => {
     await seedApiKey(db, { userId: uid, hash, expiresAt })
 
     const resolved = await resolveApiKey(db, secret)
-    expect(resolved).toEqual({ id: expect.any(String), userId: uid, grants: [] })
+    expect(resolved).toEqual({ id: expect.any(String), userId: uid, grants: FULL_GRANTS })
   })
 
   test('CASE-04: non-empty grants round-trip through resolveApiKey unchanged', async () => {
@@ -72,7 +73,7 @@ describe('resolveApiKey', () => {
     const uid = await seedUser(db)
     const secret = generateApiKey()
     const hash = await hashApiKey(secret)
-    const grants = { scopes: ['sites:read', 'sites:write'] }
+    const grants = { control: false, data: { scope: { kind: 'sites' as const, siteIds: ['s1', 's2'] }, caps: ['read' as const] } }
     await seedApiKey(db, { userId: uid, hash, grants })
 
     const resolved = await resolveApiKey(db, secret)
@@ -116,6 +117,41 @@ describe('resolveApiKey', () => {
     const id = await seedApiKey(db, { userId: uid, hash })
     // Bypass drizzle's json-mode serialization to plant a corrupt blob directly.
     await db.run(sql`update api_keys set grants = 'not-json' where id = ${id}`)
+
+    await expect(resolveApiKey(db, secret)).resolves.toBeNull()
+  })
+
+  test('CASE-06: a parseable but wrong-shape grants blob resolves to null (fails closed on shape, not just JSON syntax)', async () => {
+    const db = makeDb()
+    const uid = await seedUser(db)
+    const secret = generateApiKey()
+    const hash = await hashApiKey(secret)
+    // Valid JSON, valid object — but `scope.kind` is neither 'all-owned' nor 'sites', so
+    // isDataScope/isApiKeyGrants must reject it. This never touches JSON.parse's catch path,
+    // so it isolates the shape validator from the "corrupt blob" case above.
+    const badGrants = { control: true, data: { scope: { kind: 'nope' }, caps: ['read'] } } as unknown as ApiKeyGrants
+    await seedApiKey(db, { userId: uid, hash, grants: badGrants })
+
+    await expect(resolveApiKey(db, secret)).resolves.toBeNull()
+  })
+
+  // CASE-06 above only pins ONE of the validator's four rejecting branches (an unknown
+  // scope.kind). Each of the rest is a separate way a malformed blob could authenticate, so
+  // each gets its own case — deleting any single check in isApiKeyGrants/isDataScope must
+  // turn something red. `caps` as a bare string is the sharpest one: it survives every other
+  // check and would then reach `ceiling.includes(c)`, which on a string is SUBSTRING matching
+  // — 'read' would test true against a ceiling of 'read_all'.
+  test.each([
+    ['control is not a boolean', { control: 'yes', data: null }],
+    ['caps is a bare string rather than an array', { control: true, data: { scope: { kind: 'all-owned' }, caps: 'read_all' } }],
+    ['caps is null', { control: true, data: { scope: { kind: 'all-owned' }, caps: null } }],
+    ['a sites scope carries non-string siteIds', { control: true, data: { scope: { kind: 'sites', siteIds: [42] }, caps: ['read'] } }],
+  ])('a grants blob whose %s resolves to null (fail closed)', async (_label, badGrants) => {
+    const db = makeDb()
+    const uid = await seedUser(db)
+    const secret = generateApiKey()
+    const hash = await hashApiKey(secret)
+    await seedApiKey(db, { userId: uid, hash, grants: badGrants as unknown as ApiKeyGrants })
 
     await expect(resolveApiKey(db, secret)).resolves.toBeNull()
   })

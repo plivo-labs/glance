@@ -696,6 +696,9 @@ sites.post('/:spaceSlug/:siteSlug/fork', requireAuth, async (c) => {
 sites.delete('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
   const user = c.get('user')
   const db = c.get('db')
+  // An API key may create sites (deploy is the headline use case) but may not delete them. Checked
+  // BEFORE the ownership lookup so a key learns nothing about the site's existence or owner.
+  if (c.get('credential').kind === 'key') return c.json({ error: 'forbidden' }, 403)
   const { spaceSlug, siteSlug } = c.req.param()
   const site = await resolveSite(db, spaceSlug, siteSlug)
   if (!site) return c.json({ error: 'not found' }, 404)

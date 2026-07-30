@@ -3,6 +3,7 @@
 // Bearer-token auth path is real. A superset of the per-file makeApp twins it replaced — an extra
 // mounted route group or env binding is inert for tests that never touch it.
 import { Hono } from 'hono'
+import { generateApiKey, hashApiKey } from '../lib/api-key'
 import { requireSameOrigin } from '../middleware/auth'
 import { commentFeed } from '../routes/comment-feed'
 import { comments } from '../routes/comments'
@@ -12,7 +13,7 @@ import { slackEvents } from '../routes/slack-events'
 import { spaces } from '../routes/spaces'
 import { stars } from '../routes/stars'
 import type { AppEnv } from '../types'
-import { makeDb, makeKv, makeR2, seedUser } from './harness'
+import { makeDb, makeKv, makeR2, seedApiKey, seedUser } from './harness'
 
 export const APP_URL = 'https://glance.example.com'
 
@@ -81,6 +82,21 @@ export async function mintUser(
 /** Request headers authenticating as `mintUser(id)` through the same-origin guard. */
 export const auth = (id: string) => ({
   Authorization: `Bearer tok-${id}`,
+  Origin: APP_URL,
+  'Content-Type': 'application/json',
+})
+
+/** Seed a live `glk_`-prefixed API key for an EXISTING user (mint their session/CLI identity
+ *  first via `mintUser`), returning the plaintext secret to send as a Bearer token. */
+export async function mintKey(db: RouteApp['db'], userId: string): Promise<string> {
+  const secret = generateApiKey()
+  await seedApiKey(db, { userId, hash: await hashApiKey(secret) })
+  return secret
+}
+
+/** Request headers authenticating as `mintKey(...)`'s bearer through the same-origin guard. */
+export const authKey = (secret: string) => ({
+  Authorization: `Bearer ${secret}`,
   Origin: APP_URL,
   'Content-Type': 'application/json',
 })

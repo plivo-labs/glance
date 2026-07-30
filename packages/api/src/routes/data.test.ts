@@ -3,10 +3,12 @@ import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { documents, sites } from '../db/schema'
+import { generateApiKey, hashApiKey } from '../lib/api-key'
+import type { ApiKeyGrants } from '../lib/api-key'
 import { signDataToken } from '../lib/data-token'
-import { makeDb, seedMember, seedSite, seedSpace, seedUser } from '../test/harness'
+import { makeDb, seedApiKey, seedMember, seedSite, seedSpace, seedUser } from '../test/harness'
 import { auth, makeRouteApp, mintUser } from '../test/route-fixtures'
-import { MAX_DOCS_PER_SITE, dataApi, dataCapsFor, dataToken } from './data'
+import { MAX_DOCS_PER_SITE, dataApi, dataCapsFor, dataToken, intersectCaps } from './data'
 
 const HMAC_A = 'glance-test-aaa'
 // getDb() prefers the injected harness db, so GLANCE_DB is never touched; CONTENT_URL drives CORS.
@@ -47,7 +49,11 @@ async function scenario() {
     // Over-privileged B token for siteA (simulates a compromised mint) — used to prove that even
     // WITH write caps (but no read_all), B still cannot reach A's rows (createdBy scoping is
     // independent of write caps).
-    viewerB_write: await signDataToken(HMAC_A, { siteId: 'siteA', viewerId: 'userB', caps: ['read', 'create', 'write'] }),
+    viewerB_write: await signDataToken(HMAC_A, {
+      siteId: 'siteA',
+      viewerId: 'userB',
+      caps: ['read', 'create', 'write'],
+    }),
     // B's legitimate token for their OWN site — used to prove cross-tenant reach is impossible.
     B_siteB: await signDataToken(HMAC_A, { siteId: 'siteB', viewerId: 'userB', caps: OWNER_CAPS }),
   }
@@ -113,8 +119,18 @@ describe('glance.db data plane — happy path', () => {
 
 describe('P0-4/P0-3: modify authority is distinct from view authority', () => {
   test('dataCapsFor: owner + superadmin get write/read_all; a viewer gets read+create only', () => {
-    expect(dataCapsFor({ id: 'userA', role: 'member' }, { ownerId: 'userA' })).toEqual(['read', 'create', 'write', 'read_all'])
-    expect(dataCapsFor({ id: 'root', role: 'superadmin' }, { ownerId: 'userA' })).toEqual(['read', 'create', 'write', 'read_all'])
+    expect(dataCapsFor({ id: 'userA', role: 'member' }, { ownerId: 'userA' })).toEqual([
+      'read',
+      'create',
+      'write',
+      'read_all',
+    ])
+    expect(dataCapsFor({ id: 'root', role: 'superadmin' }, { ownerId: 'userA' })).toEqual([
+      'read',
+      'create',
+      'write',
+      'read_all',
+    ])
     expect(dataCapsFor({ id: 'userB', role: 'member' }, { ownerId: 'userA' })).toEqual(['read', 'create'])
   })
 
@@ -124,7 +140,12 @@ describe('P0-4/P0-3: modify authority is distinct from view authority', () => {
   // cap minting, an editor could read-all/delete the OWNER's glance.db docs. Owner path unchanged.
   test('dataCaps.editor.pin: an editor-share grantee still gets read+create only; owner unchanged', () => {
     expect(dataCapsFor({ id: 'editor', role: 'member' }, { ownerId: 'owner' })).toEqual(['read', 'create'])
-    expect(dataCapsFor({ id: 'owner', role: 'member' }, { ownerId: 'owner' })).toEqual(['read', 'create', 'write', 'read_all'])
+    expect(dataCapsFor({ id: 'owner', role: 'member' }, { ownerId: 'owner' })).toEqual([
+      'read',
+      'create',
+      'write',
+      'read_all',
+    ])
   })
 
   test('ATTACK: a viewer token cannot modify — put/delete → 403; legacy read-only also blocked from create', async () => {
@@ -395,7 +416,18 @@ describe('mint route — POST /api/data-token/:space/:site', () => {
     await seedSite(db, { id: 'site-m', spaceId: sp, ownerId: 'owner', slug: 'doc', visibility: 'team' })
     const mint = (as: string, space = 'acme', site = 'doc') =>
       app.request(`/api/data-token/${space}/${site}`, { method: 'POST', headers: auth(as) }, env)
-    return { db, app, env, mint }
+    // Seeds a live glk_ key for `userId` with the given grants ceiling, returning a mint()-alike
+    // that authenticates as that key instead of the CLI Bearer token.
+    const mintAsKey = async (userId: string, grants: ApiKeyGrants, space = 'acme', site = 'doc') => {
+      const secret = generateApiKey()
+      await seedApiKey(db, { userId, hash: await hashApiKey(secret), grants })
+      return app.request(
+        `/api/data-token/${space}/${site}`,
+        { method: 'POST', headers: { Authorization: `Bearer ${secret}` } },
+        env,
+      )
+    }
+    return { db, app, env, mint, mintAsKey }
   }
 
   test('owner mints write caps; a plain viewer mints read+create only', async () => {
@@ -422,5 +454,89 @@ describe('mint route — POST /api/data-token/:space/:site', () => {
     expect((await mint('peer')).status).toBe(200)
     expect(db.counters.loose).toBe(1) // requireAuth's user read — nothing else loose
     expect(db.counters.batches).toBe(1) // the access-facts batch
+  })
+
+  test('CASE-09: a key minting for a site outside its allowlist is 403', async () => {
+    const { mintAsKey } = await mintScenario()
+    const grants: ApiKeyGrants = {
+      control: false,
+      data: { scope: { kind: 'sites', siteIds: ['some-other-site'] }, caps: ['read', 'create', 'write', 'read_all'] },
+    }
+    const res = await mintAsKey('owner', grants)
+    expect(res.status).toBe(403)
+  })
+
+  test('CASE-10: an OWNER key with ceiling [read] mints [read], not the owner’s four', async () => {
+    const { mintAsKey } = await mintScenario()
+    const grants: ApiKeyGrants = { control: false, data: { scope: { kind: 'all-owned' }, caps: ['read'] } }
+    const res = await mintAsKey('owner', grants)
+    expect(res.status).toBe(200)
+    expect((await res.json()).caps).toEqual(['read'])
+  })
+
+  test('CASE-11: a FULL-ceiling key for a site the user only VIEWS still mints exactly [read, create] — never widens', async () => {
+    const { mintAsKey } = await mintScenario()
+    const grants: ApiKeyGrants = {
+      control: false,
+      data: { scope: { kind: 'sites', siteIds: ['site-m'] }, caps: ['read', 'create', 'write', 'read_all'] },
+    }
+    const res = await mintAsKey('peer', grants)
+    expect(res.status).toBe(200)
+    expect((await res.json()).caps).toEqual(['read', 'create'])
+  })
+
+  test('a key whose grants.data is null cannot mint a data token at all', async () => {
+    const { mintAsKey } = await mintScenario()
+    const grants: ApiKeyGrants = { control: true, data: null }
+    const res = await mintAsKey('owner', grants)
+    expect(res.status).toBe(403)
+  })
+
+  test('CASE-12: an allowlisted key whose ceiling shares no cap with the caller’s own access is 403, not a caps: [] token', async () => {
+    const { mintAsKey } = await mintScenario()
+    // peer's own base is [read, create] (site-access.spec) — a ceiling of exactly [write,
+    // read_all] intersects to empty, and the route must refuse to mint a capability-less token.
+    const grants: ApiKeyGrants = {
+      control: false,
+      data: { scope: { kind: 'sites', siteIds: ['site-m'] }, caps: ['write', 'read_all'] },
+    }
+    const res = await mintAsKey('peer', grants)
+    expect(res.status).toBe(403)
+  })
+
+  test('CASE-13: an all-owned key mints only for sites the caller OWNS — a non-owned site 403s even though it is a member', async () => {
+    const { mintAsKey } = await mintScenario()
+    // site-m is owned by 'owner'; 'peer' is a member but not the owner, so 'all-owned' must not
+    // resolve to "any site the caller can currently see".
+    const grants: ApiKeyGrants = { control: false, data: { scope: { kind: 'all-owned' }, caps: ['read'] } }
+    const res = await mintAsKey('peer', grants)
+    expect(res.status).toBe(403)
+  })
+
+  test('CASE-14: the allowlist keys on the resolved site id, never the URL slug', async () => {
+    const { mintAsKey } = await mintScenario()
+    // site-m's slug is 'doc' — an allowlist containing the SLUG, not the id, must still 403.
+    const grants: ApiKeyGrants = {
+      control: false,
+      data: { scope: { kind: 'sites', siteIds: ['doc'] }, caps: ['read', 'create', 'write', 'read_all'] },
+    }
+    const res = await mintAsKey('owner', grants)
+    expect(res.status).toBe(403)
+  })
+})
+
+describe('intersectCaps', () => {
+  test('no key ceiling (grants null) → base unchanged, same order', () => {
+    expect(intersectCaps(['read', 'create', 'write', 'read_all'], null)).toEqual([
+      'read',
+      'create',
+      'write',
+      'read_all',
+    ])
+  })
+
+  test('a key ceiling narrows base to the overlap, preserving base order', () => {
+    const grants: ApiKeyGrants = { control: false, data: { scope: { kind: 'all-owned' }, caps: ['write', 'read'] } }
+    expect(intersectCaps(['read', 'create', 'write', 'read_all'], grants)).toEqual(['read', 'write'])
   })
 })

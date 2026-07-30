@@ -72,7 +72,7 @@ describe('requireAuth credential dispatch', () => {
     const uid = await seedUser(db, { id: 'u1' })
     const secret = generateApiKey()
     const hash = await hashApiKey(secret)
-    const grants = { scopes: ['sites:read'] }
+    const grants = { control: true, data: { scope: { kind: 'all-owned' as const }, caps: ['read' as const] } }
     const keyId = await seedApiKey(db, { userId: uid, hash, grants })
 
     const res = await app.request('/whoami', { headers: { Authorization: `Bearer ${secret}` } }, env)

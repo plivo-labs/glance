@@ -1,4 +1,5 @@
 import { type AnySQLiteColumn, index, integer, primaryKey, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core'
+import type { ApiKeyGrants } from '../lib/api-key'
 
 // Column names mirror the spec's SQL exactly (camelCase) so raw `wrangler d1 execute`
 // queries in the runbook keep working. IDs are app-generated UUIDs; timestamps are ISO-8601.
@@ -385,7 +386,7 @@ export const apiKeys = sqliteTable(
     userId: text('userId').notNull().references(() => users.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     hash: text('hash').notNull().unique(),
-    grants: text('grants', { mode: 'json' }).$type<unknown>().notNull(),
+    grants: text('grants', { mode: 'json' }).$type<ApiKeyGrants>().notNull(),
     createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
     expiresAt: text('expiresAt').notNull(),
     revokedAt: text('revokedAt'),

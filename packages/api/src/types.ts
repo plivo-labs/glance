@@ -1,4 +1,5 @@
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
+import type { ApiKeyGrants } from './lib/api-key'
 import type { OgCard } from './lib/og-image'
 
 /** Worker bindings + secrets/vars. Secrets come from `.dev.vars` locally and
@@ -63,10 +64,6 @@ export interface SessionUser {
   name: string | null
   role: 'member' | 'superadmin'
 }
-
-// The api_keys.grants JSON blob. No scope model exists yet — a key grants everything its owner
-// can do — so this is `unknown` for now; a future slice narrows it once scoping is designed.
-export type ApiKeyGrants = unknown
 
 // HOW the caller authenticated, resolved by readCredential (see lib/session.ts) and attached to
 // the request by requireAuth. Distinct from `authKind` below: this is the full resolution
