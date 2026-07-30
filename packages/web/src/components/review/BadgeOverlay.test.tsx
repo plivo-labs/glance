@@ -37,7 +37,7 @@ describe('B2c — BadgeOverlay', () => {
     expect(buttons[1]?.style.left).toBe('65px')
   })
 
-  test('a badge with extra 0 renders one round avatar per author, its count, and no +N', () => {
+  test('a badge with extra 0 renders one round avatar per author, no reply count and no +N', () => {
     const badge = mkBadge({
       key: 't1',
       authors: [
@@ -57,8 +57,10 @@ describe('B2c — BadgeOverlay', () => {
     const button = screen.getByRole('button')
     expect(button.textContent).toContain('A')
     expect(button.textContent).toContain('B')
-    expect(button.textContent).toContain('3')
     expect(button.textContent).not.toContain('+')
+    // The reply count is the rail's job — it must not be painted on the page, only labelled.
+    expect(button.textContent).not.toContain('3')
+    expect(button.getAttribute('aria-label')).toBe('Open comments (3)')
   })
 
   test('a badge with extra 2 renders a +2 circle alongside the 3 avatars', () => {

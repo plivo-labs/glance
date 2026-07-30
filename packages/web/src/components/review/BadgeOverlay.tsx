@@ -36,6 +36,9 @@ export function BadgeOverlay({
         <button
           key={badge.key}
           type="button"
+          // The reply count is deliberately NOT drawn (WHO is talking is the useful signal on the
+          // page; HOW MANY replies is the rail's job) — but it stays in the label, so a screen
+          // reader still gets it and every test has a stable handle.
           aria-label={`Open comments (${badge.count})`}
           onClick={() => onOpen(badge.threadIds)}
           onPointerEnter={() => onHoverChange(badge.threadIds)}
@@ -43,7 +46,7 @@ export function BadgeOverlay({
           onFocus={() => onHoverChange(badge.threadIds)}
           onBlur={() => onHoverChange([])}
           style={{ top: badge.top + NUDGE_Y, left: badge.left }}
-          className="pointer-events-auto absolute inline-flex items-center gap-1.5 rounded-full border bg-popover py-0.5 pr-2 pl-0.5 font-medium text-popover-foreground text-xs shadow-md hover:bg-accent"
+          className="pointer-events-auto absolute inline-flex items-center rounded-full border bg-popover p-0.5 font-medium text-popover-foreground text-xs shadow-md hover:bg-accent"
         >
           {/* The photo is same-origin (/api/avatars/:id, see UserAvatar) — an author with no photo,
               or none at all, degrades to initials without the chip changing shape. */}
@@ -64,7 +67,6 @@ export function BadgeOverlay({
               <AvatarGroupCount className="size-5 text-[0.6rem] ring-1">+{badge.extra}</AvatarGroupCount>
             )}
           </AvatarGroup>
-          <span className="text-muted-foreground">{badge.count}</span>
         </button>
       ))}
     </div>
