@@ -208,11 +208,23 @@ describe('#5/IDOR: the room a caller joins is derived from the verified token', 
     expect(carrying.map(([k]) => k)).toEqual([TOKEN_HEADER])
 
     expect(new URL(forwarded.url).pathname).toBe('/subscribe')
-    expect(new URL(forwarded.url).search).toBe('')
+    // The channel rides the query string (defaulting to 'db' here, since the caller named none) —
+    // it is routing, not authority, so it is fine in a URL a log would keep; the token never is.
+    expect(new URL(forwarded.url).search).toBe('?channel=db')
     expect(forwarded.url).not.toContain(tokens.viewerA)
     expect(forwarded.headers.get('Upgrade')).toBe('websocket')
     expect(forwarded.headers.get('Authorization')).toBeNull()
     expect(forwarded.body).toBeNull()
+  })
+
+  test('a caller-named channel is forwarded to the DO, not silently dropped to db', async () => {
+    const { app, tokens } = await scenario()
+    const room = recordingRoom()
+    const res = await socket(app, wsHeaders(tokens.viewerA), envWith(room), `${SOCKET}?channel=comments`)
+    expect(res.status).toBe(101)
+    expect(room.requests).toHaveLength(1)
+    const forwarded = room.requests[0] as Request
+    expect(new URL(forwarded.url).search).toBe('?channel=comments')
   })
 })
 

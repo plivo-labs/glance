@@ -4,8 +4,9 @@ import { describe, expect, test } from 'bun:test'
 import { type DataCapability, signDataToken } from '../lib/data-token'
 import { type FakeWebSocket, installWorkerSocketGlobals, makeDurableObjectState, makeWebSocket } from '../test/harness'
 import type { ChangeEvent } from './change-log'
+import type { CommentEvent } from './comment-events'
 import { decodeCursor } from './cursor'
-import { notifySiteRoom } from './notify'
+import { notifyCommentEvent, notifyCommentRoom, notifySiteRoom } from './notify'
 import {
   SiteRoom,
   TOKEN_HEADER,
@@ -36,7 +37,7 @@ type Room = ReturnType<typeof makeRoom>
  *  accepted (the server half of the pair — the client half goes back in the 101). */
 async function subscribe(
   r: Room,
-  o: { viewerId: string; caps?: DataCapability[]; siteId?: string; ttlSec?: number; token?: string },
+  o: { viewerId: string; caps?: DataCapability[]; siteId?: string; ttlSec?: number; token?: string; channel?: string },
 ) {
   const token =
     o.token ??
@@ -45,9 +46,8 @@ async function subscribe(
       { siteId: o.siteId ?? 'siteA', viewerId: o.viewerId, caps: o.caps ?? VIEWER },
       o.ttlSec ?? 300,
     ))
-  const res = await r.room.fetch(
-    new Request('https://site-room/subscribe', { headers: { Upgrade: 'websocket', [TOKEN_HEADER]: token } }),
-  )
+  const url = o.channel ? `https://site-room/subscribe?channel=${o.channel}` : 'https://site-room/subscribe'
+  const res = await r.room.fetch(new Request(url, { headers: { Upgrade: 'websocket', [TOKEN_HEADER]: token } }))
   return { res, token, ws: r.state.accepted[r.state.accepted.length - 1]?.ws as FakeWebSocket }
 }
 
@@ -105,7 +105,7 @@ describe('SiteRoom — #1/#2/#3/#4: the hibernation contract', () => {
     // GB-s budget for ONE site.
     expect(ws.accepts).toBe(0)
     // Tags let a woken room select a subset without deserializing every attachment.
-    expect(r.state.getTags(ws)).toEqual(['site:siteA', 'viewer:userA'])
+    expect(r.state.getTags(ws)).toEqual(['site:siteA', 'viewer:userA', 'chan:db'])
     // The class implements the close half of the hibernation API too.
     await r.room.webSocketClose(ws as never, 1000, 'bye', true)
     expect(ws.closed).toEqual([{ code: 1000, reason: 'bye' }])
@@ -321,6 +321,86 @@ describe('SiteRoom — #9/#10: the delivered frame', () => {
   })
 })
 
+describe('SiteRoom — S1: channel-tagged sockets', () => {
+  test('C1 ATTACK: a comments-channel socket is never a candidate for a shared-* document event', async () => {
+    const r = makeRoom()
+    const { ws: dbSocket } = await subscribe(r, { viewerId: 'userA', channel: 'db' })
+    const { ws: commentsSocket } = await subscribe(r, { viewerId: 'userA', channel: 'comments' })
+    // shared-* would deliver to every site viewer on the db channel — the comments socket must
+    // not even be a CANDIDATE, not merely filtered out by policy.
+    await broadcast(r, event({ collection: 'shared-poll', createdBy: 'userA' }))
+    expect(dbSocket.sent).toHaveLength(1)
+    expect(commentsSocket.sent).toHaveLength(0)
+    expect(commentsSocket.closed).toEqual([])
+  })
+
+  test('default-channel characterization: /subscribe with no channel param behaves exactly as today', async () => {
+    const r = makeRoom()
+    const { ws } = await subscribe(r, { viewerId: 'userA' })
+    expect(r.state.getTags(ws)).toContain('chan:db')
+    await broadcast(r, event({ createdBy: 'userA' }))
+    expect(ws.sent).toHaveLength(1)
+  })
+
+  test('an unrecognised channel value also defaults to db', async () => {
+    const r = makeRoom()
+    const { ws } = await subscribe(r, { viewerId: 'userA', channel: 'bogus' })
+    expect(r.state.getTags(ws)).toContain('chan:db')
+  })
+
+  test('C4: a db frame carries events + cursor at the same keys, plus channel:"db", and is still additive to dbBroker.parseFrame', async () => {
+    const r = makeRoom()
+    const { ws } = await subscribe(r, { viewerId: 'userA' })
+    await broadcast(r, event({ seq: 42, createdBy: 'userA' }))
+    const [frame] = frames(ws)
+    expect(frame).toEqual({
+      channel: 'db',
+      events: [{ type: 'create', collection: 'notes', id: 'doc1', createdBy: 'userA', at: '2026-07-29T00:00:00.000Z' }],
+      cursor: expect.any(String),
+    })
+    // Mirrors packages/web/src/lib/dbBroker.ts's parseFrame (not imported — the repo deliberately
+    // keeps api and web decoupled): it reads only f.events + f.cursor and ignores unknown keys, so
+    // an additive `channel` field must not break it.
+    const parseFrame = (data: string): { events: unknown[]; cursor: string } | null => {
+      const f = JSON.parse(data) as { events?: unknown; cursor?: unknown }
+      return Array.isArray(f?.events) && typeof f.cursor === 'string' ? { events: f.events, cursor: f.cursor } : null
+    }
+    expect(parseFrame(ws.sent[0])).toEqual({ events: frame.events, cursor: frame.cursor })
+  })
+})
+
+describe('SiteRoom — T2: a misrouted broadcast body is a no-op, not a site-wide disconnect', () => {
+  test('T2 db: a room named siteA receiving a broadcast body for siteB delivers to nobody and closes nobody', async () => {
+    const r = makeRoom('siteA')
+    const { ws } = await subscribe(r, { viewerId: 'userA' })
+    await broadcast(r, event({ siteId: 'siteB', createdBy: 'userA' }))
+    expect(ws.sent).toEqual([])
+    expect(ws.closed).toEqual([])
+  })
+
+  test('T2 comments: a room named siteA receiving a comment-broadcast body for siteB delivers to nobody and closes nobody', async () => {
+    const r = makeRoom('siteA')
+    const { ws } = await subscribe(r, { viewerId: 'userA', channel: 'comments' })
+    await r.room.fetch(
+      new Request('https://site-room/broadcast-comment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ siteId: 'siteB', body: { text: 'hi' } } satisfies CommentEvent),
+      }),
+    )
+    expect(ws.sent).toEqual([])
+    expect(ws.closed).toEqual([])
+  })
+
+  test('T2 regression guard: a correctly-routed db broadcast still delivers exactly as before', async () => {
+    const r = makeRoom('siteA')
+    const { ws } = await subscribe(r, { viewerId: 'userA' })
+    await broadcast(r, event({ createdBy: 'userA' }))
+    expect(ws.sent).toHaveLength(1)
+    expect(ws.closed).toEqual([])
+  })
+})
+
 describe('SiteRoom — deploy wiring', () => {
   test('contract: the request notifySiteRoom sends is the one SiteRoom.fetch accepts', async () => {
     const r = makeRoom('siteA')
@@ -346,5 +426,98 @@ describe('SiteRoom — deploy wiring', () => {
   test('#1: index.ts exports SiteRoom (the wrangler class_name binding resolves by export name)', async () => {
     const mod = (await import('../index')) as { SiteRoom?: unknown }
     expect(mod.SiteRoom).toBe(SiteRoom)
+  })
+})
+
+describe('SiteRoom — comment deploy wiring', () => {
+  const commentEvent = (o: Partial<CommentEvent> = {}): CommentEvent => ({ siteId: 'siteA', body: { text: 'hi' }, ...o })
+
+  // No executionCtx in this harness (there is no real Worker request) — the same fallback
+  // fireAndForget takes in prod when a caller has none: catch the access, await inline.
+  const fakeCtx = (env: unknown) =>
+    ({
+      env,
+      get executionCtx(): never {
+        throw new Error('no executionCtx in test')
+      },
+    }) as never
+
+  test('contract: the request notifyCommentRoom sends is the one SiteRoom.fetch\'s broadcast-comment accepts', async () => {
+    const r = makeRoom('siteA')
+    const { ws } = await subscribe(r, { viewerId: 'userA', channel: 'comments' })
+    const names: string[] = []
+    const env = {
+      SITE_ROOM: {
+        idFromName(name: string) {
+          names.push(name)
+          return { name }
+        },
+        get: () => ({ fetch: (input: string, init?: RequestInit) => r.room.fetch(new Request(input, init)) }),
+      },
+    }
+    const res = await notifyCommentRoom(env as never, commentEvent())
+    // Same key as the write side and the subscribe side — siteId — or one site splits across two rooms.
+    expect(names).toEqual(['siteA'])
+    expect(res).toBeUndefined()
+    expect(ws.sent).toHaveLength(1)
+  })
+
+  test('SITE_ROOM unbound: notifyCommentRoom resolves without touching `ns.get`, notifyCommentEvent never throws', async () => {
+    const env = { SITE_ROOM: undefined }
+    // Direct call — nothing here swallows a throw, so this is the assertion the `if (!ns) return`
+    // guard actually has to earn. Without it, `ns.get` on undefined throws and this rejects.
+    await expect(notifyCommentRoom(env as never, commentEvent())).resolves.toBeUndefined()
+    await expect(notifyCommentEvent(fakeCtx(env), commentEvent())).resolves.toBeUndefined()
+  })
+
+  test('a rejecting DO stub: the returned promise still resolves, the error never escapes', async () => {
+    const env = {
+      SITE_ROOM: {
+        idFromName: () => ({}),
+        get: () => ({ fetch: () => Promise.reject(new Error('boom')) }),
+      },
+    }
+    await expect(notifyCommentEvent(fakeCtx(env), commentEvent())).resolves.toBeUndefined()
+  })
+
+  test('undefined event: no stub fetch at all — nothing to push, inventing one would be a phantom', async () => {
+    let getCalls = 0
+    const env = {
+      SITE_ROOM: {
+        idFromName: () => ({}),
+        get: () => {
+          getCalls += 1
+          return { fetch: () => Promise.resolve(new Response(null, { status: 204 })) }
+        },
+      },
+    }
+    await notifyCommentEvent(fakeCtx(env), undefined)
+    expect(getCalls).toBe(0)
+  })
+
+  test('happy path: the stub is fetched exactly once, POST /broadcast-comment, event as JSON body', async () => {
+    const calls: { url: string; init: RequestInit }[] = []
+    const names: string[] = []
+    const env = {
+      SITE_ROOM: {
+        idFromName(name: string) {
+          names.push(name)
+          return { name }
+        },
+        get: () => ({
+          fetch: (url: string, init: RequestInit) => {
+            calls.push({ url, init })
+            return Promise.resolve(new Response(null, { status: 204 }))
+          },
+        }),
+      },
+    }
+    const e = commentEvent({ siteId: 'siteB' })
+    await notifyCommentEvent(fakeCtx(env), e)
+    expect(names).toEqual(['siteB'])
+    expect(calls).toHaveLength(1)
+    expect(calls[0].url).toBe('https://site-room/broadcast-comment')
+    expect(calls[0].init.method).toBe('POST')
+    expect(JSON.parse(String(calls[0].init.body))).toEqual(e)
   })
 })

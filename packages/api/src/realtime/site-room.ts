@@ -2,9 +2,10 @@ import { type DataCapability, type DataClaims, verifyDataToken } from '../lib/da
 import { canViewerRead } from '../lib/data-visibility'
 import type { Bindings } from '../types'
 import { type ChangeEvent, toEvent } from './change-log'
+import { type CommentEvent, selectCommentRecipients } from './comment-events'
 import { encodeCursor } from './cursor'
 export { TOKEN_HEADER } from './protocol'
-import { TOKEN_HEADER } from './protocol'
+import { type Channel, TOKEN_HEADER, parseChannel } from './protocol'
 
 // ONE hibernating Durable Object per site: a pure fan-out relay that STORES NOTHING. D1 stays the
 // source of truth (the change_log is already committed before a broadcast is even attempted), so
@@ -36,6 +37,7 @@ export type SocketAuth = { subject: string; owner: string; exp: number; caps: Da
 
 const siteTag = (siteId: string) => `site:${siteId}`
 const viewerTag = (viewerId: string) => `viewer:${viewerId}`
+const chanTag = (channel: Channel) => `chan:${channel}`
 
 /** Project verified claims onto the snapshot — a WHITELIST, so no extra field (a token, a session)
  *  can ride along into storage just because a caller passed a wider object. */
@@ -130,6 +132,10 @@ export class SiteRoom {
       await this.broadcast((await req.json()) as ChangeEvent)
       return new Response(null, { status: 204 })
     }
+    if (pathname === '/broadcast-comment' && req.method === 'POST') {
+      await this.broadcastComment((await req.json()) as CommentEvent)
+      return new Response(null, { status: 204 })
+    }
     if (pathname === '/subscribe') return this.subscribe(req)
     return new Response('not found', { status: 404 })
   }
@@ -146,11 +152,16 @@ export class SiteRoom {
     const name = this.state.id.name
     if (name !== undefined && name !== claims.siteId) return new Response('forbidden', { status: 403 })
 
+    // Absent/unrecognised defaults to 'db' so the shipped client, which dials with no `channel`
+    // param at all, keeps behaving exactly as it does today.
+    const channel = parseChannel(new URL(req.url).searchParams.get('channel'))
+
     const pair = new WebSocketPair()
     const server = pair[1]
     // Tags are the only per-connection state readable WITHOUT deserializing an attachment, so they
-    // carry exactly the two keys a woken room selects on.
-    this.state.acceptWebSocket(server, [siteTag(claims.siteId), viewerTag(claims.viewerId)])
+    // carry exactly the keys a woken room selects on — including the channel, so one stream's
+    // broadcast never even considers a socket subscribed to the other.
+    this.state.acceptWebSocket(server, [siteTag(claims.siteId), viewerTag(claims.viewerId), chanTag(channel)])
     server.serializeAttachment(encodeAttachment(claimsToAuth(claims)))
     // Answered by the runtime itself: no wake, no duration charge, no timer.
     this.state.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'))
@@ -185,10 +196,21 @@ export class SiteRoom {
   /** Fan out one committed change. Recipients come from `state.getWebSockets()` — the runtime's
    *  own list — so a freshly woken instance with zero memory of the past delivers identically. */
   private async broadcast(e: ChangeEvent): Promise<void> {
+    // The room is NAMED by siteId (mirrors `subscribe`'s check, same reasoning: `name` is the
+    // authoritative tenant identity, `undefined` for ids not derived from idFromName). A body
+    // whose siteId disagrees is a MISROUTED call, not a foreign socket — every socket here already
+    // belongs to this site, so treating it as "close everyone" would turn one bad caller into a
+    // site-wide disconnect. Not reachable via notify.ts today (it addresses by e.siteId), but the
+    // site wall exists to make exactly this safe.
+    if (this.state.id.name !== undefined && this.state.id.name !== e.siteId) return
     const secret = this.secret
+    // Selecting on the CHANNEL tag (not the site tag) means a comments-channel socket is never
+    // even a candidate for a document event — selectRecipients' site-wall check below is defence
+    // in depth behind this, not a replacement for it (the room being named by siteId already means
+    // every socket here belongs to this site).
     const { deliver, close } = selectRecipients(
       e,
-      this.state.getWebSockets(siteTag(e.siteId)),
+      this.state.getWebSockets(chanTag('db')),
       Math.floor(Date.now() / 1000),
     )
     for (const ws of close) closeQuietly(ws, 1008, 'unauthorized')
@@ -201,7 +223,35 @@ export class SiteRoom {
       deliver.map(async ({ ws, auth }) => {
         const cursor = await encodeCursor(secret, { siteId: e.siteId, viewerId: auth.subject, seq: e.seq })
         try {
-          ws.send(JSON.stringify({ events, cursor }))
+          // Additive only: `events`/`cursor` stay at the same keys, so dbBroker.ts's parseFrame
+          // (which reads only those two and ignores unknown keys) parses this with zero changes.
+          ws.send(JSON.stringify({ channel: 'db', events, cursor }))
+        } catch {
+          // One dead socket must never cost the rest of the site its event.
+          closeQuietly(ws, 1011, 'send failed')
+        }
+      }),
+    )
+  }
+
+  /** Fan out one comment event over the comments-channel sockets only. Selecting on `chan:comments`
+   *  (not the site tag) means a db-channel socket is never even a candidate — mirroring `broadcast`'s
+   *  channel narrowing above. No per-viewer cursor: there is no comment change log and no seq to
+   *  seal into one. */
+  private async broadcastComment(e: CommentEvent): Promise<void> {
+    // Same misrouted-call guard as `broadcast` above — mirrors `subscribe`'s room-name check.
+    if (this.state.id.name !== undefined && this.state.id.name !== e.siteId) return
+    const { deliver, close } = selectCommentRecipients(
+      e,
+      this.state.getWebSockets(chanTag('comments')),
+      Math.floor(Date.now() / 1000),
+    )
+    for (const ws of close) closeQuietly(ws, 1008, 'unauthorized')
+
+    await Promise.all(
+      deliver.map(async ({ ws }) => {
+        try {
+          ws.send(JSON.stringify({ channel: 'comments', siteId: e.siteId, body: e.body }))
         } catch {
           // One dead socket must never cost the rest of the site its event.
           closeQuietly(ws, 1011, 'send failed')

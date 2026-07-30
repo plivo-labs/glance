@@ -2,6 +2,7 @@ import type { Context, Env } from 'hono'
 import { fireAndForget } from '../lib/events'
 import type { Bindings } from '../types'
 import type { ChangeEvent } from './change-log'
+import type { CommentEvent } from './comment-events'
 
 // Fan-out hop: main worker → the site's SiteRoom Durable Object. D1 stays the source of truth and
 // the change_log row is already committed by the time we get here, so a failed broadcast costs a
@@ -33,4 +34,28 @@ export async function notifyChange<E extends Env & { Bindings: Bindings }>(
 ): Promise<void> {
   if (!e) return
   await fireAndForget(c, notifySiteRoom(c.env, e).catch(() => {}))
+}
+
+/** The comments-channel analog of `notifySiteRoom` — same DO, same siteId key, different route:
+ *  `/broadcast-comment` instead of `/broadcast`, since a comment event carries no `collection`
+ *  for SiteRoom to dispatch on. */
+export async function notifyCommentRoom(env: Bindings, e: CommentEvent): Promise<void> {
+  const ns = env.SITE_ROOM
+  if (!ns) return
+  const stub = ns.get(ns.idFromName(e.siteId))
+  await stub.fetch('https://site-room/broadcast-comment', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(e),
+  })
+}
+
+/** Hand one comment event to the fan-out, off the response's critical path — the comment-channel
+ *  analog of `notifyChange`. `undefined` means the caller has nothing to push. */
+export async function notifyCommentEvent<E extends Env & { Bindings: Bindings }>(
+  c: Context<E>,
+  e: CommentEvent | undefined,
+): Promise<void> {
+  if (!e) return
+  await fireAndForget(c, notifyCommentRoom(c.env, e).catch(() => {}))
 }

@@ -17,7 +17,7 @@ import {
 } from '../realtime/change-log'
 import { decodeCursor, encodeCursor } from '../realtime/cursor'
 import { notifyChange } from '../realtime/notify'
-import { TOKEN_HEADER, WS_PROTOCOL } from '../realtime/protocol'
+import { TOKEN_HEADER, WS_PROTOCOL, parseChannel } from '../realtime/protocol'
 import type { AppEnv, Bindings, SessionUser } from '../types'
 
 // The shared-backend data plane (`glance.db`). Two surfaces:
@@ -213,8 +213,11 @@ dataApi.get('/_sync/socket', async (c) => {
   // notify.ts keys the write side the same way, and the DO hard-compares its own name against the
   // claims it re-verifies, so all three agree or nothing is delivered.
   const stub = room.get(room.idFromName(claims.siteId))
+  // Forwarded so the DO carries the same default (absent/unrecognised → 'db') the shipped client
+  // relies on — today's dial has no `channel` param at all and must keep behaving identically.
+  const channel = parseChannel(c.req.query('channel') ?? null)
   const res = await stub.fetch(
-    new Request('https://site-room/subscribe', {
+    new Request(`https://site-room/subscribe?channel=${channel}`, {
       // The token rides one dedicated header — never a URL, never the DO's own name. The worker's
       // check above is a cheap quota guard, NOT the authority: the DO verifies the token again.
       headers: { Upgrade: 'websocket', [TOKEN_HEADER]: c.get('token') },
