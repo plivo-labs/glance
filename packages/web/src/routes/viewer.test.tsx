@@ -153,7 +153,7 @@ describe('viewer wiring — badge overlay', () => {
       expect(btns).toHaveLength(1)
       return btns
     })
-    expect((buttons[0] as HTMLElement).style.top).toBe('10px')
+    expect((buttons[0] as HTMLElement).style.top).toBe('18px') // rect.top + BadgeOverlay's 8px drop
     expect((buttons[0] as HTMLElement).style.left).toBe('15px') // first.rect.left + first.rect.width
   })
 
@@ -188,10 +188,11 @@ describe('viewer wiring — badge overlay', () => {
     await waitFor(() => expect(badgeButtons(iframe)).toHaveLength(1))
   })
 
-  // C2b: badges are unconditional now — nothing gates the overlay (or the anchorRects handler
-  // feeding it) on `railOpen`. Renders WITHOUT `?review=1`/`?rail=1`, so the rail panel is never
-  // opened, and still expects a real badge for a real thread.
-  test('the badge overlay renders a real badge with the rail CLOSED — nothing gates it on railOpen', async () => {
+  // Badges ride WITH the rail: nothing marks the page up for a reader who hasn't opened the panel.
+  // The rect HANDLER stays ungated though, which is the half a `railOpen &&` on the handler would
+  // also satisfy — so this test proves both directions from ONE rect batch delivered while closed:
+  // no chip then, and the chip appears the moment the panel opens, with no second batch.
+  test('badges are gated on railOpen: none while the rail is CLOSED, painted from the same batch once it opens', async () => {
     const { container } = renderViewer('/sp/site')
     await waitFor(() => expect(container.querySelector('iframe')).not.toBeNull())
     const { iframe, send } = armIframe(container)
@@ -205,9 +206,12 @@ describe('viewer wiring — badge overlay', () => {
       }),
     )
 
+    expect(container.querySelector('aside')).toBeNull() // rail closed
+    await waitFor(() => expect(badgeButtons(iframe)).toHaveLength(0))
+
+    fireEvent.click(screen.getByRole('button', { name: /Comments/ }))
+
     await waitFor(() => expect(badgeButtons(iframe)).toHaveLength(1))
-    // The rail panel itself must still be absent — badges don't imply the panel opened.
-    expect(container.querySelector('aside')).toBeNull()
   })
 
   // C2b: paint is unconditional too — the mutation-check for this slice found that re-gating
@@ -262,19 +266,10 @@ describe('viewer wiring — badge click reveal (C1)', () => {
     })
   }
 
-  // With the rail CLOSED a badge is the only comment affordance on screen, so a click that merely
-  // scrolls the iframe (onOpen's original scrollAnchor-only body) moves the page and shows the user
-  // no comment at all — the thread it points at is unreachable.
-  test('a badge click opens the closed rail and reveals the clicked thread', async () => {
-    const { container } = renderViewer('/sp/site')
-    const badge = await badgeFor(container, 't1')
-    expect(container.querySelector('aside') === null).toBe(true) // rail closed: the click must open it
-
-    fireEvent.click(badge)
-
-    await waitFor(() => expect(container.querySelector('aside')).not.toBeNull())
-    expect(document.getElementById('thread-t1')).not.toBeNull()
-  })
+  // The old "a badge click opens the CLOSED rail" case is gone with the railOpen gate: badges only
+  // exist while the panel is open, so there is no closed-rail badge left to click. revealFromBadge
+  // still calls setRailOpen(true) — now a no-op from this path, kept because it costs nothing and
+  // the reveal below is the behaviour that matters.
 
   // "Unfiltered" reveal: the rail's status tabs are user state, so the thread a badge points at can
   // be sitting behind the tab that ISN'T selected. Revealing has to move the tab to the target's own

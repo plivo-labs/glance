@@ -241,8 +241,9 @@ function Viewer() {
       else if (intent.type === 'escape') dispatchPopover({ type: 'dismiss' })
       // The iframe's own box IS the frame viewport (the overlay is mounted as its sibling in that
       // same wrapper) — measuring it HERE, in the event handler, is what keeps lib/badges pure and
-      // avoids a ResizeObserver just to learn a size the DOM already hands us for free. Badges are
-      // unconditional too (C2b) — no railOpen gate.
+      // avoids a ResizeObserver just to learn a size the DOM already hands us for free. Ungated on
+      // railOpen even though the OVERLAY isn't: tracking costs nothing while nothing is painted, and
+      // it's what lets the chips appear with the panel rather than one reflow later.
       else if (intent.type === 'anchorRects') {
         setBadges((s) => stepBadges(s, intent, frameViewport(iframeRef.current)))
       }
@@ -565,8 +566,8 @@ function Viewer() {
             )}
             {/* Sibling of the iframe ON PURPOSE: this wrapper is the iframe's own box, so the rect
                 the frame reports needs no translation to position the chip/popover over it.
-                UNCONDITIONAL on railOpen (C2b): anyone who can open the site can comment — the rail
-                is just a panel, not a gate on the popover or the badges below. */}
+                The POPOVER is unconditional on railOpen (C2b): anyone who can open the site can
+                comment without opening a panel first. */}
             {!isAudio && (
               <CommentPopover
                 chip={popover.chip}
@@ -579,14 +580,16 @@ function Viewer() {
                 onDirtyChange={onDirtyChange}
               />
             )}
-            {!isAudio && (
+            {/* Badges ride WITH the rail: they only paint while the panel is open, so a reader who
+                hasn't asked for comments gets the page exactly as its author wrote it. The rect
+                handler above stays ungated on purpose — the geometry is already current when the
+                panel opens, so the chips appear with it instead of after the next reflow. */}
+            {!isAudio && railOpen && (
               <BadgeOverlay
                 badges={badgeList}
                 // A badge click scrolls the iframe to the anchor AND reveals the thread in the rail
-                // — opening the rail if it was closed, and (in ReviewRail) moving the status tab to
-                // the target's own, so the reveal can't be swallowed by whichever filter the user
-                // left selected. With the rail closed a badge is the only comment affordance on
-                // screen, so scrolling alone would point at a thread nothing can show.
+                // — (in ReviewRail) moving the status tab to the target's own, so the reveal can't
+                // be swallowed by whichever filter the user left selected.
                 onOpen={(threadIds) => {
                   const target = badgeOpenTarget(threadIds, threads)
                   if (!target) return

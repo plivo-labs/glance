@@ -20,6 +20,8 @@ function mkBadge(overrides: Partial<Badge> & { key: string }): Badge {
 }
 
 describe('B2c — BadgeOverlay', () => {
+  // The chip hangs 8px BELOW the anchor's own top (NUDGE_Y) so it clears the line of text it
+  // belongs to; `left` is taken as-is.
   test('two badges render two buttons, keyed and positioned from their top/left', () => {
     const badges = [
       mkBadge({ key: 't1', top: 15, left: 25, threadIds: ['t1'] }),
@@ -29,9 +31,9 @@ describe('B2c — BadgeOverlay', () => {
 
     const buttons = screen.getAllByRole('button')
     expect(buttons).toHaveLength(2)
-    expect(buttons[0]?.style.top).toBe('15px')
+    expect(buttons[0]?.style.top).toBe('23px')
     expect(buttons[0]?.style.left).toBe('25px')
-    expect(buttons[1]?.style.top).toBe('55px')
+    expect(buttons[1]?.style.top).toBe('63px')
     expect(buttons[1]?.style.left).toBe('65px')
   })
 

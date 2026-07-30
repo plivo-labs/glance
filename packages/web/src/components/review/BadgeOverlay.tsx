@@ -16,6 +16,11 @@ import type { Badge } from '@/lib/badges'
 // pointerleave/blur — never a union across chips. Focus counts as hover so the affordance isn't
 // mouse-only (a rail-card click's own highlight is wired by the caller, not here). BadgeOverlay
 // itself paints nothing for this — it only reports the hover set up to whoever asked for it.
+// Drop the chip below its line instead of centring it ON the text: sitting on the baseline it
+// covered the words right after the quote. Presentation only — lib/badges keeps reporting the
+// anchor's own top, which is what the offscreen and cluster rules are written against.
+const NUDGE_Y = 8
+
 export function BadgeOverlay({
   badges,
   onOpen,
@@ -37,7 +42,7 @@ export function BadgeOverlay({
           onPointerLeave={() => onHoverChange([])}
           onFocus={() => onHoverChange(badge.threadIds)}
           onBlur={() => onHoverChange([])}
-          style={{ top: badge.top, left: badge.left }}
+          style={{ top: badge.top + NUDGE_Y, left: badge.left }}
           className="pointer-events-auto absolute inline-flex items-center gap-1.5 rounded-full border bg-popover py-0.5 pr-2 pl-0.5 font-medium text-popover-foreground text-xs shadow-md hover:bg-accent"
         >
           {/* The photo is same-origin (/api/avatars/:id, see UserAvatar) — an author with no photo,
