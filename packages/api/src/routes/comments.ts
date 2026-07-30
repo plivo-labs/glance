@@ -1,3 +1,4 @@
+import { and, eq } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 import type { BatchItem, BatchResponse } from 'drizzle-orm/batch'
 import { type ElementAnchor, type StoredTextContext, normalizeText, parseElementAnchor, parseTextContext } from '../lib/anchor'
@@ -9,6 +10,10 @@ import {
   createThread,
   deleteComment,
   editComment,
+  type ReactionRow,
+  reactionsByComment,
+  reactionsByCommentStmt,
+  reactionsBySlugsStmt,
   reopenThread,
   resolveThread,
   threadByIdStmt,
@@ -30,8 +35,9 @@ import {
   slackDepsFromEnv,
   slackEnabled,
 } from '../lib/slack'
-import type { Comment, CommentThread } from '../db/schema'
+import { type Comment, type CommentThread, commentReactions } from '../db/schema'
 import { listMentionableUsers } from '../db/repo'
+import { batchAll } from '../lib/d1'
 import { fireAndForget } from '../lib/events'
 import { EXT_MIME, audioExtFromPart, contentType } from '../lib/mime'
 import type { AccessFacts, ResolvedSite } from '../lib/site-access'
@@ -58,6 +64,14 @@ const MAX_PATH = 1_024
 // unavailable. A voice comment must never be lost to an AI outage — see lib/transcribe.
 const MAX_AUDIO_BYTES = 10 * 1024 * 1024
 const VOICE_FALLBACK_BODY = '[voice message]'
+// Reactions. An emoji is a grapheme CLUSTER, not a character — "👍" is 2 UTF-16 units and a ZWJ
+// family is 11 — so the cap is generous and measured in UTF-16 units. There is deliberately no
+// "is this really an emoji" regex: every such pattern rejects valid sequences (new Unicode
+// releases, skin tones, flags), and the blast radius of a non-emoji string here is a client that
+// renders a short label. The DISTINCT cap is what actually protects the table: it bounds one
+// user's rows on one comment, so a script can't turn a single comment into unbounded storage.
+const MAX_EMOJI_LENGTH = 32
+const MAX_REACTIONS_PER_COMMENT = 20
 
 const tooLong = (v: unknown, max: number): boolean => typeof v === 'string' && v.length > max
 
@@ -143,19 +157,24 @@ async function siteWithUrlThread(
  *  → thread-in-site 404. The threadId ≠ comment.threadId check stays a post-batch comparison
  *  (T9.4), which also makes the thread-by-URL-id read equivalent to the old thread-by-
  *  comment.threadId read: past the mismatch check the two ids are equal. */
-async function siteWithUrlComment(c: Context<AppEnv>): Promise<{ site: ResolvedSite; comment: Comment } | Response> {
+async function siteWithUrlComment<T extends readonly BatchItem<'sqlite'>[]>(
+  c: Context<AppEnv>,
+  ...extras: [...T]
+): Promise<{ site: ResolvedSite; comment: Comment; extras: BatchResponse<T> } | Response> {
   const db = c.get('db')
   const { threadId, commentId } = c.req.param()
-  const gate = await gated(c, commentByIdStmt(db, commentId), threadByIdStmt(db, threadId))
+  const gate = await gated(c, commentByIdStmt(db, commentId), threadByIdStmt(db, threadId), ...extras)
   if (gate instanceof Response) return gate
-  const { site, extras } = gate
-  const comment = extras[0][0]
+  const { site, extras: rows } = gate
+  const comment = rows[0][0]
   if (!comment || comment.threadId !== threadId) return c.json({ error: 'not found' }, 404)
   // An already soft-deleted comment is gone: editing / re-deleting it is a silent no-op that could
   // resurface a redacted thread, so treat it as not found.
   if (comment.deletedAt !== null) return c.json({ error: 'not found' }, 404)
-  if (!threadInSite(extras[1][0], site.id)) return c.json({ error: 'not found' }, 404)
-  return { site, comment }
+  if (!threadInSite(rows[1][0], site.id)) return c.json({ error: 'not found' }, 404)
+  // The caller's own statements ride the SAME batch and come back untouched by the gate, exactly
+  // as `gated` hands them over — the two rows this helper consumed are sliced off the front.
+  return { site, comment, extras: rows.slice(2) as unknown as BatchResponse<T> }
 }
 
 /** Validate a comment body: strip control chars, then require a non-empty string within the cap.
@@ -436,12 +455,15 @@ comments.get('/:space/:site/comments', async (c) => {
     c,
     threadsWithUsersBySlugsStmt(db, space, siteSlug, filePath),
     commentsWithAuthorsBySlugsStmt(db, space, siteSlug, filePath),
+    // Reactions ride the SAME batch as a third statement — a page load must not pay a round trip
+    // for them, and there is no read endpoint of their own for the same reason.
+    reactionsBySlugsStmt(db, space, siteSlug, filePath),
   )
   if (gate instanceof Response) return gate
   if (filePath !== undefined && (!filePath || tooLong(filePath, MAX_PATH)))
     return c.json({ error: 'filePath required' }, 400)
-  const [threadRows, commentRows] = gate.extras
-  return c.json(assembleThreadViews(threadRows, commentRows))
+  const [threadRows, commentRows, reactionRows] = gate.extras
+  return c.json(assembleThreadViews(threadRows, commentRows, reactionRows, c.get('user').id))
 })
 
 // GET — who the caller may @-mention on this site (autocomplete source). Same access gate as
@@ -649,4 +671,94 @@ comments.delete('/:space/:site/comments/:threadId/messages/:commentId', async (c
   await deleteComment(c.get('db'), comment.threadId, comment.id)
   if (audioKey) await fireAndForget(c, deleteKeys(c.env.GLANCE_FILES, [audioKey]))
   return c.json({ ok: true })
+})
+
+// --- Emoji reactions on a comment. No access rule of their own: reacting needs exactly what
+// commenting needs, so both verbs run the sibling message routes' gate (siteWithUrlComment) and
+// inherit its precedence — including the soft-deleted 404, which is the answer here too: a
+// redacted comment takes no new reactions. Rows already on it survive (the delete redacts the
+// BODY, it does not rewrite who reacted). ------------------------------------------------------
+
+/** Validate a reaction emoji: strip control chars (a CLI prints these), then require a non-empty
+ *  string within the cap. Stripped BEFORE the cap so it bounds the value we actually store. */
+function cleanEmoji(v: unknown): string | null {
+  if (typeof v !== 'string') return null
+  const emoji = stripControlChars(v).trim()
+  if (!emoji || emoji.length > MAX_EMOJI_LENGTH) return null
+  return emoji
+}
+
+/** Shared PRE-WRITE resolve for both verbs: ONE batch (access facts + the URL's comment and thread
+ *  rows + the comment's CURRENT reaction rows — every id is in the path, so all of it is known
+ *  pre-batch), then the body's emoji. The rows come back because BOTH verbs need them twice: to
+ *  decide whether there is anything to write at all, and — when there isn't — as the response. */
+async function reactionTarget(
+  c: Context<AppEnv>,
+): Promise<{ comment: Comment; emoji: string; rows: ReactionRow[] } | Response> {
+  const { commentId } = c.req.param()
+  const gate = await siteWithUrlComment(c, reactionsByCommentStmt(c.get('db'), commentId))
+  if (gate instanceof Response) return gate
+  const raw = await c.req.json().catch(() => null)
+  const emoji = cleanEmoji(raw?.emoji)
+  if (!emoji) return c.json({ error: 'invalid emoji' }, 400)
+  return { comment: gate.comment, emoji, rows: gate.extras[0] }
+}
+
+/** The comment's whole reaction set as the caller sees it — what both verbs answer with, so the
+ *  client replaces its state from the response instead of refetching the list. */
+const reactionsFor = (rows: ReactionRow[], commentId: string, viewerId: string) =>
+  reactionsByComment(rows, viewerId).get(commentId) ?? []
+
+/** Does this user already hold this exact emoji here? True ⇒ the requested state is the current
+ *  one, so the verb has nothing to write. */
+const holds = (rows: ReactionRow[], userId: string, emoji: string) =>
+  rows.some((r) => r.userId === userId && r.emoji === emoji)
+
+/** How many DISTINCT emojis this user already holds on the comment — what the cap bounds. Reading
+ *  it off the rows the gate already fetched keeps the cap free of its own query. */
+const distinctHeld = (rows: ReactionRow[], userId: string) => rows.filter((r) => r.userId === userId).length
+
+// PUT — add the caller's reaction. Idempotent: an emoji the caller already holds skips the write
+// entirely (the composite PK would absorb it anyway) and just answers with the current set.
+comments.put('/:space/:site/comments/:threadId/messages/:commentId/reactions', async (c) => {
+  const target = await reactionTarget(c)
+  if (target instanceof Response) return target
+  const { comment, emoji, rows } = target
+  const db = c.get('db')
+  const userId = c.get('user').id
+  if (holds(rows, userId, emoji)) return c.json(reactionsFor(rows, comment.id, userId))
+  // The cap bounds one user's DISTINCT set on one comment, which is why it is checked only on the
+  // path that actually adds a row — re-adding an emoji you already hold can never trip it.
+  if (distinctHeld(rows, userId) >= MAX_REACTIONS_PER_COMMENT) return c.json({ error: 'too many reactions' }, 400)
+  // Write and re-read in ONE batch: the response is the committed state, not a locally patched
+  // guess, and it still costs a single round trip.
+  const [, fresh] = await batchAll(db, [
+    db.insert(commentReactions).values({ commentId: comment.id, userId, emoji }).onConflictDoNothing(),
+    reactionsByCommentStmt(db, comment.id),
+  ] as const)
+  return c.json(reactionsFor(fresh, comment.id, userId))
+})
+
+// DELETE — remove the caller's reaction. Removing one that isn't there is already the requested
+// state, so it answers 200 with the current set rather than erroring.
+comments.delete('/:space/:site/comments/:threadId/messages/:commentId/reactions', async (c) => {
+  const target = await reactionTarget(c)
+  if (target instanceof Response) return target
+  const { comment, emoji, rows } = target
+  const db = c.get('db')
+  const userId = c.get('user').id
+  if (!holds(rows, userId, emoji)) return c.json(reactionsFor(rows, comment.id, userId))
+  const [, fresh] = await batchAll(db, [
+    db
+      .delete(commentReactions)
+      .where(
+        and(
+          eq(commentReactions.commentId, comment.id),
+          eq(commentReactions.userId, userId),
+          eq(commentReactions.emoji, emoji),
+        ),
+      ),
+    reactionsByCommentStmt(db, comment.id),
+  ] as const)
+  return c.json(reactionsFor(fresh, comment.id, userId))
 })

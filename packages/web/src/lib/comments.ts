@@ -23,6 +23,11 @@ export interface ElementAnchor {
   textFallback: string
 }
 
+/** One DISTINCT emoji on a comment, aggregated server-side: how many people used it and whether
+ *  the caller is one of them. Mirrors the api CommentReaction — the reactor ids stay on the server,
+ *  so a chip can show a count and a pressed state and nothing else. */
+export type CommentReaction = { emoji: string; count: number; mine: boolean }
+
 export interface CommentItem {
   id: string
   authorId: string | null
@@ -30,6 +35,9 @@ export interface CommentItem {
   body: string | null // null when soft-deleted
   deleted: boolean
   hasAudio?: boolean // voice comment: has a recording; played via the audio route (UI: Step 18)
+  // First-reacted-first, [] when nobody has. Present on soft-deleted comments too: the delete
+  // redacts the body, it does not rewrite who reacted to it.
+  reactions: CommentReaction[]
   createdAt: string
   editedAt: string | null
 }
@@ -151,4 +159,11 @@ export const comments = {
     api.patch<{ ok: true }>(`${base(s)}/${threadId}/messages/${commentId}`, { body }),
   remove: (s: SiteRef, threadId: string, commentId: string) =>
     api.delete<{ ok: true }>(`${base(s)}/${threadId}/messages/${commentId}`),
+  // Both toggles answer with the comment's FRESH reaction list, so a caller re-renders from the
+  // response instead of refetching the thread. Idempotent server-side: reacting twice, or removing
+  // a reaction that isn't there, returns the current list rather than an error.
+  react: (s: SiteRef, threadId: string, commentId: string, emoji: string) =>
+    api.put<CommentReaction[]>(`${base(s)}/${threadId}/messages/${commentId}/reactions`, { emoji }),
+  unreact: (s: SiteRef, threadId: string, commentId: string, emoji: string) =>
+    api.delete<CommentReaction[]>(`${base(s)}/${threadId}/messages/${commentId}/reactions`, { emoji }),
 }

@@ -146,10 +146,10 @@ describe('comments routes — T9.2 read-your-write', () => {
 })
 
 // S9b request-shape pins. A "request" is one D1 round trip (a loose statement or one db.batch).
-// GET list must be exactly: requireAuth's 1 loose user read (parked floor) + ONE fused batch of 7
-// statements — 5 slug-keyed access facts + the 2 S8 list statements. Counters reset after seeding
-// so only the request under test is measured.
-describe('comments routes — T9.3 GET list = 1 loose read + 1 fused batch of 7', () => {
+// GET list must be exactly: requireAuth's 1 loose user read (parked floor) + ONE fused batch of 8
+// statements — 5 slug-keyed access facts + the 2 S8 list statements + the reactions statement.
+// Counters reset after seeding so only the request under test is measured.
+describe('comments routes — T9.3 GET list = 1 loose read + 1 fused batch of 8', () => {
   test('allowed: per-file and site-wide lists each run exactly the fused batch', async () => {
     const { app, env, db, kv } = makeRouteApp()
     const owner = await mintUser(db, kv, 'owner')
@@ -161,7 +161,7 @@ describe('comments routes — T9.3 GET list = 1 loose read + 1 fused batch of 7'
       expect((await res.json()).length).toBe(1)
       expect(db.counters.loose).toBe(1) // requireAuth's user read — nothing else loose
       expect(db.counters.batches).toBe(1) // facts + list statements FUSED, not two batches
-      expect(db.counters.batchStmts).toBe(7) // 5 access facts + threads stmt + comments stmt
+      expect(db.counters.batchStmts).toBe(8) // 5 access facts + threads + comments + reactions
     }
   })
 
@@ -176,7 +176,7 @@ describe('comments routes — T9.3 GET list = 1 loose read + 1 fused batch of 7'
     // The list statements executed inside the batch (arity proves it)…
     expect(db.counters.loose).toBe(1)
     expect(db.counters.batches).toBe(1)
-    expect(db.counters.batchStmts).toBe(7)
+    expect(db.counters.batchStmts).toBe(8)
     // …but their rows never reach the response: the body is the bare denial.
     expect(await res.json()).toEqual({ error: 'forbidden' })
   })

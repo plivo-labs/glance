@@ -10,7 +10,17 @@ import {
   readElementAnchor,
   readTextContext,
 } from '../lib/anchor'
-import { type Comment, type CommentThread, comments, commentThreads, sites, spaces, users } from './schema'
+import {
+  type Comment,
+  type CommentReactionRow,
+  type CommentThread,
+  commentReactions,
+  comments,
+  commentThreads,
+  sites,
+  spaces,
+  users,
+} from './schema'
 
 // Comments repo: create/list/reply/resolve/edit/soft-delete. Anchors are STORED here but never
 // resolved server-side — the browser annotate client re-finds each quote in the rendered DOM to
@@ -26,6 +36,11 @@ function touchThread(db: DrizzleD1Database, threadId: string, ts: string) {
   return db.update(commentThreads).set({ updatedAt: ts }).where(eq(commentThreads.id, threadId))
 }
 
+/** One DISTINCT emoji on a comment, aggregated server-side: how many people used it and whether
+ *  the caller is one of them. The individual reactor ids never leave the server — the client needs
+ *  a count and a toggle state, and nothing else. */
+export type CommentReaction = { emoji: string; count: number; mine: boolean }
+
 export type CommentView = {
   id: string
   authorId: string | null
@@ -33,6 +48,9 @@ export type CommentView = {
   body: string | null // null when soft-deleted (redacted)
   deleted: boolean
   hasAudio: boolean // voice comment: has a recording served via the audio route. audioKey never leaks.
+  // One entry per distinct emoji, first-reacted-first; [] when nobody has reacted. Kept on a
+  // soft-deleted comment too: the delete redacts the BODY, it does not rewrite who reacted to it.
+  reactions: CommentReaction[]
   createdAt: string
   editedAt: string | null
 }
@@ -107,6 +125,21 @@ const THREAD_LIST_COLUMNS = {
   resolverEmail: sql<string | null>`${threadResolver.email}`.as('resolverEmail'),
 }
 const COMMENT_LIST_COLUMNS = { comment: comments, authorName: users.name, authorEmail: users.email }
+// Reaction rows are read RAW (one row per reactor) and aggregated in `reactionsByComment`. A
+// GROUP BY would be one row per (comment, emoji) — but `mine` needs the caller's own row, so the
+// grouped form would still owe a second correlated read. Folding in JS costs one pass over rows
+// that are already bounded per comment (20 distinct emojis per user) and keeps the read to ONE
+// statement. `createdAt` is read only to order them; the reactor ids never leave the server.
+const REACTION_COLUMNS = {
+  commentId: commentReactions.commentId,
+  userId: commentReactions.userId,
+  emoji: commentReactions.emoji,
+}
+
+/** Row shape of both reaction statements — the raw (comment, reactor, emoji) triples. */
+export type ReactionRow = Pick<CommentReactionRow, 'commentId' | 'userId' | 'emoji'>
+
+const reactionOrder = [commentReactions.createdAt, sql`"comment_reactions".rowid`] as const
 
 /** Statement: the scoped threads LEFT JOINed to their creator and resolver users, ordered
  *  (filePath, createdAt, rowid). With a filePath filter the filePath key is constant, so the
@@ -151,18 +184,74 @@ export function commentsWithAuthorsBySlugsStmt(
     .orderBy(comments.createdAt, sql`"comments".rowid`)
 }
 
+/** Statement: the scoped threads' comments' reaction rows, scoped THROUGH the same thread join the
+ *  two statements above use — so it fuses into the list route's ONE batch instead of costing a
+ *  second round trip. Slug-keyed for the same reason: no site id exists before that batch runs. */
+export function reactionsBySlugsStmt(db: DrizzleD1Database, spaceSlug: string, siteSlug: string, filePath?: string) {
+  return db
+    .select(REACTION_COLUMNS)
+    .from(commentReactions)
+    .innerJoin(comments, eq(commentReactions.commentId, comments.id))
+    .innerJoin(commentThreads, eq(comments.threadId, commentThreads.id))
+    .innerJoin(sites, eq(commentThreads.siteId, sites.id))
+    .innerJoin(spaces, eq(sites.spaceId, spaces.id))
+    .where(slugThreadScope(spaceSlug, siteSlug, filePath))
+    .orderBy(...reactionOrder)
+}
+
+/** Statement: one comment's reaction rows, id-keyed — for the toggle routes, whose commentId comes
+ *  from the URL (so it fuses into their access batch) and whose response is this same set. */
+export function reactionsByCommentStmt(db: DrizzleD1Database, commentId: string) {
+  return db
+    .select(REACTION_COLUMNS)
+    .from(commentReactions)
+    .where(eq(commentReactions.commentId, commentId))
+    .orderBy(...reactionOrder)
+}
+
+/** PURE aggregation of raw reaction rows into the per-comment wire shape, keyed by commentId.
+ *  Rows arrive in reaction order, so each comment's emojis come out first-reacted-first and the
+ *  chips hold their position as counts change. `viewerId` null (no caller) ⇒ `mine` is never true. */
+export function reactionsByComment(rows: ReactionRow[], viewerId: string | null): Map<string, CommentReaction[]> {
+  const byComment = new Map<string, CommentReaction[]>()
+  for (const r of rows) {
+    let list = byComment.get(r.commentId)
+    if (!list) {
+      list = []
+      byComment.set(r.commentId, list)
+    }
+    const hit = list.find((x) => x.emoji === r.emoji)
+    if (hit) {
+      hit.count++
+      hit.mine ||= r.userId === viewerId
+    } else list.push({ emoji: r.emoji, count: 1, mine: r.userId === viewerId })
+  }
+  return byComment
+}
+
 /** Display name from JOINed user fields: null id → null; id whose join found no row (dangling
  *  or deleted; null email ⇔ join miss) → null; else name ?? email. */
 const joinedDisplayName = (id: string | null, name: string | null, email: string | null): string | null =>
   id == null || email == null ? null : (name ?? email)
 
-/** PURE assembly of the two statements' rows into ThreadView[], in thread-row order. Threads
+/** PURE assembly of the three statements' rows into ThreadView[], in thread-row order. Threads
  *  with zero comments are kept (comments: []); soft-deleted comments keep their row with the
- *  body redacted (toCommentView). No R2, no anchor resolution — painting is the client's job. */
-export function assembleThreadViews(threadRows: ThreadWithUsersRow[], commentRows: CommentWithAuthorRow[]): ThreadView[] {
+ *  body redacted (toCommentView). No R2, no anchor resolution — painting is the client's job.
+ *  `viewerId` is whose `mine` the reactions answer for. */
+export function assembleThreadViews(
+  threadRows: ThreadWithUsersRow[],
+  commentRows: CommentWithAuthorRow[],
+  reactionRows: ReactionRow[],
+  viewerId: string | null,
+): ThreadView[] {
+  const reactions = reactionsByComment(reactionRows, viewerId)
   const byThread = new Map<string, CommentView[]>()
   for (const r of commentRows) {
-    const view = toCommentView(r.comment, joinedDisplayName(r.comment.authorId, r.authorName, r.authorEmail))
+    const view = toCommentView(
+      r.comment,
+      joinedDisplayName(r.comment.authorId, r.authorName, r.authorEmail),
+      reactions.get(r.comment.id) ?? [],
+    )
     const list = byThread.get(r.comment.threadId)
     if (list) list.push(view)
     else byThread.set(r.comment.threadId, [view])
@@ -186,7 +275,7 @@ export function assembleThreadViews(threadRows: ThreadWithUsersRow[], commentRow
   }))
 }
 
-function toCommentView(c: Comment, author: string | null): CommentView {
+function toCommentView(c: Comment, author: string | null, reactions: CommentReaction[]): CommentView {
   const deleted = c.deletedAt !== null
   return {
     id: c.id,
@@ -196,6 +285,7 @@ function toCommentView(c: Comment, author: string | null): CommentView {
     deleted,
     // Expose only the existence of audio; the R2 key is internal and served via the audio route.
     hasAudio: !deleted && c.audioKey !== null,
+    reactions,
     createdAt: c.createdAt,
     editedAt: c.editedAt,
   }

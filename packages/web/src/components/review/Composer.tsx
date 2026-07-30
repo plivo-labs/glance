@@ -1,6 +1,7 @@
 import { Clock, Mic, Square, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { EmojiPicker } from '@/components/review/EmojiPicker'
 import { UserAvatar } from '@/components/UserAvatar'
 import { useMediaRecorder } from '@/hooks/useMediaRecorder'
 import { formatTimestamp } from '@/lib/audio'
@@ -10,7 +11,8 @@ import { cn } from '@/lib/utils'
 // Shared composer for a new thread or a flat reply. Text and voice are alternative submit paths:
 // typing submits trimmed non-empty bodies via onSubmit (clears on success); the mic records a clip
 // that submits via onSubmitVoice. When `loadMentions` is set, an `@` opens an autocomplete of
-// site-mentionable users; the chosen ids ride along to onSubmit. Controlled locally.
+// site-mentionable users; the chosen ids ride along to onSubmit. An emoji picker sits in the action
+// row and inserts at the caret, the same way a mention does. Controlled locally.
 export function Composer({
   placeholder,
   submitLabel,
@@ -109,6 +111,16 @@ export function Composer({
   function onBodyChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
     setBody(e.target.value)
     syncMenu(e.target.value, e.target.selectionStart)
+  }
+
+  // Same insert-at-the-caret contract as a mention, minus the token to replace: the picker is a
+  // click away from the textarea, so the draft the user was mid-sentence in must not get an emoji
+  // stapled to its end.
+  function insertEmoji(emoji: string) {
+    const el = textareaRef.current
+    const caret = el ? el.selectionStart : body.length
+    setBody(body.slice(0, caret) + emoji + body.slice(caret))
+    pendingCaret.current = caret + emoji.length
   }
 
   function pickMention(user: MentionUser) {
@@ -289,6 +301,7 @@ export function Composer({
               Cancel
             </Button>
           )}
+          <EmojiPicker onPick={insertEmoji} disabled={busy} />
           {onSubmitVoice && (
             <Button
               type="button"
