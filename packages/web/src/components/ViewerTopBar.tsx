@@ -21,7 +21,7 @@ import { BrandMark, Spinner } from '@/components/states'
 //
 // C2b: "review mode" is gone — Comments is a plain TOGGLE for the rail panel, always present (an
 // open-count badge rides along), and there is no separate Done button; the rail's own ✕ closes it
-// too. Badges/painting/commenting are unconditional elsewhere (viewer.tsx) — the rail is just a
+// too. Commenting is unconditional elsewhere (viewer.tsx) — the rail is just a
 // panel you open and close, not a gate on any of that.
 //
 // Below `md` the row doesn't fit (6 controls overlapped the breadcrumb on a phone), so everything

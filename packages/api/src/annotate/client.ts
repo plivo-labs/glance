@@ -4,30 +4,31 @@
 //
 // Trust model (COMMENTS_PLAN constraint 1): this runs in the HOSTILE uploaded-HTML context. It
 // may only OPEN UI or SUGGEST an anchor — it emits intent-only messages and computes NO persisted
-// status. Paint/focus/highlight commands are accepted only from the trusted parent origin. A
-// painted element anchor's selector is only ever `querySelector`'d (never eval'd).
+// status. Paint/focus commands are accepted only from the trusted parent origin. A painted element
+// anchor's selector is only ever `querySelector`'d (never eval'd).
 //
 // Element ("pinpoint") comments are DROPPED as a creation path (RULING): the uploaded page must
-// behave exactly as its author wrote it, so this client no longer hovers, intercepts a click, or
-// suggests an anchor. PAINTING an existing element anchor stays — those threads are already in
-// customers' databases — and the API keeps accepting element creates so a stale cached bundle
-// doesn't start failing on an old page load.
+// behave exactly as its author wrote it, so this client never hovers or suggests an anchor. The one
+// click it claims is a click that lands ON an existing painted anchor — an affordance the user
+// asked for by opening the rail, and impossible while it's closed (nothing is painted). PAINTING an
+// existing element anchor stays — those threads are already in customers' databases — and the API
+// keeps accepting element creates so a stale cached bundle doesn't start failing on an old page load.
 //
 // Two anchor kinds are painted against the RENDERED DOM (the server no longer resolves anchors):
-//   • text    — re-find the stored quote (whitespace-flexible, case-insensitive) and report its
-//               rect so the parent can place a badge. The CSS Highlight itself is a HOVER
-//               affordance (B3b): a paint never touches it — only an explicit glance:highlight
-//               command, sent while a badge is hovered or a rail card is focused, does.
-//   • element — re-resolve the stored CSS selector and report its rect, same as text. The overlay
-//               BOX is that kind's hover affordance and follows the same rule as the highlight:
-//               drawn only for the ids of the current glance:highlight, then tracking
-//               scroll/resize/DOM-mutation for as long as they stay lit. Unresolved selectors draw
-//               nothing and are reported back so the parent can flag them orphaned.
+//   • text    — re-find the stored quote (whitespace-flexible, case-insensitive) and light it in
+//               the `glance-comment` CSS Custom Highlight.
+//   • element — re-resolve the stored CSS selector and lay an outline box over it, tracking
+//               scroll/resize/DOM-mutation. Unresolved selectors draw nothing and are reported
+//               back so the parent can flag them orphaned.
+// A PAINT IS THE HIGHLIGHT: everything the parent sends is lit, and the parent sends anchors only
+// while the comments rail is open (an empty paint on close clears the page). There is no hover
+// command and no per-anchor lit set — badges, and the rect batches that positioned them, are gone.
+// Clicking a painted anchor is what opens its thread in the rail (glance:anchor-click).
 
 import { withAnnotateParam } from './linkRewrite'
 import type { TextContext } from '../lib/anchor'
 import { findRange, resolveSelector } from './locator'
-import { createRectEmitter, highlightRanges, installIndexInvalidation, paintTextAnchors, type TextAnchor } from './reflow'
+import { anchorIdAtPoint, anchorRanges, type ElementAnchor, installIndexInvalidation, type TextAnchor } from './reflow'
 import { installSelectionCapture, type Rect } from './selection'
 
 type Boot = { siteId: string; filePath: string; appOrigin: string }
@@ -102,12 +103,7 @@ const PENDING_STYLE =
 let overlayRoot: HTMLElement | null = null
 let pendingBox: HTMLElement | null = null
 let pendingSelector: string | null = null
-let elementAnchors: { id: string; selector: string }[] = []
-// Which element anchors are currently LIT — the element half of the same hover affordance the text
-// highlight is (B3b's ruling: nothing marks the page up until a badge or rail card is hovered). Set
-// only by glance:highlight; every anchor still resolves and still emits a rect regardless, because
-// badges and orphan reporting are not hover state.
-let outlinedIds: string[] = []
+let elementAnchors: ElementAnchor[] = []
 
 function ensureOverlayRoot(): HTMLElement {
   if (overlayRoot?.isConnected) return overlayRoot
@@ -131,15 +127,10 @@ let lastResolutionKey = ''
 /** Re-resolve every element anchor and lay a box over each; report resolved vs orphaned so the
  *  parent can flag anchors whose element is gone. Runs on every reflow frame (repositioning boxes),
  *  but the resolution message is posted ONLY when the resolved/orphaned SET changes — otherwise a
- *  scroll would spam the parent with an identical message every frame.
- *
- *  `emit` is false for the one caller that changes what is DRAWN without moving anything: a hover.
- *  Nothing has reflowed, so re-sending the rects would post a byte-identical batch (and re-render
- *  the parent's badge overlay) on every pointerenter and every pointerleave. */
-function reposition(emit = true): void {
+ *  scroll would spam the parent with an identical message every frame. */
+function reposition(): void {
   const root = ensureOverlayRoot()
   repositionPending(root)
-  if (emit) emitRects(textAnchors, elementAnchors, document)
   for (const b of Array.from(root.querySelectorAll('[data-glance-anchor]'))) b.remove()
   if (elementAnchors.length === 0) {
     lastResolutionKey = ''
@@ -154,9 +145,6 @@ function reposition(emit = true): void {
       continue
     }
     resolved.push(a.id)
-    // Resolution (and the rect that feeds its badge) is unconditional; the BOX is the hover
-    // affordance, so it exists only while this anchor is one of the lit ones.
-    if (!outlinedIds.includes(a.id)) continue
     const box = document.createElement('div')
     box.setAttribute('data-glance-anchor', a.id)
     box.style.cssText = ANCHOR_STYLE
@@ -214,16 +202,11 @@ function setPending(selector: string | null): void {
   reposition()
 }
 
-// --- painting text anchors (rects only — the CSS Custom Highlight is a HOVER affordance) -------
+// --- painting text anchors (the CSS Custom Highlight) --------------------------------------
 
 const supportsHighlight = typeof CSS !== 'undefined' && 'highlights' in CSS
 
 let textAnchors: TextAnchor[] = []
-
-/** Hand the parent where each anchor currently sits — text AND element alike (C2b: element threads
- *  badge too) — so it can draw a badge beside it. One emitter, one message, one epoch for both
- *  kinds: batch shape, the epoch tag and the empty-batch rule are reflow.ts's; this is the wiring. */
-const emitRects = createRectEmitter(toParent)
 
 /** Apply a computed Range set to the registered Highlight — the one place client.ts touches
  *  CSS.highlights, shared verbatim by paintTexts and highlight below so neither can decide its own
@@ -238,25 +221,35 @@ function applyRanges(ranges: Range[]): void {
   else CSS.highlights.set('glance-comment', new Highlight(...ranges))
 }
 
-/** Record which anchors exist for rect emission, and apply reflow.ts's paint decision — which is
- *  always "no highlight" (paintTextAnchors's contract, tested in reflow.test.ts). Routing through
- *  it rather than computing ranges here is what keeps the persistent-markup bug B3b replaced: the
- *  highlight only ever comes from an explicit glance:highlight command (badge hover / rail focus),
- *  handled below. */
+/** Record which anchors exist (for the click hit-test) and light every one of them. The parent
+ *  sends anchors only while the comments rail is open and an EMPTY list when it closes, so the
+ *  page is marked up exactly as long as the panel that explains the markup is on screen. */
 function paintTexts(anchors: PaintAnchor[]): void {
-  const painted = paintTextAnchors(anchors.filter((a) => a.quote))
-  textAnchors = painted.anchors
-  applyRanges(painted.ranges)
+  textAnchors = anchors.filter((a) => a.quote)
+  applyRanges(anchorRanges(textAnchors, document))
 }
 
-/** Show (or clear) the hover affordance for exactly the ids the parent names — the text highlight
- *  and the element outline box are the same gesture on the two anchor kinds, so one command drives
- *  both. Repositioning is what redraws (or removes) the element boxes for the new id set. */
-function highlight(ids: string[]): void {
-  applyRanges(highlightRanges(textAnchors, ids, document))
-  outlinedIds = ids
-  reposition(false)
-}
+// --- clicking a painted anchor -----------------------------------------------------------
+// The page→rail direction. Capture phase, and a hit SWALLOWS the click: a highlighted quote inside
+// a link must open its thread, not navigate away, and stopPropagation is what keeps the page's own
+// handlers from acting on it either. (The link-rewrite handler above is registered first and so
+// still runs — it only edits the href, never navigates, so preventDefault here still wins.)
+// A MISS is left completely untouched, and with the rail closed nothing is painted at all, so
+// nothing can hit and the uploaded page behaves exactly as its author wrote it.
+
+document.addEventListener(
+  'click',
+  (e) => {
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return
+    if (textAnchors.length === 0 && elementAnchors.length === 0) return
+    const id = anchorIdAtPoint(textAnchors, elementAnchors, { x: e.clientX, y: e.clientY }, document)
+    if (!id) return
+    e.preventDefault()
+    e.stopPropagation()
+    toParent({ type: 'glance:anchor-click', id })
+  },
+  true,
+)
 
 // --- command dispatch (parent-driven) ----------------------------------------------------
 
@@ -276,16 +269,16 @@ function focus(target: { quote?: string; selector?: string; context?: TextContex
     findRange(target.quote, document, target.context)?.startContainer.parentElement?.scrollIntoView({ behavior: 'smooth', block: 'center' })
 }
 
-// Paint/focus/highlight commands are trusted ONLY from the parent app origin (the inverse of the
-// hostile-iframe rule: here the parent is the trusted side). A stray `glance:mode` from a stale
-// cached bundle (the parent no longer sends it) falls through unmatched below and is ignored.
+// Paint/focus commands are trusted ONLY from the parent app origin (the inverse of the hostile-
+// iframe rule: here the parent is the trusted side). A stray `glance:mode` or `glance:highlight`
+// from a stale cached bundle (the parent no longer sends either) falls through unmatched below and
+// is ignored.
 window.addEventListener('message', (e: MessageEvent) => {
   if (!boot || e.origin !== boot.appOrigin) return
-  const d = e.data as { type?: string; anchors?: PaintAnchor[]; quote?: string; selector?: string; context?: TextContext; ids?: string[] }
+  const d = e.data as { type?: string; anchors?: PaintAnchor[]; quote?: string; selector?: string; context?: TextContext }
   if (d?.type === 'glance:paint' && Array.isArray(d.anchors)) paint(d.anchors)
   else if (d?.type === 'glance:focus') focus({ quote: d.quote, selector: d.selector, context: d.context })
   else if (d?.type === 'glance:pending') setPending(typeof d.selector === 'string' ? d.selector : null)
-  else if (d?.type === 'glance:highlight' && Array.isArray(d.ids)) highlight(d.ids)
 })
 
 // Boot handshake: tell the parent which file is mounted (intent-only; parent re-validates).

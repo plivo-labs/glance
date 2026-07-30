@@ -16,12 +16,12 @@ export type ClearIntent = { type: 'clear' }
  *  either. Payload-free — the parent decides what (if anything) they close. */
 export type ClickAwayIntent = { type: 'clickAway' }
 export type EscapeIntent = { type: 'escape' }
-/** One reflow frame's worth of text-anchor positions (see annotate/reflow.ts). `epoch` tags the
- *  index VERSION the rects were measured under — the parent drops a batch whose epoch is behind
- *  the latest it's seen, so a bad epoch must fail the whole message rather than silently become
- *  the lowest possible epoch (which would make every later, real batch look stale forever). */
-export type AnchorRectsIntent = { type: 'anchorRects'; epoch: number; rects: { id: string; rect: DOMRectLike }[] }
-export type Intent = SelectIntent | ReadyIntent | ClearIntent | ClickAwayIntent | EscapeIntent | AnchorRectsIntent
+/** A click that landed on a painted anchor (see annotate/reflow.ts's anchorIdAtPoint) — the page's
+ *  only route back to the rail now that badges are gone. Intent-only, like every other message
+ *  here: `id` is a thread id the parent looks up in its OWN loaded threads, so a forged one that
+ *  matches nothing simply reveals nothing. */
+export type AnchorClickIntent = { type: 'anchorClick'; id: string }
+export type Intent = SelectIntent | ReadyIntent | ClearIntent | ClickAwayIntent | EscapeIntent | AnchorClickIntent
 
 export type DOMRectLike = { top: number; left: number; width: number; height: number }
 
@@ -64,28 +64,6 @@ const rect = (v: unknown): DOMRectLike | undefined => {
   return { top: num(r.top), left: num(r.left), width: num(r.width), height: num(r.height) }
 }
 
-/** Strict counterpart to `rect()` above, for anchor-rects entries. That helper is deliberately
- *  best-effort: a select/pinpoint chip with a coerced-to-0 edge just sits at a slightly wrong spot.
- *  Here a coerced 0 would park a badge at the page corner pointing at nothing (see reflow.ts's
- *  measurableRect, which the annotate client already applies before posting) — so a bad edge, or a
- *  collapsed/display:none zero-area box, must drop the entry instead of faking a position for it. */
-const strictRect = (v: unknown): DOMRectLike | null => {
-  if (!v || typeof v !== 'object') return null
-  const r = v as Record<string, unknown>
-  // Narrowed one edge at a time rather than by an `.every` predicate over an array: a type guard on
-  // the ARRAY's element type tells TypeScript nothing about the individual bindings, so `width > 0`
-  // below would still be comparing `unknown` (and the whole thing would need an `as` cast to
-  // compile — the cast being exactly how a coercion bug would slip back in unnoticed).
-  const edge = (n: unknown): number | null => (typeof n === 'number' && Number.isFinite(n) ? n : null)
-  const top = edge(r.top)
-  const left = edge(r.left)
-  const width = edge(r.width)
-  const height = edge(r.height)
-  if (top === null || left === null || width === null || height === null) return null
-  if (!(width > 0 || height > 0)) return null
-  return { top, left, width, height }
-}
-
 /** Validate a message event from the content iframe. Returns a typed intent or null. */
 export function parseIntent(event: MessageEvent, expected: ExpectedSource): Intent | null {
   if (event.origin !== expected.origin) return null
@@ -110,21 +88,9 @@ export function parseIntent(event: MessageEvent, expected: ExpectedSource): Inte
       return { type: 'clickAway' }
     case 'glance:escape':
       return { type: 'escape' }
-    case 'glance:anchor-rects': {
-      const d = data as { epoch?: unknown; rects?: unknown }
-      // Deliberately NOT num(): that helper coerces a bad epoch to 0, the LOWEST possible epoch, so
-      // every later legitimate batch would compare as stale and the badges would freeze forever.
-      if (typeof d.epoch !== 'number' || !Number.isFinite(d.epoch)) return null
-      if (!Array.isArray(d.rects)) return null
-      const rects: { id: string; rect: DOMRectLike }[] = []
-      for (const entry of d.rects as unknown[]) {
-        if (!entry || typeof entry !== 'object') continue
-        const e = entry as Record<string, unknown>
-        const id = str(e.id, MAX_FIELD)
-        const r = strictRect(e.rect)
-        if (id && r) rects.push({ id, rect: r })
-      }
-      return { type: 'anchorRects', epoch: d.epoch, rects }
+    case 'glance:anchor-click': {
+      const id = str((data as { id?: unknown }).id)
+      return id ? { type: 'anchorClick', id } : null
     }
     case 'glance:ready': {
       const filePath = str((data as { filePath?: unknown }).filePath)

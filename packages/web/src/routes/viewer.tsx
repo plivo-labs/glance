@@ -4,22 +4,19 @@ import { toast } from 'sonner'
 import { api, ApiError } from '@/lib/api'
 import { isAudioFile } from '@/lib/audio'
 import { attachDbBroker } from '@/lib/dbBroker'
-import { buildBadges, initialBadges, stepBadges } from '@/lib/badges'
 import { comments, paintAnchors, type PendingAnchor, pendingToInput, type Thread } from '@/lib/comments'
 import { initialPopover, stepPopover } from '@/lib/commentPopover'
-import { type HighlightEvent, initialHighlight, stepHighlight } from '@/lib/highlightTarget'
 import { type Intent, parseIntent } from '@/lib/parseIntent'
 import { encodePathSegments } from '@/lib/paths'
 import { type ArbiterEvent, type ArbiterState, type Decision, initialArbiter, stepArbiter } from '@/lib/prefetchArbiter'
 import { recordVisit } from '@/lib/recents'
 import type { Me } from '@/lib/types'
-import { badgeOpenTarget, deepLinkReady, frameViewport, highlightCommand, railFromSearch, type RevealRequest } from '@/lib/viewerCommands'
+import { deepLinkReady, railFromSearch, type RevealRequest } from '@/lib/viewerCommands'
 import { loadViewer, PREFETCH_FAILED, type PrefetchResult, type ViewerLoaderData } from '@/lib/viewerLoader'
 import { AudioView } from '@/components/AudioView'
 import { Spinner } from '@/components/states'
 import { CommandPalette } from '@/components/CommandPalette'
 import { ViewerTopBar } from '@/components/ViewerTopBar'
-import { BadgeOverlay } from '@/components/review/BadgeOverlay'
 import { CommentPopover } from '@/components/review/CommentPopover'
 import { ReviewRail } from '@/components/review/ReviewRail'
 import { ViewerSidebar } from '@/components/ViewerSidebar'
@@ -71,9 +68,9 @@ function Viewer() {
   const isAudio = useMemo(() => entryPath !== null && isAudioFile(entryPath), [entryPath])
   const audioSrc = useMemo(() => appendPath(site.contentUrl, entryPath ?? ''), [site.contentUrl, entryPath])
 
-  // Is the comments rail on screen — the ONE thing this boolean means (slice C1a split it out of
-  // the old `review`, which also gated composing/painting; those are unconditional as of C2b,
-  // decided elsewhere, not read from here anymore).
+  // Is the comments rail on screen. It gates the on-page HIGHLIGHTS again (the rail is the panel
+  // that explains them, so they live and die with it) but NOT commenting: selecting text still
+  // composes in place with the panel closed.
   const [railOpen, setRailOpen] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [me, setMe] = useState<Me | null>(null)
@@ -87,10 +84,6 @@ function Viewer() {
   // whole chip → composer → save lifecycle and this only executes it. Held with useReducer rather
   // than the arbiter's ref, because unlike the arbiter every transition here IS the UI.
   const [popover, dispatchPopover] = useReducer(stepPopover, undefined, initialPopover)
-  // The overlay's badge model (slice B2b): the latest anchorRects batch, stepped through the pure
-  // reducer in lib/badges. Held separately from `threads` because a batch's epoch race is about
-  // POSITIONS, not thread content — buildBadges combines the two only at render time (below).
-  const [badges, setBadges] = useState(initialBadges)
   // `dirty` is a reducer INPUT, read at dispatch time from a ref: the draft stays inside the
   // Composer (Composer.onDirtyChange), and a re-render per keystroke would buy nothing.
   const dirtyRef = useRef(false)
@@ -102,16 +95,20 @@ function Viewer() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [cmdOpen, setCmdOpen] = useState(false)
 
-  // Paint anchors back into the iframe via the trusted parent→child channel — UNCONDITIONALLY
-  // (C2b): badges are on for anyone with access whether or not the rail panel is open, since the
-  // rail is just a view onto the same threads, not a gate on showing them. The text-vs-element
-  // mapping (and that an existing element thread still reaches the iframe) is lib/comments'
-  // paintAnchors, unit-tested there — this is only the postMessage wiring.
+  // Paint anchors back into the iframe via the trusted parent→child channel. A paint IS the
+  // highlight now (client.ts lights everything it's sent), so this is gated on `railOpen`: open the
+  // panel and every commented passage lights up, close it and the EMPTY paint below clears the page
+  // — the reader gets the document exactly as its author wrote it. The text-vs-element mapping (and
+  // that an existing element thread still reaches the iframe) is lib/comments' paintAnchors,
+  // unit-tested there — this is only the postMessage wiring.
+  // `loaded` is a DEPENDENCY, not just a guard: the client's message listener isn't wired until the
+  // frame has booted, so a paint posted before that is dropped on the floor with nothing to re-fire
+  // it — which is exactly the `?review=1` deep link (rail open and threads in before onLoad).
   const paint = useCallback(() => {
     const win = iframeRef.current?.contentWindow
-    if (!win) return
-    win.postMessage({ type: 'glance:paint', anchors: paintAnchors(threads) }, contentOrigin)
-  }, [threads, contentOrigin])
+    if (!win || !loaded) return
+    win.postMessage({ type: 'glance:paint', anchors: railOpen ? paintAnchors(threads) : [] }, contentOrigin)
+  }, [threads, railOpen, loaded, contentOrigin])
 
   // ── S11 comments-load arbitration ────────────────────────────────────────────────────────────
   // The loader fires a comments prefetch BEFORE the iframe mounts; this pure reducer
@@ -173,10 +170,6 @@ function Viewer() {
   // Actionable count for the toolbar badge: open threads (mirrors the rail's default "open" list).
   const openCount = useMemo(() => threads.filter((t) => t.status === 'open').length, [threads])
 
-  // The overlay's drawable chips: combines the latest rect batch with the current threads (for
-  // visibility/author/count), recomputed only when either input actually changes.
-  const badgeList = useMemo(() => buildBadges(badges, threads), [badges, threads])
-
   // Per-site tab title: without this the shell's static <title> ("Glance — …") shows for EVERY
   // site. site.title is owner-set or deploy-derived from the entry HTML's <title>; fall back to
   // the slug. Restored on unmount so back-navigation to the dashboard keeps the shell default.
@@ -199,6 +192,19 @@ function Viewer() {
     })
     return broker.dispose
   }, [site.spaceSlug, site.siteSlug, contentOrigin])
+
+  // The rail's reveal has two producers: the one-shot deep link below and clicks on a painted
+  // highlight. A click is the source the nonce was built for — the same thread can be clicked over
+  // and over, and each click must reveal again, so the counter (not the thread id) is what changes.
+  // Once a click has happened it wins for the rest of the page's life; the deep link fires at most
+  // once, at mount, before any click can have landed.
+  const [clickFocusRequest, setClickFocusRequest] = useState<RevealRequest | null>(null)
+  const clickRevealNonce = useRef(0)
+  const revealThread = useCallback((thread: Thread) => {
+    setRailOpen(true)
+    clickRevealNonce.current += 1
+    setClickFocusRequest({ id: thread.id, nonce: clickRevealNonce.current })
+  }, [])
 
   // Listen for intents from the iframe. parseIntent re-validates origin+source; it is a filter,
   // not a trust oracle — nothing here writes without a subsequent explicit user action.
@@ -239,18 +245,17 @@ function Viewer() {
       // Neither of these is observable from the parent: they happen inside a cross-origin document.
       else if (intent.type === 'clickAway') dispatchPopover({ type: 'clickAway', dirty: dirtyRef.current })
       else if (intent.type === 'escape') dispatchPopover({ type: 'dismiss' })
-      // The iframe's own box IS the frame viewport (the overlay is mounted as its sibling in that
-      // same wrapper) — measuring it HERE, in the event handler, is what keeps lib/badges pure and
-      // avoids a ResizeObserver just to learn a size the DOM already hands us for free. Ungated on
-      // railOpen even though the OVERLAY isn't: tracking costs nothing while nothing is painted, and
-      // it's what lets the chips appear with the panel rather than one reflow later.
-      else if (intent.type === 'anchorRects') {
-        setBadges((s) => stepBadges(s, intent, frameViewport(iframeRef.current)))
+      // A click on a painted highlight — the page→rail direction. The id is looked up in OUR
+      // threads (a forged one matches nothing and reveals nothing), and the rail is necessarily
+      // already open, since nothing is painted while it's closed.
+      else if (intent.type === 'anchorClick') {
+        const target = threads.find((t) => t.id === intent.id)
+        if (target) revealThread(target)
       }
     }
     window.addEventListener('message', onMsg)
     return () => window.removeEventListener('message', onMsg)
-  }, [contentOrigin, me, site.spaceSlug, site.siteSlug, site.title, dispatch, loadThreads])
+  }, [contentOrigin, me, site.spaceSlug, site.siteSlug, site.title, threads, dispatch, loadThreads, revealThread])
 
   useEffect(() => {
     api
@@ -286,8 +291,6 @@ function Viewer() {
       setThreads([])
       setComposing(null)
       dispatchPopover({ type: 'dismiss' }) // a chip/popover pinned to the OLD document's rect
-      setBadges(initialBadges()) // badges pinned to the OLD document's rects too
-      dispatchHighlight({ type: 'navigate' }) // a highlight lit in the OLD document too
       setLoaded(false)
     }
     if (commentsPromise && commentsPromise !== consumedPrefetch.current && entryPath !== null) {
@@ -323,34 +326,9 @@ function Viewer() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  // B3b-hard: which thread ids are lit RIGHT NOW is a pure decision (lib/highlightTarget),
-  // extracted for the same reason lib/badges and lib/commentPopover were — so hover-replaces-not-
-  // unions, and every clear (leave/exitReview/navigate), are unit-tested instead of living inline
-  // in callbacks. This component only dispatches events and posts whatever the reducer says.
-  const [highlightState, dispatchHighlight] = useReducer(stepHighlight, undefined, initialHighlight)
-
-  // Post the current highlight to the iframe whenever the reducer's output actually changes —
-  // `stepHighlight` returns the SAME state object for a no-op event, so an unrelated re-render
-  // never re-sends it. Guarded by `loaded` like the other parent→child posts below (the client's
-  // message listener isn't wired until then).
-  useEffect(() => {
-    const win = iframeRef.current?.contentWindow
-    if (!win || !loaded) return
-    win.postMessage(highlightCommand(highlightState), contentOrigin)
-  }, [highlightState, loaded, contentOrigin])
-
-  // Shared entry point for every "hover" source (badge pointer/focus, rail-card pointer/focus):
-  // a null or empty id list is a leave, otherwise the ids REPLACE whatever was lit before — never
-  // a union across two hovered chips.
-  const hoverHighlight = useCallback((ids: string[] | null) => {
-    const event: HighlightEvent = ids && ids.length > 0 ? { type: 'hover', ids } : { type: 'leave' }
-    dispatchHighlight(event)
-  }, [])
-
-  // Scroll an anchor into view in the iframe: element → its selector; text → its quote. Deliberately
-  // the ONLY thing a rail-card/badge CLICK does — B3b-hard's fix is that lighting the highlight is
-  // never a side effect of scrolling: it comes exclusively from hoverHighlight (pointer/focus) and
-  // must clear on leave/blur, which a click has no matching event for.
+  // Scroll an anchor into view in the iframe: element → its selector; text → its quote. What a rail
+  // card's click does; nothing about it changes what is LIT, because everything already is for as
+  // long as the rail is open.
   const scrollAnchor = useCallback(
     (thread: Thread) => {
       const win = iframeRef.current?.contentWindow
@@ -387,37 +365,21 @@ function Viewer() {
     if (deepLinkFocused.current || !deepLinkThreadId || !railOpen || !deepLinkReady({ isAudio, loaded, hasThread: !!target })) return
     deepLinkFocused.current = true
     // Scroll the iframe to the anchor; the rail reveals + scrolls the thread card itself (ReviewRail
-    // owns the open/resolved filter, so it can un-hide a resolved target). scrollAnchor only —
-    // landing here is a page load, not a click or hover, so `navigate` is dispatched too (a
-    // deep-link mount lights NOTHING; see lib/highlightTarget's 'navigate' case).
+    // owns the open/resolved filter, so it can un-hide a resolved target).
     scrollAnchor(target!)
-    dispatchHighlight({ type: 'navigate' })
   }, [deepLinkThreadId, railOpen, loaded, isAudio, threads, scrollAnchor])
 
   // Stable identity for ReviewRail's focusRequest prop: an inline object literal here would be a
-  // NEW reference on every viewer render (threads loading, `loaded` flipping, badge batches
-  // arriving, …), and ReviewRail's reveal effect is keyed on `[focusRequest, threads]` — so every
-  // unrelated re-render would re-run it, whose cleanup cancels the pending rAF card-scroll before
-  // it fires, and the re-run then no-ops on the (nonce-)unchanged request. Memoized on the one
-  // thing that should actually change it: the deep link's own id (nonce is a constant 0 here — see
-  // the comment on ReviewRail's focusRequest prop below).
+  // NEW reference on every viewer render (threads loading, `loaded` flipping, …), and ReviewRail's
+  // reveal effect is keyed on `[focusRequest, threads]` — so every unrelated re-render would re-run
+  // it, whose cleanup cancels the pending rAF card-scroll before it fires, and the re-run then
+  // no-ops on the (nonce-)unchanged request. Memoized on the one thing that should actually change
+  // it: the deep link's own id (nonce is a constant 0 here — see the comment on ReviewRail's
+  // focusRequest prop below).
   const deepLinkFocusRequest = useMemo(
     () => (deepLinkThreadId ? { id: deepLinkThreadId, nonce: 0 } : null),
     [deepLinkThreadId],
   )
-
-  // The rail's reveal has two producers: the one-shot deep link above and badge clicks. A badge is
-  // the source the nonce was built for — the same thread can be clicked over and over, and each
-  // click must reveal again, so the counter (not the thread id) is what changes. Once a click has
-  // happened it wins for the rest of the page's life; the deep link fires at most once, at mount,
-  // before any click can have landed.
-  const [badgeFocusRequest, setBadgeFocusRequest] = useState<RevealRequest | null>(null)
-  const badgeRevealNonce = useRef(0)
-  const revealFromBadge = useCallback((thread: Thread) => {
-    setRailOpen(true)
-    badgeRevealNonce.current += 1
-    setBadgeFocusRequest({ id: thread.id, nonce: badgeRevealNonce.current })
-  }, [])
 
   // The one create path, text and voice alike, rail and popover alike — hence the anchor is an
   // ARGUMENT: the rail's page/element anchor and the popover's text anchor drive the same write.
@@ -443,13 +405,11 @@ function Viewer() {
       throw err
     }
     onWritten()
+    // Adding a comment OPENS the rail — always. The new thread's own card appearing there is the
+    // confirmation (and its highlight lighting up on the page), so there is no toast: a toast was
+    // only ever standing in for a panel that wasn't allowed to open itself. Already open is a no-op.
+    setRailOpen(true)
     await refresh(filePath)
-    // Confirm the write ONLY when nothing else on screen can. With the panel open the new thread
-    // appears in the rail as its own card; with it closed the composer just vanishes — badges are
-    // gated with the panel, so the only other signal is the top bar's count ticking up in the far
-    // corner. The action is the way in, without commenting having to open the panel itself.
-    if (!railOpen)
-      toast.success('Comment added', { action: { label: 'Show comments', onClick: () => setRailOpen(true) } })
   }
 
   const createThread = (body: string, mentions: string[]) =>
@@ -504,17 +464,16 @@ function Viewer() {
       ),
     )
 
-  // Closes the rail panel — via the Comments toggle or the rail's own ✕ (C2b: "Done" and the old
-  // review-mode exit are gone, but closing still clears what only makes sense while the panel is
-  // open: the rail's own page-anchor composer, and whatever's lit from a rail-card hover). It does
-  // NOT touch the popover (dispatchPopover) — that used to be safe because the popover was ALSO
-  // gated on review and unmounted the moment review ended; now it's unconditional (C2b), so
-  // dismissing it here would destroy an unrelated in-progress draft just because the user closed
-  // the rail panel. The popover has its own explicit teardown (Escape / click-away / save).
+  // Closes the rail panel — via the Comments toggle or the rail's own ✕ — and clears the rail's own
+  // page-anchor composer with it. The on-page highlights go too, but not from here: `railOpen` is a
+  // dependency of `paint`, so flipping it re-runs that effect with an empty anchor list. It does NOT
+  // touch the popover (dispatchPopover) — that used to be safe because the popover was ALSO gated on
+  // review and unmounted the moment review ended; now it's unconditional (C2b), so dismissing it
+  // here would destroy an unrelated in-progress draft just because the user closed the rail panel.
+  // The popover has its own explicit teardown (Escape / click-away / save).
   function closeRail() {
     setRailOpen(false)
     setComposing(null)
-    dispatchHighlight({ type: 'exitReview' })
   }
 
   const toggleRail = () => (railOpen ? closeRail() : setRailOpen(true))
@@ -586,25 +545,6 @@ function Viewer() {
                 onDirtyChange={onDirtyChange}
               />
             )}
-            {/* Badges ride WITH the rail: they only paint while the panel is open, so a reader who
-                hasn't asked for comments gets the page exactly as its author wrote it. The rect
-                handler above stays ungated on purpose — the geometry is already current when the
-                panel opens, so the chips appear with it instead of after the next reflow. */}
-            {!isAudio && railOpen && (
-              <BadgeOverlay
-                badges={badgeList}
-                // A badge click scrolls the iframe to the anchor AND reveals the thread in the rail
-                // — (in ReviewRail) moving the status tab to the target's own, so the reveal can't
-                // be swallowed by whichever filter the user left selected.
-                onOpen={(threadIds) => {
-                  const target = badgeOpenTarget(threadIds, threads)
-                  if (!target) return
-                  scrollAnchor(target)
-                  revealFromBadge(target)
-                }}
-                onHoverChange={hoverHighlight}
-              />
-            )}
             {!isAudio && !loaded && (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background text-muted-foreground">
                 <Spinner className="size-6" />
@@ -625,16 +565,15 @@ function Viewer() {
             onCreateVoice={createVoiceThread}
             onChanged={() => filePath && refresh(filePath)}
             onFocusAnchor={scrollAnchor}
-            onHoverThread={hoverHighlight}
             onClose={closeRail}
             onStartComment={isAudio ? startPageComment : undefined}
             getCurrentTime={isAudio ? getCurrentTime : undefined}
-            // Badge clicks take over from the deep link once one has happened (see revealFromBadge):
-            // the link is one-shot at mount and carries a constant nonce, while a badge re-requests
-            // the same thread on every click and bumps the nonce to say so. Both are stable
-            // references — an inline literal here re-ran ReviewRail's reveal effect on every viewer
-            // render and silently dropped the pending card scroll.
-            focusRequest={badgeFocusRequest ?? deepLinkFocusRequest}
+            // Highlight clicks take over from the deep link once one has happened (see revealThread):
+            // the link is one-shot at mount and carries a constant nonce, while a click re-requests
+            // the same thread every time and bumps the nonce to say so. Both are stable references —
+            // an inline literal here re-ran ReviewRail's reveal effect on every viewer render and
+            // silently dropped the pending card scroll.
+            focusRequest={clickFocusRequest ?? deepLinkFocusRequest}
           />
         )}
       </div>

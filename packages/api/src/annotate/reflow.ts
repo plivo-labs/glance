@@ -1,121 +1,54 @@
-// Reflow-side policy for the annotate client: keeping the shared text index HONEST, and turning the
-// painted text anchors into an epoch-tagged rect batch the parent draws badges from. BROWSER code
-// (it works on DOM objects) but GLOBAL-FREE: the document, the window and the emitter are all
-// INJECTED, so the policy is unit-testable under a constructed happy-dom window with no global
-// registration — the same seam locator.ts and selection.ts use. client.ts is only the wiring.
-// Bundled into client.ts by scripts/build-annotate.ts; excluded from the worker tsconfig (DOM types).
+// Reflow-side policy for the annotate client: keeping the shared text index HONEST, turning the
+// painted anchors into the Ranges the CSS Custom Highlight shows, and hit-testing a click against
+// them. BROWSER code (it works on DOM objects) but GLOBAL-FREE: the document, the window and the
+// point are all INJECTED, so the policy is unit-testable under a constructed happy-dom window with
+// no global registration — the same seam locator.ts and selection.ts use. client.ts is only the
+// wiring. Bundled into client.ts by scripts/build-annotate.ts; excluded from the worker tsconfig
+// (DOM types).
 
 import type { TextContext } from '../lib/anchor'
-import { currentEpoch, findRange, newEpoch, resolveSelector } from './locator'
-import type { Rect } from './selection'
+import { findRange, newEpoch, resolveSelector } from './locator'
 
 export type TextAnchor = { id: string; quote?: string; context?: TextContext }
 export type ElementAnchor = { id: string; selector: string }
-export type AnchorRect = { id: string; rect: Rect }
-export type RectsMessage = { type: 'glance:anchor-rects'; epoch: number; rects: AnchorRect[] }
+export type Point = { x: number; y: number }
 
-/** A measurement a badge can actually be placed against, or null. Geometry carries no position in
- *  two ways, and BOTH must be dropped rather than passed on. A non-finite edge never comes out of a
- *  real getBoundingClientRect, but it is what the parent has to be able to trust it will never see
- *  (its own parseIntent would coerce a NaN to 0). A ZERO-AREA box does happen constantly: it is what
- *  a collapsed range measures, and what any range inside a display:none subtree measures. Emit it
- *  and the badge parks at (0,0) in the page corner, pointing at nothing. */
-export function measurableRect(r: { top: number; left: number; width: number; height: number }): Rect | null {
-  const rect = { top: r.top, left: r.left, width: r.width, height: r.height }
-  if (![rect.top, rect.left, rect.width, rect.height].every((n) => Number.isFinite(n))) return null
-  return rect.width > 0 || rect.height > 0 ? rect : null
-}
-
-/** Where each text anchor currently sits. The epoch tags the index VERSION the rects were measured
- *  under: a batch is consumed asynchronously by the parent, and one that lands after the DOM moved on
- *  describes positions that no longer exist, so the parent drops it. An anchor that no longer
- *  re-finds — or whose range has no real geometry — contributes no rect, which is how the parent
- *  learns to remove its badge. */
-export function textRectBatch(anchors: TextAnchor[], doc: Document): RectsMessage {
-  const rects: AnchorRect[] = []
-  for (const a of anchors) {
-    // All of these re-finds share ONE text index per DOM version, so this is a regex scan per
-    // anchor, not a full document walk per anchor.
-    const range = a.quote ? findRange(a.quote, doc, a.context) : null
-    const rect = range && measurableRect(range.getBoundingClientRect())
-    if (rect) rects.push({ id: a.id, rect })
-  }
-  return { type: 'glance:anchor-rects', epoch: currentEpoch(), rects }
-}
-
-/** Where each element ("pinpoint") anchor currently sits: its resolved selector's live bounding
- *  box, subject to the SAME measurableRect rejection as a text anchor — an off-DOM or zero-area
- *  box contributes nothing. An unresolved selector (the element was removed, or never existed)
- *  contributes no rect either, mirroring an orphaned text quote — that absence is how the parent
- *  learns to drop the badge. resolveSelector is the SAME function client.ts's overlay box is
- *  painted from, so a badge can never disagree with where the outline box actually sits. */
-export function elementRectBatch(anchors: ElementAnchor[], doc: Document): AnchorRect[] {
-  const rects: AnchorRect[] = []
-  for (const a of anchors) {
-    const el = resolveSelector(a.selector, doc)
-    const rect = el && measurableRect(el.getBoundingClientRect())
-    if (rect) rects.push({ id: a.id, rect })
-  }
-  return rects
-}
-
-/** One rect batch covering BOTH anchor kinds, tagged with the single epoch they were measured
- *  under — element threads must badge exactly like text ones (C2b), and riding the same message
- *  as the text half is what keeps the two from ever landing under different epochs in the parent's
- *  eyes. */
-export function anchorRectBatch(textAnchors: TextAnchor[], elementAnchors: ElementAnchor[], doc: Document): RectsMessage {
-  const text = textRectBatch(textAnchors, doc)
-  return { type: 'glance:anchor-rects', epoch: text.epoch, rects: [...text.rects, ...elementRectBatch(elementAnchors, doc)] }
-}
-
-/** The Ranges to paint into the `glance-comment` CSS Custom Highlight RIGHT NOW — the hover/focus
- *  set the parent asks for, in the order it asks for it, never the full anchor list. Painting every
- *  anchor unconditionally (the bug this replaces) marks up every commented sentence on the page
- *  PERMANENTLY; the ruling is that the highlight is a hover affordance, so the parent must be able
- *  to ask for exactly the ids it wants lit and nothing else. An id with no matching anchor, or an
- *  anchor whose quote no longer resolves (the page changed under it), silently contributes no
- *  Range — same drop rule as textRectBatch, for the same reason: a badge/highlight for text that
- *  isn't there anymore is worse than no highlight. */
-export function highlightRanges(anchors: TextAnchor[], ids: string[], doc: Document): Range[] {
-  const byId = new Map(anchors.map((a) => [a.id, a]))
+/** Every painted text anchor's Range, to paint into the `glance-comment` CSS Custom Highlight.
+ *  A paint IS the highlight now: the parent only sends anchors while the comments rail is open, so
+ *  "what is painted" and "what is lit" are the same set and there is no separate hover command to
+ *  disagree with it. An anchor whose quote no longer resolves (the page changed under it) silently
+ *  contributes no Range — a highlight over text that isn't there anymore is worse than none. */
+export function anchorRanges(anchors: TextAnchor[], doc: Document): Range[] {
   const ranges: Range[] = []
-  for (const id of ids) {
-    const anchor = byId.get(id)
-    const range = anchor?.quote ? findRange(anchor.quote, doc, anchor.context) : null
+  for (const a of anchors) {
+    const range = a.quote ? findRange(a.quote, doc, a.context) : null
     if (range) ranges.push(range)
   }
   return ranges
 }
 
-/** What a `glance:paint` command decides for the highlight, and nothing else: record the anchors
- *  (for `textRectBatch` to place badges from) and hand back ZERO Ranges, always. `paintTexts` in
- *  client.ts calls this and applies whatever it returns verbatim, never computing its own Ranges —
- *  client.test.ts drives that wiring for real (happy-dom has no CSS Custom Highlight API, so it
- *  can't be exercised HERE) and is what actually catches the persistent-markup bug this file's
- *  header describes: this function alone being pinned to always-empty proves nothing if client.ts
- *  is free to bypass it, which is exactly what survived until that test existed. */
-export function paintTextAnchors(anchors: TextAnchor[]): { anchors: TextAnchor[]; ranges: Range[] } {
-  return { anchors, ranges: [] }
-}
+const hits = (r: { top: number; left: number; width: number; height: number }, p: Point): boolean =>
+  p.x >= r.left && p.x <= r.left + r.width && p.y >= r.top && p.y <= r.top + r.height
 
-/** Emit a batch on every reflow frame. Deliberately NOT guarded by a change key the way
- *  `glance:pinpoint-resolved` is: rects move on EVERY scroll frame and the badges have to follow, so
- *  a "only when the SET changes" guard would freeze them at their first position. The one thing
- *  suppressed is the ENDLESS empty batch — the first empty one matters (it is what clears the last
- *  badge when the final anchor, text or element, is unpainted or stops resolving), but after it a
- *  page with no anchors of either kind must not post a message every frame for the rest of the
- *  session. ONE emitter for both kinds (not one per kind) is what keeps a badge from ever landing
- *  under a different epoch than the outline box it's supposed to sit beside. */
-export function createRectEmitter(
-  emit: (msg: RectsMessage) => void,
-): (textAnchors: TextAnchor[], elementAnchors: ElementAnchor[], doc: Document) => void {
-  let lastCount = 0
-  return (textAnchors, elementAnchors, doc) => {
-    const batch = anchorRectBatch(textAnchors, elementAnchors, doc)
-    if (batch.rects.length === 0 && lastCount === 0) return
-    lastCount = batch.rects.length
-    emit(batch)
+/** Which anchor (if any) a click at `point` landed on — the ONE way the page navigates to a thread
+ *  now that badges are gone. A CSS Custom Highlight is paint, not DOM: it takes part in no hit
+ *  testing at all, so the highlighted text has to be re-found and its client rects tested against
+ *  the point by hand. A Range spanning a line break measures as SEVERAL rects, hence getClientRects
+ *  rather than its bounding box (which would cover the whole indented block between two lines).
+ *
+ *  Text is tested before elements: a quote inside an element-anchored container is the more
+ *  specific of two overlapping anchors, and the click means the one the user can actually see the
+ *  highlight on. Returns null for a click anywhere else — that click is the page's own, untouched. */
+export function anchorIdAtPoint(textAnchors: TextAnchor[], elementAnchors: ElementAnchor[], point: Point, doc: Document): string | null {
+  for (const a of textAnchors) {
+    const range = a.quote ? findRange(a.quote, doc, a.context) : null
+    if (range && Array.from(range.getClientRects()).some((r) => hits(r, point))) return a.id
   }
+  for (const a of elementAnchors) {
+    const el = resolveSelector(a.selector, doc)
+    if (el && hits(el.getBoundingClientRect(), point)) return a.id
+  }
+  return null
 }
 
 export type InvalidationDeps = {
@@ -125,7 +58,7 @@ export type InvalidationDeps = {
     removeEventListener(type: string, listener: () => void): void
     MutationObserver: typeof MutationObserver
   }
-  /** Run after the version bump — the client re-reads (and re-emits) on the next frame. */
+  /** Run after the version bump — the client re-reads (and repaints) on the next frame. */
   onInvalidate: () => void
 }
 
