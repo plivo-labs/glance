@@ -444,6 +444,12 @@ function Viewer() {
     }
     onWritten()
     await refresh(filePath)
+    // Confirm the write ONLY when nothing else on screen can. With the panel open the new thread
+    // appears in the rail as its own card; with it closed the composer just vanishes — badges are
+    // gated with the panel, so the only other signal is the top bar's count ticking up in the far
+    // corner. The action is the way in, without commenting having to open the panel itself.
+    if (!railOpen)
+      toast.success('Comment added', { action: { label: 'Show comments', onClick: () => setRailOpen(true) } })
   }
 
   const createThread = (body: string, mentions: string[]) =>
