@@ -1,4 +1,4 @@
-import { Check, ChevronRight, Command, GitFork, History, Menu, MessageSquare, Share2, Sparkles, Star } from 'lucide-react'
+import { ChevronRight, Command, GitFork, History, Menu, MessageSquare, Share2, Sparkles, Star } from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { useForkSite } from '@/hooks/useForkSite'
@@ -17,29 +17,30 @@ import { SummarySheet } from '@/components/SummarySheet'
 import { BrandMark, Spinner } from '@/components/states'
 
 // The persistent top chrome for the viewer: brand (→ dashboard) + a breadcrumb, then one action
-// row that stays put across modes — Fork, TL;DR, Comments (with an open count, outside review),
-// Share, and Done while reviewing. The Read·Annotate toggle lives in the ReviewRail header, next
-// to the comments it drives. Replaces the old floating PreviewToolbar dock.
+// row — Fork, TL;DR, Comments, Share. Replaces the old floating PreviewToolbar dock.
 //
-// Below `md` the row doesn't fit (7 controls overlapped the breadcrumb on a phone), so everything
-// except Comments and Done collapses into a hamburger menu. Fork/TL;DR/Share are driven from shared
-// state rather than duplicated components, so the desktop button and the menu item are one action.
+// C2b: "review mode" is gone — Comments is a plain TOGGLE for the rail panel, always present (an
+// open-count badge rides along), and there is no separate Done button; the rail's own ✕ closes it
+// too. Badges/painting/commenting are unconditional elsewhere (viewer.tsx) — the rail is just a
+// panel you open and close, not a gate on any of that.
+//
+// Below `md` the row doesn't fit (6 controls overlapped the breadcrumb on a phone), so everything
+// except Comments collapses into a hamburger menu. Fork/TL;DR/Share are driven from shared state
+// rather than duplicated components, so the desktop button and the menu item are one action.
 export function ViewerTopBar({
   site,
   sitePath,
-  review,
+  railOpen,
   commentCount,
-  onReview,
-  onExit,
+  onToggleRail,
   onToggleSidebar,
   onSearch,
 }: {
   site: ViewerSite
   sitePath: string
-  review: boolean
+  railOpen: boolean
   commentCount: number
-  onReview: () => void
-  onExit: () => void
+  onToggleRail: () => void
   onToggleSidebar: () => void
   onSearch: () => void
 }) {
@@ -128,23 +129,22 @@ export function ViewerTopBar({
           <Sparkles className="size-3.5" />
           TL;DR
         </Button>
-        {!review && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={onReview}
-            className={cn('gap-1.5', commentCount > 0 && 'text-primary')}
-            title={commentCount > 0 ? `${commentCount} open comment${commentCount === 1 ? '' : 's'}` : 'Comments'}
-          >
-            <MessageSquare className="size-3.5" />
-            Comments
-            {commentCount > 0 && (
-              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 font-semibold text-[10px] text-primary-foreground leading-none tabular-nums">
-                {commentCount > 9 ? '9+' : commentCount}
-              </span>
-            )}
-          </Button>
-        )}
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={onToggleRail}
+          aria-pressed={railOpen}
+          className={cn('gap-1.5', commentCount > 0 && 'text-primary')}
+          title={commentCount > 0 ? `${commentCount} open comment${commentCount === 1 ? '' : 's'}` : 'Comments'}
+        >
+          <MessageSquare className="size-3.5" />
+          Comments
+          {commentCount > 0 && (
+            <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 font-semibold text-[10px] text-primary-foreground leading-none tabular-nums">
+              {commentCount > 9 ? '9+' : commentCount}
+            </span>
+          )}
+        </Button>
         {site.isOwner && (
           <Button
             variant="ghost"
@@ -157,13 +157,6 @@ export function ViewerTopBar({
             <Share2 />
           </Button>
         )}
-        {review && (
-          <Button size="sm" variant="secondary" onClick={onExit}>
-            <Check className="size-3.5" />
-            Done
-          </Button>
-        )}
-
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon" className="size-8 md:hidden" aria-label="Menu">

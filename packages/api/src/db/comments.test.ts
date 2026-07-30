@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'bun:test'
 import { eq } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
+import { TEXT_CONTEXT_VERSION } from '../lib/anchor'
 import { batchAll } from '../lib/d1'
 import { makeDb, makeR2, seedComment, seedFile, seedSite, seedSpace, seedThread, seedUser } from '../test/harness'
 import { commentThreads, users } from './schema'
 import {
+  type CreateThreadInput,
   addComment,
   assembleThreadViews,
   commentByIdStmt,
@@ -156,7 +158,7 @@ describe('createThread — stores the anchor', () => {
       createdBy: user,
       body: 'this chart is wrong',
       anchorType: 'element',
-      anchor: { selector: '#chart > svg', tag: 'svg', preview: 'Bar chart', textFallback: 'Revenue' },
+      element: { selector: '#chart > svg', tag: 'svg', preview: 'Bar chart', textFallback: 'Revenue' },
     })
 
     const [thread] = await listThreads(db, sp, siteId, path)
@@ -164,7 +166,108 @@ describe('createThread — stores the anchor', () => {
     expect(thread.anchorType).toBe('element')
     expect(thread.quote).toBeNull()
     expect(thread.anchor).toEqual({ selector: '#chart > svg', tag: 'svg', preview: 'Bar chart', textFallback: 'Revenue' })
+    expect(thread.context).toBeNull() // an element row never reads back as text context
     expect(thread.comments.map((c) => c.body)).toEqual(['this chart is wrong'])
+  })
+
+  test('create-thread-stores-text-context: a text thread round-trips its occurrence context', async () => {
+    const { db, sp, siteId, user, path } = await siteWithFile('<p>Beta section. Revenue is up.</p>')
+
+    await createThread(db, {
+      siteId,
+      filePath: path,
+      createdBy: user,
+      body: 'which one is this?',
+      quote: 'Revenue is up.',
+      context: { v: TEXT_CONTEXT_VERSION, prefix: 'Beta section. ', suffix: '' },
+    })
+
+    const [thread] = await listThreads(db, sp, siteId, path)
+    expect(thread.anchorType).toBe('text')
+    expect(thread.context).toEqual({ prefix: 'Beta section. ', suffix: '' })
+    expect(thread.anchor).toBeNull() // context is not an element anchor, and never surfaces as one
+  })
+
+  test('create-thread-text-context-optional: no context → null, exactly as before context existed', async () => {
+    const { db, sp, siteId, user, path } = await siteWithFile('<p>The quick brown fox jumps.</p>')
+    await createThread(db, { siteId, filePath: path, createdBy: user, body: 'x', quote: 'brown fox' })
+    const [thread] = await listThreads(db, sp, siteId, path)
+    expect(thread.context).toBeNull()
+  })
+
+})
+
+// The `anchor` column is shared by two payload kinds and discriminated only by the sibling
+// `anchorType` column, and both guards that keep them apart are RUNTIME guards. A test that can
+// only express well-typed input therefore proves nothing about them: TS types are erased, the real
+// callers include a legacy pre-split shape (one `anchor` field carrying either kind) and anything
+// reaching the repo directly, and a wrong write is invisible through the anchorType-gated readers —
+// they answer null for the mismatched kind whether or not the bad payload was persisted. So these
+// specs push mismatched payloads past the compile-time shape and assert on the RAW column.
+describe('createThread — the anchor column never holds the wrong payload', () => {
+  /** The pre-split input type took ONE `anchor` field for both kinds; every field is loosened so a
+   *  spec can send that legacy name, or the right name carrying the wrong kind. */
+  type LooseCreateInput = Omit<CreateThreadInput, 'element' | 'context'> & {
+    element?: unknown
+    context?: unknown
+    anchor?: unknown
+  }
+  const createThreadLoose = (db: DrizzleD1Database, input: LooseCreateInput) => createThread(db, input as CreateThreadInput)
+
+  const storedAnchor = async (db: DrizzleD1Database, threadId: string) =>
+    (await db.select().from(commentThreads).where(eq(commentThreads.id, threadId)))[0].anchor
+
+  const ELEMENT = { selector: '#chart > svg', tag: 'svg', preview: 'Bar chart', textFallback: 'Revenue' }
+  const CONTEXT = { v: TEXT_CONTEXT_VERSION, prefix: 'Beta section. ', suffix: '' }
+
+  test('create-thread-drops-unversioned-context: a legacy context with no version tag is not persisted', async () => {
+    const { db, sp, siteId, user, path } = await siteWithFile('<p>Beta section. Revenue is up.</p>')
+    const { threadId } = await createThreadLoose(db, {
+      siteId,
+      filePath: path,
+      createdBy: user,
+      body: 'from a caller the compiler never saw',
+      quote: 'Revenue is up.',
+      context: { prefix: 'Beta section. ', suffix: '' }, // the pre-v2 shape: no `v`
+    })
+    // Storing it would be worse than dropping it: reads gate on the same version, so the row would
+    // come back context-less anyway — an unreadable row instead of an honest null.
+    expect(await storedAnchor(db, threadId)).toBeNull()
+    const [thread] = await listThreads(db, sp, siteId, path)
+    expect(thread.anchorType).toBe('text') // still a normal text thread, anchoring as it did pre-context
+    expect(thread.context).toBeNull()
+  })
+
+  test('create-thread-element-row-never-holds-text-context: a context payload on an element request is not persisted', async () => {
+    const { db, siteId, user, path } = await siteWithFile('<div id="chart"><svg></svg></div>')
+    const { threadId } = await createThreadLoose(db, {
+      siteId,
+      filePath: path,
+      createdBy: user,
+      body: 'oops',
+      anchorType: 'element',
+      context: CONTEXT,
+      anchor: CONTEXT, // the legacy field name — this is the pairing that used to write it verbatim
+    })
+    expect(await storedAnchor(db, threadId)).toBeNull()
+  })
+
+  // CHARACTERIZATION, not a regression pin: the pre-split code already dropped this (its version
+  // gate rejected an untagged element payload on the text branch), so this spec stays green against
+  // both implementations. The cast bug only ever existed on the ELEMENT branch — the spec above is
+  // the one that goes red without the fix.
+  test('create-thread-text-row-never-holds-a-selector: an element payload on a text request is not persisted', async () => {
+    const { db, siteId, user, path } = await siteWithFile('<p>Beta section. Revenue is up.</p>')
+    const { threadId } = await createThreadLoose(db, {
+      siteId,
+      filePath: path,
+      createdBy: user,
+      body: 'oops',
+      quote: 'Revenue is up.',
+      context: ELEMENT,
+      anchor: ELEMENT,
+    })
+    expect(await storedAnchor(db, threadId)).toBeNull()
   })
 })
 

@@ -1,21 +1,13 @@
-import { MessageSquarePlus } from 'lucide-react'
+import { MessageSquarePlus, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { comments, type PendingAnchor, type Thread, type ThreadStatus } from '@/lib/comments'
 import { timestampPrefix } from '@/lib/audio'
 import type { Me, ViewerSite } from '@/lib/types'
+import { type RevealRequest, shouldReveal } from '@/lib/viewerCommands'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
-import { Segmented } from '@/components/ui/segmented'
-import { AnchorChip } from '@/components/review/AnchorChip'
 import { Composer } from '@/components/review/Composer'
 import { ThreadCard } from '@/components/review/ThreadCard'
-
-export type ReviewMode = 'read' | 'annotate'
-
-const MODES = [
-  { value: 'read', label: 'Read', title: 'Browse the page' },
-  { value: 'annotate', label: 'Annotate', title: 'Click an element to comment' },
-] as const satisfies readonly { value: ReviewMode; label: string; title: string }[]
 
 const byUpdatedDesc = (a: Thread, b: Thread) => b.updatedAt.localeCompare(a.updatedAt)
 
@@ -24,14 +16,12 @@ export const RAIL_MIN_WIDTH = 360
 export const clampRailWidth = (width: number, viewportWidth: number): number =>
   Math.min(Math.max(width, RAIL_MIN_WIDTH), Math.max(RAIL_MIN_WIDTH, Math.floor(viewportWidth / 2)))
 
-// Persistent right-rail for review mode: the Read·Annotate toggle in its header, filter
-// (open/resolved), an anchor-prefilled composer on select/pinpoint, and the thread list.
-// Done (exit review) lives in the ViewerTopBar.
+// The comments rail: the filter (open/resolved), an anchor-prefilled composer on select, and the
+// thread list. C2b: this is just a panel now (badges/painting/commenting are unconditional in
+// viewer.tsx) — its own ✕ closes it, alongside the ViewerTopBar's Comments toggle.
 export function ReviewRail({
   site,
   me,
-  mode,
-  onMode,
   threads,
   composing,
   onCancelComposer,
@@ -39,16 +29,14 @@ export function ReviewRail({
   onCreateVoice,
   onChanged,
   onFocusAnchor,
+  onHoverThread,
+  onClose,
   onStartComment,
   getCurrentTime,
-  focusThreadId,
+  focusRequest,
 }: {
   site: ViewerSite
   me: Me | null
-  // Read·Annotate toggle in the rail header. Unset for content with no DOM to annotate (the
-  // audio view), which hides the toggle.
-  mode?: ReviewMode
-  onMode?: (mode: ReviewMode) => void
   threads: Thread[]
   composing: PendingAnchor | null
   onCancelComposer: () => void
@@ -57,9 +45,16 @@ export function ReviewRail({
   onCreateVoice: (blob: Blob) => void | Promise<void>
   onChanged: () => void
   onFocusAnchor: (thread: Thread) => void
-  // A notification deep-link's target thread (S11): reveal it regardless of the open/resolved
-  // filter (switch to its tab) and scroll its card into view, once, when it lands in `threads`.
-  focusThreadId?: string | null
+  // Mirrors BadgeOverlay's onHoverChange, threaded down to each ThreadCard (B3b-hard).
+  onHoverThread: (ids: string[] | null) => void
+  // The rail's own close affordance (its header ✕) — the ViewerTopBar's Comments toggle is the
+  // other way to close it; both land on the same handler in viewer.tsx.
+  onClose: () => void
+  // A notification deep-link or badge click's target thread (S11 / C1b): reveal it regardless of
+  // the open/resolved filter (switch to its tab) and scroll its card into view. Keyed on `nonce`,
+  // not just `id` — see shouldReveal — so the SAME thread can be re-requested (e.g. a repeated
+  // badge click) and still reveal.
+  focusRequest?: RevealRequest | null
   // Set only for content with no DOM to select in (the audio view) — offers a plain "Add
   // comment" trigger that opens the composer with a bare page anchor, no text/element pending.
   onStartComment?: () => void
@@ -92,21 +87,31 @@ export function ReviewRail({
 
   const active = useMemo(() => threads.filter((t) => t.status === filter).sort(byUpdatedDesc), [threads, filter])
 
-  // Deep-link reveal: when a notification's target thread arrives, switch to its status tab (so a
-  // resolved thread isn't hidden by the default 'open' filter) and scroll its card into view. Fires
-  // once per target id; the rAF lets the tab switch render the card before we scroll to it.
-  const revealedRef = useRef<string | null>(null)
+  // Reveal: when a requested thread arrives, switch to its status tab (so a resolved thread isn't
+  // hidden by the default 'open' filter) and scroll its card into view. Guarded by NONCE, not id
+  // (shouldReveal) — a re-request of the same thread with a bumped nonce reveals again, an
+  // unchanged nonce across an unrelated re-render does not. The rAF lets the tab switch render the
+  // card before we scroll to it.
+  //
+  // Deps are the request's own PRIMITIVES (id, nonce), not the `focusRequest` object itself — a
+  // caller that builds `{ id, nonce }` inline (as viewer.tsx's one-shot deep link does) hands us a
+  // new object reference on every one of ITS renders even when id/nonce haven't changed; keying on
+  // the object would rerun this effect on every unrelated parent re-render, whose cleanup cancels
+  // the pending rAF before it fires and the rerun then no-ops on the unchanged nonce — silently
+  // dropping the scroll. Keying on the primitives makes this effect immune to caller identity
+  // churn instead of relying on every current and future caller (e.g. a badge click) to memoize.
+  const revealedNonceRef = useRef<number | null>(null)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the primitive deps ARE the fix (above) — depending on the focusRequest object re-runs this on every caller re-render and cancels the pending rAF scroll.
   useEffect(() => {
-    if (!focusThreadId || revealedRef.current === focusThreadId) return
-    const target = threads.find((t) => t.id === focusThreadId)
-    if (!target) return
-    revealedRef.current = focusThreadId
-    setFilter(target.status)
+    const target = focusRequest ? threads.find((t) => t.id === focusRequest.id) : undefined
+    if (!focusRequest || !shouldReveal(focusRequest, revealedNonceRef.current, !!target)) return
+    revealedNonceRef.current = focusRequest.nonce
+    setFilter(target!.status)
     const raf = requestAnimationFrame(() =>
-      document.getElementById(`thread-${focusThreadId}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }),
+      document.getElementById(`thread-${focusRequest.id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }),
     )
     return () => cancelAnimationFrame(raf)
-  }, [focusThreadId, threads])
+  }, [focusRequest?.id, focusRequest?.nonce, threads])
 
   return (
     <aside
@@ -134,20 +139,16 @@ export function ReviewRail({
       />
       <header className="flex items-center justify-between gap-2 border-b px-4 py-3">
         <h2 className="font-semibold text-sm">Comments</h2>
-        {mode && onMode && <Segmented value={mode} options={MODES} onChange={onMode} />}
+        <Button variant="ghost" size="icon" className="size-6" aria-label="Close comments" onClick={onClose}>
+          <X className="size-3.5" />
+        </Button>
       </header>
 
+      {/* The rail composes PAGE comments only (audio's "Add comment"). A text selection composes in
+          the popover over the content, and element comments no longer exist as a creation path — so
+          there is no anchor preview to draw here, only the composer. */}
       {composing ? (
         <div className="border-b bg-muted/40 p-3">
-          {composing.kind !== 'page' && (
-            <div className="mb-2">
-              {composing.kind === 'element' ? (
-                <AnchorChip tag={composing.anchor.tag} preview={composing.anchor.preview} />
-              ) : (
-                <p className="line-clamp-2 border-primary/40 border-l-2 pl-2 text-muted-foreground text-xs italic">“{composing.quote}”</p>
-              )}
-            </div>
-          )}
           <Composer
             autoFocus
             focusOn={composing}
@@ -194,11 +195,19 @@ export function ReviewRail({
               ? 'No resolved threads.'
               : onStartComment
                 ? 'Add a comment above — optionally with a timestamp.'
-                : 'Select text — or click an element in Annotate mode — to comment.'}
+                : 'Select text to comment.'}
           </p>
         )}
         {active.map((t) => (
-          <ThreadCard key={t.id} site={site} me={me} thread={t} onChanged={onChanged} onFocusAnchor={onFocusAnchor} />
+          <ThreadCard
+            key={t.id}
+            site={site}
+            me={me}
+            thread={t}
+            onChanged={onChanged}
+            onFocusAnchor={onFocusAnchor}
+            onHoverThread={onHoverThread}
+          />
         ))}
       </div>
     </aside>

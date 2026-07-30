@@ -1,6 +1,6 @@
 import { type Context, Hono } from 'hono'
 import type { BatchItem, BatchResponse } from 'drizzle-orm/batch'
-import { type ElementAnchor, normalizeText, parseElementAnchor } from '../lib/anchor'
+import { type ElementAnchor, type StoredTextContext, normalizeText, parseElementAnchor, parseTextContext } from '../lib/anchor'
 import {
   addComment,
   assembleThreadViews,
@@ -320,18 +320,22 @@ type ThreadFields = {
   filePath: string
   quote: string | undefined
   anchorType: 'text' | 'page' | 'element'
-  anchor: ElementAnchor | undefined
+  element: ElementAnchor | undefined
+  context: StoredTextContext | undefined
 }
 
 /** Validate the anchor-shaping fields shared by the JSON and multipart create paths: filePath
  *  (required, capped), quote (folded + control-stripped + capped), anchorType, and — for an element
  *  anchor — the parsed+validated element payload. Returns an error+status to return as-is, or the
- *  normalized fields. `element` must already be a PARSED object (parseElementAnchor expects one). */
+ *  normalized fields. `element` must already be a PARSED object (parseElementAnchor expects one).
+ *  A TEXT anchor may carry `context` ({prefix,suffix} around the selection); it shares the same
+ *  stored column and, being a hint rather than an identifier, degrades to undefined instead of 400. */
 function parseThreadFields(raw: {
   filePath?: unknown
   quote?: unknown
   anchorType?: unknown
   element?: unknown
+  context?: unknown
 }): { error: string } | ThreadFields {
   if (typeof raw.filePath !== 'string' || !raw.filePath || tooLong(raw.filePath, MAX_PATH))
     return { error: 'filePath required' }
@@ -344,13 +348,32 @@ function parseThreadFields(raw: {
 
   // An element anchor is validated + built in the canonical layer; the route only maps its error to
   // a 400 (element without a selector must NOT silently coerce to text).
-  let anchor: ElementAnchor | undefined
+  let element: ElementAnchor | undefined
+  let context: StoredTextContext | undefined
   if (anchorType === 'element') {
     const parsed = parseElementAnchor(raw.element)
     if ('error' in parsed) return { error: parsed.error }
-    anchor = parsed.anchor
+    element = parsed.anchor
+  } else if (anchorType === 'text') {
+    context = parseTextContext(raw.context) ?? undefined
   }
-  return { filePath: raw.filePath, quote, anchorType, anchor }
+  return { filePath: raw.filePath, quote, anchorType, element, context }
+}
+
+/** Marks a JSON form field that was PRESENT but unparseable — deliberately distinct from absent,
+ *  because the two JSON fields want OPPOSITE answers to it (see the caller). */
+const INVALID_JSON = Symbol('invalid-json')
+
+/** A FormData value that should hold JSON: absent or empty → undefined, malformed → INVALID_JSON.
+ *  Malformed is reported rather than swallowed so the caller keeps that choice; collapsing the two
+ *  cases here would silently turn a malformed field into an absent one. */
+function jsonField(raw: File | string | null): unknown {
+  if (typeof raw !== 'string' || !raw) return undefined
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return INVALID_JSON
+  }
 }
 
 /** Shared voice-comment ingest for create + reply. Validate the `audio` part, cap its size (no R2
@@ -488,7 +511,8 @@ comments.post('/:space/:site/comments', async (c) => {
     body,
     anchorType: fields.anchorType,
     quote: fields.quote,
-    anchor: fields.anchor,
+    element: fields.element,
+    context: fields.context,
   })
   await notifyThreadCreated(c, site, { out, filePath: fields.filePath, snippet: body, rawMentions: raw?.mentions })
   return c.json(out, 201)
@@ -502,21 +526,23 @@ async function createVoiceThread(c: Context<AppEnv>, site: ResolvedSite): Promis
   const form = await c.req.formData().catch(() => null)
   if (!form) return c.json({ error: 'invalid form' }, 400)
 
-  // `element` arrives as a JSON string; parse it here (parseElementAnchor expects a parsed object).
-  let element: unknown
-  const rawElement = form.get('element')
-  if (typeof rawElement === 'string' && rawElement) {
-    try {
-      element = JSON.parse(rawElement)
-    } catch {
-      return c.json({ error: 'invalid element' }, 400)
-    }
-  }
+  // `element` and `context` both arrive as JSON strings, and malformed JSON means opposite things
+  // for the two. `element` is the anchor's IDENTITY, so an unparseable one is rejected HERE — before
+  // anchorType is consulted at all, so a text/absent anchorType gets the same 400, and with its own
+  // error body rather than the anchor validator's "no selector" (letting it fall through would both
+  // relabel the error and turn the text case into a 201 that quietly drops the field). `context` is
+  // only a positioning hint: an unparseable one is DROPPED, costing first-occurrence anchoring
+  // rather than the comment.
+  const element = jsonField(form.get('element'))
+  if (element === INVALID_JSON) return c.json({ error: 'invalid element' }, 400)
+  const context = jsonField(form.get('context'))
+
   const fields = parseThreadFields({
     filePath: form.get('filePath'),
     quote: form.get('quote'),
     anchorType: form.get('anchorType'),
     element,
+    context: context === INVALID_JSON ? undefined : context,
   })
   if ('error' in fields) return c.json({ error: fields.error }, 400)
 
@@ -532,7 +558,8 @@ async function createVoiceThread(c: Context<AppEnv>, site: ResolvedSite): Promis
       body,
       anchorType: fields.anchorType,
       quote: fields.quote,
-      anchor: fields.anchor,
+      element: fields.element,
+      context: fields.context,
       commentId,
       audioKey,
     })

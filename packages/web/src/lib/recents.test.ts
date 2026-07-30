@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { afterAll, describe, expect, test } from 'bun:test'
 import {
   applyRemoveEntry,
   applyVisit,
@@ -26,8 +26,15 @@ class FakeStorage {
 }
 const fakeStorage = new FakeStorage()
 globalThis.localStorage = fakeStorage as unknown as Storage
+// The web package DOES have a real (happy-dom) window, globally registered by the bunfig preload —
+// clobbering it here without restoring leaks a `window` with no `.happyDOM` into every test file
+// that runs afterwards in the same process (broke viewer.test.tsx's happyDOM.settings read).
+const realWindow = globalThis.window
 globalThis.window = { dispatchEvent: () => true, addEventListener: () => {}, removeEventListener: () => {} } as unknown as Window &
   typeof globalThis
+afterAll(() => {
+  globalThis.window = realWindow
+})
 
 function readStored(userId: string): RecentEntry[] {
   const raw = fakeStorage.getItem(`glance:recents:${userId}`)

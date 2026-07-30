@@ -1,5 +1,15 @@
 import { describe, expect, test } from 'bun:test'
-import { ELEMENT_ANCHOR_LIMITS, buildElementAnchor, normalizeText, parseElementAnchor, readElementAnchor } from './anchor'
+import {
+  ELEMENT_ANCHOR_LIMITS,
+  TEXT_CONTEXT_LIMIT,
+  TEXT_CONTEXT_VERSION,
+  buildElementAnchor,
+  normalizeText,
+  parseElementAnchor,
+  parseTextContext,
+  readElementAnchor,
+  readTextContext,
+} from './anchor'
 
 // Text anchors normalize the stored quote (the client paints it against the rendered DOM). Element
 // ("pinpoint") anchors store a client-suggested selector + preview in the JSON `anchor` column,
@@ -81,5 +91,61 @@ describe('readElementAnchor — element rows only, legacy never leaks', () => {
     expect(readElementAnchor('element', {})).toBeNull()
     expect(readElementAnchor('element', null)).toBeNull()
     expect(readElementAnchor('element', { selector: '' })).toBeNull()
+  })
+})
+
+describe('parseTextContext — the untrusted side of a text anchor', () => {
+  test('normalizes + versions a usable context', () => {
+    expect(parseTextContext({ prefix: '  lead in  ', suffix: 'tail\ntext' })).toEqual({
+      v: TEXT_CONTEXT_VERSION,
+      prefix: ' lead in ', // NBSP folded, runs collapsed, edges KEPT (the space is load-bearing)
+      suffix: 'tail text',
+    })
+  })
+
+  test('caps each side toward the quote rather than rejecting (context is a hint, never authority)', () => {
+    const prefix = `${'a'.repeat(490)}0123456789`
+    const suffix = `0123456789${'b'.repeat(490)}`
+    const ctx = parseTextContext({ prefix, suffix })!
+    expect(ctx.prefix).toBe(prefix.slice(-TEXT_CONTEXT_LIMIT))
+    expect(ctx.suffix).toBe(suffix.slice(0, TEXT_CONTEXT_LIMIT))
+  })
+
+  test('keeps the side that IS present when the other is empty', () => {
+    expect(parseTextContext({ prefix: '', suffix: 'after' })).toEqual({ v: TEXT_CONTEXT_VERSION, prefix: '', suffix: 'after' })
+  })
+
+  test('no usable context → null (nothing to store, so the column stays empty)', () => {
+    expect(parseTextContext(undefined)).toBeNull()
+    expect(parseTextContext({})).toBeNull()
+    expect(parseTextContext({ prefix: '   ', suffix: '' })).toBeNull()
+    expect(parseTextContext({ prefix: 42, suffix: ['x'] })).toBeNull()
+  })
+})
+
+describe('readTextContext — text rows only, legacy context never resurrected', () => {
+  test('surfaces a versioned context on a text row', () => {
+    const stored = { v: TEXT_CONTEXT_VERSION, prefix: 'before ', suffix: ' after' }
+    expect(readTextContext('text', stored)).toEqual({ prefix: 'before ', suffix: ' after' })
+  })
+
+  // The `anchor` column held a DIFFERENT {quote,prefix,suffix} model years ago, normalized on
+  // another axis. Resurrecting it would silently re-anchor old threads, so the version gate is
+  // what makes reusing this column safe.
+  test('legacy unversioned {quote,prefix,suffix} is ignored', () => {
+    expect(readTextContext('text', { quote: 'q', prefix: 'p', suffix: 's' })).toBeNull()
+  })
+
+  test('never reads across anchor kinds', () => {
+    const stored = { v: TEXT_CONTEXT_VERSION, prefix: 'a', suffix: 'b' }
+    expect(readTextContext('element', stored)).toBeNull()
+    expect(readTextContext('page', stored)).toBeNull()
+    expect(readTextContext('text', null)).toBeNull()
+  })
+
+  // An element anchor and a text context share one column; each reader must ignore the other's shape.
+  test('an element anchor is not readable as a text context, and vice versa', () => {
+    expect(readTextContext('text', { selector: '#x', tag: 'div', preview: '', textFallback: '' })).toBeNull()
+    expect(readElementAnchor('text', { v: TEXT_CONTEXT_VERSION, prefix: 'a', suffix: 'b' })).toBeNull()
   })
 })

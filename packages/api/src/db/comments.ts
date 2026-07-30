@@ -1,7 +1,15 @@
 import { and, eq, sql } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { alias } from 'drizzle-orm/sqlite-core'
-import { type ElementAnchor, normalizeText, readElementAnchor } from '../lib/anchor'
+import {
+  type ElementAnchor,
+  type StoredTextContext,
+  TEXT_CONTEXT_VERSION,
+  type TextContext,
+  normalizeText,
+  readElementAnchor,
+  readTextContext,
+} from '../lib/anchor'
 import { type Comment, type CommentThread, comments, commentThreads, sites, spaces, users } from './schema'
 
 // Comments repo: create/list/reply/resolve/edit/soft-delete. Anchors are STORED here but never
@@ -35,6 +43,10 @@ export type ThreadView = {
   anchorType: 'text' | 'page' | 'element'
   quote: string | null
   anchor: ElementAnchor | null // element threads only; null for text/page (legacy JSON never leaks)
+  // Text threads only: the {prefix,suffix} captured around the selection, which tells REPEATED
+  // occurrences of the same quote apart. Null on element/page rows and on text rows stored before
+  // context existed — the client then falls back to first-occurrence matching.
+  context: TextContext | null
   status: 'open' | 'resolved'
   resolvedBy: string | null
   resolvedByName: string | null
@@ -161,6 +173,7 @@ export function assembleThreadViews(threadRows: ThreadWithUsersRow[], commentRow
     anchorType: t.anchorType,
     quote: t.quote,
     anchor: readElementAnchor(t.anchorType, t.anchor),
+    context: readTextContext(t.anchorType, t.anchor),
     status: t.status,
     resolvedBy: t.resolvedBy,
     resolvedByName: joinedDisplayName(t.resolvedBy, resolverName, resolverEmail),
@@ -195,26 +208,43 @@ export type CreateThreadInput = {
   body: string
   anchorType?: 'text' | 'page' | 'element'
   quote?: string
-  anchor?: ElementAnchor // a built element anchor (see lib/anchor); required when anchorType='element'
+  element?: ElementAnchor
+  context?: StoredTextContext
   // Voice comments (S-B): the route pre-generates the comment id so it can name the R2 audio object
   // BEFORE the D1 insert, then stores that key here — one id ties the row to its recording.
   commentId?: string
   audioKey?: string
 }
 
+/** RUNTIME version gate on the write path. `StoredTextContext` is a compile-time shape and TS types
+ *  are erased, so the declared field constrains only the callers the compiler can see — the param is
+ *  typed `unknown` to say exactly that. Two reasons a mis-versioned payload must never be persisted:
+ *  `readTextContext` gates READS on the same `v`, so an unversioned row would list back as
+ *  `context: null` and silently revert to first-occurrence painting with no error anywhere; and the
+ *  `anchor` column still holds a DIFFERENT legacy `{quote,prefix,suffix}` model on rows already in
+ *  the production database, so the version is also what keeps that stale, differently-normalized
+ *  context from re-anchoring an old thread. Anything unversioned stores null — the pre-context
+ *  behaviour, which is a complete answer. */
+function versionedContext(context: unknown): StoredTextContext | null {
+  const c = context as StoredTextContext | null | undefined
+  return c != null && c.v === TEXT_CONTEXT_VERSION ? c : null
+}
+
 /** Create a thread + its opening comment atomically. An element anchor stores its built selector
- *  payload in the JSON `anchor` column; a text anchor stores the normalized quote; a missing quote
- *  (or an explicit page anchor) stores a page thread. No resolution — the client paints the anchor
- *  against the rendered DOM at view time. */
+ *  payload in the JSON `anchor` column; a text anchor stores the normalized quote (plus its
+ *  occurrence context in that same column); a missing quote (or an explicit page anchor) stores a
+ *  page thread. No resolution — the client paints the anchor against the rendered DOM at view time. */
 export async function createThread(
   db: DrizzleD1Database,
   input: CreateThreadInput,
 ): Promise<{ threadId: string; openingCommentId: string }> {
-  const isElement = input.anchorType === 'element' && input.anchor != null
+  const isElement = input.anchorType === 'element' && input.element != null
   const wantsText = !isElement && (input.anchorType ?? 'text') === 'text' && Boolean(input.quote)
   const anchorType: 'text' | 'page' | 'element' = isElement ? 'element' : wantsText ? 'text' : 'page'
   const quote = wantsText ? normalizeText(input.quote as string) : null
-  const anchor = isElement ? (input.anchor as ElementAnchor) : null
+  // The one JSON column carries whichever payload this anchorType owns — an element's selector, or
+  // a text anchor's occurrence context. A page thread (and a text thread with no context) stores null.
+  const anchor = anchorType === 'element' ? (input.element ?? null) : anchorType === 'text' ? versionedContext(input.context) : null
 
   const threadId = crypto.randomUUID()
   const openingCommentId = input.commentId ?? crypto.randomUUID()

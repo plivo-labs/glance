@@ -9,6 +9,10 @@ import type { ViewerSite } from '@/lib/types'
 
 export type ThreadStatus = 'open' | 'resolved'
 
+/** Text on either side of a selection. Untrusted and advisory: it only steers which occurrence of
+ *  a repeated quote gets painted, never whether a comment may exist. */
+export type TextContext = { prefix: string; suffix: string }
+
 // An element ("pinpoint") anchor: a client-suggested CSS selector for a whole element (chart,
 // table, image) plus a short preview + text fallback. Mirrors the api ElementAnchor; the annotate
 // client re-resolves `selector` in the rendered DOM to paint an overlay.
@@ -36,6 +40,9 @@ export interface Thread {
   anchorType: 'text' | 'page' | 'element'
   quote: string | null
   anchor: ElementAnchor | null // element threads only
+  // Text threads only: the text around the selection, which tells REPEATED occurrences of the same
+  // quote apart when painting. Null on threads stored before context existed → first-match painting.
+  context: TextContext | null
   status: ThreadStatus
   resolvedBy: string | null
   resolvedByName: string | null
@@ -53,19 +60,23 @@ export interface NewThreadInput {
   anchorType?: 'text' | 'page' | 'element'
   quote?: string
   element?: ElementAnchor
+  context?: TextContext
 }
 
 // A pending anchor the viewer holds between "user picked an anchor" and "user submitted the
-// comment" — a text selection, an element pinpoint, or (audio view — no DOM to select in) a bare
-// page anchor. Kept generic so the composer + create path don't branch on anchor kind everywhere.
-export type PendingAnchor = { kind: 'text'; quote: string } | { kind: 'element'; anchor: ElementAnchor } | { kind: 'page' }
+// comment": a text selection (from the popover), or a bare page anchor (the audio view, which has
+// no DOM to select in). No 'element' variant — element comments are dropped as a creation path
+// (RULING, C2a), so existing element THREADS still paint and badge, but nothing composes a new one
+// and a payload for it would be unreachable.
+export type PendingAnchor = { kind: 'text'; quote: string; context?: TextContext } | { kind: 'page' }
 
 /** Pure map: a pending anchor + body → the create payload. Unit-tested (seam S2) so the viewer's
  *  create path needs no browser to verify. */
 export function pendingToInput(filePath: string, body: string, pending: PendingAnchor): NewThreadInput {
-  if (pending.kind === 'element') return { filePath, body, anchorType: 'element', element: pending.anchor }
   if (pending.kind === 'page') return { filePath, body, anchorType: 'page' }
-  return { filePath, body, quote: pending.quote }
+  // `context` is omitted entirely when absent — the server treats an absent key and an unusable one
+  // identically, but sending `undefined` would put a null in the JSON body for no reason.
+  return { filePath, body, quote: pending.quote, ...(pending.context ? { context: pending.context } : {}) }
 }
 
 /** Attach an explicit mentions list to a JSON payload, but ONLY when there are ids to send — an
@@ -73,6 +84,27 @@ export function pendingToInput(filePath: string, body: string, pending: PendingA
  *  the create/reply contract is verifiable without a network (seam S-D). */
 export function withMentions<T extends object>(payload: T, mentions?: string[]): T | (T & { mentions: string[] }) {
   return mentions && mentions.length > 0 ? { ...payload, mentions } : payload
+}
+
+// The paint payload the annotate client understands: a text anchor (re-find quote) or an element
+// anchor (re-resolve selector). Mirrors the annotate client's own PaintAnchor.
+export type PaintAnchor =
+  | { id: string; anchorType: 'text'; quote: string; context: TextContext | null }
+  | { id: string; anchorType: 'element'; selector: string }
+
+/** Pure map: which threads the viewer paints into the iframe, and how. UNCONDITIONAL (C2b: badges
+ *  and painting are on for anyone with access, whether or not the rail panel is open — the rail is
+ *  just a view onto the same threads, not a gate on whether they're shown). Text threads re-find
+ *  their stored quote; element threads re-resolve their stored selector — either kind the iframe
+ *  can't locate simply isn't painted (element misses come back reported as orphaned). Extracted
+ *  (not inline in viewer.tsx) so this mapping — in particular that element anchors still reach the
+ *  iframe — has its own test instead of being provable only by mutating the wiring shell by hand. */
+export function paintAnchors(threads: Thread[]): PaintAnchor[] {
+  return threads.flatMap((t): PaintAnchor[] => {
+    if (t.anchorType === 'text' && t.quote) return [{ id: t.id, anchorType: 'text', quote: t.quote, context: t.context }]
+    if (t.anchorType === 'element' && t.anchor) return [{ id: t.id, anchorType: 'element', selector: t.anchor.selector }]
+    return []
+  })
 }
 
 type SiteRef = Pick<ViewerSite, 'spaceSlug' | 'siteSlug'>
@@ -104,6 +136,7 @@ export const comments = {
     if (fields.anchorType) form.append('anchorType', fields.anchorType)
     if (fields.quote) form.append('quote', fields.quote)
     if (fields.element) form.append('element', JSON.stringify(fields.element))
+    if (fields.context) form.append('context', JSON.stringify(fields.context))
     return api.postForm<{ threadId: string }>(base(s), form)
   },
   // Voice reply: multipart, audio only (a reply carries no anchor). Same shape as `reply`.
