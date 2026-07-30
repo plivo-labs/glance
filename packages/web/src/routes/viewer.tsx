@@ -90,7 +90,10 @@ function Viewer() {
   const onDirtyChange = useCallback((d: boolean) => {
     dirtyRef.current = d
   }, [])
-  // The rail composer, now only ever the page (audio) anchor — element creation is gone (slice C2a).
+  // The rail composer, now only ever the page anchor — element creation is gone (slice C2a). Note
+  // this is INDEPENDENT of `popover` above: neither clears the other, so both can be open at once.
+  // That is why the rail offers a page comment behind a button rather than an always-open textarea
+  // (#112) — an always-open one would make two live drafts the norm, not the exception.
   const [composing, setComposing] = useState<PendingAnchor | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [cmdOpen, setCmdOpen] = useState(false)
@@ -303,8 +306,10 @@ function Viewer() {
 
   useEffect(paint, [paint])
 
-  // Audio view: no DOM to select text/elements in, so the rail's "Add comment" button starts a
-  // bare page-anchored composer directly (no selection step).
+  // The rail's "Add comment" button starts a bare page-anchored composer directly (no selection
+  // step) — for every content type, not just audio (#112). Audio NEEDS it (there is no DOM to
+  // select in); everywhere else it is how you say something about the page as a whole rather than
+  // about one arbitrary sentence. Text selection still composes in the popover, untouched.
   const startPageComment = useCallback(() => setComposing({ kind: 'page' }), [])
 
   // Read on demand (an event handler, not a subscription) — never causes a re-render, so the
@@ -566,7 +571,7 @@ function Viewer() {
             onChanged={() => filePath && refresh(filePath)}
             onFocusAnchor={scrollAnchor}
             onClose={closeRail}
-            onStartComment={isAudio ? startPageComment : undefined}
+            onStartComment={startPageComment}
             getCurrentTime={isAudio ? getCurrentTime : undefined}
             // Highlight clicks take over from the deep link once one has happened (see revealThread):
             // the link is one-shot at mount and carries a constant nonce, while a click re-requests

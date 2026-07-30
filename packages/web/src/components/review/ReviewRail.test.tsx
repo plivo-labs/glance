@@ -56,6 +56,7 @@ function renderRail(threads: Thread[], focusRequest: { id: string; nonce: number
       onChanged={() => {}}
       onFocusAnchor={() => {}}
       onClose={() => {}}
+      onStartComment={() => {}}
       focusRequest={focusRequest}
     />,
   )
@@ -79,11 +80,66 @@ describe('ReviewRail — the header ✕ closes the panel (C2b: replaces the View
         onChanged={() => {}}
         onFocusAnchor={() => {}}
         onClose={onClose}
+        onStartComment={() => {}}
         focusRequest={null}
       />,
     )
     fireEvent.click(screen.getByRole('button', { name: 'Close comments' }))
     expect(called).toBe(true)
+  })
+})
+
+// #112 — page comments used to be an audio-only affordance: `onStartComment` was optional, viewer
+// passed it only when isAudio, and the rail rendered the trigger only when it was set. It is now
+// REQUIRED and always rendered, so a page comment can be written from any content type. The
+// alternative considered — an always-mounted textarea instead of this button — was rejected: the
+// rail's `composing` and the popover's own composer are independent states, so an always-open
+// textarea makes "two live drafts at once" the default on every text selection.
+describe('ReviewRail — the page-comment trigger (#112)', () => {
+  function renderWithStart(extra: { getCurrentTime?: () => number } = {}) {
+    let started = 0
+    const view = render(
+      <ReviewRail
+        site={SITE}
+        me={ME}
+        threads={[]}
+        composing={null}
+        onCancelComposer={() => {}}
+        onCreate={() => {}}
+        onCreateVoice={() => {}}
+        onChanged={() => {}}
+        onFocusAnchor={() => {}}
+        onClose={() => {}}
+        onStartComment={() => {
+          started++
+        }}
+        focusRequest={null}
+        {...extra}
+      />,
+    )
+    return { ...view, startedCount: () => started }
+  }
+
+  test('the trigger is offered with no audio player present, and clicking it starts a page comment', () => {
+    // No getCurrentTime — i.e. an HTML page, the exact case the old gate excluded.
+    const { startedCount } = renderWithStart()
+    fireEvent.click(screen.getByRole('button', { name: 'Add comment' }))
+    expect(startedCount()).toBe(1)
+  })
+
+  test('the empty state names BOTH creation paths on a page you can select text in', () => {
+    renderWithStart()
+    const empty = screen.getByText(/Add a comment above/)
+    // Naming only the button would leave the selection path undiscoverable now that the rail no
+    // longer says "Select text to comment."
+    expect(empty.textContent).toContain('select text')
+  })
+
+  test('the audio empty state does NOT offer a select-text path (there is no DOM to select in)', () => {
+    renderWithStart({ getCurrentTime: () => 0 })
+    const empty = screen.getByText(/Add a comment above/)
+    expect(empty.textContent).not.toContain('select text')
+    expect(empty.textContent).toContain('timestamp')
   })
 })
 
@@ -122,6 +178,7 @@ describe('ReviewRail — reveal-by-nonce', () => {
         onChanged={() => {}}
         onFocusAnchor={() => {}}
       onClose={() => {}}
+        onStartComment={() => {}}
         focusRequest={{ id: 't1', nonce: 2 }}
       />,
     )
@@ -149,6 +206,7 @@ describe('ReviewRail — reveal-by-nonce', () => {
         onChanged={() => {}}
         onFocusAnchor={() => {}}
       onClose={() => {}}
+        onStartComment={() => {}}
         focusRequest={{ id: 't1', nonce: 1 }}
       />,
     )
@@ -172,6 +230,7 @@ describe('ReviewRail — reveal-by-nonce', () => {
         onChanged={() => {}}
         onFocusAnchor={() => {}}
       onClose={() => {}}
+        onStartComment={() => {}}
         focusRequest={{ id: 't2', nonce: 2 }}
       />,
     )
@@ -204,6 +263,7 @@ describe('ReviewRail — reveal-by-nonce', () => {
         onChanged={() => {}}
         onFocusAnchor={() => {}}
       onClose={() => {}}
+        onStartComment={() => {}}
         focusRequest={{ id: 't1', nonce: 1 }}
       />,
     )

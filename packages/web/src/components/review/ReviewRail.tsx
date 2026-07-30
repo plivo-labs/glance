@@ -53,9 +53,11 @@ export function ReviewRail({
   // not just `id` — see shouldReveal — so the SAME thread can be re-requested (e.g. clicking the
   // same highlight twice) and still reveal.
   focusRequest?: RevealRequest | null
-  // Set only for content with no DOM to select in (the audio view) — offers a plain "Add
-  // comment" trigger that opens the composer with a bare page anchor, no text/element pending.
-  onStartComment?: () => void
+  // Opens the composer on a bare page anchor — no text/element pending. REQUIRED, for every
+  // content type (#112): its optionality used to BE the gate that limited page comments to the
+  // audio view, so the type is what keeps it ungated. Text selection still composes in the
+  // popover; this is the "about the page as a whole" path.
+  onStartComment: () => void
   // Set only for the audio view — lets the composer's timestamp button read the player's
   // current position (via a ref, at click time) without any state/effect wiring.
   getCurrentTime?: () => number
@@ -142,9 +144,15 @@ export function ReviewRail({
         </Button>
       </header>
 
-      {/* The rail composes PAGE comments only (audio's "Add comment"). A text selection composes in
-          the popover over the content, and element comments no longer exist as a creation path — so
-          there is no anchor preview to draw here, only the composer. */}
+      {/* The rail composes PAGE comments only ("Add comment"). A text selection composes in the
+          popover over the content, and element comments no longer exist as a creation path — so
+          there is no anchor preview to draw here, only the composer.
+
+          A BUTTON, not an always-mounted textarea (#112): `composing` here and the popover's own
+          composer are independent states (viewer.tsx:86,94) — nothing clears one when the other
+          opens — so a permanently-open textarea would make "two live drafts, no rule for which
+          wins" the DEFAULT state on every text selection, and would spend ~100px of a 55vh mobile
+          bottom sheet on every reader who came only to read. */}
       {composing ? (
         <div className="border-b bg-muted/40 p-3">
           <Composer
@@ -160,14 +168,12 @@ export function ReviewRail({
           />
         </div>
       ) : (
-        onStartComment && (
-          <div className="border-b p-3">
-            <Button type="button" variant="outline" size="sm" className="w-full" onClick={onStartComment}>
-              <MessageSquarePlus className="size-3.5" />
-              Add comment
-            </Button>
-          </div>
-        )
+        <div className="border-b p-3">
+          <Button type="button" variant="outline" size="sm" className="w-full" onClick={onStartComment}>
+            <MessageSquarePlus className="size-3.5" />
+            Add comment
+          </Button>
+        </div>
       )}
 
       <div className="flex gap-1 px-4 py-2">
@@ -187,13 +193,16 @@ export function ReviewRail({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pb-4">
+        {/* Both creation paths get named (#112). Keyed on getCurrentTime, which is the one prop
+            that is still genuinely audio-only — the audio view has no DOM to select text in, so
+            offering it a "select text" path would be a lie. */}
         {active.length === 0 && !composing && (
           <p className="px-1 py-8 text-center text-muted-foreground text-sm">
             {filter !== 'open'
               ? 'No resolved threads.'
-              : onStartComment
+              : getCurrentTime
                 ? 'Add a comment above — optionally with a timestamp.'
-                : 'Select text to comment.'}
+                : 'Add a comment above, or select text on the page to anchor one.'}
           </p>
         )}
         {active.map((t) => (

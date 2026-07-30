@@ -13,6 +13,15 @@ describe('pendingToInput — pending anchor → NewThreadInput', () => {
     })
   })
 
+  // #112: a page pending is no longer audio-only — an HTML page can be commented on as a whole,
+  // without picking an arbitrary sentence to hang the comment off. The map is the same either way;
+  // this pins the HTML case so the payload can't quietly grow a quote for it.
+  test('a page pending from an HTML page → anchorType page with NO quote key', () => {
+    const input = pendingToInput('index.html', 'this chart is wrong', { kind: 'page' })
+    expect(input).toEqual({ filePath: 'index.html', body: 'this chart is wrong', anchorType: 'page' })
+    expect(input).not.toHaveProperty('quote')
+  })
+
   test('a page pending (audio view — no DOM to anchor to) → a bare page payload, no quote/element', () => {
     expect(pendingToInput('song.mp3', 'love this bridge', { kind: 'page' })).toEqual({
       filePath: 'song.mp3',
