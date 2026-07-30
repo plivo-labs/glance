@@ -42,11 +42,22 @@ export function BadgeOverlay({
         >
           {/* The photo is same-origin (/api/avatars/:id, see UserAvatar) — an author with no photo,
               or none at all, degrades to initials without the chip changing shape. */}
-          <AvatarGroup>
+          {/* Sized like the rail's own avatars (size-5), and the group's default 8px overlap and
+              2px ring are scaled to match — at this size they'd swallow the initial under the next
+              circle. The chip sits ON the page's text, so every pixel of width hides content. */}
+          <AvatarGroup className="-space-x-1.5 *:data-[slot=avatar]:ring-1">
             {badge.authors.map((author) => (
-              <UserAvatar key={author.id ?? author.name ?? '?'} userId={author.id} name={author.name} />
+              <UserAvatar
+                key={author.id ?? author.name ?? '?'}
+                userId={author.id}
+                name={author.name}
+                className="size-5"
+                fallbackClassName="text-[0.6rem]"
+              />
             ))}
-            {badge.extra > 0 && <AvatarGroupCount className="size-6 text-[0.65rem]">+{badge.extra}</AvatarGroupCount>}
+            {badge.extra > 0 && (
+              <AvatarGroupCount className="size-5 text-[0.6rem] ring-1">+{badge.extra}</AvatarGroupCount>
+            )}
           </AvatarGroup>
           <span className="text-muted-foreground">{badge.count}</span>
         </button>
