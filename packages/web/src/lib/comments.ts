@@ -66,7 +66,7 @@ export interface NewThreadInput {
 // A pending anchor the viewer holds between "user picked an anchor" and "user submitted the
 // comment": a text selection (from the popover), or a bare page anchor (the audio view, which has
 // no DOM to select in). No 'element' variant — element comments are dropped as a creation path
-// (RULING, C2a), so existing element THREADS still paint and badge, but nothing composes a new one
+// (RULING, C2a), so existing element THREADS still paint, but nothing composes a new one
 // and a payload for it would be unreachable.
 export type PendingAnchor = { kind: 'text'; quote: string; context?: TextContext } | { kind: 'page' }
 
@@ -92,9 +92,9 @@ export type PaintAnchor =
   | { id: string; anchorType: 'text'; quote: string; context: TextContext | null }
   | { id: string; anchorType: 'element'; selector: string }
 
-/** Pure map: which threads the viewer paints into the iframe, and how. UNCONDITIONAL (C2b: badges
- *  and painting are on for anyone with access, whether or not the rail panel is open — the rail is
- *  just a view onto the same threads, not a gate on whether they're shown). Text threads re-find
+/** Pure map: which threads the viewer paints into the iframe, and how. The CALLER decides when to
+ *  paint (viewer.tsx gates it on the rail being open, since a paint IS the on-page highlight); this
+ *  only says what a paint contains. Text threads re-find
  *  their stored quote; element threads re-resolve their stored selector — either kind the iframe
  *  can't locate simply isn't painted (element misses come back reported as orphaned). Extracted
  *  (not inline in viewer.tsx) so this mapping — in particular that element anchors still reach the

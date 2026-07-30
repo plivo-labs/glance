@@ -1,8 +1,6 @@
-// Slice B3b-hard — the rail card's own half of the hover-only highlight ruling: it lights its
-// anchor on hover/focus and clears on leave/blur, exactly like a BadgeOverlay chip (see
-// BadgeOverlay.test.tsx's mirror-image cases). A click is unchanged — it still scrolls
-// (onFocusAnchor) — but must NEVER be the thing that lights a highlight; that's the bug this
-// slice fixes (a rail-card click used to post glance:highlight([id]) with nothing to clear it).
+// The rail card's own wiring: a click on its quote/anchor chip scrolls the iframe to that anchor
+// (onFocusAnchor) and does nothing else. It has no hover behaviour at all — every commented passage
+// is already highlighted for as long as the rail is open, so there is nothing for a hover to light.
 import { describe, expect, mock, spyOn, test } from 'bun:test'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { comments, type Thread } from '@/lib/comments'
@@ -44,62 +42,34 @@ function mkThread(overrides: Partial<Thread> & { id: string }): Thread {
   }
 }
 
-function renderCard(overrides: { onFocusAnchor?: (t: Thread) => void; onHoverThread?: (ids: string[] | null) => void } = {}) {
+function renderCard(overrides: { onFocusAnchor?: (t: Thread) => void } = {}) {
   const onFocusAnchor = overrides.onFocusAnchor ?? mock((_t: Thread) => {})
-  const onHoverThread = overrides.onHoverThread ?? mock((_ids: string[] | null) => {})
   const thread = mkThread({ id: 't1' })
-  render(
-    <ThreadCard site={SITE} me={ME} thread={thread} onChanged={() => {}} onFocusAnchor={onFocusAnchor} onHoverThread={onHoverThread} />,
-  )
+  render(<ThreadCard site={SITE} me={ME} thread={thread} onChanged={() => {}} onFocusAnchor={onFocusAnchor} />)
   // The root carries id={`thread-${thread.id}`} for the deep-link scroll target (S11) — reused
   // here instead of adding a test-only attribute.
   const card = document.getElementById(`thread-${thread.id}`) as HTMLElement
-  return { onFocusAnchor, onHoverThread, thread, card }
+  return { onFocusAnchor, thread, card }
 }
 
-describe('ThreadCard — hover/focus light the anchor, leave/blur clear it', () => {
-  test('pointerenter fires onHoverThread with its own thread id', () => {
-    const { onHoverThread, card } = renderCard()
-    fireEvent.pointerEnter(card)
-    expect(onHoverThread).toHaveBeenCalledTimes(1)
-    expect(onHoverThread).toHaveBeenLastCalledWith(['t1'])
-  })
-
-  test('pointerleave fires onHoverThread with null', () => {
-    const { onHoverThread, card } = renderCard()
-    fireEvent.pointerEnter(card)
-    fireEvent.pointerLeave(card)
-    expect(onHoverThread).toHaveBeenCalledTimes(2)
-    expect(onHoverThread).toHaveBeenLastCalledWith(null)
-  })
-
-  test('focus fires onHoverThread with its own thread id — keyboard counts as hover', () => {
-    const { onHoverThread, card } = renderCard()
-    fireEvent.focus(card)
-    expect(onHoverThread).toHaveBeenCalledTimes(1)
-    expect(onHoverThread).toHaveBeenLastCalledWith(['t1'])
-  })
-
-  test('blur fires onHoverThread with null', () => {
-    const { onHoverThread, card } = renderCard()
-    fireEvent.focus(card)
-    fireEvent.blur(card)
-    expect(onHoverThread).toHaveBeenCalledTimes(2)
-    expect(onHoverThread).toHaveBeenLastCalledWith(null)
-  })
-})
-
-describe('ThreadCard — a click still scrolls, and never lights a persistent highlight', () => {
+describe('ThreadCard — a click scrolls, and the card has no hover behaviour', () => {
   test('clicking the quote calls onFocusAnchor with the thread (scroll)', () => {
     const { onFocusAnchor, thread } = renderCard()
     fireEvent.click(screen.getByText(`“${thread.quote}”`))
     expect(onFocusAnchor).toHaveBeenCalledTimes(1)
     expect(onFocusAnchor).toHaveBeenCalledWith(thread)
-    // onHoverThread is deliberately NOT asserted either way here: a real browser click on a
-    // <button> moves focus to it, which bubbles as onFocus on the card root and fires
-    // onHoverThread(['t1']) — the 'focus fires onHoverThread' case above already covers that. In
-    // happy-dom, fireEvent.click never moves focus, so asserting "not called" here would only be
-    // testing the test harness's lack of focus-follows-click, not the component.
+  })
+
+  test('pointer/focus events on the card root do nothing — no hover handlers are wired at all', () => {
+    // The card used to light its anchor on enter/focus and clear it on leave/blur. That whole
+    // affordance is gone with the badges: pinned here so re-adding a hover handler is a deliberate
+    // choice rather than something that slips back in unnoticed.
+    const { onFocusAnchor, card } = renderCard()
+    fireEvent.pointerEnter(card)
+    fireEvent.pointerLeave(card)
+    fireEvent.focus(card)
+    fireEvent.blur(card)
+    expect(onFocusAnchor).not.toHaveBeenCalled()
   })
 })
 

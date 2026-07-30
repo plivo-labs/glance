@@ -17,8 +17,9 @@ export const clampRailWidth = (width: number, viewportWidth: number): number =>
   Math.min(Math.max(width, RAIL_MIN_WIDTH), Math.max(RAIL_MIN_WIDTH, Math.floor(viewportWidth / 2)))
 
 // The comments rail: the filter (open/resolved), an anchor-prefilled composer on select, and the
-// thread list. C2b: this is just a panel now (badges/painting/commenting are unconditional in
-// viewer.tsx) — its own ✕ closes it, alongside the ViewerTopBar's Comments toggle.
+// thread list. C2b: this is just a panel now (commenting is unconditional in viewer.tsx; the
+// on-page highlights ride with this panel) — its own ✕ closes it, alongside the ViewerTopBar's
+// Comments toggle.
 export function ReviewRail({
   site,
   me,
@@ -29,7 +30,6 @@ export function ReviewRail({
   onCreateVoice,
   onChanged,
   onFocusAnchor,
-  onHoverThread,
   onClose,
   onStartComment,
   getCurrentTime,
@@ -45,15 +45,13 @@ export function ReviewRail({
   onCreateVoice: (blob: Blob) => void | Promise<void>
   onChanged: () => void
   onFocusAnchor: (thread: Thread) => void
-  // Mirrors BadgeOverlay's onHoverChange, threaded down to each ThreadCard (B3b-hard).
-  onHoverThread: (ids: string[] | null) => void
   // The rail's own close affordance (its header ✕) — the ViewerTopBar's Comments toggle is the
   // other way to close it; both land on the same handler in viewer.tsx.
   onClose: () => void
-  // A notification deep-link or badge click's target thread (S11 / C1b): reveal it regardless of
+  // A notification deep-link or highlight click's target thread (S11 / C1b): reveal it regardless of
   // the open/resolved filter (switch to its tab) and scroll its card into view. Keyed on `nonce`,
-  // not just `id` — see shouldReveal — so the SAME thread can be re-requested (e.g. a repeated
-  // badge click) and still reveal.
+  // not just `id` — see shouldReveal — so the SAME thread can be re-requested (e.g. clicking the
+  // same highlight twice) and still reveal.
   focusRequest?: RevealRequest | null
   // Set only for content with no DOM to select in (the audio view) — offers a plain "Add
   // comment" trigger that opens the composer with a bare page anchor, no text/element pending.
@@ -99,7 +97,7 @@ export function ReviewRail({
   // the object would rerun this effect on every unrelated parent re-render, whose cleanup cancels
   // the pending rAF before it fires and the rerun then no-ops on the unchanged nonce — silently
   // dropping the scroll. Keying on the primitives makes this effect immune to caller identity
-  // churn instead of relying on every current and future caller (e.g. a badge click) to memoize.
+  // churn instead of relying on every current and future caller (e.g. a highlight click) to memoize.
   const revealedNonceRef = useRef<number | null>(null)
   // biome-ignore lint/correctness/useExhaustiveDependencies: the primitive deps ARE the fix (above) — depending on the focusRequest object re-runs this on every caller re-render and cancels the pending rAF scroll.
   useEffect(() => {
@@ -206,7 +204,6 @@ export function ReviewRail({
             thread={t}
             onChanged={onChanged}
             onFocusAnchor={onFocusAnchor}
-            onHoverThread={onHoverThread}
           />
         ))}
       </div>

@@ -16,18 +16,14 @@ export function ThreadCard({
   thread,
   onChanged,
   onFocusAnchor,
-  onHoverThread,
 }: {
   site: ViewerSite
   me: Me | null
   thread: Thread
   onChanged: () => void
-  // Scroll only (B3b-hard): a click still jumps the iframe/rail to the anchor, but must never be
-  // what lights the highlight — that's onHoverThread's job now, exactly like a badge.
+  // Scroll only: a click jumps the iframe to the anchor. It doesn't light anything — every anchor
+  // on the page is already highlighted for as long as the rail is open.
   onFocusAnchor: (thread: Thread) => void
-  // Mirrors BadgeOverlay's onHoverChange: this card's own id on pointerenter/focus, null on
-  // pointerleave/blur — never a persistent highlight nothing clears.
-  onHoverThread: (ids: string[] | null) => void
 }) {
   const [replying, setReplying] = useState(false)
   const canModerate = site.isOwner || me?.role === 'superadmin'
@@ -51,14 +47,7 @@ export function ThreadCard({
 
   return (
     // id lets a notification deep-link scroll this card into view (viewer S11).
-    <div
-      id={`thread-${thread.id}`}
-      className="rounded-lg border bg-card p-3 text-card-foreground"
-      onPointerEnter={() => onHoverThread([thread.id])}
-      onPointerLeave={() => onHoverThread(null)}
-      onFocus={() => onHoverThread([thread.id])}
-      onBlur={() => onHoverThread(null)}
-    >
+    <div id={`thread-${thread.id}`} className="rounded-lg border bg-card p-3 text-card-foreground">
       <div className="mb-2 flex items-start justify-between gap-2">
         {thread.anchorType === 'element' && thread.anchor ? (
           <button type="button" onClick={() => onFocusAnchor(thread)} className="text-left hover:opacity-80">

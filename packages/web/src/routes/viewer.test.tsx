@@ -1,22 +1,19 @@
-// B2c "viewer wiring" — the two behaviors the slice spec calls out by name that no test anywhere
-// else touches (viewer.tsx is otherwise an intentionally-untested wiring shell; see badges.ts,
-// prefetchArbiter.ts etc. for where the actual logic lives and is unit-tested):
+// "viewer wiring" — the behaviours that live ONLY in viewer.tsx's wiring and no unit test anywhere
+// else touches (viewer.tsx is otherwise an intentionally-untested shell; see prefetchArbiter.ts etc.
+// for where the actual logic lives):
 //
-//   1. the anchorRects handler measures the IFRAME'S OWN clientWidth/clientHeight at the moment a
-//      batch arrives (not a hardcoded/default box) — that's what keeps lib/badges pure.
-//   2. badge state resets to initialBadges() on splat navigation, so a chip pinned to the OLD
-//      document's rect doesn't survive a same-site file change.
+//   1. the glance:paint post is gated on railOpen — real anchors when the panel is open, an EMPTY
+//      list when it isn't, which is what makes the on-page highlights appear and disappear with it.
+//   2. a glance:anchor-click from the iframe reveals that thread in the rail, every time.
+//   3. adding a comment OPENS the rail (and shows no toast standing in for it).
 //
-// Sidebar and command palette are stubbed to `null`: this test is scoped to the badge wiring plus
-// (C2b) the rail-toggle/popover-independence wiring, not a full-viewer render — those two pieces
-// have (or don't need) their own coverage. ViewerTopBar, CommentPopover and ReviewRail are
-// deliberately NOT stubbed here (see note below the import) — badge-button queries are scoped to
-// the iframe's own wrapper (badgeButtons below) so the rail's/topbar's real, visible buttons never
-// leak into that count.
-import { describe, expect, mock, test } from 'bun:test'
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+// Sidebar and command palette are stubbed to `null`: this test is scoped to that wiring, not a
+// full-viewer render. ViewerTopBar, CommentPopover and ReviewRail are deliberately NOT stubbed
+// (see note below the import).
+import { describe, expect, mock, spyOn, test } from 'bun:test'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { createMemoryRouter, type LoaderFunctionArgs, RouterProvider } from 'react-router'
-import type { Thread } from '@/lib/comments'
+import { comments, type Thread } from '@/lib/comments'
 import type { ViewerLoaderData } from '@/lib/viewerLoader'
 import type { ViewerSite } from '@/lib/types'
 
@@ -30,10 +27,9 @@ import type { ViewerSite } from '@/lib/types'
 // ReviewRail.test.tsx was added in slice C1b — its renders came back an empty `<div />` because
 // THIS file's mock.module had already run at import time). All three are left real and unmocked:
 // ViewerTopBar is needed for real here (C2b's Comments-button-toggles-the-rail wiring has no other
-// integration coverage — see the "rail toggle" describe block below); CommentPopover renders
-// nothing observable in the badge tests (they leave chip/composer state null); ReviewRail's own
-// buttons are kept out of this file's badge-button assertions by scoping them to the iframe's
-// wrapper (badgeButtons below).
+// integration coverage — see the "rail toggle" describe block below), and so are CommentPopover
+// (the add-a-comment flow is driven through its real chip and composer) and ReviewRail (a reveal is
+// observed as the thread's own card appearing in it).
 mock.module('@/components/ViewerSidebar', () => ({ ViewerSidebar: () => null }))
 mock.module('@/components/CommandPalette', () => ({ CommandPalette: () => null }))
 
@@ -80,17 +76,10 @@ function mkThread(overrides: Partial<Thread> & { id: string }): Thread {
 }
 
 const THREADS: Thread[] = [mkThread({ id: 't1' }), mkThread({ id: 't2' })]
-// A different file's threads, disjoint ids from THREADS — mirrors production (comments.list scopes
-// by path, so two files never share a thread id) and is what makes the epoch-regression bug in the
-// splat-nav test observable: an id-based filter alone can't catch a stale badge epoch.
-const OTHER_THREADS: Thread[] = [mkThread({ id: 't3', filePath: 'other.html' })]
 
 // Bypasses the real loader (network) entirely — the router feeds the component exactly the
-// ViewerLoaderData shape it expects, same as loadViewer would once site meta resolves. Path-aware
-// so the splat-nav test can drive the component to a genuinely different file.
-function makeLoaderData({ params }: LoaderFunctionArgs): ViewerLoaderData {
-  const sitePath = params['*'] ?? ''
-  if (sitePath === 'other.html') return { site: SITE, entryPath: 'other.html', commentsPromise: Promise.resolve(OTHER_THREADS) }
+// ViewerLoaderData shape it expects, same as loadViewer would once site meta resolves.
+function makeLoaderData(_args: LoaderFunctionArgs): ViewerLoaderData {
   return { site: SITE, entryPath: 'index.html', commentsPromise: Promise.resolve(THREADS) }
 }
 
@@ -98,187 +87,90 @@ function renderViewer(initialPath: string) {
   const router = createMemoryRouter([{ path: '/:space/:site/*', Component, loader: makeLoaderData }], {
     initialEntries: [initialPath],
   })
-  const utils = render(<RouterProvider router={router} />)
-  return { ...utils, router }
+  return render(<RouterProvider router={router} />)
 }
 
-// Arms the iframe with a real (test-chosen) box and returns it plus the message-sending helper —
-// `source` must be the SAME window object parseIntent compares against (iframeRef.current
-// .contentWindow), and `origin` must match the site's content origin, or the message is dropped.
+// Arms the iframe with a FAKE contentWindow that records every parent→child post. happy-dom's real
+// contentWindow is null with iframe page loading disabled (see the top-of-file note), so paint()'s
+// `if (!win) return` would swallow every postMessage before it happened — a fake is the only way to
+// observe the parent→child channel at all in this harness. Must be installed BEFORE 'ready':
+// viewer.tsx re-reads iframeRef.current.contentWindow fresh on every paint.
 function armIframe(container: HTMLElement) {
   const iframe = container.querySelector('iframe') as HTMLIFrameElement
-  Object.defineProperty(iframe, 'clientWidth', { value: 100, configurable: true })
-  Object.defineProperty(iframe, 'clientHeight', { value: 50, configurable: true })
-  const send = (data: unknown) => {
-    window.dispatchEvent(new MessageEvent('message', { data, origin: CONTENT_ORIGIN, source: iframe.contentWindow }))
-  }
-  return { iframe, send }
+  const posted: unknown[] = []
+  const fakeWin = { postMessage: (m: unknown) => posted.push(m) }
+  Object.defineProperty(iframe, 'contentWindow', { value: fakeWin, configurable: true })
+  // `source` must be the SAME object parseIntent compares against, and `origin` must match the
+  // site's content origin, or the message is dropped.
+  const send = (data: unknown) =>
+    window.dispatchEvent(new MessageEvent('message', { data, origin: CONTENT_ORIGIN, source: iframe.contentWindow as unknown as Window }))
+  const paints = () => posted.filter((m) => (m as { type?: string }).type === 'glance:paint') as { anchors: { id: string }[] }[]
+  const lastPaintIds = () => (paints().at(-1)?.anchors ?? []).map((a) => a.id).sort()
+  return { iframe, send, paints, lastPaintIds }
 }
 
-// Badge buttons live in the iframe's own wrapper div (BadgeOverlay is its sibling, per viewer.tsx);
-// ReviewRail — now real and unmocked — renders its OWN buttons (filter tabs, "Add comment") in a
-// sibling `<aside>` outside that wrapper, so scoping here is what keeps this file's badge-count
-// assertions from silently counting the rail's chrome too.
-function badgeButtons(iframe: HTMLIFrameElement) {
-  return within(iframe.parentElement as HTMLElement).queryAllByRole('button')
-}
+// The iframe only boots its message listener on load; viewer.tsx gates paint on the same `loaded`
+// flag, so nothing is ever posted until this fires.
+const loadIframe = (iframe: HTMLIFrameElement) => act(() => void fireEvent.load(iframe))
 
-describe('viewer wiring — badge overlay', () => {
-  test('anchorRects filters offscreen rects against the IFRAME\'S OWN measured box, not a default', async () => {
-    const { container } = renderViewer('/sp/site?review=1')
-    await waitFor(() => expect(container.querySelector('iframe')).not.toBeNull())
-    const { iframe, send } = armIframe(container)
-
-    // Confirm the provisional HTML prefetch against the iframe's real path so `threads` populates —
-    // otherwise every rect below is dropped for "no matching thread" before offscreen even runs.
-    act(() => send({ type: 'glance:ready', filePath: 'index.html' }))
-    await waitFor(() => expect(badgeButtons(iframe)).toHaveLength(0)) // no rects yet, but ready applied
-
-    // t1 sits well inside the iframe's real 100x50 box; t2 sits well outside it — but comfortably
-    // inside any plausible hardcoded default (e.g. 800x600). Only measuring the real box yields
-    // exactly one visible badge; any hardcoded viewport yields zero (default {0,0} fallback) or two.
-    act(() =>
-      send({
-        type: 'glance:anchor-rects',
-        epoch: 0,
-        rects: [
-          { id: 't1', rect: { top: 10, left: 10, width: 5, height: 5 } },
-          { id: 't2', rect: { top: 200, left: 200, width: 5, height: 5 } },
-        ],
-      }),
-    )
-
-    const buttons = await waitFor(() => {
-      const btns = badgeButtons(iframe)
-      expect(btns).toHaveLength(1)
-      return btns
-    })
-    expect((buttons[0] as HTMLElement).style.top).toBe('18px') // rect.top + BadgeOverlay's 8px drop
-    expect((buttons[0] as HTMLElement).style.left).toBe('15px') // first.rect.left + first.rect.width
-  })
-
-  // buildBadges already drops a rect whose id has no matching CURRENT thread, so a stale rect alone
-  // never renders a visible chip for the new document (ids never collide across files in
-  // production) — that isn't the bug this pins. The real failure mode is the badge EPOCH: several
-  // reflow frames on the old document push it well above 0, and a fresh iframe's own reflow always
-  // restarts counting at 0. Without the reset, stepBadges' "a lower epoch is stale, drop it" guard
-  // (lib/badges.ts) mistakes the NEW document's first-ever batch for a stale replay of the old one
-  // and drops it forever — the new page's comments simply never grow a badge.
-  test('splat navigation resets the badge epoch, so the new document\'s first batch is not mistaken for a stale replay', async () => {
-    const { container, router } = renderViewer('/sp/site?review=1')
-    await waitFor(() => expect(container.querySelector('iframe')).not.toBeNull())
-    const { iframe, send } = armIframe(container)
-
-    act(() => send({ type: 'glance:ready', filePath: 'index.html' }))
-    // Several reflow frames on the OLD document, ending well above epoch 0.
-    act(() => send({ type: 'glance:anchor-rects', epoch: 5, rects: [{ id: 't1', rect: { top: 10, left: 10, width: 5, height: 5 } }] }))
-    await waitFor(() => expect(badgeButtons(iframe)).toHaveLength(1))
-
-    // Same site, different splat — the exact nav the reset guards (a cross-site nav would instead
-    // remount via the Component key, never reaching this branch).
-    await act(async () => {
-      await router.navigate('/sp/site/other.html?review=1')
-    })
-    act(() => send({ type: 'glance:ready', filePath: 'other.html' }))
-    await waitFor(() => expect(badgeButtons(iframe)).toHaveLength(0)) // threads reset, no rects yet
-
-    // The NEW iframe's own first reflow frame — always epoch 0.
-    act(() => send({ type: 'glance:anchor-rects', epoch: 0, rects: [{ id: 't3', rect: { top: 10, left: 10, width: 5, height: 5 } }] }))
-
-    await waitFor(() => expect(badgeButtons(iframe)).toHaveLength(1))
-  })
-
-  // Badges ride WITH the rail: nothing marks the page up for a reader who hasn't opened the panel.
-  // The rect HANDLER stays ungated though, which is the half a `railOpen &&` on the handler would
-  // also satisfy — so this test proves both directions from ONE rect batch delivered while closed:
-  // no chip then, and the chip appears the moment the panel opens, with no second batch.
-  test('badges are gated on railOpen: none while the rail is CLOSED, painted from the same batch once it opens', async () => {
+describe('viewer wiring — the paint is gated on railOpen (the on-page highlights)', () => {
+  // A paint IS the highlight now (annotate/client.ts lights everything it is sent), so this ONE
+  // post is the whole feature: real anchors while the panel is open, an empty list when it isn't.
+  // Both directions from one render — a `railOpen &&` that only ever ADDS anchors would pass the
+  // open half and fail the close half, and a paint left unconditional fails the first assertion.
+  test('empty while the rail is CLOSED, real anchors once it opens, empty again when it closes', async () => {
     const { container } = renderViewer('/sp/site')
     await waitFor(() => expect(container.querySelector('iframe')).not.toBeNull())
-    const { iframe, send } = armIframe(container)
-
-    act(() => send({ type: 'glance:ready', filePath: 'index.html' }))
-    act(() =>
-      send({
-        type: 'glance:anchor-rects',
-        epoch: 0,
-        rects: [{ id: 't1', rect: { top: 10, left: 10, width: 5, height: 5 } }],
-      }),
-    )
-
-    expect(container.querySelector('aside')).toBeNull() // rail closed
-    await waitFor(() => expect(badgeButtons(iframe)).toHaveLength(0))
-
-    fireEvent.click(screen.getByRole('button', { name: /Comments/ }))
-
-    await waitFor(() => expect(badgeButtons(iframe)).toHaveLength(1))
-  })
-
-  // C2b: paint is unconditional too — the mutation-check for this slice found that re-gating
-  // `anchors: railOpen ? paintAnchors(threads) : []` left the whole suite green, because nothing
-  // asserted on the actual glance:paint POST (only on badges fed by a hand-injected anchor-rects
-  // message, which never exercises paint at all). Spying on the iframe's own postMessage is what
-  // proves painting itself — not just the badge overlay it eventually feeds — fires unconditionally.
-  test('painting posts real anchors to the iframe with the rail CLOSED — not just an empty array', async () => {
-    const { container } = renderViewer('/sp/site')
-    await waitFor(() => expect(container.querySelector('iframe')).not.toBeNull())
-    const iframe = container.querySelector('iframe') as HTMLIFrameElement
-    // happy-dom's real contentWindow is null with iframe page loading disabled (see the top-of-file
-    // note), so `paint()`'s `if (!win) return` would swallow every postMessage before it happens —
-    // a fake contentWindow is the only way to observe the parent→child channel at all in this
-    // harness. Must be set BEFORE 'ready' below: viewer.tsx re-reads iframeRef.current.contentWindow
-    // fresh on every paint, so it's the value in place when threads first populate that matters.
-    const posted: unknown[] = []
-    const fakeWin = { postMessage: (m: unknown) => posted.push(m) }
-    Object.defineProperty(iframe, 'contentWindow', { value: fakeWin, configurable: true })
-    const send = (data: unknown) =>
-      window.dispatchEvent(new MessageEvent('message', { data, origin: CONTENT_ORIGIN, source: iframe.contentWindow as unknown as Window }))
+    const { iframe, send, paints, lastPaintIds } = armIframe(container)
+    loadIframe(iframe)
 
     act(() => send({ type: 'glance:ready', filePath: 'index.html' })) // applies THREADS (t1, t2)
 
-    await waitFor(() => {
-      const paints = posted.filter((m) => (m as { type?: string }).type === 'glance:paint')
-      expect(paints.length).toBeGreaterThan(0)
-    })
-    const lastPaint = posted.filter((m) => (m as { type?: string }).type === 'glance:paint').at(-1) as {
-      anchors: { id: string }[]
-    }
-    expect(lastPaint.anchors.map((a) => a.id).sort()).toEqual(['t1', 't2'])
-    expect(container.querySelector('aside') === null).toBe(true) // rail never opened
+    expect(container.querySelector('aside')).toBeNull() // rail closed
+    await waitFor(() => expect(paints().length).toBeGreaterThan(0))
+    expect(lastPaintIds()).toEqual([])
+
+    fireEvent.click(screen.getByRole('button', { name: /Comments/ }))
+    await waitFor(() => expect(lastPaintIds()).toEqual(['t1', 't2']))
+
+    fireEvent.click(screen.getByRole('button', { name: /Comments/ }))
+    await waitFor(() => expect(lastPaintIds()).toEqual([]))
+  })
+
+  // `?review=1` (a notification link) opens the rail before the frame has loaded and before threads
+  // are in. The client's listener isn't wired until load, so a paint posted earlier is dropped on
+  // the floor with nothing to re-fire it — which is why `loaded` is a DEPENDENCY of paint, not just
+  // a guard inside it. Without that, this deep link lands on a rail full of comments and a page
+  // with no highlights at all.
+  test('a ?review=1 deep link still paints once the frame finishes loading', async () => {
+    const { container } = renderViewer('/sp/site?review=1')
+    await waitFor(() => expect(container.querySelector('iframe')).not.toBeNull())
+    const { iframe, send, lastPaintIds } = armIframe(container)
+
+    act(() => send({ type: 'glance:ready', filePath: 'index.html' }))
+    await waitFor(() => expect(container.querySelector('aside')).not.toBeNull()) // rail open, not loaded yet
+
+    loadIframe(iframe)
+
+    await waitFor(() => expect(lastPaintIds()).toEqual(['t1', 't2']))
   })
 })
 
-// C1: a badge click is the second reveal SOURCE (the notification deep link is the first), and the
-// only one that can re-request the SAME thread — which is what ReviewRail's nonce guard exists for.
-// Both tests drive the real BadgeOverlay and the real ReviewRail; the reveal is observed as the
-// thread's own card (`#thread-<id>`, ThreadCard's root) being in the document.
-describe('viewer wiring — badge click reveal (C1)', () => {
-  // Arms the iframe, applies THREADS, injects one rect for `id` and returns its rendered chip.
-  async function badgeFor(container: HTMLElement, id: string) {
+// Clicking a highlight in the page is the ONLY route from the document back to the rail now that
+// badges are gone. The reveal is observed as the thread's own card (`#thread-<id>`, ThreadCard's
+// root) being in the document.
+describe('viewer wiring — a click on a painted anchor reveals its thread', () => {
+  // "Unfiltered" reveal: the rail's status tabs are user state, so the thread a highlight belongs to
+  // can be sitting behind the tab that ISN'T selected. Revealing has to move the tab to the target's
+  // own status (ReviewRail's setFilter(target.status)), or the click opens a rail that doesn't
+  // contain it. Round two clicks the SAME anchor, which is what the nonce buys: with a constant
+  // nonce ReviewRail treats the repeat as already-handled and the card never comes back.
+  test('reveals its thread even when the rail is filtered away from it, on every click', async () => {
+    const { container } = renderViewer('/sp/site?review=1')
     await waitFor(() => expect(container.querySelector('iframe')).not.toBeNull())
     const { iframe, send } = armIframe(container)
+    loadIframe(iframe)
     act(() => send({ type: 'glance:ready', filePath: 'index.html' }))
-    act(() => send({ type: 'glance:anchor-rects', epoch: 0, rects: [{ id, rect: { top: 10, left: 10, width: 5, height: 5 } }] }))
-    return await waitFor(() => {
-      const btns = badgeButtons(iframe)
-      expect(btns).toHaveLength(1)
-      return btns[0]
-    })
-  }
-
-  // The old "a badge click opens the CLOSED rail" case is gone with the railOpen gate: badges only
-  // exist while the panel is open, so there is no closed-rail badge left to click. revealFromBadge
-  // still calls setRailOpen(true) — now a no-op from this path, kept because it costs nothing and
-  // the reveal below is the behaviour that matters.
-
-  // "Unfiltered" reveal: the rail's status tabs are user state, so the thread a badge points at can
-  // be sitting behind the tab that ISN'T selected. Revealing has to move the tab to the target's own
-  // status (ReviewRail's setFilter(target.status)), or the click opens a rail that doesn't contain
-  // it. Round two re-clicks the SAME badge, which is what the nonce buys: with a constant nonce
-  // ReviewRail treats the repeat as already-handled and the card never comes back.
-  test('a badge click reveals its thread even when the rail is filtered away from it, on every click', async () => {
-    const { container } = renderViewer('/sp/site?review=1')
-    const badge = await badgeFor(container, 't1')
     await waitFor(() => expect(document.getElementById('thread-t1')).not.toBeNull())
 
     for (const _round of [1, 2]) {
@@ -286,9 +178,59 @@ describe('viewer wiring — badge click reveal (C1)', () => {
       fireEvent.click(screen.getByRole('button', { name: 'resolved' }))
       await waitFor(() => expect(document.getElementById('thread-t1')).toBeNull())
 
-      fireEvent.click(badge)
+      act(() => send({ type: 'glance:anchor-click', id: 't1' }))
 
       await waitFor(() => expect(document.getElementById('thread-t1')).not.toBeNull())
+    }
+  })
+
+  // The id crosses the hostile-iframe boundary, so it is looked up in the parent's OWN threads
+  // rather than trusted. A forged one matches nothing and must reveal nothing — not open the rail
+  // on an empty request, and not throw.
+  test('an id matching no loaded thread reveals nothing', async () => {
+    const { container } = renderViewer('/sp/site')
+    await waitFor(() => expect(container.querySelector('iframe')).not.toBeNull())
+    const { iframe, send } = armIframe(container)
+    loadIframe(iframe)
+    act(() => send({ type: 'glance:ready', filePath: 'index.html' }))
+
+    act(() => send({ type: 'glance:anchor-click', id: 'ghost' }))
+
+    expect(container.querySelector('aside')).toBeNull()
+  })
+})
+
+// Adding a comment OPENS the rail — always, and with no toast standing in for it. The old behaviour
+// (leave the panel shut, toast "Comment added" with a "Show comments" action) is what this replaces,
+// so both halves are asserted: the <aside> appears, and no toast does.
+describe('viewer wiring — adding a comment opens the rail', () => {
+  test('a comment written from the in-page popover opens the rail, with no toast', async () => {
+    const create = spyOn(comments, 'create').mockResolvedValue(mkThread({ id: 't9' }))
+    const list = spyOn(comments, 'list').mockResolvedValue(THREADS)
+    const mentionable = spyOn(comments, 'mentionable').mockResolvedValue([])
+    try {
+      const { container } = renderViewer('/sp/site')
+      await waitFor(() => expect(container.querySelector('iframe')).not.toBeNull())
+      const { iframe, send } = armIframe(container)
+      loadIframe(iframe)
+      act(() => send({ type: 'glance:ready', filePath: 'index.html' })) // gives submitThread its filePath
+      expect(container.querySelector('aside')).toBeNull() // rail closed
+
+      // Select text in the page → chip → composer, the real in-place comment path.
+      act(() => send({ type: 'glance:select', quote: 'the quoted sentence', rect: { top: 10, left: 10, width: 50, height: 12 } }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Comment on selection' }))
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: 'this paragraph contradicts the last' } })
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Comment' }))
+      })
+
+      expect(create).toHaveBeenCalledTimes(1)
+      await waitFor(() => expect(container.querySelector('aside')).not.toBeNull())
+      expect(screen.queryByText('Comment added')).toBeNull()
+    } finally {
+      create.mockRestore()
+      list.mockRestore()
+      mentionable.mockRestore()
     }
   })
 })

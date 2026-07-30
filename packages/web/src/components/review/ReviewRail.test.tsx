@@ -1,4 +1,4 @@
-// Slice C1b — the deep-link/badge-click reveal used to key on thread id alone (`revealedRef`),
+// Slice C1b — the deep-link/highlight-click reveal used to key on thread id alone (`revealedRef`),
 // so asking to reveal the SAME thread a second time was silently a no-op. It's now keyed on a
 // caller-bumped NONCE (lib/viewerCommands' shouldReveal) — same id + bumped nonce reveals again,
 // unchanged nonce across a re-render does not.
@@ -55,7 +55,6 @@ function renderRail(threads: Thread[], focusRequest: { id: string; nonce: number
       onCreateVoice={() => {}}
       onChanged={() => {}}
       onFocusAnchor={() => {}}
-      onHoverThread={() => {}}
       onClose={() => {}}
       focusRequest={focusRequest}
     />,
@@ -79,7 +78,6 @@ describe('ReviewRail — the header ✕ closes the panel (C2b: replaces the View
         onCreateVoice={() => {}}
         onChanged={() => {}}
         onFocusAnchor={() => {}}
-        onHoverThread={() => {}}
         onClose={onClose}
         focusRequest={null}
       />,
@@ -123,7 +121,6 @@ describe('ReviewRail — reveal-by-nonce', () => {
         onCreateVoice={() => {}}
         onChanged={() => {}}
         onFocusAnchor={() => {}}
-        onHoverThread={() => {}}
       onClose={() => {}}
         focusRequest={{ id: 't1', nonce: 2 }}
       />,
@@ -151,7 +148,6 @@ describe('ReviewRail — reveal-by-nonce', () => {
         onCreateVoice={() => {}}
         onChanged={() => {}}
         onFocusAnchor={() => {}}
-        onHoverThread={() => {}}
       onClose={() => {}}
         focusRequest={{ id: 't1', nonce: 1 }}
       />,
@@ -175,7 +171,6 @@ describe('ReviewRail — reveal-by-nonce', () => {
         onCreateVoice={() => {}}
         onChanged={() => {}}
         onFocusAnchor={() => {}}
-        onHoverThread={() => {}}
       onClose={() => {}}
         focusRequest={{ id: 't2', nonce: 2 }}
       />,
@@ -208,7 +203,6 @@ describe('ReviewRail — reveal-by-nonce', () => {
         onCreateVoice={() => {}}
         onChanged={() => {}}
         onFocusAnchor={() => {}}
-        onHoverThread={() => {}}
       onClose={() => {}}
         focusRequest={{ id: 't1', nonce: 1 }}
       />,
