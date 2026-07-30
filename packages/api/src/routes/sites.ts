@@ -592,12 +592,25 @@ sites.post('/:spaceSlug/:siteSlug/fork', requireAuth, async (c) => {
   if (!site) return c.json({ error: 'not found' }, 404)
   if (!access.ok) return c.json({ error: 'forbidden' }, access.status)
 
-  const body = (await c.req.json().catch(() => null)) as { space?: unknown; slug?: unknown; title?: unknown } | null
+  const body = (await c.req.json().catch(() => null)) as {
+    space?: unknown
+    slug?: unknown
+    title?: unknown
+    visibility?: unknown
+  } | null
   const wantSpace = body?.space
   const wantSlug = body?.slug
   if (wantSpace !== undefined && typeof wantSpace !== 'string') return c.json({ error: 'invalid space' }, 400)
   if (wantSlug !== undefined && typeof wantSlug !== 'string') return c.json({ error: 'invalid slug' }, 400)
   if (typeof wantSlug === 'string' && !isValidSlug(wantSlug)) return c.json({ error: 'invalid slug' }, 400)
+
+  // Same normalize-then-validate as PATCH, so legacy wire tiers are mapped rather than rejected.
+  let wantVisibility: Visibility | undefined
+  if (body?.visibility !== undefined) {
+    const vis = normalizeVisibility(body.visibility)
+    if (!isVisibility(vis)) return c.json({ error: 'invalid visibility' }, 400)
+    wantVisibility = vis
+  }
 
   // Destination: an explicitly named space, else the caller's personal space. A user with neither
   // gets a 400 — never a silent fork into somewhere they didn't ask for.
@@ -652,8 +665,9 @@ sites.post('/:spaceSlug/:siteSlug/fork', requireAuth, async (c) => {
         // A fork COPIES the bytes, so it inherits the blurb derived from them; the next replace
         // re-derives it from whatever the fork's own content becomes.
         description: site.description,
-        // Inherit the source's tier: a fork of a private site is private, not silently widened.
-        visibility: site.visibility,
+        // The forker picks the tier (the fork dialog defaults its picker to the source's). Omit it
+        // and the source's tier is inherited: a fork of a private site is never silently widened.
+        visibility: wantVisibility ?? site.visibility,
         ownerId: user.id,
         forkedFrom: site.id,
       }),

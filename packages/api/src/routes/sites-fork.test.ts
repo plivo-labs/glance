@@ -128,6 +128,57 @@ describe('POST /api/sites/:space/:site/fork', () => {
     expect((await fork(app, env, 'rd', { slug: 'Not A Slug' })).status).toBe(400)
   })
 
+  test('fork.custom.title: an explicit title is honoured; an omitted one keeps the source’s', async () => {
+    const { db, app, env } = await setup()
+    await fork(app, env, 'rd', { title: '  My Fork  ', slug: 'named' })
+    await fork(app, env, 'rd', { slug: 'unnamed' })
+    const named = (await db.select().from(sitesTable).where(eq(sitesTable.slug, 'named')))[0]
+    const unnamed = (await db.select().from(sitesTable).where(eq(sitesTable.slug, 'unnamed')))[0]
+    expect(named?.title).toBe('My Fork')
+    expect(unnamed?.title).toBe('Doc')
+  })
+
+  // The fork dialog lets the user choose who can see the copy. An OMITTED visibility keeps the old
+  // behaviour (inherit the source's tier) — the dialog just defaults its picker to that.
+  test('fork.visibility.inherited: an omitted visibility still inherits the source tier', async () => {
+    const { db, app, env } = await setup()
+    expect((await fork(app, env, 'rd')).status).toBe(200)
+    const copy = (await db.select().from(sitesTable).where(eq(sitesTable.slug, 'doc-copy')))[0]
+    expect(copy?.visibility).toBe('team')
+  })
+
+  test('fork.visibility.chosen: an explicit tier wins — including narrowing a team site to private', async () => {
+    const { db, app, env } = await setup()
+    expect((await fork(app, env, 'rd', { visibility: 'private', slug: 'priv' })).status).toBe(200)
+    expect((await fork(app, env, 'rd', { visibility: 'members', slug: 'memb' })).status).toBe(200)
+    expect((await fork(app, env, 'rd', { visibility: 'team', slug: 'tier' })).status).toBe(200)
+    const tier = async (slug: string) =>
+      (await db.select().from(sitesTable).where(eq(sitesTable.slug, slug)))[0]?.visibility
+    expect(await tier('priv')).toBe('private')
+    expect(await tier('memb')).toBe('members')
+    expect(await tier('tier')).toBe('team')
+  })
+
+  // Same normalization the PATCH route uses: legacy wire values are mapped, never rejected.
+  test('fork.visibility.legacy: `public` normalizes to team rather than 400ing', async () => {
+    const { db, app, env } = await setup()
+    expect((await fork(app, env, 'rd', { visibility: 'public', slug: 'legacy' })).status).toBe(200)
+    const copy = (await db.select().from(sitesTable).where(eq(sitesTable.slug, 'legacy')))[0]
+    expect(copy?.visibility).toBe('team')
+  })
+
+  test('fork.visibility.invalid: junk 400s and copies nothing', async () => {
+    const { db, app, env, r2 } = await setup()
+    for (const visibility of ['nope', 42, null, {}]) {
+      const res = await fork(app, env, 'rd', { visibility })
+      expect(res.status).toBe(400)
+      expect(await res.json()).toMatchObject({ error: 'invalid visibility' })
+    }
+    // Validation runs before any R2 copy or D1 write — nothing was created.
+    expect((await db.select().from(sitesTable).where(eq(sitesTable.spaceId, 'rd-personal'))).length).toBe(0)
+    expect(r2.store.size).toBe(2)
+  })
+
   test('fork.no.read.403: a stranger with no access cannot fork', async () => {
     const { db, app, env } = await setup()
     await db.update(sitesTable).set({ visibility: 'private' }).where(eq(sitesTable.id, 'site'))
