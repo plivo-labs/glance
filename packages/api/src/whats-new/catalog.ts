@@ -4,6 +4,13 @@ import type { Release } from './bake'
 
 export const RELEASES: Release[] = [
   {
+    "slug": "realtime-comments",
+    "title": "Comments arrive live",
+    "date": "2026-08-01T10:00:00.000Z",
+    "featured": true,
+    "bodyHtml": "<p>A comment someone else leaves now shows up while you&#39;re reading. No refresh, no polling, no &quot;let me reload and check&quot;.</p>\n<ul>\n<li><strong>New comments and replies appear as they&#39;re posted</strong> — in the panel and on the page</li>\n<li><strong>You only ever receive what you could already open.</strong> The live feed is gated exactly like the page is; it is not a second way in</li>\n<li><strong>Leave a tab open and it stays honest.</strong> If the connection drops it reconnects and re-reads the thread, so an old tab catches up instead of quietly going stale</li>\n<li><strong>See a reply coming.</strong> While someone is typing a reply, the thread says so</li>\n<li><strong>Nothing to turn on</strong> — open a page with comments and it&#39;s already listening</li>\n</ul>\n<p>The connection renews itself every few minutes. A comment that lands exactly on a renewal arrives a beat later rather than instantly — everything else is immediate.</p>\n"
+  },
+  {
     "slug": "api-keys",
     "title": "API keys for scripts and CI",
     "image": "api-keys.png",
@@ -90,4 +97,4 @@ export const RELEASES: Release[] = [
   }
 ]
 
-export const NEWEST_RELEASE_DATE: string | null = "2026-07-31T10:00:00.000Z"
+export const NEWEST_RELEASE_DATE: string | null = "2026-08-01T10:00:00.000Z"
