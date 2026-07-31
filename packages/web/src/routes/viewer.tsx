@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'r
 import { type LoaderFunctionArgs, useLoaderData, useParams, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import { api, ApiError } from '@/lib/api'
+import { applyCommentEvent } from '@/lib/applyCommentEvent'
 import { isAudioFile } from '@/lib/audio'
+import { type CommentStream, type CommentStreamEvent, createCommentStream } from '@/lib/commentStream'
 import { attachDbBroker } from '@/lib/dbBroker'
 import { comments, paintAnchors, type PendingAnchor, pendingToInput, type Thread } from '@/lib/comments'
 import { initialPopover, stepPopover } from '@/lib/commentPopover'
@@ -18,7 +20,7 @@ import { Spinner } from '@/components/states'
 import { CommandPalette } from '@/components/CommandPalette'
 import { ViewerTopBar } from '@/components/ViewerTopBar'
 import { CommentPopover } from '@/components/review/CommentPopover'
-import { ReviewRail } from '@/components/review/ReviewRail'
+import { ReviewRail, type TypingPing } from '@/components/review/ReviewRail'
 import { ViewerSidebar } from '@/components/ViewerSidebar'
 
 // S11: the loader resolves on SITE META alone; the comments prefetch for the predicted entry file
@@ -169,6 +171,96 @@ function Viewer() {
   // Mutation refresh (create/reply/resolve): a fresh generation, so any older in-flight list
   // result — prefetch included — can no longer clobber what this returns.
   const refresh = useCallback((fp: string) => loadThreads(fp), [loadThreads])
+
+  // ── S9 pushed comment events ─────────────────────────────────────────────────────────────────
+  // The rail stops asking and starts listening: the site's comments socket pushes creates and
+  // replies (Phase 1+2) and lib/applyCommentEvent folds each one into `threads`. Nothing else is
+  // needed for the page to keep up — `paint` already derives from `threads`, so the chips repaint
+  // for free, and `openCount` (the toolbar badge) recomputes with them.
+  const streamRef = useRef<CommentStream | null>(null)
+  // The socket is per SITE and outlives every in-iframe file change, so its callbacks read the
+  // current file from a ref rather than closing over it: making `filePath` a dependency of the
+  // effect below would re-dial on every in-page navigation and drop events for the redial's length.
+  const filePathRef = useRef(filePath)
+  useEffect(() => {
+    filePathRef.current = filePath
+  }, [filePath])
+
+  // S12 — who is replying right now. A ping carries its own ABSOLUTE expiry and is never retracted
+  // (the room schedules nothing; a closed laptop just stops sending), so the rail counts it down on
+  // its own clock and nothing here has to expire anything. Keyed by VIEWER: a person types in one
+  // place at a time, so a new ping replaces that viewer's previous one — and any ping already past
+  // its expiry is dropped on the way in, so this can't grow with the length of the session.
+  const [typing, setTyping] = useState<TypingPing[]>([])
+
+  const onPushed = useCallback(
+    // Both frames the comments channel carries — the transport declares the union (S8), so the
+    // discriminant below is the only thing that tells them apart here.
+    (event: CommentStreamEvent) => {
+      if (event.type === 'typing') {
+        // Destructured, never spread: ONLY these three fields cross into the rail, so a payload
+        // that also carried a display name could not get it rendered.
+        const { viewerId, threadId, expiresAt } = event
+        const now = Date.now()
+        setTyping((live) => {
+          // Dropping this viewer's previous ping is what makes a stop (expiresAt 0) work: the ping
+          // it replaces is gone, and an already-elapsed one is never added back — so the list holds
+          // live pings only and cannot grow with the length of the session.
+          const others = live.filter((p) => p.viewerId !== viewerId && p.expiresAt > now)
+          return expiresAt > now ? [...others, { viewerId, threadId, expiresAt }] : others
+        })
+        return
+      }
+      // The fold goes THROUGH the arbiter rather than straight to setThreads: a push landing while a
+      // list read is unsettled must be applied to the list that read returns (applying it now would
+      // paint it onto a list the settle is about to replace — the comment would vanish). Only the
+      // arbiter knows whether one is in flight, and which file it is for, so it holds the fold and
+      // runs it at apply time. 'live' means nothing is unsettled: this is the on-screen list's file.
+      const { decision } = dispatch({ type: 'push', apply: (list, path) => applyCommentEvent(list, event, path) })
+      const fp = filePathRef.current
+      if (decision.kind === 'live' && fp) setThreads((list) => decision.apply(list, fp))
+    },
+    [dispatch],
+  )
+
+  useEffect(() => {
+    const stream = createCommentStream({
+      site: siteRef,
+      appOrigin: window.location.origin,
+      onEvent: onPushed,
+      // There is no cursor to replay from (ruled decision 1), so a redial can only mean "a gap may
+      // have happened" — including the one comment the 300s token expiry drops. Re-reading the list
+      // is the whole convergence story.
+      onReconnect: () => {
+        const fp = filePathRef.current
+        if (fp) void refresh(fp)
+      },
+    })
+    streamRef.current = stream
+    return () => {
+      streamRef.current = null
+      stream.dispose()
+    }
+    // All three are stable for the life of a mount (siteRef is memoized on slugs the Component keys
+    // on), so this dials ONCE per site and disposes on unmount — never mid-session.
+  }, [siteRef, onPushed, refresh])
+
+  // A local write's list refetch, dropped in exactly one case: the room fans this write back to
+  // every socket on the site — the author's own included — so a PUSHED change on a CONNECTED stream
+  // is already on its way and the read would only ask for what we are about to be told. Anything
+  // else still reads: resolve/reopen/delete are never pushed (ruled decision 5), and with no live
+  // socket (the redial gap, or realtime unavailable) the read is the only way the author ever sees
+  // their own write. Returned so a mutation flow can keep its composer busy until the list lands.
+  // Stable across renders so ReviewRail's own memoized children don't churn: the stream itself is
+  // held in a ref precisely because it is replaced on redial, and neither of these should change
+  // identity when it is.
+  const sendTyping = useCallback((threadId: string) => streamRef.current?.sendTyping(threadId), [])
+  const sendTypingStop = useCallback((threadId: string) => streamRef.current?.sendTypingStop(threadId), [])
+
+  const refreshUnlessPushed = useCallback(
+    (fp: string, pushed: boolean) => (pushed && streamRef.current?.connected() ? Promise.resolve() : refresh(fp)),
+    [refresh],
+  )
 
   // Actionable count for the toolbar badge: open threads (mirrors the rail's default "open" list).
   const openCount = useMemo(() => threads.filter((t) => t.status === 'open').length, [threads])
@@ -414,7 +506,8 @@ function Viewer() {
     // confirmation (and its highlight lighting up on the page), so there is no toast: a toast was
     // only ever standing in for a panel that wasn't allowed to open itself. Already open is a no-op.
     setRailOpen(true)
-    await refresh(filePath)
+    // S9: a create IS pushed, so with a live stream this read goes away (see refreshUnlessPushed).
+    await refreshUnlessPushed(filePath, true)
   }
 
   const createThread = (body: string, mentions: string[]) =>
@@ -568,8 +661,17 @@ function Viewer() {
             onCancelComposer={() => setComposing(null)}
             onCreate={createThread}
             onCreateVoice={createVoiceThread}
-            onChanged={() => filePath && refresh(filePath)}
+            // ThreadCard fires this for resolve/reopen and delete as well as for replies, so the S9
+            // gate is per change (`pushed`), not per call site: a reply's push replaces this read,
+            // a resolve has no push and must keep it or it would be invisible until reload.
+            onChanged={({ pushed }) => filePath && void refreshUnlessPushed(filePath, pushed)}
             onFocusAnchor={scrollAnchor}
+            typing={typing}
+            // The send side. `sendTyping` does its own 15s-per-thread rate cap (S11) — every
+            // keystroke calls it and all but one is swallowed there, so the composer needs no timer
+            // and no state of its own. With no live socket both are silent no-ops.
+            onTyping={sendTyping}
+            onTypingStop={sendTypingStop}
             onClose={closeRail}
             onStartComment={startPageComment}
             getCurrentTime={isAudio ? getCurrentTime : undefined}

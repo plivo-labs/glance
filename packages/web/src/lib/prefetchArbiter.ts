@@ -11,6 +11,15 @@
 // - STALE READY: after a splat navigation the OLD iframe document can still deliver a late ready.
 //   navReset records the old path as `staleHint`; a pre-confirmation ready matching it is ignored,
 //   while any other pre-confirmation mismatch is the iframe's REAL path winning over our guess.
+// - PUSHED events (S9): a comment pushed over the socket while a list read is unsettled must not be
+//   applied to the list that read is about to replace — the settle would silently swallow it. Such a
+//   push is BUFFERED here and folded into whatever that read returns; with nothing unsettled it is
+//   'live' and the component applies it to what is on screen. The fold is a FUNCTION so this reducer
+//   stays generic and knows nothing about comments (the viewer passes lib/applyCommentEvent).
+
+/** Folds one pushed event into a list. `path` is the file the list being folded into is FOR — the
+ *  push may have been buffered across a refetch, so it is never assumed to be the current file. */
+export type PushFold<T> = (data: T, path: string) => T
 
 export interface InFlight {
   gen: number
@@ -33,6 +42,8 @@ export interface ArbiterState<T> {
   inFlight: InFlight | null
   /** A settled provisional prefetch parked until its ready arrives. */
   pending: { path: string; data: T } | null
+  /** Pushes that landed while the list was unsettled, in arrival order — folded in on the next apply. */
+  buffered: PushFold<T>[]
 }
 
 export type ArbiterEvent<T> =
@@ -41,6 +52,7 @@ export type ArbiterEvent<T> =
   | { type: 'settled'; gen: number; ok: false; error: unknown }
   | { type: 'ready'; path: string }
   | { type: 'navReset'; expected: string | null }
+  | { type: 'push'; apply: PushFold<T> }
 
 export type Decision<T> =
   | { kind: 'none' } // state advanced (start / parked provisional / reset) — nothing to do
@@ -49,6 +61,7 @@ export type Decision<T> =
   | { kind: 'apply'; path: string; data: T } // paint these threads
   | { kind: 'refetch'; path: string } // the iframe's real path has no usable data — load it
   | { kind: 'error'; error: unknown } // CURRENT-generation ad-hoc failure — surface it
+  | { kind: 'live'; apply: PushFold<T> } // nothing unsettled — fold this push into what is on screen
 
 export interface StepResult<T> {
   state: ArbiterState<T>
@@ -56,7 +69,16 @@ export interface StepResult<T> {
 }
 
 export function initialArbiter<T>(expected: string | null): ArbiterState<T> {
-  return { gen: 0, expected, staleHint: null, confirmed: false, readyPath: null, inFlight: null, pending: null }
+  return { gen: 0, expected, staleHint: null, confirmed: false, readyPath: null, inFlight: null, pending: null, buffered: [] }
+}
+
+/** The one place a list becomes visible: every buffered push is folded in, in arrival order, and the
+ *  buffer is emptied — so a push is applied exactly once no matter which read finally lands. */
+function applied<T>(state: ArbiterState<T>, path: string, data: T): StepResult<T> {
+  return {
+    state: { ...state, buffered: [] },
+    decision: { kind: 'apply', path, data: state.buffered.reduce((d, fold) => fold(d, path), data) },
+  }
 }
 
 // A ready established `path` as the iframe's real file. Use the parked/in-flight data when it was
@@ -64,7 +86,7 @@ export function initialArbiter<T>(expected: string | null): ArbiterState<T> {
 function confirm<T>(state: ArbiterState<T>, path: string, matchesExpected: boolean): StepResult<T> {
   const confirmed: ArbiterState<T> = { ...state, confirmed: true, readyPath: path, pending: null }
   if (matchesExpected && state.pending && state.pending.path === path)
-    return { state: confirmed, decision: { kind: 'apply', path, data: state.pending.data } }
+    return applied(confirmed, path, state.pending.data)
   if (matchesExpected && state.inFlight && state.inFlight.path === path)
     return { state: confirmed, decision: { kind: 'none' } } // still in flight — applies on settle
   return { state: confirmed, decision: { kind: 'refetch', path } }
@@ -90,11 +112,9 @@ export function stepArbiter<T>(state: ArbiterState<T>, event: ArbiterEvent<T>): 
         // failure surfaces. Stale rejections never reach here (generation check above).
         return { state: next, decision: provisional ? { kind: 'discard' } : { kind: 'error', error: event.error } }
       }
-      if (!provisional) return { state: next, decision: { kind: 'apply', path, data: event.data } }
+      if (!provisional) return applied(next, path, event.data)
       if (state.confirmed) {
-        return state.readyPath === path
-          ? { state: next, decision: { kind: 'apply', path, data: event.data } }
-          : { state: next, decision: { kind: 'discard' } }
+        return state.readyPath === path ? applied(next, path, event.data) : { state: next, decision: { kind: 'discard' } }
       }
       // No ready yet: park it. If no ready ever arrives, it is never applied.
       return { state: { ...next, pending: { path, data: event.data } }, decision: { kind: 'none' } }
@@ -110,6 +130,15 @@ export function stepArbiter<T>(state: ArbiterState<T>, event: ArbiterEvent<T>): 
       }
       if (path === state.readyPath) return { state, decision: { kind: 'ignore' } } // duplicate ready
       return confirm(state, path, false) // in-iframe navigation to another file
+    }
+
+    case 'push': {
+      // "Unsettled" is in flight OR parked: in both cases a list the user cannot see yet is about to
+      // land, and applying the push now would be applying it to the list that one replaces. Held
+      // pushes are folded in by `applied` — including onto a LATER read if this one fails, which is
+      // why the buffer is not cleared on a discard/error.
+      if (state.inFlight === null && state.pending === null) return { state, decision: { kind: 'live', apply: event.apply } }
+      return { state: { ...state, buffered: [...state.buffered, event.apply] }, decision: { kind: 'none' } }
     }
 
     case 'navReset':

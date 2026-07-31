@@ -64,7 +64,7 @@ describe('S-B seam: pre-generated commentId + audioKey', () => {
     const sp = await seedSpace(db, { createdBy: user })
     const siteId = await seedSite(db, { spaceId: sp, ownerId: user })
     const threadId = await seedThread(db, { siteId, filePath: 'index.html', anchorType: 'page' })
-    const id = await addComment(db, {
+    const { id } = await addComment(db, {
       threadId,
       authorId: user,
       body: 'reply transcript',
@@ -316,7 +316,7 @@ describe('listThreads — ordering + soft-delete shape', () => {
   test('soft-delete-keeps-thread-shape: deleted comment row stays, body redacted', async () => {
     const { db, sp, siteId, user, path } = await siteWithFile('<p>hi there</p>')
     const { threadId } = await createThread(db, { siteId, filePath: path, createdBy: user, body: 'keep me', quote: 'hi' })
-    const replyId = await addComment(db, { threadId, authorId: user, body: 'delete me' })
+    const { id: replyId } = await addComment(db, { threadId, authorId: user, body: 'delete me' })
     await deleteComment(db, threadId, replyId)
     const [thread] = await listThreads(db, sp, siteId, path)
     expect(thread.comments).toHaveLength(2)
@@ -407,7 +407,7 @@ describe('author legibility — display name resolution', () => {
     const { db, sp, siteId } = await bareSite()
     const author = await seedUser(db, { id: 'au3', name: 'Grace Hopper', email: 'grace@example.com' })
     const { threadId } = await createThread(db, { siteId, filePath: 'index.html', createdBy: author, body: 'keep', quote: 'hello' })
-    const replyId = await addComment(db, { threadId, authorId: author, body: 'delete me' })
+    const { id: replyId } = await addComment(db, { threadId, authorId: author, body: 'delete me' })
     await deleteComment(db, threadId, replyId)
     const [thread] = await listThreads(db, sp, siteId, 'index.html')
     const del = thread.comments.find((c) => c.id === replyId)!

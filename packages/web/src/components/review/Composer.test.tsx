@@ -147,3 +147,65 @@ describe('A — onDirtyChange', () => {
     expect(onDirtyChange.mock.calls.at(-1)).toEqual([false])
   })
 })
+
+// S11: the composer is the only thing that knows a human is typing. It reports EVERY keystroke —
+// the 15s cap lives in commentStream, so a composer that tried to be clever here would just be a
+// second, drifting copy of the cost model.
+describe('A — typing signal', () => {
+  test('every keystroke reports typing, and blur reports a stop', () => {
+    const onTyping = mock(() => {})
+    const onTypingStop = mock(() => {})
+    render(
+      <Composer
+        placeholder="Add a comment"
+        submitLabel="Comment"
+        onSubmit={() => {}}
+        onTyping={onTyping}
+        onTypingStop={onTypingStop}
+      />,
+    )
+    const textarea = screen.getByPlaceholderText('Add a comment') as HTMLTextAreaElement
+
+    type(textarea, 't')
+    type(textarea, 'th')
+    type(textarea, 'the')
+    expect(onTyping).toHaveBeenCalledTimes(3)
+    expect(onTypingStop).toHaveBeenCalledTimes(0)
+
+    // Clicking away is the commonest way a draft is abandoned — the peer's indicator must not hang
+    // there for the full server TTL.
+    fireEvent.blur(textarea)
+    expect(onTypingStop).toHaveBeenCalledTimes(1)
+  })
+
+  test('a submitted comment reports a stop; a failed one does not — the draft is still being typed', async () => {
+    const onTypingStop = mock(() => {})
+    let settle!: { resolve: () => void; reject: (err: unknown) => void }
+    const onSubmit = mock(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          settle = { resolve, reject: (err) => reject(err) }
+        }),
+    )
+    render(
+      <Composer placeholder="Add a comment" submitLabel="Comment" onSubmit={onSubmit} onTypingStop={onTypingStop} />,
+    )
+    const textarea = screen.getByPlaceholderText('Add a comment') as HTMLTextAreaElement
+    const submitButton = screen.getByRole('button', { name: 'Comment' }) as HTMLButtonElement
+
+    type(textarea, DRAFT)
+    fireEvent.click(submitButton)
+    await act(async () => {
+      settle.reject(new Error('write failed'))
+    })
+    // Same rule the draft itself follows: a rejected write changed nothing, and the user is still
+    // sitting on their text.
+    expect(onTypingStop).toHaveBeenCalledTimes(0)
+
+    fireEvent.click(submitButton)
+    await act(async () => {
+      settle.resolve()
+    })
+    expect(onTypingStop).toHaveBeenCalledTimes(1)
+  })
+})

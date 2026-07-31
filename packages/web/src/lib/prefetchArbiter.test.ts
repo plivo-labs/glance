@@ -160,6 +160,7 @@ describe('splat-navigation reset (T11.4)', () => {
       readyPath: null,
       inFlight: null,
       pending: null,
+      buffered: [], // a push held for the OLD file must never fold into the new one's list
     })
     // generations keep counting up after the reset
     expect(stepArbiter(reset, { type: 'start', path: 'b.html', provisional: true }).state.gen).toBe(2)
@@ -195,5 +196,81 @@ describe('splat-navigation reset (T11.4)', () => {
       { type: 'ready', path: 'a.html' }, // old doc's ready arriving after the nav
     ])
     expect(decisions[1]).toEqual({ kind: 'ignore' })
+  })
+})
+
+// C13 (S9) — the same ordering rule the loads already obey, now for PUSHED comment events: a push
+// that lands while a list is being read must not be applied to the list that read is about to
+// replace. The reducer buffers it and folds it into whatever that read returns, so the push
+// survives the settle instead of being silently overwritten by it. The fold is a FUNCTION so the
+// reducer stays generic and knows nothing about comments; the viewer passes applyCommentEvent.
+describe('pushed events vs an in-flight list (C13)', () => {
+  const push = (tag: string): ArbiterEvent<Data> => ({ type: 'push', apply: (d) => [...d, tag] })
+
+  test('with no load in flight the push is LIVE — the component applies it to what is on screen', () => {
+    const { state, decisions } = run('index.html', [{ type: 'ready', path: 'index.html' }, push('p1')])
+    expect(decisions[1].kind).toBe('live')
+    expect(state.buffered).toEqual([]) // nothing held back
+  })
+
+  test('a push DURING a load is buffered, then folded into that list when it settles', () => {
+    const { state, decisions } = run('index.html', [
+      { type: 'start', path: 'index.html', provisional: false },
+      push('p1'),
+      { type: 'settled', gen: 1, ok: true, data: THREADS },
+    ])
+    expect(decisions[1]).toEqual({ kind: 'none' }) // NOT applied to the pre-load list
+    expect(decisions[2]).toEqual({ kind: 'apply', path: 'index.html', data: ['t1', 't2', 'p1'] })
+    expect(state.buffered).toEqual([]) // drained exactly once
+  })
+
+  test('a push while a provisional prefetch is PARKED is folded in when the ready applies it', () => {
+    const { decisions } = run('index.html', [
+      { type: 'start', path: 'index.html', provisional: true },
+      { type: 'settled', gen: 1, ok: true, data: THREADS }, // parked, nothing on screen yet
+      push('p1'),
+      { type: 'ready', path: 'index.html' },
+    ])
+    expect(decisions[2]).toEqual({ kind: 'none' }) // buffered — applying it live would be clobbered
+    expect(decisions[3]).toEqual({ kind: 'apply', path: 'index.html', data: ['t1', 't2', 'p1'] })
+  })
+
+  test('the buffer drains ONCE — a later list does not re-apply an already-folded push', () => {
+    const { decisions } = run('index.html', [
+      { type: 'start', path: 'index.html', provisional: false },
+      push('p1'),
+      { type: 'settled', gen: 1, ok: true, data: THREADS },
+      { type: 'start', path: 'index.html', provisional: false },
+      { type: 'settled', gen: 2, ok: true, data: THREADS },
+    ])
+    expect(decisions[4]).toEqual({ kind: 'apply', path: 'index.html', data: THREADS })
+  })
+
+  test('the fold is given the path the settled list is FOR, not the file the push arrived on', () => {
+    let seen: string | null = null
+    const { decisions } = run('index.html', [
+      { type: 'start', path: 'index.html', provisional: false },
+      {
+        type: 'push',
+        apply: (d, path) => {
+          seen = path
+          return d
+        },
+      },
+      { type: 'settled', gen: 1, ok: true, data: THREADS },
+    ])
+    expect(decisions[2].kind).toBe('apply')
+    expect(seen).toBe('index.html')
+  })
+
+  test('a push buffered before a splat nav never reaches the NEW file’s list', () => {
+    const { decisions } = run('a.html', [
+      { type: 'start', path: 'a.html', provisional: false },
+      push('p1'),
+      { type: 'navReset', expected: 'b.html' },
+      { type: 'start', path: 'b.html', provisional: false },
+      { type: 'settled', gen: 2, ok: true, data: NEWER },
+    ])
+    expect(decisions[4]).toEqual({ kind: 'apply', path: 'b.html', data: NEWER })
   })
 })
