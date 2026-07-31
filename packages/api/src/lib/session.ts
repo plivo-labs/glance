@@ -95,6 +95,14 @@ export async function readCliToken(c: Context<AppEnv>, token: string): Promise<S
   }
 }
 
+/** The `Authorization: Bearer <token>` value, or null when the header is absent or carries
+ *  another scheme. THE single place that header is parsed — the analytics middleware derives its
+ *  CLI/key tagging from this too, rather than re-slicing the header itself. */
+export function bearerToken(c: Context<AppEnv>): string | null {
+  const header = c.req.header('Authorization')
+  return header?.startsWith('Bearer ') ? header.slice(7) : null
+}
+
 // Resolve the request's credential — session cookie, then Authorization: Bearer, dispatched by
 // prefix: a `glk_`-prefixed token is a D1 control-plane API key and is resolved ONLY against D1;
 // anything else is a KV CLI token. On a failed `glk_` resolve this returns null immediately and
@@ -104,9 +112,8 @@ export async function readCredential(c: Context<AppEnv>): Promise<Credential | n
   const sessionUser = await readSession(c)
   if (sessionUser) return { kind: 'session', user: sessionUser }
 
-  const header = c.req.header('Authorization')
-  if (!header?.startsWith('Bearer ')) return null
-  const token = header.slice(7)
+  const token = bearerToken(c)
+  if (token === null) return null
 
   if (token.startsWith(API_KEY_PREFIX)) {
     const db = apiKeyDb(c)

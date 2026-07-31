@@ -8,7 +8,7 @@ import { batchAll } from '../lib/d1'
 import { siteFeedColumns, toFeedRow } from '../lib/site-feed'
 import { deleteSpaceObjects } from '../lib/storage'
 import { isValidSlug } from '../lib/slug'
-import { requireAuth } from '../middleware/auth'
+import { requireAuth, requireControlGrant } from '../middleware/auth'
 import type { AppEnv } from '../types'
 
 export const spaces = new Hono<AppEnv>()
@@ -22,7 +22,7 @@ function isUniqueConstraintError(err: unknown): boolean {
 }
 
 // POST /api/spaces — create a GROUP space. Creator is added as a member (atomic).
-spaces.post('/', requireAuth, async (c) => {
+spaces.post('/', requireAuth, requireControlGrant, async (c) => {
   const user = c.get('user')
   const db = c.get('db')
   const body = await c.req.json().catch(() => null)
@@ -139,7 +139,7 @@ spaces.get('/:slug/sites', requireAuth, async (c) => {
 })
 
 // POST /api/spaces/:slug/members — invite a user by email (owner only).
-spaces.post('/:slug/members', requireAuth, async (c) => {
+spaces.post('/:slug/members', requireAuth, requireControlGrant, async (c) => {
   const user = c.get('user')
   const db = c.get('db')
   const slug = c.req.param('slug')
@@ -169,7 +169,7 @@ spaces.post('/:slug/members', requireAuth, async (c) => {
 })
 
 // DELETE /api/spaces/:slug/members/:userId — remove a member (owner only; cannot remove owner).
-spaces.delete('/:slug/members/:userId', requireAuth, async (c) => {
+spaces.delete('/:slug/members/:userId', requireAuth, requireControlGrant, async (c) => {
   const user = c.get('user')
   const db = c.get('db')
   const slug = c.req.param('slug')
@@ -187,7 +187,7 @@ spaces.delete('/:slug/members/:userId', requireAuth, async (c) => {
 })
 
 // DELETE /api/spaces/:slug — delete a space (owner or superadmin). Personal spaces are protected.
-spaces.delete('/:slug', requireAuth, async (c) => {
+spaces.delete('/:slug', requireAuth, requireControlGrant, async (c) => {
   const user = c.get('user')
   const db = c.get('db')
   const slug = c.req.param('slug')

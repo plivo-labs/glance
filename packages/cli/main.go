@@ -59,15 +59,14 @@ func dispatch(cmd string, rest []string) error {
 		}
 		return newClient(base, token, os.Stdout).logout()
 	case "deploy", "list", "delete", "move", "fork", "comments", "read", "reply", "notifications":
-		// Authed commands resolve the instance from the STORED config (not the env override) - the
-		// per-command requireAuth() inside each handler produces the clean "Not logged in" message.
-		// The token, like the URL, is resolved via apiToken() which still prefers GLANCE_TOKEN.
-		cfg := readConfig()
-		base := ""
-		if cfg != nil {
-			base = cfg.ApiUrl
-		}
-		c := newClient(base, apiToken(), os.Stdout)
+		// Both halves of the credential come from the same precedence: env override, then stored
+		// config. Resolving the token from the env but the URL from disk only would half-wire it —
+		// a CI container with GLANCE_TOKEN and GLANCE_API_URL exported but no ~/.glance/config.json
+		// (a baked-in binary, no installer run) would pass requireAuth() on the non-empty token and
+		// then fail every request with `unsupported protocol scheme ""`. apiBase()'s local-dev
+		// fallback keeps the clean "Not logged in" path intact when neither is set: the base is
+		// non-empty, the token is not, and requireAuth() catches it.
+		c := newClient(apiBase(), apiToken(), os.Stdout)
 		switch cmd {
 		case "deploy":
 			return c.deploy(rest)

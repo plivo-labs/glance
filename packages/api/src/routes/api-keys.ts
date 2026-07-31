@@ -2,7 +2,7 @@ import { and, count, desc, eq, gt, isNull } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { Hono } from 'hono'
 import { apiKeys as apiKeysTable } from '../db/schema'
-import { API_KEY_PREFIX, type ApiKeyGrants, generateApiKey, hashApiKey, isApiKeyGrants } from '../lib/api-key'
+import { API_KEY_PREFIX, generateApiKey, hashApiKey, isApiKeyGrants } from '../lib/api-key'
 import { requireAuth } from '../middleware/auth'
 import type { AppEnv } from '../types'
 
@@ -77,7 +77,7 @@ apiKeys.post('/', async (c) => {
     userId: user.id,
     name,
     hash,
-    grants: grants as ApiKeyGrants,
+    grants,
     createdAt: now.toISOString(),
     expiresAt,
     // Non-secret display fragment: the last 4 chars of the plaintext ONLY (see schema.ts comment

@@ -526,7 +526,7 @@ describe('mint route — POST /api/data-token/:space/:site', () => {
 })
 
 describe('intersectCaps', () => {
-  test('no key ceiling (grants null) → base unchanged, same order', () => {
+  test('no key ceiling (null) → base unchanged, same order', () => {
     expect(intersectCaps(['read', 'create', 'write', 'read_all'], null)).toEqual([
       'read',
       'create',
@@ -536,7 +536,6 @@ describe('intersectCaps', () => {
   })
 
   test('a key ceiling narrows base to the overlap, preserving base order', () => {
-    const grants: ApiKeyGrants = { control: false, data: { scope: { kind: 'all-owned' }, caps: ['write', 'read'] } }
-    expect(intersectCaps(['read', 'create', 'write', 'read_all'], grants)).toEqual(['read', 'write'])
+    expect(intersectCaps(['read', 'create', 'write', 'read_all'], ['write', 'read'])).toEqual(['read', 'write'])
   })
 })

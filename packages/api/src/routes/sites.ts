@@ -25,7 +25,7 @@ import { isValidSlug } from '../lib/slug'
 import { copyObjects, deleteKeys, deleteSiteObjects } from '../lib/storage'
 import { signToken } from '../lib/token'
 import { isVisibility, normalizeVisibility } from '../lib/visibility'
-import { requireAuth } from '../middleware/auth'
+import { requireAuth, requireControlGrant } from '../middleware/auth'
 import type { AppEnv, SessionUser } from '../types'
 
 // Phase 4: site CRUD + viewer metadata. Mounted at /api/sites.
@@ -148,7 +148,7 @@ export async function searchSites(
 }
 
 // POST /api/sites — create an empty site in a space the caller belongs to.
-sites.post('/', requireAuth, async (c) => {
+sites.post('/', requireAuth, requireControlGrant, async (c) => {
   const user = c.get('user')
   const db = c.get('db')
   const body = await c.req.json().catch(() => null)
@@ -456,7 +456,7 @@ sites.get('/:spaceSlug/:siteSlug/shares', requireAuth, async (c) => {
 })
 
 // PUT /api/sites/:spaceSlug/:siteSlug/shares — owner-only: replace the whole share set.
-sites.put('/:spaceSlug/:siteSlug/shares', requireAuth, async (c) => {
+sites.put('/:spaceSlug/:siteSlug/shares', requireAuth, requireControlGrant, async (c) => {
   const user = c.get('user')
   const db = c.get('db')
   const { spaceSlug, siteSlug } = c.req.param()
@@ -493,7 +493,7 @@ sites.put('/:spaceSlug/:siteSlug/shares', requireAuth, async (c) => {
 })
 
 // PATCH /api/sites/:spaceSlug/:siteSlug — owner-only update of visibility/title.
-sites.patch('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
+sites.patch('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c) => {
   const user = c.get('user')
   const db = c.get('db')
   const { spaceSlug, siteSlug } = c.req.param()
@@ -525,7 +525,7 @@ sites.patch('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
 // POST /api/sites/:spaceSlug/:siteSlug/move — owner (or superadmin) moves a site to another
 // space they belong to. Storage keys are space-agnostic (uuid-prefixed), so only `spaceId`
 // changes; shares/comments key off `siteId` and survive. The site's URL becomes /<dest>/<slug>.
-sites.post('/:spaceSlug/:siteSlug/move', requireAuth, async (c) => {
+sites.post('/:spaceSlug/:siteSlug/move', requireAuth, requireControlGrant, async (c) => {
   const user = c.get('user')
   const db = c.get('db')
   const { spaceSlug, siteSlug } = c.req.param()
@@ -583,7 +583,7 @@ async function freeForkSlug(db: DrizzleD1Database, spaceId: string, base: string
 // (default: your personal space). The fork is INDEPENDENT: new id, new owner, its own R2 objects,
 // no shares, no comments, version 0. Read access is the whole gate — if you can open it, you can
 // fork it (you could already download the bytes and redeploy them by hand).
-sites.post('/:spaceSlug/:siteSlug/fork', requireAuth, async (c) => {
+sites.post('/:spaceSlug/:siteSlug/fork', requireAuth, requireControlGrant, async (c) => {
   const user = c.get('user')
   const db = c.get('db')
   const { spaceSlug, siteSlug } = c.req.param()
@@ -693,7 +693,7 @@ sites.post('/:spaceSlug/:siteSlug/fork', requireAuth, async (c) => {
 })
 
 // DELETE /api/sites/:spaceSlug/:siteSlug — hard delete (owner or superadmin). Purges R2 first.
-sites.delete('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
+sites.delete('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c) => {
   const user = c.get('user')
   const db = c.get('db')
   // An API key may create sites (deploy is the headline use case) but may not delete them. Checked

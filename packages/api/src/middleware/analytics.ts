@@ -3,7 +3,7 @@ import { getCookie } from 'hono/cookie'
 import { createMiddleware } from 'hono/factory'
 import { API_KEY_PREFIX } from '../lib/api-key'
 import { fireAndForget, parseCliVersion, recordEvent } from '../lib/events'
-import { readSessionOrBearer } from '../lib/session'
+import { bearerToken, readSessionOrBearer } from '../lib/session'
 import type { AppEnv } from '../types'
 
 const SESSION_COOKIE = '__Host-glance_session'
@@ -15,16 +15,15 @@ const SESSION_COOKIE = '__Host-glance_session'
 // directly to shape its own 404/403 JSON, never running requireAuth) leave `authKind`/`user`
 // unset, so their CLI hits used to go unrecorded.
 function isCliRequest(c: Context<AppEnv>): boolean {
-  const isBearer = c.req.header('Authorization')?.startsWith('Bearer ') ?? false
-  return isBearer && getCookie(c, SESSION_COOKIE) === undefined
+  return bearerToken(c) !== null && getCookie(c, SESSION_COOKIE) === undefined
 }
 
 // A `glk_`-prefixed Bearer is a D1 API key, not the CLI's own client — its User-Agent was never
 // stamped `glance-cli/<version>` by our CLI, so parsing it as one would pollute the version
-// stats with garbage. Derived from the raw header for the same reason as isCliRequest above.
-function isKeyRequest(c: Context<AppEnv>): boolean {
-  const header = c.req.header('Authorization')
-  return (header?.startsWith('Bearer ') && header.slice(7).startsWith(API_KEY_PREFIX)) ?? false
+// stats with garbage. Derived from the raw header (same reason as isCliRequest above).
+function cliVersionOf(c: Context<AppEnv>): string | null {
+  if (bearerToken(c)?.startsWith(API_KEY_PREFIX)) return null
+  return parseCliVersion(c.req.header('User-Agent'))
 }
 
 // CLI-usage analytics. Mounted on /api/*, it runs AFTER the route, then records one event per
@@ -49,7 +48,7 @@ export const trackCliUsage = createMiddleware<AppEnv>(async (c, next) => {
         type: 'cli',
         action,
         userId: user.id,
-        cliVersion: isKeyRequest(c) ? null : parseCliVersion(c.req.header('User-Agent')),
+        cliVersion: cliVersionOf(c),
       })
     })(),
   )

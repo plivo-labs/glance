@@ -14,6 +14,10 @@ function CodeBlock({ children }: { children: string }) {
   )
 }
 
+function Code({ children }: { children: string }) {
+  return <code className="rounded bg-muted px-1 py-0.5 text-xs">{children}</code>
+}
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="space-y-2">
@@ -51,27 +55,26 @@ export function Component() {
 
         <Section title="Use it with the CLI">
           <p>
-            The CLI reads its target instance from <code className="rounded bg-muted px-1 py-0.5 text-xs">~/.glance/config.json</code>,
-            not from the key — so install and point it at this instance first:
+            The CLI reads its target instance from <Code>~/.glance/config.json</Code>, not from the key — so install
+            and point it at this instance first:
           </p>
           <CodeBlock>{'curl -fsSL <this instance origin>/api/install | sh'}</CodeBlock>
           <p>
-            Then export the key as <code className="rounded bg-muted px-1 py-0.5 text-xs">GLANCE_TOKEN</code> instead
-            of running <code className="rounded bg-muted px-1 py-0.5 text-xs">glance login</code>:
+            Then export the key as <Code>GLANCE_TOKEN</Code> instead of running <Code>glance login</Code>:
           </p>
           <CodeBlock>{'export GLANCE_TOKEN=glk_...\nglance deploy ./my-site'}</CodeBlock>
           <p>
-            <code className="rounded bg-muted px-1 py-0.5 text-xs">GLANCE_TOKEN</code> is only checked by commands
-            that call the API — <code className="rounded bg-muted px-1 py-0.5 text-xs">glance logout</code> ignores
-            it deliberately, so it always acts on your real session, not a key you happen to have exported.
+            <Code>GLANCE_TOKEN</Code> is only checked by commands that call the API — <Code>glance logout</Code>{' '}
+            ignores it deliberately, so it always acts on your real session, not a key you happen to have exported.
           </p>
         </Section>
 
         <Section title="What a key can do">
           <p>
-            With the "manage sites" grant, a key can deploy and create sites the same as you can. It can never
-            delete a site, and it can never mint or revoke another key — both are denied outright, regardless of
-            grants.
+            With the "manage sites" grant, a key can deploy and create sites the same as you can. Without it, the
+            key can still read and use the data plane, but any request that would change a site — deploy, create,
+            fork, move, rename, share — is refused. It can never delete a site, and it can never mint or revoke
+            another key: both are denied outright, whatever its grants.
           </p>
         </Section>
 

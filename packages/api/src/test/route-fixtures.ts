@@ -15,6 +15,7 @@ import { slackEvents } from '../routes/slack-events'
 import { spaces } from '../routes/spaces'
 import { stars } from '../routes/stars'
 import type { AppEnv } from '../types'
+import type { ApiKeyGrants } from '../lib/api-key'
 import { makeDb, makeKv, makeR2, seedApiKey, seedUser } from './harness'
 
 export const APP_URL = 'https://glance.example.com'
@@ -88,27 +89,36 @@ export async function mintUser(
   return id
 }
 
-/** Request headers authenticating as `mintUser(id)` through the same-origin guard. */
-export const auth = (id: string) => ({
-  Authorization: `Bearer tok-${id}`,
+/** Request headers carrying a raw Bearer token through the same-origin guard — used directly with
+ *  `mintKey(...)`'s plaintext API key secret. */
+export const authKey = (token: string) => ({
+  Authorization: `Bearer ${token}`,
   Origin: APP_URL,
   'Content-Type': 'application/json',
 })
 
+/** Request headers authenticating as `mintUser(id)`'s CLI token. */
+export const auth = (id: string) => authKey(`tok-${id}`)
+
 /** Seed a live `glk_`-prefixed API key for an EXISTING user (mint their session/CLI identity
- *  first via `mintUser`), returning the plaintext secret to send as a Bearer token. */
-export async function mintKey(db: RouteApp['db'], userId: string): Promise<string> {
+ *  first via `mintUser`), returning the plaintext secret to send as a Bearer token. Defaults to
+ *  FULL_GRANTS; pass `grants` to mint a narrower key (e.g. `control: false`). */
+export async function mintKey(
+  db: RouteApp['db'],
+  userId: string,
+  grants?: ApiKeyGrants,
+): Promise<string> {
   const secret = generateApiKey()
-  await seedApiKey(db, { userId, hash: await hashApiKey(secret) })
+  await seedApiKey(db, { userId, hash: await hashApiKey(secret), ...(grants && { grants }) })
   return secret
 }
 
-/** Request headers authenticating as `mintKey(...)`'s bearer through the same-origin guard. */
-export const authKey = (secret: string) => ({
-  Authorization: `Bearer ${secret}`,
-  Origin: APP_URL,
-  'Content-Type': 'application/json',
-})
+/** A key that may use the DATA plane but must not change control-plane state — the "data only"
+ *  key from the plan's wireframe, and the one `requireControlGrant` exists to constrain. */
+export const DATA_ONLY_GRANTS: ApiKeyGrants = {
+  control: false,
+  data: { scope: { kind: 'all-owned' }, caps: ['read', 'create'] },
+}
 
 /** Post-auth D1 request count. A "request" is one D1 round trip: a loose statement or one
  *  db.batch. requireAuth itself costs exactly 1 loose read (getUserById) — subtract it;
