@@ -1,13 +1,14 @@
 # Glance HTTP API
 
-The control plane a script, CI job, or agent talks to. Everything here is authenticated
-with an **API key** (`glk_…`) minted from `/settings/keys` — see
-[API keys](#api-keys) for how a key differs from your browser session and from the CLI's
-stored token.
+The HTTP control plane. Every endpoint below is callable with an **API key** (`glk_…`) minted from
+`/settings/keys`.
 
 Base URL is your instance origin (`https://glance.<your-subdomain>.workers.dev` by default).
 All request and response bodies are JSON unless noted; the one exception is
 [deploy](#deploy-files), which is `multipart/form-data`.
+
+> Looking for the `glance` CLI instead? See the [README](../../README.md#cli). The CLI is a client
+> of this API, not part of its contract — nothing here requires it.
 
 - [Authentication](#authentication)
 - [What a key may do](#what-a-key-may-do)
@@ -28,29 +29,21 @@ Send the key as a bearer token:
 curl -H "Authorization: Bearer $GLANCE_TOKEN" https://your-instance/api/sites/mine
 ```
 
-Three credential kinds reach the same routes, and the server records *which* one authenticated
-a request — the limits below apply to keys only:
+Three credential kinds reach these routes, and the server records *which* one authenticated a
+request. The [grant limits](#what-a-key-may-do) apply to API keys only:
 
-| Credential | Presented as | Notes |
+| Credential | Presented as | Governed by |
 | --- | --- | --- |
-| Browser session | `__Host-glance_session` cookie | Unsafe methods additionally require same-origin (CSRF). |
-| CLI device token | `Authorization: Bearer <token>` | Minted by `glance login`; governed by ownership alone. |
-| API key | `Authorization: Bearer glk_…` | Governed by ownership **and** the grants below. |
+| API key | `Authorization: Bearer glk_…` | Ownership **and** its grants |
+| Device token | `Authorization: Bearer <uuid>` | Ownership alone |
+| Browser session | `__Host-glance_session` cookie | Ownership alone; unsafe methods also require same-origin (CSRF) |
 
-A `glk_`-prefixed bearer is dispatched to the key store and never falls through to the CLI token
-store, or the reverse — an invalid key is a `401`, not a retry against the other store.
+A `glk_`-prefixed bearer is dispatched to the key store and never falls through to the device-token
+store, or the reverse — an invalid key is `401`, not a retry against the other store.
 
-The CLI reads `GLANCE_TOKEN` from the environment ahead of its stored config, so CI can deploy
-without ever running the interactive `glance login`:
-
-```bash
-export GLANCE_TOKEN=glk_...
-export GLANCE_API_URL=https://your-instance   # only if no ~/.glance/config.json exists
-glance deploy ./dist
-```
-
-`glance logout` deliberately ignores `GLANCE_TOKEN` and acts on the stored session instead — a
-key is revoked from `/settings/keys`, not by logging out.
+`POST /api/auth/logout` is a *session* verb: it destroys a browser session and revokes a device
+token. Presented with an API key it returns `400 not_a_session` — a key is revoked with
+[`DELETE /api/api-keys/:id`](#delete-apiapi-keysid--revoke), not by logging out.
 
 ## What a key may do
 
