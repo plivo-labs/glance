@@ -574,11 +574,12 @@ describe('viewer wiring — pushed comment events (S9)', () => {
   })
 
   /** Drop the socket and bring its redial up — the gap onReconnect exists to close. The redial
-   *  delay is commentStream's own (and pinned there); fake timers only skip the wait. */
+   *  delay is commentStream's own (and pinned there); fake timers only skip the wait. Advanced past
+   *  the first backoff step INCLUDING its jitter (3s + up to 25%), so this never races the random. */
   async function reconnect(socket: FakeSocket) {
     jest.useFakeTimers()
     act(() => socket.onclose?.())
-    act(() => void jest.advanceTimersByTime(3000))
+    act(() => void jest.advanceTimersByTime(4000))
     jest.useRealTimers()
     const redialled = sockets.at(-1)!
     expect(redialled).not.toBe(socket)

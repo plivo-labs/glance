@@ -41,6 +41,17 @@ export type SocketAuth = { subject: string; owner: string; exp: number; caps: Da
  *  would flicker between pings. */
 const TYPING_TTL_MS = 20_000
 
+/** The composer caps itself at one ping per 15s per thread — but that cap lives in the BROWSER, and
+ *  any authenticated viewer skips it from devtools. This is the abuse floor on the server side: one
+ *  inbound typing frame per socket per 500ms. No human composer reaches it (a ping, a stop, then a
+ *  ping on another thread is still three distinct half-seconds), and it turns a devtools flood from
+ *  "N sends per keystroke, forever" into a rounding error. A MAP, not a timer — rule 2 stands, and
+ *  hibernation clearing it is harmless: a socket flooding this room is what keeps the room awake. */
+const TYPING_FLOOR_MS = 500
+/** A threadId is echoed verbatim to every peer, so its size is multiplied by the size of the room.
+ *  Real ones are UUIDs; this only has to be small enough that a megabyte cannot be amplified. */
+const MAX_THREAD_ID = 64
+
 const siteTag = (siteId: string) => `site:${siteId}`
 const viewerTag = (viewerId: string) => `viewer:${viewerId}`
 const chanTag = (channel: Channel) => `chan:${channel}`
@@ -69,37 +80,49 @@ export function isAttachmentExpired(auth: SocketAuth, nowSec: number): boolean {
   return nowSec > auth.exp
 }
 
-type Attached = { deserializeAttachment(): unknown }
+export type Attached = { deserializeAttachment(): unknown }
+export type Partitioned<T> = { deliver: { ws: T; auth: SocketAuth }[]; close: T[] }
 
 /**
- * Who receives one event, decided from the attachment snapshots alone — PURE, so the fan-out
- * policy is testable without a socket runtime.
+ * The AUTHORIZATION bar every fan-out on this object applies first — PURE, decided from the
+ * attachment snapshots alone, so the policy is testable without a socket runtime.
  *
- * A push is a SECOND READ PATH, so the question is asked of `canViewerRead` (the one policy shared
- * with the SELECT in routes/data.ts) against the DOCUMENT's creator — never re-implemented here.
- * `close` is for sockets that are no longer AUTHORIZED at all (no snapshot, past exp, or bound to
- * another site); merely being filtered out by the read policy is silent.
+ * `close` is for sockets that are no longer AUTHORIZED at all: no readable snapshot, past exp, or
+ * bound to another site. The site wall is defence in depth behind the room-name binding — one room
+ * only ever holds one site's sockets, so a mismatch here means something upstream is wrong and the
+ * connection is dropped rather than quietly skipped.
+ *
+ * Everything a caller adds on top is a VISIBILITY question, and visibility is silent: a socket the
+ * caller then filters out of `deliver` is skipped, never closed. That split is why this is shared
+ * by all three fan-outs (documents, comments, typing) while each keeps its own policy.
  */
-export function selectRecipients<T extends Attached>(
-  event: ChangeEvent,
-  sockets: T[],
-  nowSec: number,
-): { deliver: { ws: T; auth: SocketAuth }[]; close: T[] } {
+export function partitionAuthorized<T extends Attached>(sockets: T[], siteId: string, nowSec: number): Partitioned<T> {
   const deliver: { ws: T; auth: SocketAuth }[] = []
   const close: T[] = []
   for (const ws of sockets) {
     const auth = decodeAttachment(ws.deserializeAttachment())
-    // The site wall is defence in depth behind the room-name binding: one room only ever holds one
-    // site's sockets, so a mismatch here means something upstream is wrong — drop the connection.
-    if (!auth || isAttachmentExpired(auth, nowSec) || auth.owner !== event.siteId) {
-      close.push(ws)
-      continue
-    }
-    if (canViewerRead({ viewerId: auth.subject, caps: auth.caps }, event.collection, event.createdBy)) {
-      deliver.push({ ws, auth })
-    }
+    if (!auth || isAttachmentExpired(auth, nowSec) || auth.owner !== siteId) close.push(ws)
+    else deliver.push({ ws, auth })
   }
   return { deliver, close }
+}
+
+/**
+ * Who receives one document event.
+ *
+ * A push is a SECOND READ PATH, so the question is asked of `canViewerRead` (the one policy shared
+ * with the SELECT in routes/data.ts) against the DOCUMENT's creator — never re-implemented here.
+ * That predicate is a VISIBILITY filter, so it only ever narrows `deliver`; `partitionAuthorized`
+ * above owns the close-vs-skip line.
+ */
+export function selectRecipients<T extends Attached>(event: ChangeEvent, sockets: T[], nowSec: number): Partitioned<T> {
+  const { deliver, close } = partitionAuthorized(sockets, event.siteId, nowSec)
+  return {
+    deliver: deliver.filter(({ auth }) =>
+      canViewerRead({ viewerId: auth.subject, caps: auth.caps }, event.collection, event.createdBy),
+    ),
+    close,
+  }
 }
 
 function claimsToAuth(claims: DataClaims): SocketAuth {
@@ -116,6 +139,11 @@ function closeQuietly(ws: WebSocket, code: number, reason: string): void {
 }
 
 export class SiteRoom {
+  /** When each socket last got a typing frame past the abuse floor. In MEMORY, deliberately: it
+   *  stores nothing, schedules nothing, and an eviction that clears it can only happen once the
+   *  room has been idle — which is exactly when there is no flood to throttle. */
+  private lastTyping = new WeakMap<WebSocket, { at: number; stopped: boolean }>()
+
   constructor(
     private state: DurableObjectState,
     private env: Bindings,
@@ -192,7 +220,26 @@ export class SiteRoom {
     // say "the ping you are holding is over". Without this branch the client's stop frame wakes the
     // room and changes nothing, which is precisely the cost the rate cap exists to avoid.
     if ((msg?.type === 'typing' || msg?.type === 'typing.stop') && typeof msg.threadId === 'string') {
-      return this.fanOutTyping(ws, msg.threadId, msg.type === 'typing.stop')
+      if (msg.threadId.length > MAX_THREAD_ID) return
+      const stop = msg.type === 'typing.stop'
+      const last = this.lastTyping.get(ws)
+      const now = Date.now()
+      // A STOP is not rate-limited by the clock — a viewer who types and blurs 200ms later must not
+      // leave a stale "…is replying" up for the full 20s TTL. It is limited by the PING instead:
+      // one stop per ping that actually went out, and it does not reopen the ping's window. So the
+      // most a socket can put on the wire is one ping plus one stop per floor interval.
+      // Dropped SILENTLY in either case, never closed: a burst is as likely to be a wedged client
+      // as an attacker, and closing would only hand it a redial loop.
+      if (stop) {
+        if (!last || last.stopped) return
+        // Keeps the PING's timestamp, so a stop cannot reopen the window: ping/stop/ping/stop would
+        // otherwise walk straight through the floor forever.
+        this.lastTyping.set(ws, { at: last.at, stopped: true })
+      } else {
+        if (last && now - last.at < TYPING_FLOOR_MS) return
+        this.lastTyping.set(ws, { at: now, stopped: false })
+      }
+      return this.fanOutTyping(ws, msg.threadId, stop)
     }
     if (msg?.type !== 'auth' || typeof msg.token !== 'string') return
     const current = decodeAttachment(ws.deserializeAttachment())
@@ -232,19 +279,14 @@ export class SiteRoom {
       expiresAt: stop ? 0 : now + TYPING_TTL_MS,
     })
     // Selecting on the CHANNEL tag exactly like `broadcastComment`: a `chan:db` socket is never
-    // even a candidate for a comments frame.
-    for (const peer of this.state.getWebSockets(chanTag('comments'))) {
-      // The sender already knows it is typing; echoing it back would only make the rail filter its
-      // own id back out.
-      if (peer === ws) continue
-      const peerAuth = decodeAttachment(peer.deserializeAttachment())
-      // Close-vs-skip mirrors selectCommentRecipients (not reused: a typing ping is not a
-      // CommentEvent — no filePath, no view, and it never comes from the worker). A socket that is
-      // no longer AUTHORIZED at all is disconnected rather than quietly skipped.
-      if (!peerAuth || isAttachmentExpired(peerAuth, nowSec) || peerAuth.owner !== auth.owner) {
-        closeQuietly(peer, 1008, 'unauthorized')
-        continue
-      }
+    // even a candidate for a comments frame. The sender is filtered out before the partition — it
+    // already knows it is typing, and echoing back would only make the rail filter its own id out.
+    // Everything past that is the SAME authorization bar the two broadcasts apply, run by the same
+    // `partitionAuthorized`: a socket no longer authorized at all is disconnected, not skipped.
+    const peers = this.state.getWebSockets(chanTag('comments')).filter((peer) => peer !== ws)
+    const { deliver, close } = partitionAuthorized(peers, auth.owner, nowSec)
+    for (const peer of close) closeQuietly(peer, 1008, 'unauthorized')
+    for (const { ws: peer } of deliver) {
       try {
         peer.send(frame)
       } catch {

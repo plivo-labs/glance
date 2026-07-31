@@ -50,7 +50,8 @@ import { deleteKeys } from '../lib/storage'
 import { transcribeVoice } from '../lib/transcribe'
 import { cookieAuthed, isSameOrigin, requireAuth } from '../middleware/auth'
 import { notifyCommentEvent } from '../realtime/notify'
-import { TOKEN_HEADER, WS_PROTOCOL } from '../realtime/protocol'
+import { TOKEN_HEADER } from '../realtime/protocol'
+import { isUpgrade, reissueUpgrade } from '../realtime/upgrade'
 import type { AppEnv, SessionUser } from '../types'
 
 // Comments API. Mounted at /api/sites, so paths are /:space/:site/comments… — three segments,
@@ -556,15 +557,6 @@ comments.get('/:space/:site/comments/audio/:commentId', async (c) => {
   return new Response(bytes, { headers })
 })
 
-/** True when the request is a genuine WebSocket upgrade — same test data.ts's /_sync/socket uses. */
-const isUpgrade = (c: Context<AppEnv>): boolean => c.req.header('Upgrade')?.toLowerCase() === 'websocket'
-
-/** The subprotocol list a browser offered, same shape data.ts negotiates against. */
-const subprotocols = (c: Context<AppEnv>): string[] => {
-  const raw = c.req.header('Sec-WebSocket-Protocol')
-  return raw ? raw.split(',').map((p) => p.trim()) : []
-}
-
 // GET — authenticated WebSocket upgrade for the comments channel. Unlike data.ts's /_sync/socket
 // (a bearer DATA TOKEN the untrusted content page holds), this rail is PARENT-APP code, so it
 // authenticates with the session cookie: requireAuth (above, global on this router) guarantees a
@@ -609,15 +601,8 @@ comments.get('/:space/:site/comments/socket', async (c) => {
       headers: { Upgrade: 'websocket', [TOKEN_HEADER]: token },
     }),
   )
-  // Re-issued here, not passed through, because a subrequest response's headers are immutable and
-  // the browser's subprotocol offer is negotiated by the worker (the DO never sees it) — mirrors
-  // data.ts's own upgrade exactly.
-  const negotiated = res.status === 101 && subprotocols(c).includes(WS_PROTOCOL)
-  return new Response(null, {
-    status: res.status,
-    webSocket: res.webSocket,
-    headers: negotiated ? { 'Sec-WebSocket-Protocol': WS_PROTOCOL } : {},
-  })
+  // Shared with data.ts's own upgrade — same immutable-subrequest-headers reason, one implementation.
+  return reissueUpgrade(c, res)
 })
 
 // POST — create a thread + its opening comment. The anchor is stored, not resolved (the client
@@ -716,7 +701,7 @@ comments.post('/:space/:site/comments/:threadId/replies', async (c) => {
   const body = cleanBody(raw?.body)
   if (!body) return c.json({ error: 'invalid body' }, 400)
   const added = await addComment(c.get('db'), { threadId: thread.id, authorId: c.get('user').id, body })
-  await pushCommentCreated(c, site, thread, added.comment)
+  await pushCommentCreated(c, site, thread, added)
   await notifyReply(c, site, { thread, commentId: added.id, snippet: body, rawMentions: raw?.mentions })
   return c.json({ id: added.id }, 201)
 })
@@ -729,14 +714,14 @@ async function replyVoiceComment(c: Context<AppEnv>, site: ResolvedSite, thread:
   const ingested = await ingestVoiceComment(c, form)
   if (ingested instanceof Response) return ingested
   const { commentId, audioKey, body } = ingested
-  let added: Awaited<ReturnType<typeof addComment>>
+  let added: Comment
   try {
     added = await addComment(c.get('db'), { threadId: thread.id, authorId: c.get('user').id, body, commentId, audioKey })
   } catch (e) {
     await deleteKeys(c.env.GLANCE_FILES, [audioKey]) // compensation: don't orphan the R2 object
     throw e
   }
-  await pushCommentCreated(c, site, thread, added.comment)
+  await pushCommentCreated(c, site, thread, added)
   await notifyReply(c, site, { thread, commentId: added.id, snippet: body })
   return c.json({ id: added.id }, 201)
 }

@@ -105,6 +105,32 @@ describe('createCommentStream', () => {
     expect(events).toEqual([])
   })
 
+  // A frame with the right `channel` and the right `type` but a missing payload is the dangerous
+  // one: the consumer's fold is DEFERRED while a list read is in flight, so it does not throw here
+  // inside safely() — it throws later, in the arbiter, leaving the buffer undrained and list
+  // loading wedged for the life of the mount. One bad frame has to cost exactly one bad frame.
+  test('a frame whose payload does not match its own type is dropped, not handed on', () => {
+    const { sockets, events } = makeStream()
+    for (const bad of [
+      { type: 'thread.created', siteId: 's1', filePath: 'f' }, // no thread at all
+      { type: 'thread.created', siteId: 's1', filePath: 'f', thread: { quote: 'q' } }, // thread, no id
+      { type: 'comment.created', siteId: 's1', filePath: 'f', threadId: 't1' }, // no comment
+      { type: 'thread.created', siteId: 's1', thread: { id: 't1' } }, // no filePath to route on
+      { type: 'typing', viewerId: 'u1', threadId: 't1' }, // no expiresAt: never expires
+      { type: 'thread.resolved', siteId: 's1', filePath: 'f' }, // a type this rail does not know
+    ]) {
+      expect(() => sockets[0].emit({ channel: 'comments', ...bad })).not.toThrow()
+    }
+    expect(events).toEqual([])
+
+    // …and the good ones still get through, both shapes.
+    const created = { type: 'thread.created', siteId: 's1', filePath: 'f', thread: { id: 't1' } }
+    const typing = { type: 'typing', viewerId: 'u1', threadId: 't1', expiresAt: 123 }
+    sockets[0].emit({ channel: 'comments', ...created })
+    sockets[0].emit({ channel: 'comments', ...typing })
+    expect(events).toEqual([created, typing])
+  })
+
   // C15 (P0): there is no cursor, so a reconnect is the ONLY signal the consumer gets that it may
   // have missed events — it must re-read the list to converge. Documented decision: onReconnect
   // does NOT fire for the first connection (mirrors dbBroker's `dials > 1`) — the consumer's own
@@ -137,6 +163,38 @@ describe('createCommentStream', () => {
     await until('redial socket after the delay', () => sockets[1])
   })
 
+  // This stream is dialled on EVERY viewer mount, rail open or not, and a deploy with no realtime
+  // binding 503s every dial — each one a full authenticated request. A flat retry is ~20 D1 round
+  // trips a minute per open tab, forever, on a configuration that is explicitly supported.
+  test('a server that never comes back is retried with BACKOFF, not on a flat interval', async () => {
+    const { sockets } = makeStream({ reconnectMs: 20 })
+    // Every dial closes immediately: the 503 case, twelve times over.
+    const at: number[] = []
+    for (let i = 0; i < 6; i++) {
+      const s = await until(`dial ${i + 1}`, () => sockets[i])
+      at.push(Date.now())
+      s.onclose?.()
+    }
+    const gaps = at.slice(1).map((t, i) => t - at[i]!)
+    // Doubling, so the last gap dwarfs the first — a flat interval would keep them all equal.
+    expect(gaps.at(-1)!).toBeGreaterThan(gaps[0]! * 3)
+  })
+
+  test('a connection that OPENS resets the backoff — a 300s token expiry costs one short gap', async () => {
+    const { sockets } = makeStream({ reconnectMs: 20 })
+    sockets[0].onclose?.()
+    const s2 = await until('redial', () => sockets[1])
+    s2.onclose?.() // second failure: the wait has now doubled
+    const s3 = await until('second redial', () => sockets[2])
+    s3.onopen?.() // …but this one is a real connection
+
+    const openedAt = Date.now()
+    s3.onclose?.() // the routine 300s close
+    await until('redial after a successful connection', () => sockets[3])
+    // Back to the fast retry, not to whatever the outage had grown to.
+    expect(Date.now() - openedAt).toBeLessThan(60)
+  })
+
   test('on close, a redial is scheduled and a NEW socket is actually dialled', async () => {
     const { sockets } = makeStream({ reconnectMs: 5 })
     expect(sockets).toHaveLength(1)
@@ -156,7 +214,7 @@ describe('createCommentStream', () => {
   test('after dispose, a late-arriving socket event fires no callback', () => {
     const { stream, sockets, events } = makeStream()
     stream.dispose()
-    sockets[0].emit({ channel: 'comments', type: 'thread.created', siteId: 's1', filePath: 'f', thread: {} })
+    sockets[0].emit({ channel: 'comments', type: 'thread.created', siteId: 's1', filePath: 'f', thread: { id: 't1' } })
     expect(events).toEqual([])
   })
 
@@ -209,7 +267,7 @@ describe('createCommentStream', () => {
         throw new Error('consumer bug')
       },
     })
-    const event = { type: 'thread.created', siteId: 's1', filePath: 'f', thread: {} }
+    const event = { type: 'thread.created', siteId: 's1', filePath: 'f', thread: { id: 't1' } }
     expect(() => sockets[0].emit({ channel: 'comments', ...event })).not.toThrow()
     expect(() => sockets[0].emit({ channel: 'comments', ...event })).not.toThrow()
     expect(calls).toBe(2)

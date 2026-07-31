@@ -531,10 +531,13 @@ describe('SiteRoom — S10: typing, the first inbound message that is not auth',
     const { ws: sender } = await subscribe(r, { viewerId: 'userA', channel: 'comments' })
     const { ws: peer } = await subscribe(r, { viewerId: 'userB', channel: 'comments' })
 
+    // A stop only ever follows a ping — the rail's own sendTypingStop returns early for a thread it
+    // never announced, and the room bounds stops by ping for the same reason (see the floor test).
+    await typing(r, sender, { type: 'typing', threadId: 't1' })
     await typing(r, sender, { type: 'typing.stop', threadId: 't1' })
 
     // Same shape as a ping — the receiver has ONE code path, and `expiresAt: 0` is what "over" is.
-    expect(frames(peer)).toEqual([{ channel: 'comments', type: 'typing', viewerId: 'userA', threadId: 't1', expiresAt: 0 }])
+    expect(frames(peer).at(-1)).toEqual({ channel: 'comments', type: 'typing', viewerId: 'userA', threadId: 't1', expiresAt: 0 })
     expect([sender.sent, sender.closed, peer.closed]).toEqual([[], [], []])
   })
 
@@ -552,6 +555,53 @@ describe('SiteRoom — S10: typing, the first inbound message that is not auth',
     const ttl = frames(peer)[0].expiresAt - before
     expect(ttl).toBeGreaterThanOrEqual(10_000)
     expect(ttl).toBeLessThanOrEqual(60_000)
+  })
+
+  // The 15s cap lives in the browser, where a viewer with devtools simply does not run it. Each
+  // frame wakes the room and fans out to every socket on the site, so one flooding client is
+  // multiplied by N — the cost model has to be ENFORCED here, not requested there.
+  test('a flood of typing frames from one socket is throttled at the room, not just at the composer', async () => {
+    const r = makeRoom('siteA')
+    const { ws: sender } = await subscribe(r, { viewerId: 'userA', channel: 'comments' })
+    const { ws: peer } = await subscribe(r, { viewerId: 'userB', channel: 'comments' })
+
+    for (let i = 0; i < 50; i++) await typing(r, sender, { type: 'typing', threadId: 't1' })
+
+    // One got through; the other 49 never reached the fan-out.
+    expect(peer.sent).toHaveLength(1)
+    // …and a throttled socket is DROPPED, never closed: a burst is as likely to be a wedged client
+    // as an attacker, and closing would only hand it a redial loop.
+    expect([sender.closed, peer.closed]).toEqual([[], []])
+  })
+
+  // …and the floor must not eat the STOP: type, blur 200ms later, and the peer has to be told, or
+  // the indicator it is holding stays up for the whole 20s TTL on a composer that is already closed.
+  test('a stop right after a ping still goes out — the floor limits stops by ping, not by clock', async () => {
+    const r = makeRoom('siteA')
+    const { ws: sender } = await subscribe(r, { viewerId: 'userA', channel: 'comments' })
+    const { ws: peer } = await subscribe(r, { viewerId: 'userB', channel: 'comments' })
+
+    await typing(r, sender, { type: 'typing', threadId: 't1' })
+    await typing(r, sender, { type: 'typing.stop', threadId: 't1' }) // same millisecond
+
+    expect(frames(peer).map((f) => f.expiresAt === 0)).toEqual([false, true])
+    // One stop per ping, though — a stop cannot be flooded either, and it does not reopen the
+    // ping's window (otherwise ping/stop/ping/stop is an unbounded loop straight through the floor).
+    for (let i = 0; i < 20; i++) await typing(r, sender, { type: 'typing.stop', threadId: 't1' })
+    for (let i = 0; i < 20; i++) await typing(r, sender, { type: 'typing', threadId: 't1' })
+    expect(peer.sent).toHaveLength(2)
+  })
+
+  // The id is echoed verbatim to every peer, so its size is multiplied by the size of the room.
+  test('an oversized threadId is dropped rather than amplified across the room', async () => {
+    const r = makeRoom('siteA')
+    const { ws: sender } = await subscribe(r, { viewerId: 'userA', channel: 'comments' })
+    const { ws: peer } = await subscribe(r, { viewerId: 'userB', channel: 'comments' })
+
+    await typing(r, sender, { type: 'typing', threadId: 'x'.repeat(100_000) })
+
+    expect(peer.sent).toEqual([])
+    expect(sender.closed).toEqual([])
   })
 
   // The third copy of the site wall (subscribe and selectRecipients have the other two, each with

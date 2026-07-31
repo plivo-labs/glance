@@ -1,5 +1,5 @@
 import type { CommentView, ThreadView } from '../db/comments'
-import { type SocketAuth, decodeAttachment, isAttachmentExpired } from './site-room'
+import { type Attached, type Partitioned, partitionAuthorized } from './site-room'
 
 // The comments-channel fan-out policy. A comment event has neither a document `collection` nor a
 // `createdBy` — canViewerRead asks about a document's creator/collection, and there is no such
@@ -23,29 +23,14 @@ export type CommentEvent =
   | { type: 'thread.created'; siteId: string; filePath: string; thread: ThreadView }
   | { type: 'comment.created'; siteId: string; filePath: string; threadId: string; comment: CommentView }
 
-type Attached = { deserializeAttachment(): unknown }
-
-/**
- * Who receives one comment event, decided from the attachment snapshots alone — PURE, mirroring
- * `selectRecipients`' close-vs-skip shape exactly (`close` for a socket that is no longer
- * AUTHORIZED at all: no snapshot, past exp, or bound to another site). Unlike `selectRecipients`,
- * every socket that clears that bar is delivered — there is no per-document visibility question
- * left to ask.
- */
+/** Who receives one comment event. The whole policy is `partitionAuthorized`'s bar and nothing on
+ *  top: every socket that clears it is delivered, because (per the note above) there is no
+ *  per-document visibility question left to ask — which is exactly where this parts ways with
+ *  `selectRecipients`, whose `canViewerRead` filter narrows `deliver` further. */
 export function selectCommentRecipients<T extends Attached>(
   event: CommentEvent,
   sockets: T[],
   nowSec: number,
-): { deliver: { ws: T; auth: SocketAuth }[]; close: T[] } {
-  const deliver: { ws: T; auth: SocketAuth }[] = []
-  const close: T[] = []
-  for (const ws of sockets) {
-    const auth = decodeAttachment(ws.deserializeAttachment())
-    if (!auth || isAttachmentExpired(auth, nowSec) || auth.owner !== event.siteId) {
-      close.push(ws)
-      continue
-    }
-    deliver.push({ ws, auth })
-  }
-  return { deliver, close }
+): Partitioned<T> {
+  return partitionAuthorized(sockets, event.siteId, nowSec)
 }

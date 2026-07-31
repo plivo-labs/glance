@@ -403,16 +403,16 @@ export async function createThread(
   return { threadId, openingCommentId, thread, comment }
 }
 
-/** Append a flat reply to a thread (no nesting) and bump the thread's updatedAt. Returns the
- *  exact row just inserted — see `createThread`'s note on why this is a local `ts`, not a re-read. */
+/** Append a flat reply to a thread (no nesting) and bump the thread's updatedAt. Returns the exact
+ *  row just inserted — its own `id` included, so there is no second field to keep in step with it
+ *  — see `createThread`'s note on why this is a local `ts`, not a re-read. */
 export async function addComment(
   db: DrizzleD1Database,
   input: { threadId: string; authorId: string; body: string; commentId?: string; audioKey?: string },
-): Promise<{ id: string; comment: Comment }> {
+): Promise<Comment> {
   const ts = now()
-  const id = input.commentId ?? crypto.randomUUID()
   const comment: Comment = {
-    id,
+    id: input.commentId ?? crypto.randomUUID(),
     threadId: input.threadId,
     authorId: input.authorId,
     body: input.body,
@@ -422,7 +422,7 @@ export async function addComment(
     audioKey: input.audioKey ?? null,
   }
   await db.batch([db.insert(comments).values(comment), touchThread(db, input.threadId, ts)])
-  return { id, comment }
+  return comment
 }
 
 export async function resolveThread(db: DrizzleD1Database, threadId: string, userId: string): Promise<void> {

@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'r
 import { type LoaderFunctionArgs, useLoaderData, useParams, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import { api, ApiError } from '@/lib/api'
-import { applyCommentEvent, type CommentEvent } from '@/lib/applyCommentEvent'
+import { applyCommentEvent } from '@/lib/applyCommentEvent'
 import { isAudioFile } from '@/lib/audio'
-import { type CommentStream, createCommentStream } from '@/lib/commentStream'
+import { type CommentStream, type CommentStreamEvent, createCommentStream } from '@/lib/commentStream'
 import { attachDbBroker } from '@/lib/dbBroker'
 import { comments, paintAnchors, type PendingAnchor, pendingToInput, type Thread } from '@/lib/comments'
 import { initialPopover, stepPopover } from '@/lib/commentPopover'
@@ -194,9 +194,9 @@ function Viewer() {
   const [typing, setTyping] = useState<TypingPing[]>([])
 
   const onPushed = useCallback(
-    // A typing ping shares the comments socket but is not a comment event — hence the widened
-    // parameter (accepted by createCommentStream, which only ever passes the narrower one).
-    (event: CommentEvent | ({ type: 'typing' } & TypingPing)) => {
+    // Both frames the comments channel carries — the transport declares the union (S8), so the
+    // discriminant below is the only thing that tells them apart here.
+    (event: CommentStreamEvent) => {
       if (event.type === 'typing') {
         // Destructured, never spread: ONLY these three fields cross into the rail, so a payload
         // that also carried a display name could not get it rendered.

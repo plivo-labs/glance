@@ -17,6 +17,17 @@ import type { CommentEvent } from './applyCommentEvent'
 // forcing every consumer to special-case dial #1.
 
 export type CommentStreamSite = { spaceSlug: string; siteSlug: string }
+
+/** The other frame this channel carries: a peer's "still typing" ping (S10/S12), attributed by the
+ *  room from the SENDER'S attachment and never from its payload. `expiresAt` is ABSOLUTE and
+ *  nothing ever retracts it — the receiver counts it down on its own clock. */
+export type TypingEvent = { type: 'typing'; viewerId: string; threadId: string; expiresAt: number }
+
+/** Everything `onEvent` can be handed. A typing ping shares the socket but is not a CommentEvent,
+ *  so the union is declared HERE — the transport owns the shape of its own wire, rather than every
+ *  consumer widening a callback the parser was quietly lying about. */
+export type CommentStreamEvent = CommentEvent | TypingEvent
+
 /** Only what the rail uses — so a test can stand in for a real socket. */
 export type CommentStreamSocket = {
   close: () => void
@@ -28,6 +39,9 @@ export type CommentStreamSocket = {
 
 const WS_PROTOCOL = 'glance.db.v1'
 const RECONNECT_MS = 3000
+/** The ceiling the backoff doubles up to (see `redial`). A room that is simply unavailable then
+ *  costs about one dial a minute per tab instead of twenty. */
+const MAX_RECONNECT_MS = 60_000
 /** The whole cost control for the send half: every inbound message WAKES the Durable Object, so an
  *  uncapped keystroke stream is the bill. One ping per thread per window, no matter how fast the
  *  typing. It lives here rather than in the composer so no caller can forget it — and it is shorter
@@ -50,7 +64,7 @@ export type CommentStream = {
 }
 
 export function createCommentStream(
-  opts: { site: CommentStreamSite; appOrigin: string; onEvent: (event: CommentEvent) => void; onReconnect: () => void },
+  opts: { site: CommentStreamSite; appOrigin: string; onEvent: (event: CommentStreamEvent) => void; onReconnect: () => void },
   deps: { newSocket: (url: string, protocols: string[]) => CommentStreamSocket; reconnectMs?: number } = {
     newSocket: (url, protocols) => new WebSocket(url, protocols) as unknown as CommentStreamSocket,
   },
@@ -61,6 +75,8 @@ export function createCommentStream(
   let redialTimer: ReturnType<typeof setTimeout> | null = null
   let dials = 0
   let open = false
+  /** The CURRENT wait before the next dial — doubles per failed attempt, resets on a real open. */
+  let backoff = reconnectMs
   /** threadId → when this rail last actually PUT a typing ping on the wire for it. */
   const lastTypingAt = new Map<string, number>()
 
@@ -96,6 +112,9 @@ export function createCommentStream(
     ws.onopen = () => {
       if (disposed) return
       open = true
+      // A connection that actually opened resets the backoff: the next outage starts from the fast
+      // retry again, so a 300s token expiry costs one 3s gap, not whatever the last outage grew to.
+      backoff = reconnectMs
       if (dials > 1) safely(opts.onReconnect)
     }
     ws.onmessage = (e) => {
@@ -111,12 +130,20 @@ export function createCommentStream(
     }
   }
 
+  /** Backoff, not a fixed interval. This stream is dialled on EVERY viewer mount, whether or not the
+   *  rail is ever opened, and a deploy with no realtime binding answers 503 to every dial — each one
+   *  a full authenticated request (a user read plus the access batch). A flat 3s retry is ~20 D1
+   *  round trips a minute per open tab, forever, on a configuration that is explicitly supported.
+   *  Doubling to a 60s ceiling makes an unavailable server cost ~1 dial a minute instead; the jitter
+   *  is what keeps every tab on a site from redialling in lockstep when a room restarts. */
   function redial(): void {
     if (disposed) return
+    const wait = backoff * (1 + Math.random() * 0.25)
+    backoff = Math.min(backoff * 2, MAX_RECONNECT_MS)
     redialTimer = setTimeout(() => {
       redialTimer = null
       if (!disposed) dial()
-    }, reconnectMs)
+    }, wait)
   }
 
   /** One frame out, or nothing. There is no queue: the socket is closed for the whole redial gap
@@ -168,7 +195,7 @@ export function createCommentStream(
 
 /** A comments-channel frame, or nothing — anything malformed, non-object, or tagged for the OTHER
  *  channel (`db`) must be silently dropped: a hostile or buggy server frame must never throw. */
-function parseFrame(data: unknown): CommentEvent | null {
+function parseFrame(data: unknown): CommentStreamEvent | null {
   if (typeof data !== 'string') return null
   let f: unknown
   try {
@@ -178,5 +205,22 @@ function parseFrame(data: unknown): CommentEvent | null {
   }
   if (f === null || typeof f !== 'object' || Array.isArray(f)) return null
   const { channel, ...rest } = f as { channel?: unknown }
-  return channel === 'comments' ? (rest as CommentEvent) : null
+  if (channel !== 'comments') return null
+  return wellFormed(rest) ? (rest as CommentStreamEvent) : null
+}
+
+/** The discriminant AND the fields that discriminant promises. Checking only `channel` is not
+ *  enough, because the consumer's fold is DEFERRED while a list read is in flight: a frame like
+ *  `{type:'thread.created', thread:undefined}` never throws inside this file's `safely()` — it
+ *  throws later, inside the arbiter, while the buffered folds are being applied. That leaves the
+ *  buffer undrained and the read unsettled, so every later push queues behind the poison one and
+ *  list loading is wedged for the life of the mount. One bad frame must cost one bad frame. */
+function wellFormed(e: Record<string, unknown>): boolean {
+  const str = (v: unknown) => typeof v === 'string'
+  const withId = (v: unknown) => typeof v === 'object' && v !== null && str((v as { id?: unknown }).id)
+  if (e.type === 'typing') return str(e.viewerId) && str(e.threadId) && typeof e.expiresAt === 'number'
+  if (!str(e.siteId) || !str(e.filePath)) return false
+  if (e.type === 'thread.created') return withId(e.thread)
+  if (e.type === 'comment.created') return str(e.threadId) && withId(e.comment)
+  return false
 }

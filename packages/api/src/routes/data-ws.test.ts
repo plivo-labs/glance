@@ -217,14 +217,18 @@ describe('#5/IDOR: the room a caller joins is derived from the verified token', 
     expect(forwarded.body).toBeNull()
   })
 
-  test('a caller-named channel is forwarded to the DO, not silently dropped to db', async () => {
+  // ATTACK, and the mirror of comments-access.test.ts's version: the channel tag is the only wall
+  // between the two streams, and THIS is the token the browser holds. A caller who names
+  // `?channel=comments` here would otherwise join the comments room with a data token and receive
+  // every thread body, author name and typing ping on the site.
+  test.each(['comments', 'garbage', ''])('a caller-named ?channel=%p is IGNORED — this route is db, always', async (channel) => {
     const { app, tokens } = await scenario()
     const room = recordingRoom()
-    const res = await socket(app, wsHeaders(tokens.viewerA), envWith(room), `${SOCKET}?channel=comments`)
+    const res = await socket(app, wsHeaders(tokens.viewerA), envWith(room), `${SOCKET}?channel=${channel}`)
     expect(res.status).toBe(101)
     expect(room.requests).toHaveLength(1)
     const forwarded = room.requests[0] as Request
-    expect(new URL(forwarded.url).search).toBe('?channel=comments')
+    expect(new URL(forwarded.url).search).toBe('?channel=db')
   })
 })
 
