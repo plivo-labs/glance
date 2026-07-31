@@ -12,3 +12,9 @@ export function timeAgo(iso: string): string {
   if (days < 30) return `${days}d ago`
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
+
+// Calendar date for a FUTURE timestamp (key expiry) — "expires 2026-10-29", not relative math:
+// an expiry you might screenshot into a runbook should read as a fixed date, not "in 47 days".
+export function isoDate(iso: string): string {
+  return iso.slice(0, 10)
+}

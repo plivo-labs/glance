@@ -107,3 +107,56 @@ export interface ShareSet {
 }
 
 export type SlugExists = { exists: false } | { exists: true; owned: boolean }
+
+// Mirrors packages/api/src/routes/api-keys.ts KEY_DURATIONS — the only expiries the server will
+// ever accept. Keep this list in sync with that one; it is what drives the expiry dropdown.
+export const KEY_DURATIONS = [1, 7, 30, 90, 180, 365] as const
+
+export type DataCapability = 'read' | 'create' | 'write' | 'read_all'
+
+// Mirrors packages/api/src/lib/api-key.ts API_KEY_PREFIX — the server derives `secretHint` from
+// it, so a locally-built hint (the mint response never round-trips through GET) has to use the
+// same constant or the two silently drift.
+export const API_KEY_PREFIX = 'glk_'
+
+// The capability CEILING a key may carry, as the three tiers that are actually meaningful against
+// the server's dataCapsFor: it intersects this with what the user themselves can do, so a tier can
+// only ever narrow. Offering the four raw capabilities as independent checkboxes would let someone
+// build combinations the server can never grant (read_all without read, say) and read as more
+// control than it is.
+export const DATA_LEVELS = [
+  { value: 'read', label: 'Read only', caps: ['read'] },
+  { value: 'submit', label: 'Read & submit', caps: ['read', 'create'] },
+  { value: 'full', label: 'Full access', caps: ['read', 'create', 'write', 'read_all'] },
+] as const satisfies ReadonlyArray<{ value: string; label: string; caps: readonly DataCapability[] }>
+
+export type DataLevel = (typeof DATA_LEVELS)[number]['value']
+
+// Mirrors packages/api/src/lib/api-key.ts ApiKeyGrants.
+export type ApiKeyGrants = {
+  control: boolean
+  data: { scope: { kind: 'all-owned' } | { kind: 'sites'; siteIds: string[] }; caps: DataCapability[] } | null
+}
+
+// GET /api/api-keys row shape. Never carries the plaintext secret — only `secretHint`
+// (`glk_…4mR2`), which the server derives from the last 4 chars of a value it never stores.
+export interface ApiKeyItem {
+  id: string
+  name: string
+  grants: ApiKeyGrants
+  createdAt: string
+  expiresAt: string
+  revokedAt: string | null
+  lastUsedAt: string | null
+  secretHint: string | null
+}
+
+// POST /api/api-keys response — the ONLY payload that ever carries the plaintext secret.
+export interface MintedApiKey {
+  id: string
+  name: string
+  secret: string
+  grants: ApiKeyGrants
+  createdAt: string
+  expiresAt: string
+}

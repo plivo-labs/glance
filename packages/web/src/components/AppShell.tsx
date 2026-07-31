@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { Link, NavLink, Outlet, useLoaderData, useNavigation } from 'react-router'
-import { Command, LogOut, Moon, Sun, SunMoon } from 'lucide-react'
+import { Command, KeyRound, LogOut, Moon, Sun, SunMoon } from 'lucide-react'
 import type { RootData } from '@/lib/notifications'
 import { api } from '@/lib/api'
 import { toggleTheme, useTheme } from '@/components/theme'
@@ -110,6 +110,12 @@ export function AppShell() {
                   <DropdownMenuItem onSelect={() => toggleTheme()}>
                     <SunMoon />
                     Toggle theme
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to="/settings/keys">
+                      <KeyRound />
+                      API Keys
+                    </Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     className="text-destructive focus:text-destructive"
