@@ -2,6 +2,7 @@
 title: Forking asks first now
 slug: name-your-fork
 date: 2026-07-30T10:00:00.000Z
+image: name-your-fork.png
 featured: false
 ---
 Forking used to happen the instant you clicked it — you got a copy called `something-copy` and found out what it was called afterwards. Now **Fork** opens a dialog first.

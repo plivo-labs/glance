@@ -14,6 +14,7 @@ export const RELEASES: Release[] = [
   {
     "slug": "realtime-comments",
     "title": "Comments arrive live",
+    "image": "realtime-comments.png",
     "date": "2026-08-01T10:00:00.000Z",
     "featured": false,
     "bodyHtml": "<p>A comment someone else leaves now shows up while you&#39;re reading. No refresh, no polling, no &quot;let me reload and check&quot;.</p>\n<ul>\n<li><strong>New comments and replies appear as they&#39;re posted</strong> — in the panel and on the page</li>\n<li><strong>You only ever receive what you could already open.</strong> The live feed is gated exactly like the page is; it is not a second way in</li>\n<li><strong>Leave a tab open and it stays honest.</strong> If the connection drops it reconnects and re-reads the thread, so an old tab catches up instead of quietly going stale</li>\n<li><strong>See a reply coming.</strong> While someone is typing a reply, the thread says so</li>\n<li><strong>Nothing to turn on</strong> — open a page with comments and it&#39;s already listening</li>\n</ul>\n<p>The connection renews itself every few minutes. A comment that lands exactly on a renewal arrives a beat later rather than instantly — everything else is immediate.</p>\n"
@@ -21,6 +22,7 @@ export const RELEASES: Release[] = [
   {
     "slug": "comment-on-the-page",
     "title": "Comment on the page, not on a sentence",
+    "image": "comment-on-the-page.png",
     "date": "2026-07-30T16:00:00.000Z",
     "featured": false,
     "bodyHtml": "<p>Saying something about a page as a whole — <em>&quot;this chart is wrong&quot;</em>, <em>&quot;ship it&quot;</em>, <em>&quot;who owns this?&quot;</em> — used to mean picking some arbitrary sentence to hang the comment off. Now the page itself takes comments.</p>\n<ul>\n<li><strong>Add a comment</strong> from the comments panel without selecting anything first</li>\n<li><strong>A button, not a box that&#39;s always open</strong> — it&#39;s there when you want it and out of the way when you don&#39;t</li>\n<li><strong>Selecting text still works exactly as before.</strong> This is another way in, not a replacement</li>\n</ul>\n<p>Audio pages have had this button all along, because a waveform has no text to select. Now every page does.</p>\n"
@@ -28,6 +30,7 @@ export const RELEASES: Release[] = [
   {
     "slug": "emoji-reactions",
     "title": "Emoji in comments — and reactions on them",
+    "image": "emoji-reactions.png",
     "date": "2026-07-30T14:00:00.000Z",
     "featured": false,
     "bodyHtml": "<p>Comments got both halves of emoji: a picker for writing them, and one-tap reactions for when a reply would be too much.</p>\n<ul>\n<li><strong>A picker in the composer</strong> — 238 emoji across eight categories, with search</li>\n<li><strong>It inserts where your cursor is</strong>, not at the end, so you can drop one mid-sentence</li>\n<li><strong>React to any comment</strong> with a tap — the count tells you how many people picked each one, and the ones you picked are marked</li>\n<li><strong>Tap again to take it back.</strong> Use as many different emoji as you like on the same comment; the same one only ever counts once</li>\n</ul>\n<p>Search matches names <em>and</em> keywords, and puts the obvious one first — type <code>star</code> and you get ⭐, not 💫. <code>lol</code> finds 😂, <code>+1</code> finds 👍, <code>ship</code> finds 🚀.</p>\n"
@@ -35,6 +38,7 @@ export const RELEASES: Release[] = [
   {
     "slug": "name-your-fork",
     "title": "Forking asks first now",
+    "image": "name-your-fork.png",
     "date": "2026-07-30T10:00:00.000Z",
     "featured": false,
     "bodyHtml": "<p>Forking used to happen the instant you clicked it — you got a copy called <code>something-copy</code> and found out what it was called afterwards. Now <strong>Fork</strong> opens a dialog first.</p>\n<ul>\n<li><strong>Name it yourself</strong> — prefilled with the original&#39;s name plus <em>(copy)</em>, so hitting Fork straight away still does the obvious thing</li>\n<li><strong>See the address before you commit</strong> — the URL is derived from the name as you type and shown under the field</li>\n<li><strong>Choose who can see it</strong> — the picker defaults to the original&#39;s visibility, so a fork of a private page stays private unless <em>you</em> widen it</li>\n<li><strong>One dialog, both routes</strong> — the menu in the viewer and the row menu on your dashboard now open the same thing</li>\n</ul>\n<p>Pick a name whose address is already taken and the dialog stays open with the reason, so you can edit it rather than start again.</p>\n"

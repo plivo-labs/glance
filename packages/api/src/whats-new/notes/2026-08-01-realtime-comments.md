@@ -2,6 +2,7 @@
 title: Comments arrive live
 slug: realtime-comments
 date: 2026-08-01T10:00:00.000Z
+image: realtime-comments.png
 featured: false
 ---
 A comment someone else leaves now shows up while you're reading. No refresh, no polling, no "let me reload and check".
