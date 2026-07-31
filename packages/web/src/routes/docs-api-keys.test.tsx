@@ -32,9 +32,21 @@ describe('docs/api-keys', () => {
 
   test('documents the env var the CLI actually reads, and the create-not-delete limit', async () => {
     renderDocs()
-    const text = (await screen.findByRole('heading', { name: 'API Keys' })).closest('div')?.parentElement
-      ?.textContent
+    const text = (await screen.findByRole('heading', { name: 'API Keys' })).closest('div')?.parentElement?.textContent
     expect(text).toContain('GLANCE_TOKEN')
     expect(text?.toLowerCase()).toContain('delete')
+  })
+
+  // The reason a script reaches for a key at all is reading/writing a page's data, and that needs
+  // BOTH halves: the mint (a key is refused on the data plane) and the CRUD surface it unlocks.
+  // Documenting one without the other leaves a reader stuck, so assert the pair.
+  test('documents the data-token exchange and every /api/_data verb', async () => {
+    renderDocs()
+    const text = (await screen.findByRole('heading', { name: 'API Keys' })).closest('div')?.parentElement?.textContent
+    expect(text).toContain('/api/data-token/')
+    for (const path of ['/api/_data/:collection', '/api/_data/:collection/:docId']) {
+      expect(text).toContain(path)
+    }
+    for (const verb of ['GET', 'POST', 'PUT', 'DELETE']) expect(text).toContain(verb)
   })
 })

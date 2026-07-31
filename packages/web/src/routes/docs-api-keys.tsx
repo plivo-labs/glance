@@ -62,46 +62,47 @@ export function Component() {
             <Link to="/settings/keys" className="font-medium text-primary hover:underline">
               /settings/keys
             </Link>
-            , click <strong className="text-foreground">New key</strong>. Give it a name, an expiry (1, 7, 30, 90,
-            180, or 365 days — the only durations Glance will ever mint), and site access: either a set of sites you
-            pick, or every site you own. There's also an optional checkbox to let the key manage sites (deploy,
-            create, fork) — off by default.
+            , click <strong className="text-foreground">New key</strong>. Give it a name, an expiry (1, 7, 30, 90, 180,
+            or 365 days — the only durations Glance will ever mint), and site access: either a set of sites you pick, or
+            every site you own. There's also an optional checkbox to let the key manage sites (deploy, create, fork) —
+            off by default.
           </p>
           <p>
-            The secret is shown <strong className="text-foreground">exactly once</strong>, right after creation.
-            Glance stores only its hash — if you lose it, revoke it and mint a new one.
+            The secret is shown <strong className="text-foreground">exactly once</strong>, right after creation. Glance
+            stores only its hash — if you lose it, revoke it and mint a new one.
           </p>
         </Section>
 
-        <Section title="Use it with the CLI">
+        <Section title="Run it on a server">
           <p>
-            The CLI reads its target instance from <Code>~/.glance/config.json</Code>, not from the key — so install
-            and point it at this instance first:
+            This is what keys are for: a cron job, a CI step, or any script that runs where nobody can sit and complete
+            a login prompt. Export the key as <Code>GLANCE_TOKEN</Code> and the CLI skips <Code>glance login</Code>{' '}
+            entirely:
           </p>
-          <CodeBlock>{'curl -fsSL <this instance origin>/api/install | sh'}</CodeBlock>
+          <CodeBlock>
+            {'curl -fsSL <origin>/api/install | sh\nexport GLANCE_TOKEN=glk_...\nglance deploy ./my-site'}
+          </CodeBlock>
           <p>
-            Then export the key as <Code>GLANCE_TOKEN</Code> instead of running <Code>glance login</Code>:
-          </p>
-          <CodeBlock>{'export GLANCE_TOKEN=glk_...\nglance deploy ./my-site'}</CodeBlock>
-          <p>
-            <Code>GLANCE_TOKEN</Code> is only checked by commands that call the API — <Code>glance logout</Code>{' '}
-            ignores it deliberately, so it always acts on your real session, not a key you happen to have exported.
+            The CLI reads its target instance from <Code>~/.glance/config.json</Code>, not from the key, so the install
+            step above matters on a fresh box. <Code>GLANCE_TOKEN</Code> is only honoured by commands that call the API
+            — <Code>glance logout</Code> ignores it deliberately, so it always acts on your real session, not a key you
+            happen to have exported.
           </p>
         </Section>
 
         <Section title="What a key can do">
           <p>
-            With the "manage sites" grant, a key can deploy and create sites the same as you can. Without it, the
-            key can still read and use the data plane, but any request that would change a site — deploy, create,
-            fork, move, rename, share — is refused. It can never delete a site, and it can never mint or revoke
-            another key: both are denied outright, whatever its grants.
+            With the "manage sites" grant, a key can deploy and create sites the same as you can. Without it, the key
+            can still read and use the data plane, but any request that would change a site — deploy, create, fork,
+            move, rename, share — is refused. It can never delete a site, and it can never mint or revoke another key:
+            both are denied outright, whatever its grants.
           </p>
           <p>
-            <strong className="text-foreground">One gap to scope around:</strong> deleting a{' '}
-            <em>space</em> is not covered by that rule. A key with the "manage sites" grant can delete a group space
-            it created, which destroys every site inside it. Personal spaces are protected, and the delete is
-            refused if the space holds sites owned by other members — but your own sites in your own group space can
-            be erased this way despite the per-site rule above.
+            <strong className="text-foreground">One gap to scope around:</strong> deleting a <em>space</em> is not
+            covered by that rule. A key with the "manage sites" grant can delete a group space it created, which
+            destroys every site inside it. Personal spaces are protected, and the delete is refused if the space holds
+            sites owned by other members — but your own sites in your own group space can be erased this way despite the
+            per-site rule above.
           </p>
         </Section>
 
@@ -110,33 +111,7 @@ export function Component() {
             The CLI is a convenience — a key is a bearer token against the same HTTP API. Send it as an{' '}
             <Code>Authorization</Code> header:
           </p>
-          <CodeBlock>
-            {'curl -H "Authorization: Bearer $GLANCE_TOKEN" \\\n  <this instance origin>/api/sites/mine'}
-          </CodeBlock>
-          <p>Key management lives at {'/api/api-keys'}, and is refused to a key credential except for the list:</p>
-          <EndpointTable
-            rows={[
-              ['POST', '/api/api-keys', 'mint — returns the secret once', '403 for a key'],
-              ['GET', '/api/api-keys', 'list your keys (no secrets, no hashes)', 'allowed'],
-              ['DELETE', '/api/api-keys/:id', 'revoke — idempotent', '403 for a key'],
-            ]}
-          />
-          <p>Minting takes a name, one of the six fixed durations, and the grants:</p>
-          <CodeBlock>
-            {`POST /api/api-keys
-{
-  "name": "CI deploy bot",
-  "expiresInDays": 30,
-  "grants": {
-    "control": true,
-    "data": { "scope": { "kind": "all-owned" }, "caps": ["read"] }
-  }
-}`}
-          </CodeBlock>
-          <p>
-            An <Code>expiresAt</Code> in the body is ignored — it's always derived server-side from{' '}
-            <Code>expiresInDays</Code>. You may hold 10 active keys; revoked and expired ones don't count.
-          </p>
+          <CodeBlock>{'curl -H "Authorization: Bearer $GLANCE_TOKEN" \\\n  <origin>/api/sites/mine'}</CodeBlock>
           <p>Deploying is a multipart upload, one form field per file:</p>
           <CodeBlock>
             {`curl -X POST "<origin>/api/upload/<space>/<site>" \\
@@ -145,17 +120,70 @@ export function Component() {
   -F "visibility=team"`}
           </CodeBlock>
           <p>
-            Full endpoint reference — sites, spaces, shares, forks, response shapes and status codes — is in{' '}
-            <Code>packages/api/API.md</Code>.
+            Key management itself lives at <Code>/api/api-keys</Code> — a key may list your keys, but minting and
+            revoking are refused to it and stay yours alone. Full endpoint reference — sites, spaces, shares, forks,
+            response shapes and status codes — is in <Code>packages/api/API.md</Code>.
           </p>
         </Section>
 
-        <Section title="Data access">
+        <Section title="Read and write a page's data">
           <p>
-            A key's data grant is an allowlist — the specific sites you selected, or "all owned sites" — plus a
-            capability ceiling (read, create, write, read_all) on top of it. When the key is used to mint a
-            glance.db data token, that ceiling only ever narrows what the token can carry: it can restrict what
-            you could otherwise do, never grant more than your own access already allows.
+            Every site has a document store (<Code>glance.db</Code>) — the same one a live dashboard or a form on the
+            page reads from. A script can fill it, which is how a page updates itself between deploys: the cron job
+            writes the new numbers, the open page re-renders.
+          </p>
+          <p>
+            The key doesn't work on the data plane directly. Exchange it for a{' '}
+            <strong className="text-foreground">data token</strong>, then use that:
+          </p>
+          <CodeBlock>
+            {`TOKEN=$(curl -fsS -X POST \\
+  -H "Authorization: Bearer $GLANCE_TOKEN" \\
+  "<origin>/api/data-token/<space>/<site>" | jq -r .token)`}
+          </CodeBlock>
+          <p>
+            That token lasts <strong className="text-foreground">300 seconds</strong> — mint one per run, never bake it
+            into a config file. A <Code>401</Code> on the data plane means it aged out.
+          </p>
+          <p>
+            With it, documents are plain JSON over <Code>/api/_data</Code>. The last column is the capability the token
+            must carry:
+          </p>
+          <EndpointTable
+            rows={[
+              ['GET', '/api/_data/:collection', 'list, newest first — ?limit= (default 50, max 200)', 'read'],
+              ['GET', '/api/_data/:collection/:docId', 'fetch one document', 'read'],
+              ['POST', '/api/_data/:collection', 'create — the id is assigned for you', 'create'],
+              ['PUT', '/api/_data/:collection/:docId', 'create or replace at an id you choose', 'write'],
+              ['DELETE', '/api/_data/:collection/:docId', 'delete — 204, idempotent', 'write'],
+            ]}
+          />
+          <p>
+            Reads come back as <Code>{'{ id, data, createdBy, createdAt, updatedAt }'}</Code>, and a list wraps them in{' '}
+            <Code>{'{ items: [...] }'}</Code>. Your JSON is whatever you put in <Code>data</Code>.
+          </p>
+          <p>
+            So the cron job that refreshes a dashboard is one <Code>PUT</Code> at a stable id — the page reads the same
+            row every time, no accumulating history:
+          </p>
+          <CodeBlock>
+            {`curl -fsS -X PUT \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{"signups": 412, "mrr": 91400}' \\
+  "<origin>/api/_data/shared-metrics/today"`}
+          </CodeBlock>
+          <p>
+            <strong className="text-foreground">Two rules worth knowing.</strong> Reads are scoped to your own rows by
+            default; name a collection <Code>shared-*</Code> and every viewer of the site can read it — that's what
+            makes the numbers above visible on the page. And any viewer may read and create, but <Code>PUT</Code>/
+            <Code>DELETE</Code> are the site owner's alone, so a visitor can submit to your form and never edit what's
+            there. Documents cap at 100KB each, 5,000 per site.
+          </p>
+          <p>
+            A key reaches only the sites its grant allows, and its capability ceiling (read, create, write, read_all)
+            narrows the minted token further. It can restrict what you could otherwise do, never widen it — a key with
+            no data grant is <Code>403</Code> at the mint.
           </p>
         </Section>
 
@@ -168,9 +196,9 @@ export function Component() {
             . Revoked keys stay listed, greyed out, rather than disappearing.
           </p>
           <p>
-            One exception: a data token the key already minted before revocation keeps working for the rest of its
-            own lifetime — up to 5 minutes (300 seconds). That token is a self-contained, signed credential, not a
-            lookup against the key, so revoking the key doesn't reach back into tokens it already handed out.
+            One exception: a data token the key already minted before revocation keeps working for the rest of its own
+            lifetime — up to 5 minutes (300 seconds). That token is a self-contained, signed credential, not a lookup
+            against the key, so revoking the key doesn't reach back into tokens it already handed out.
           </p>
         </Section>
       </div>
