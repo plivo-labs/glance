@@ -244,3 +244,33 @@ describe('createCommentStream', () => {
     stream.dispose()
   })
 })
+
+// S9 needs one bit this transport already knows and no consumer can otherwise see: is a socket OPEN
+// right now. The viewer drops its own post-write list refetch only while this is true — the pushed
+// event is what replaces it, and a viewer that skipped the refetch with no socket would never see
+// its own comment appear.
+describe('createCommentStream connected()', () => {
+  test('false until the socket opens, true once it does', () => {
+    const { stream, sockets } = makeStream()
+    expect(stream.connected()).toBe(false) // dialled, not open yet
+    sockets[0].onopen?.()
+    expect(stream.connected()).toBe(true)
+  })
+
+  test('false again the moment the socket closes, true again once the redial opens', async () => {
+    const { stream, sockets } = makeStream({ reconnectMs: 5 })
+    sockets[0].onopen?.()
+    sockets[0].onclose?.()
+    expect(stream.connected()).toBe(false) // the 3s redial gap is exactly when the refetch is needed
+    const s2 = await until('redial socket', () => sockets[1])
+    s2.onopen?.()
+    expect(stream.connected()).toBe(true)
+  })
+
+  test('false after dispose, even though the socket never reported its close', () => {
+    const { stream, sockets } = makeStream()
+    sockets[0].onopen?.()
+    stream.dispose()
+    expect(stream.connected()).toBe(false)
+  })
+})

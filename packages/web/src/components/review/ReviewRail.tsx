@@ -43,7 +43,8 @@ export function ReviewRail({
   onCreate: (body: string, mentions: string[]) => void | Promise<void>
   // Voice sibling of onCreate: submits the composer's recording as a voice thread on the same anchor.
   onCreateVoice: (blob: Blob) => void | Promise<void>
-  onChanged: () => void
+  // Passed straight through to every ThreadCard — see the `pushed` note on its own prop.
+  onChanged: (change: { pushed: boolean }) => void
   onFocusAnchor: (thread: Thread) => void
   // The rail's own close affordance (its header ✕) — the ViewerTopBar's Comments toggle is the
   // other way to close it; both land on the same handler in viewer.tsx.

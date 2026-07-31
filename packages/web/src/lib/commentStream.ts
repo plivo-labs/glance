@@ -28,7 +28,14 @@ export type CommentStreamSocket = {
 const WS_PROTOCOL = 'glance.db.v1'
 const RECONNECT_MS = 3000
 
-export type CommentStream = { dispose: () => void }
+export type CommentStream = {
+  dispose: () => void
+  /** Is a socket OPEN right now — read on demand, never a subscription (nothing re-renders on it).
+   *  S9's consumer drops its own post-write list refetch only while this is true: the pushed event
+   *  is what replaces it, so a viewer in the redial gap must keep refetching or it stops seeing its
+   *  own writes. */
+  connected: () => boolean
+}
 
 export function createCommentStream(
   opts: { site: CommentStreamSite; appOrigin: string; onEvent: (event: CommentEvent) => void; onReconnect: () => void },
@@ -41,6 +48,7 @@ export function createCommentStream(
   let socket: CommentStreamSocket | null = null
   let redialTimer: ReturnType<typeof setTimeout> | null = null
   let dials = 0
+  let open = false
 
   /** Never lets a throwing consumer callback take the socket's event loop down with it. */
   function safely(fn: () => void): void {
@@ -73,6 +81,7 @@ export function createCommentStream(
     // this closure afterward, and a disposed stream must stay inert for it (case 5).
     ws.onopen = () => {
       if (disposed) return
+      open = true
       if (dials > 1) safely(opts.onReconnect)
     }
     ws.onmessage = (e) => {
@@ -82,6 +91,7 @@ export function createCommentStream(
     }
     ws.onclose = () => {
       if (disposed || socket !== ws) return
+      open = false
       socket = null
       redial()
     }
@@ -98,8 +108,10 @@ export function createCommentStream(
   dial()
 
   return {
+    connected: () => open,
     dispose() {
       disposed = true
+      open = false
       if (redialTimer) clearTimeout(redialTimer)
       redialTimer = null
       const ws = socket
