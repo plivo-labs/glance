@@ -64,6 +64,29 @@ function event(o: Partial<ChangeEvent> = {}): ChangeEvent {
   }
 }
 
+/** A minimal, valid S4-shaped comment.created event — these specs exercise routing/plumbing
+ *  (misrouted siteId, deploy wiring), not payload content, so any real CommentEvent will do. */
+function commentEvent(o: Partial<Extract<CommentEvent, { type: 'comment.created' }>> = {}): CommentEvent {
+  return {
+    type: 'comment.created',
+    siteId: 'siteA',
+    filePath: 'index.html',
+    threadId: 't1',
+    comment: {
+      id: 'c1',
+      authorId: null,
+      author: null,
+      body: 'hi',
+      deleted: false,
+      hasAudio: false,
+      reactions: [],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      editedAt: null,
+    },
+    ...o,
+  }
+}
+
 function broadcast(r: Room, e: ChangeEvent = event()) {
   return r.room.fetch(
     new Request('https://site-room/broadcast', {
@@ -367,6 +390,24 @@ describe('SiteRoom — S1: channel-tagged sockets', () => {
     }
     expect(parseFrame(ws.sent[0])).toEqual({ events: frame.events, cursor: frame.cursor })
   })
+
+  test('a comments frame carries the whole event payload, not just siteId — the spread must actually reach the wire', async () => {
+    const r = makeRoom()
+    const { ws } = await subscribe(r, { viewerId: 'userA', channel: 'comments' })
+    const e = commentEvent({ filePath: 'index.html', threadId: 't1' })
+    await r.room.fetch(
+      new Request('https://site-room/broadcast-comment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(e),
+      }),
+    )
+    // `{ channel: 'comments', ...e }` must survive the wire round trip: a frame reduced to just
+    // siteId would still pass every other spec here (they only check length/type/threadId), so
+    // this asserts the FULL parsed frame — type/filePath/thread|comment included.
+    const [frame] = frames(ws)
+    expect(frame).toEqual({ channel: 'comments', ...e })
+  })
 })
 
 describe('SiteRoom — T2: a misrouted broadcast body is a no-op, not a site-wide disconnect', () => {
@@ -385,7 +426,7 @@ describe('SiteRoom — T2: a misrouted broadcast body is a no-op, not a site-wid
       new Request('https://site-room/broadcast-comment', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ siteId: 'siteB', body: { text: 'hi' } } satisfies CommentEvent),
+        body: JSON.stringify(commentEvent({ siteId: 'siteB' })),
       }),
     )
     expect(ws.sent).toEqual([])
@@ -430,8 +471,6 @@ describe('SiteRoom — deploy wiring', () => {
 })
 
 describe('SiteRoom — comment deploy wiring', () => {
-  const commentEvent = (o: Partial<CommentEvent> = {}): CommentEvent => ({ siteId: 'siteA', body: { text: 'hi' }, ...o })
-
   // No executionCtx in this harness (there is no real Worker request) — the same fallback
   // fireAndForget takes in prod when a caller has none: catch the access, await inline.
   const fakeCtx = (env: unknown) =>

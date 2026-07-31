@@ -1,3 +1,4 @@
+import type { CommentView, ThreadView } from '../db/comments'
 import { type SocketAuth, decodeAttachment, isAttachmentExpired } from './site-room'
 
 // The comments-channel fan-out policy. A comment event has neither a document `collection` nor a
@@ -10,10 +11,17 @@ import { type SocketAuth, decodeAttachment, isAttachmentExpired } from './site-r
 //
 // No cursor: there is no comment change log and no seq to seal into one (ruled decisions 1 + 4).
 
-/** The payload a later slice fills in with real comment fields (thread, author, text, ...). For
- *  now: just enough to route the event — `siteId` to match against a socket's attachment, and an
- *  opaque `body` carried through to the wire unchanged. */
-export type CommentEvent = { siteId: string; body: unknown }
+/** S4's real discriminated shape: a push carries the WHOLE view — the exact ThreadView /
+ *  CommentView the list route returns for the same row, built by db/comments.ts's
+ *  buildThreadCreatedView / buildCommentCreatedView — never a hand-rolled second shape.
+ *  `siteId` is what routes the event to the right room (matched against a socket's attachment);
+ *  `filePath` is what the open rail compares against to decide whether the event is for the file
+ *  it is showing. No cursor (ruled decisions 1 + 4). Only create and reply push (ruled decision
+ *  5) — resolve/delete/edit have no event here. Every reaction row is empty by construction
+ *  (ruled decision 2), so nothing per-viewer ever reaches this type. */
+export type CommentEvent =
+  | { type: 'thread.created'; siteId: string; filePath: string; thread: ThreadView }
+  | { type: 'comment.created'; siteId: string; filePath: string; threadId: string; comment: CommentView }
 
 type Attached = { deserializeAttachment(): unknown }
 

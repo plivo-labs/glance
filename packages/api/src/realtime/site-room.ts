@@ -251,7 +251,9 @@ export class SiteRoom {
     await Promise.all(
       deliver.map(async ({ ws }) => {
         try {
-          ws.send(JSON.stringify({ channel: 'comments', siteId: e.siteId, body: e.body }))
+          // e's own fields (type/siteId/filePath/thread|comment) ride the wire unchanged — S4's
+          // CommentEvent IS the wire shape now, so there's no separate `body` wrapper to build.
+          ws.send(JSON.stringify({ channel: 'comments', ...e }))
         } catch {
           // One dead socket must never cost the rest of the site its event.
           closeQuietly(ws, 1011, 'send failed')

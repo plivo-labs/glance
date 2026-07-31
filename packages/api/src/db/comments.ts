@@ -275,6 +275,32 @@ export function assembleThreadViews(
   }))
 }
 
+// --- S4 (realtime): viewer-independent push payload builders. Reuse the SAME assembly the list
+// route runs (assembleThreadViews / toCommentView) instead of a hand-rolled second shape — the
+// contract the caller (S5) exists to protect: a pushed thread and a reloaded thread must be
+// byte-identical, or live and reloaded silently drift apart. A push has no single viewer (one
+// frame goes to everyone in the room), so both builders pass viewerId null / an empty reaction
+// row list — reactions: [] on a push (decision 2), which is also the truthful state of a
+// brand-new comment, not a lossy one. Row-shaped inputs (ThreadWithUsersRow / CommentWithAuthorRow)
+// so the author name resolves through the SAME joinedDisplayName the list endpoint's SQL join
+// feeds — the create path's `c.get('user')` fields slot in unchanged, drift-proof by construction.
+
+/** Push payload for a just-created thread + its opening comment: the exact ThreadView the list
+ *  route would return for it. */
+export function buildThreadCreatedView(threadRow: ThreadWithUsersRow, commentRow: CommentWithAuthorRow): ThreadView {
+  return assembleThreadViews([threadRow], [commentRow], [], null)[0]
+}
+
+/** Push payload for a reply: `{ threadId, comment }`, `comment` being the exact CommentView shape
+ *  the list route nests under its thread. */
+export function buildCommentCreatedView(
+  threadId: string,
+  commentRow: CommentWithAuthorRow,
+): { threadId: string; comment: CommentView } {
+  const { comment, authorName, authorEmail } = commentRow
+  return { threadId, comment: toCommentView(comment, joinedDisplayName(comment.authorId, authorName, authorEmail), []) }
+}
+
 function toCommentView(c: Comment, author: string | null, reactions: CommentReaction[]): CommentView {
   const deleted = c.deletedAt !== null
   return {
@@ -323,11 +349,17 @@ function versionedContext(context: unknown): StoredTextContext | null {
 /** Create a thread + its opening comment atomically. An element anchor stores its built selector
  *  payload in the JSON `anchor` column; a text anchor stores the normalized quote (plus its
  *  occurrence context in that same column); a missing quote (or an explicit page anchor) stores a
- *  page thread. No resolution — the client paints the anchor against the rendered DOM at view time. */
+ *  page thread. No resolution — the client paints the anchor against the rendered DOM at view time.
+ *
+ *  Returns the exact rows just inserted (`thread`/`comment`), not a re-read: `createdAt` is
+ *  computed here as a plain local `ts` instead of the columns' `$defaultFn`, so the value handed
+ *  to `.values()` and the value handed back are the SAME string — the S5 realtime push builds its
+ *  payload from this return with ZERO extra D1 round trips (a re-read would blow the D1
+ *  request-count budget T9.5 pins on this route). */
 export async function createThread(
   db: DrizzleD1Database,
   input: CreateThreadInput,
-): Promise<{ threadId: string; openingCommentId: string }> {
+): Promise<{ threadId: string; openingCommentId: string; thread: CommentThread; comment: Comment }> {
   const isElement = input.anchorType === 'element' && input.element != null
   const wantsText = !isElement && (input.anchorType ?? 'text') === 'text' && Boolean(input.quote)
   const anchorType: 'text' | 'page' | 'element' = isElement ? 'element' : wantsText ? 'text' : 'page'
@@ -336,47 +368,61 @@ export async function createThread(
   // a text anchor's occurrence context. A page thread (and a text thread with no context) stores null.
   const anchor = anchorType === 'element' ? (input.element ?? null) : anchorType === 'text' ? versionedContext(input.context) : null
 
+  const ts = now()
   const threadId = crypto.randomUUID()
   const openingCommentId = input.commentId ?? crypto.randomUUID()
-  await db.batch([
-    db.insert(commentThreads).values({
-      id: threadId,
-      siteId: input.siteId,
-      filePath: input.filePath,
-      anchorType,
-      quote,
-      anchor,
-      status: 'open',
-      createdBy: input.createdBy,
-    }),
-    db.insert(comments).values({
-      id: openingCommentId,
-      threadId,
-      authorId: input.createdBy,
-      body: input.body,
-      audioKey: input.audioKey ?? null,
-    }),
-  ])
-  return { threadId, openingCommentId }
+  const thread: CommentThread = {
+    id: threadId,
+    siteId: input.siteId,
+    filePath: input.filePath,
+    anchorType,
+    quote,
+    anchor,
+    contentHash: null,
+    anchorStatus: 'anchored',
+    start: null,
+    end: null,
+    status: 'open',
+    resolvedBy: null,
+    resolvedAt: null,
+    createdBy: input.createdBy,
+    createdAt: ts,
+    updatedAt: ts,
+  }
+  const comment: Comment = {
+    id: openingCommentId,
+    threadId,
+    authorId: input.createdBy,
+    body: input.body,
+    createdAt: ts,
+    editedAt: null,
+    deletedAt: null,
+    audioKey: input.audioKey ?? null,
+  }
+  await db.batch([db.insert(commentThreads).values(thread), db.insert(comments).values(comment)])
+  return { threadId, openingCommentId, thread, comment }
 }
 
-/** Append a flat reply to a thread (no nesting) and bump the thread's updatedAt. */
+/** Append a flat reply to a thread (no nesting) and bump the thread's updatedAt. Returns the
+ *  exact row just inserted — see `createThread`'s note on why this is a local `ts`, not a re-read. */
 export async function addComment(
   db: DrizzleD1Database,
   input: { threadId: string; authorId: string; body: string; commentId?: string; audioKey?: string },
-): Promise<string> {
+): Promise<{ id: string; comment: Comment }> {
+  const ts = now()
   const id = input.commentId ?? crypto.randomUUID()
-  await db.batch([
-    db.insert(comments).values({
-      id,
-      threadId: input.threadId,
-      authorId: input.authorId,
-      body: input.body,
-      audioKey: input.audioKey ?? null,
-    }),
-    touchThread(db, input.threadId, now()),
-  ])
-  return id
+  const comment: Comment = {
+    id,
+    threadId: input.threadId,
+    authorId: input.authorId,
+    body: input.body,
+    createdAt: ts,
+    editedAt: null,
+    deletedAt: null,
+    audioKey: input.audioKey ?? null,
+  }
+  await db.batch([db.insert(comments).values(comment), touchThread(db, input.threadId, ts)])
+  return { id, comment }
 }
 
 export async function resolveThread(db: DrizzleD1Database, threadId: string, userId: string): Promise<void> {

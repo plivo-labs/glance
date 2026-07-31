@@ -42,6 +42,28 @@ function reattach(ws: FakeWebSocket, o: { subject: string; owner: string; exp: n
   ws.serializeAttachment(encodeAttachment({ caps: VIEWER, ...o }))
 }
 
+/** A minimal, valid S4-shaped comment.created event for siteId — the specs below exercise
+ *  routing (site/expiry/channel), not payload content, so any real CommentEvent will do. */
+function commentEvent(siteId: string): CommentEvent {
+  return {
+    type: 'comment.created',
+    siteId,
+    filePath: 'index.html',
+    threadId: 't1',
+    comment: {
+      id: 'c1',
+      authorId: null,
+      author: null,
+      body: 'hi',
+      deleted: false,
+      hasAudio: false,
+      reactions: [],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      editedAt: null,
+    },
+  }
+}
+
 /** Every object key at any depth — the honest form of "no cursor key at all" (`in` would still
  *  false-positive on `undefined`, and JSON.stringify drops undefined keys anyway). */
 function keysDeep(value: unknown, out: string[] = []): string[] {
@@ -68,7 +90,7 @@ describe('selectCommentRecipients — pure policy: SITE + EXPIRY, no visibility,
     reattach(foreignSite, { subject: 'userC', owner: 'siteB', exp })
     const unattached = makeWebSocket()
 
-    const event: CommentEvent = { siteId: 'siteA', body: { threadId: 't1', text: 'hi' } }
+    const event = commentEvent('siteA')
     const { deliver, close } = selectCommentRecipients(
       event,
       [mine, sameSiteOther, stale, foreignSite, unattached],
@@ -82,14 +104,14 @@ describe('selectCommentRecipients — pure policy: SITE + EXPIRY, no visibility,
     expect(close).toEqual([stale, foreignSite, unattached])
   })
 
-  test('canViewerRead is never consulted: a body carrying a collection/createdBy that policy would REJECT still delivers', () => {
+  test('canViewerRead is never consulted: a bare "read"-cap viewer still delivers', () => {
     const exp = nowSec() + 300
     const ws = makeWebSocket()
-    // A bare 'read' cap viewer, reading someone else's document in a non-shared collection, is
-    // exactly what canViewerRead rejects (see data-visibility.ts). selectCommentRecipients has no
-    // such axis to even ask the question on — site + expiry are fine, so it delivers.
+    // A bare 'read' cap viewer is exactly who canViewerRead's collection/createdBy axis would
+    // reject on a db document (see data-visibility.ts). A comment event carries no such axis at
+    // all — selectCommentRecipients has nothing to ask the question on — so it delivers.
     reattach(ws, { subject: 'userB', owner: 'siteA', exp, caps: ['read'] as DataCapability[] })
-    const event: CommentEvent = { siteId: 'siteA', body: { collection: 'notes', createdBy: 'someoneElse' } }
+    const event = commentEvent('siteA')
     const { deliver, close } = selectCommentRecipients(event, [ws], nowSec())
     expect(deliver).toHaveLength(1)
     expect(close).toEqual([])
@@ -101,7 +123,7 @@ describe('SiteRoom — POST /broadcast-comment', () => {
     const r = makeRoom()
     const { ws: dbSocket } = await subscribe(r, { viewerId: 'userA', channel: 'db' })
     const { ws: commentsSocket } = await subscribe(r, { viewerId: 'userA', channel: 'comments' })
-    await broadcastComment(r, { siteId: 'siteA', body: { threadId: 't1' } })
+    await broadcastComment(r, commentEvent('siteA'))
     expect(commentsSocket.sent).toHaveLength(1)
     expect(dbSocket.sent).toHaveLength(0)
     // Wrong channel is a skip, not a close: the db socket was never even a candidate.
@@ -112,7 +134,7 @@ describe('SiteRoom — POST /broadcast-comment', () => {
     const r = makeRoom()
     const { ws } = await subscribe(r, { viewerId: 'userA', channel: 'comments' })
     reattach(ws, { subject: 'userA', owner: 'siteA', exp: nowSec() - 1 })
-    await broadcastComment(r, { siteId: 'siteA', body: { threadId: 't1' } })
+    await broadcastComment(r, commentEvent('siteA'))
     expect(ws.sent).toEqual([])
     expect(ws.closed).toEqual([{ code: 1008, reason: expect.any(String) }])
   })
@@ -120,7 +142,7 @@ describe('SiteRoom — POST /broadcast-comment', () => {
   test('the emitted frame is channel-tagged "comments" and carries NO cursor key at all', async () => {
     const r = makeRoom()
     const { ws } = await subscribe(r, { viewerId: 'userA', channel: 'comments' })
-    await broadcastComment(r, { siteId: 'siteA', body: { threadId: 't1', text: 'hi' } })
+    await broadcastComment(r, commentEvent('siteA'))
     const [frame] = ws.sent.map((s) => JSON.parse(s))
     expect(frame.channel).toBe('comments')
     expect(keysDeep(frame)).not.toContain('cursor')
@@ -132,7 +154,7 @@ describe('SiteRoom — POST /broadcast-comment', () => {
     const { ws: broken } = await subscribe(r, { viewerId: 'u2', channel: 'comments' })
     const { ws: third } = await subscribe(r, { viewerId: 'u3', channel: 'comments' })
     broken.failNextSend(new Error('socket gone'))
-    await broadcastComment(r, { siteId: 'siteA', body: { threadId: 't1' } })
+    await broadcastComment(r, commentEvent('siteA'))
     expect(first.sent).toHaveLength(1)
     expect(third.sent).toHaveLength(1)
     expect(broken.sent).toHaveLength(0)
