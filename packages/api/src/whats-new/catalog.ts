@@ -4,11 +4,51 @@ import type { Release } from './bake'
 
 export const RELEASES: Release[] = [
   {
+    "slug": "api-keys",
+    "title": "API keys for scripts and CI",
+    "image": "api-keys.png",
+    "date": "2026-08-01T12:00:00.000Z",
+    "featured": true,
+    "bodyHtml": "<p>A script can now do the things you do in Glance — deploy a build, publish a report, push a dashboard — without borrowing your login. <strong>Settings → API Keys</strong> mints one.</p>\n<ul>\n<li><strong>Copy the secret once.</strong> It&#39;s shown at mint time and never again; Glance only keeps a hash of it</li>\n<li><strong>Export it as <code>GLANCE_TOKEN</code></strong> and the CLI runs without <code>glance login</code>. The same key is a bearer token against the HTTP API, so <code>curl</code> works too</li>\n<li><strong>Grant only what it needs</strong> — all your sites or a chosen few, read or write. A key&#39;s access can never be wider than your own</li>\n<li><strong>It can create and deploy, never delete</strong> — and it can&#39;t mint or revoke keys, whatever you grant it</li>\n<li><strong>Revoke instantly</strong> from the same screen. Revoked keys stay in the list, marked, so you can see what was retired and when</li>\n</ul>\n<p>You choose how long a key lives when you mint it, and you can hold ten active at a time. <strong>How keys work</strong> on the keys screen has the full rules.</p>\n"
+  },
+  {
+    "slug": "realtime-comments",
+    "title": "Comments arrive live",
+    "image": "realtime-comments.png",
+    "date": "2026-08-01T10:00:00.000Z",
+    "featured": false,
+    "bodyHtml": "<p>A comment someone else leaves now shows up while you&#39;re reading. No refresh, no polling, no &quot;let me reload and check&quot;.</p>\n<ul>\n<li><strong>New comments and replies appear as they&#39;re posted</strong> — in the panel and on the page</li>\n<li><strong>You only ever receive what you could already open.</strong> The live feed is gated exactly like the page is; it is not a second way in</li>\n<li><strong>Leave a tab open and it stays honest.</strong> If the connection drops it reconnects and re-reads the thread, so an old tab catches up instead of quietly going stale</li>\n<li><strong>See a reply coming.</strong> While someone is typing a reply, the thread says so</li>\n<li><strong>Nothing to turn on</strong> — open a page with comments and it&#39;s already listening</li>\n</ul>\n<p>The connection renews itself every few minutes. A comment that lands exactly on a renewal arrives a beat later rather than instantly — everything else is immediate.</p>\n"
+  },
+  {
+    "slug": "comment-on-the-page",
+    "title": "Comment on the page, not on a sentence",
+    "image": "comment-on-the-page.png",
+    "date": "2026-07-30T16:00:00.000Z",
+    "featured": false,
+    "bodyHtml": "<p>Saying something about a page as a whole — <em>&quot;this chart is wrong&quot;</em>, <em>&quot;ship it&quot;</em>, <em>&quot;who owns this?&quot;</em> — used to mean picking some arbitrary sentence to hang the comment off. Now the page itself takes comments.</p>\n<ul>\n<li><strong>Add a comment</strong> from the comments panel without selecting anything first</li>\n<li><strong>A button, not a box that&#39;s always open</strong> — it&#39;s there when you want it and out of the way when you don&#39;t</li>\n<li><strong>Selecting text still works exactly as before.</strong> This is another way in, not a replacement</li>\n</ul>\n<p>Audio pages have had this button all along, because a waveform has no text to select. Now every page does.</p>\n"
+  },
+  {
+    "slug": "emoji-reactions",
+    "title": "Emoji in comments — and reactions on them",
+    "image": "emoji-reactions.png",
+    "date": "2026-07-30T14:00:00.000Z",
+    "featured": false,
+    "bodyHtml": "<p>Comments got both halves of emoji: a picker for writing them, and one-tap reactions for when a reply would be too much.</p>\n<ul>\n<li><strong>A picker in the composer</strong> — 238 emoji across eight categories, with search</li>\n<li><strong>It inserts where your cursor is</strong>, not at the end, so you can drop one mid-sentence</li>\n<li><strong>React to any comment</strong> with a tap — the count tells you how many people picked each one, and the ones you picked are marked</li>\n<li><strong>Tap again to take it back.</strong> Use as many different emoji as you like on the same comment; the same one only ever counts once</li>\n</ul>\n<p>Search matches names <em>and</em> keywords, and puts the obvious one first — type <code>star</code> and you get ⭐, not 💫. <code>lol</code> finds 😂, <code>+1</code> finds 👍, <code>ship</code> finds 🚀.</p>\n"
+  },
+  {
+    "slug": "name-your-fork",
+    "title": "Forking asks first now",
+    "image": "name-your-fork.png",
+    "date": "2026-07-30T10:00:00.000Z",
+    "featured": false,
+    "bodyHtml": "<p>Forking used to happen the instant you clicked it — you got a copy called <code>something-copy</code> and found out what it was called afterwards. Now <strong>Fork</strong> opens a dialog first.</p>\n<ul>\n<li><strong>Name it yourself</strong> — prefilled with the original&#39;s name plus <em>(copy)</em>, so hitting Fork straight away still does the obvious thing</li>\n<li><strong>See the address before you commit</strong> — the URL is derived from the name as you type and shown under the field</li>\n<li><strong>Choose who can see it</strong> — the picker defaults to the original&#39;s visibility, so a fork of a private page stays private unless <em>you</em> widen it</li>\n<li><strong>One dialog, both routes</strong> — the menu in the viewer and the row menu on your dashboard now open the same thing</li>\n</ul>\n<p>Pick a name whose address is already taken and the dialog stays open with the reason, so you can edit it rather than start again.</p>\n"
+  },
+  {
     "slug": "star-a-page",
     "title": "Star a page",
     "image": "star-a-page.png",
     "date": "2026-07-29T18:00:00.000Z",
-    "featured": true,
+    "featured": false,
     "bodyHtml": "<p>The page you keep hunting for in search is now one click away. Hit the <strong>star</strong> on any page — from a row on your dashboard or from the top bar while you&#39;re reading it — and it pins to a new <strong>Starred</strong> tab.</p>\n<ul>\n<li><strong>Star from wherever you are</strong> — the row on the dashboard, or the top bar of the page you&#39;re already reading</li>\n<li><strong>Starred is always there</strong>, second tab along, so you can find it before you&#39;ve starred anything</li>\n<li><strong>Newest star first</strong> — the tab is ordered by when <em>you</em> pinned each page, not when it was created</li>\n<li><strong>Your stars are yours.</strong> Nobody can see what you&#39;ve starred, and starring never changes who can open a page</li>\n<li><strong>If you can open it, you can star it</strong> — including your own private pages and private pages someone shared with you</li>\n</ul>\n<p>Star a page you later lose access to and it quietly drops out of the tab — if you get access again, it comes right back.</p>\n"
   },
   {
@@ -16,7 +56,7 @@ export const RELEASES: Release[] = [
     "title": "Live data on any page",
     "image": "live-data.png",
     "date": "2026-07-29T09:00:00.000Z",
-    "featured": true,
+    "featured": false,
     "bodyHtml": "<p>A page you deploy can now <strong>store data and update itself</strong> — no backend to run, nothing to host. Ask for a form, a poll, a board or a dashboard, and it gets a real data store: <code>glance.db</code>.</p>\n<ul>\n<li><strong>Anyone who can open the site can add to it</strong>, attributed to them — so forms and surveys just work</li>\n<li><strong>Changes are pushed, not polled.</strong> Every open page updates the moment something lands, with no refresh button</li>\n<li><strong>Your scripts can write too</strong> — a cron job or CI step posts to the site and every dashboard watching it reacts</li>\n<li>By default you only see what <strong>you</strong> added; a <code>shared-…</code> collection is one everybody watching sees together</li>\n<li>The site <strong>owner</strong> can edit or remove any entry, so a public board stays moderatable</li>\n</ul>\n<p>Leave a page open overnight and it catches up on whatever it missed — no stale tab, no reload.</p>\n"
   },
   {
@@ -24,7 +64,7 @@ export const RELEASES: Release[] = [
     "title": "TL;DR any site",
     "image": "tldr-summaries.png",
     "date": "2026-07-14T18:00:00.000Z",
-    "featured": true,
+    "featured": false,
     "bodyHtml": "<p>Every site now has an AI summary one click away: hit <strong>TL;DR</strong> in the viewer top bar, or <strong>Summary</strong> from a site&#39;s row menu on the dashboard.</p>\n<ul>\n<li>Summaries are cached — reopening one is instant and free until the site&#39;s content changes</li>\n<li>When content changes, the sheet shows what version the summary was written for and offers a one-click update</li>\n<li>Sites with a summary show a sparkle next to their name on the dashboard</li>\n</ul>\n"
   },
   {
@@ -61,4 +101,4 @@ export const RELEASES: Release[] = [
   }
 ]
 
-export const NEWEST_RELEASE_DATE: string | null = "2026-07-29T18:00:00.000Z"
+export const NEWEST_RELEASE_DATE: string | null = "2026-08-01T12:00:00.000Z"

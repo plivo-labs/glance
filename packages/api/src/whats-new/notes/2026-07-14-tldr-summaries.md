@@ -3,7 +3,7 @@ title: TL;DR any site
 slug: tldr-summaries
 date: 2026-07-14T18:00:00.000Z
 image: tldr-summaries.png
-featured: true
+featured: false
 ---
 Every site now has an AI summary one click away: hit **TL;DR** in the viewer top bar, or **Summary** from a site's row menu on the dashboard.
 
