@@ -51,7 +51,7 @@ describe('settings-keys', () => {
 
   test('links to the API keys docs page', async () => {
     renderPage({ items: [] })
-    const link = (await screen.findByText('How keys work')).closest('a')
+    const link = (await screen.findByText(/How keys work/)).closest('a')
     expect(link?.getAttribute('href')).toBe('/docs/api-keys')
   })
 
