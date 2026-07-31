@@ -44,6 +44,16 @@ Put it in your shell profile to make it permanent. Token + URL are saved to `~/.
 ### login
 Device-code flow. If no browser opener is available (SSH/headless), open the printed URL and enter the code manually. Must run before any authed command — others fail with "Not logged in."
 
+**In CI, don't run `login` at all — it's interactive.** Mint an API key from `/settings/keys` in the browser and export it; `GLANCE_TOKEN` takes precedence over the saved config:
+
+```bash
+export GLANCE_TOKEN=glk_...        # shown exactly once at mint
+export GLANCE_API_URL=https://…    # only if the runner has no ~/.glance/config.json
+glance deploy ./dist
+```
+
+A key can deploy, create, fork and move, but **never deletes a site** and never mints or revokes another key — so `glance delete` will fail with a key exported, by design. `glance logout` deliberately ignores `GLANCE_TOKEN` and acts on your real session; revoke a key from `/settings/keys` instead. Full contract: `packages/api/API.md`.
+
 ### deploy
 - `<path>` is the only required arg — it can be a **single file** or a **folder**.
   - **File**: uploads just that file; it renders at the site root (e.g. `glance deploy report.html`).
@@ -219,11 +229,13 @@ So a deployed page can have a working form, notes list, or per-viewer state with
 (Only when viewed through the app — opening the raw content URL directly gives a clear
 "open this site through the Glance app" error.)
 
-Scripts and cron jobs can write to the same store — exchange your CLI token
-(`~/.glance/config.json`) for a short-lived data token:
+Scripts and cron jobs can write to the same store — exchange a credential for a short-lived data
+token. Prefer an **API key** (`/settings/keys`) over lifting the CLI token out of
+`~/.glance/config.json`: a key is scoped to chosen sites, carries a capability ceiling, expires on
+a fixed schedule, and is revocable on its own without killing your session.
 
 ```bash
-TOKEN=$(curl -s -X POST -H "Authorization: Bearer <cli-token>" \
+TOKEN=$(curl -s -X POST -H "Authorization: Bearer $GLANCE_TOKEN" \
   "$GLANCE_API_URL/api/data-token/<space>/<slug>" | jq -r .token)     # valid 5 min
 curl -H "Authorization: Bearer $TOKEN" -X POST -d '{"text":"hi"}' \
   "$GLANCE_API_URL/api/_data/notes"
@@ -377,6 +389,7 @@ Report the returned `✓ Deployed → <url>` as the deliverable — not the pros
 - Multi-file output, a build step, or broken external deps — one openable file only.
 
 ## Gotchas
-- Commands other than `login`/`logout` require a saved token; run `glance login` first.
+- Commands other than `login`/`logout` require a credential: run `glance login`, or export `GLANCE_TOKEN` (an API key) — which wins over the saved config.
+- A key can't delete a site. `glance delete` with `GLANCE_TOKEN` exported is a 403 by design, not a misconfiguration — unset it and use your own session.
 - Wrong `GLANCE_API_URL` → you'll log in / deploy against the wrong instance silently. Verify with `glance list`.
 - `deploy` errors print the HTTP status and a truncated server message — check `--space`/`--name` are valid slugs and you're pointed at the right instance.
