@@ -4,6 +4,35 @@ import type { Release } from './bake'
 
 export const RELEASES: Release[] = [
   {
+    "slug": "api-keys",
+    "title": "API keys for scripts and CI",
+    "image": "api-keys.png",
+    "date": "2026-07-31T10:00:00.000Z",
+    "featured": true,
+    "bodyHtml": "<p>A script can now do the things you do in Glance — deploy a build, publish a report, push a dashboard — without borrowing your login. <strong>Settings → API Keys</strong> mints one.</p>\n<ul>\n<li><strong>Copy the secret once.</strong> It&#39;s shown at mint time and never again; Glance only keeps a hash of it</li>\n<li><strong>Export it as <code>GLANCE_TOKEN</code></strong> and the CLI runs without <code>glance login</code>. The same key is a bearer token against the HTTP API, so <code>curl</code> works too</li>\n<li><strong>Grant only what it needs</strong> — all your sites or a chosen few, read or write. A key&#39;s access can never be wider than your own</li>\n<li><strong>It can create and deploy, never delete</strong> — and it can&#39;t mint or revoke keys, whatever you grant it</li>\n<li><strong>Revoke instantly</strong> from the same screen. Revoked keys stay in the list, marked, so you can see what was retired and when</li>\n</ul>\n<p>You choose how long a key lives when you mint it, and you can hold ten active at a time. <strong>How keys work</strong> on the keys screen has the full rules.</p>\n"
+  },
+  {
+    "slug": "comment-on-the-page",
+    "title": "Comment on the page, not on a sentence",
+    "date": "2026-07-30T16:00:00.000Z",
+    "featured": true,
+    "bodyHtml": "<p>Saying something about a page as a whole — <em>&quot;this chart is wrong&quot;</em>, <em>&quot;ship it&quot;</em>, <em>&quot;who owns this?&quot;</em> — used to mean picking some arbitrary sentence to hang the comment off. Now the page itself takes comments.</p>\n<ul>\n<li><strong>Add a comment</strong> from the comments panel without selecting anything first</li>\n<li><strong>A button, not a box that&#39;s always open</strong> — it&#39;s there when you want it and out of the way when you don&#39;t</li>\n<li><strong>Selecting text still works exactly as before.</strong> This is another way in, not a replacement</li>\n</ul>\n<p>Audio pages have had this button all along, because a waveform has no text to select. Now every page does.</p>\n"
+  },
+  {
+    "slug": "emoji-reactions",
+    "title": "Emoji in comments — and reactions on them",
+    "date": "2026-07-30T14:00:00.000Z",
+    "featured": true,
+    "bodyHtml": "<p>Comments got both halves of emoji: a picker for writing them, and one-tap reactions for when a reply would be too much.</p>\n<ul>\n<li><strong>A picker in the composer</strong> — 238 emoji across eight categories, with search</li>\n<li><strong>It inserts where your cursor is</strong>, not at the end, so you can drop one mid-sentence</li>\n<li><strong>React to any comment</strong> with a tap — the count tells you how many people picked each one, and the ones you picked are marked</li>\n<li><strong>Tap again to take it back.</strong> Use as many different emoji as you like on the same comment; the same one only ever counts once</li>\n</ul>\n<p>Search matches names <em>and</em> keywords, and puts the obvious one first — type <code>star</code> and you get ⭐, not 💫. <code>lol</code> finds 😂, <code>+1</code> finds 👍, <code>ship</code> finds 🚀.</p>\n"
+  },
+  {
+    "slug": "name-your-fork",
+    "title": "Forking asks first now",
+    "date": "2026-07-30T10:00:00.000Z",
+    "featured": false,
+    "bodyHtml": "<p>Forking used to happen the instant you clicked it — you got a copy called <code>something-copy</code> and found out what it was called afterwards. Now <strong>Fork</strong> opens a dialog first.</p>\n<ul>\n<li><strong>Name it yourself</strong> — prefilled with the original&#39;s name plus <em>(copy)</em>, so hitting Fork straight away still does the obvious thing</li>\n<li><strong>See the address before you commit</strong> — the URL is derived from the name as you type and shown under the field</li>\n<li><strong>Choose who can see it</strong> — the picker defaults to the original&#39;s visibility, so a fork of a private page stays private unless <em>you</em> widen it</li>\n<li><strong>One dialog, both routes</strong> — the menu in the viewer and the row menu on your dashboard now open the same thing</li>\n</ul>\n<p>Pick a name whose address is already taken and the dialog stays open with the reason, so you can edit it rather than start again.</p>\n"
+  },
+  {
     "slug": "star-a-page",
     "title": "Star a page",
     "image": "star-a-page.png",
@@ -61,4 +90,4 @@ export const RELEASES: Release[] = [
   }
 ]
 
-export const NEWEST_RELEASE_DATE: string | null = "2026-07-29T18:00:00.000Z"
+export const NEWEST_RELEASE_DATE: string | null = "2026-07-31T10:00:00.000Z"

@@ -27,6 +27,12 @@ export async function loader({ request }: LoaderFunctionArgs): Promise<ApiKeyLis
   }
 }
 
+// Inline literal, same treatment as the one on /docs/api-keys so GLANCE_TOKEN reads as a token
+// in both places.
+function Code({ children }: { children: string }) {
+  return <code className="rounded bg-muted px-1 py-0.5 text-xs">{children}</code>
+}
+
 // Tombstone model, matching the server (routes/api-keys.ts GET comment): revoked and expired keys
 // stay in the list rather than disappearing, styled inert with no revoke action left to take.
 function isInert(key: ApiKeyItem): boolean {
@@ -52,10 +58,21 @@ export function Component() {
 
   return (
     <div className="mx-auto max-w-2xl">
-      <PageHeader title="API Keys" description="Keys for scripting against the Glance API.">
-        <Link to="/docs/api-keys" className="font-medium text-primary text-sm hover:underline">
-          How keys work
-        </Link>
+      {/* The whole model on one line: a key IS the token, and exporting it replaces the login step.
+          The docs link stays for the grant rules and the endpoint table — it is no longer the only
+          way to learn what a key is. */}
+      <PageHeader
+        title="API Keys"
+        description={
+          <>
+            A key is a bearer token — export it as <Code>GLANCE_TOKEN</Code> and the CLI runs without{' '}
+            <Code>glance login</Code>.{' '}
+            <Link to="/docs/api-keys" className="font-medium text-primary hover:underline">
+              How keys work
+            </Link>
+          </>
+        }
+      >
         <Button onClick={() => setDialogOpen(true)}>
           <Plus /> New key
         </Button>
