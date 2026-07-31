@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { files, sites } from '../db/schema'
 import { makeDb, makeKv, makeR2, seedMember, seedSite, seedSpace, seedUser } from '../test/harness'
+import { mintKey } from '../test/route-fixtures'
 import type { AppEnv } from '../types'
 import { upload } from './upload'
 
@@ -329,6 +330,28 @@ describe('upload — derived title: R2 integrity + COALESCE race', () => {
     expect((await replace).status).toBe(200)
     const row = (await db.select({ title: sites.title }).from(sites).where(eq(sites.slug, 'raceme')))[0]
     expect(row.title).toBe('Manual Name')
+  })
+})
+
+// CASE-08 — the headline use case, and the other half of the create-not-delete ruling that
+// sites-delete.test.ts pins from the deny side. A key must be able to deploy a site that does not
+// exist yet; the control grant is unscopable, so no allowlist gates this the way the data grant
+// gates minting. Without this case, widening S4's deny into a blanket key-denial would stay green.
+describe('upload — an API key may CREATE a site', () => {
+  test('CASE-08: deploying with a key creates a site that did not exist', async () => {
+    const { app, env, db } = await setup()
+    const secret = await mintKey(db, 'owner')
+
+    const fd = new FormData()
+    fd.append('files', html('<html>from ci</html>', 'index.html'))
+    const res = await app.request(
+      '/api/upload/acme/ci-made-this',
+      { method: 'POST', headers: { Authorization: `Bearer ${secret}` }, body: fd },
+      env,
+    )
+
+    expect(res.status).toBe(200)
+    expect(await db.select().from(sites).where(eq(sites.slug, 'ci-made-this'))).toHaveLength(1)
   })
 })
 

@@ -59,6 +59,7 @@ describe('isValidSlug', () => {
     expect(isValidSlug('admin')).toBe(false)
     expect(isValidSlug('api')).toBe(false)
     expect(isValidSlug('content')).toBe(false)
+    expect(isValidSlug('docs')).toBe(false)
   })
 })
 

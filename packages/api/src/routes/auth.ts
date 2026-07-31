@@ -9,7 +9,14 @@ import { requireAuth } from '../middleware/auth'
 import { sanitizeAvatarUrl } from '../lib/avatar'
 import { bootstrapDecision } from '../lib/bootstrap'
 import { createGoogle, isGoogleEnabled, OAUTH_SCOPES } from '../lib/oauth'
-import { createCliToken, createSession, destroyCliToken, destroySession } from '../lib/session'
+import {
+  bearerToken,
+  createCliToken,
+  createSession,
+  destroyCliToken,
+  destroySession,
+  readCredential,
+} from '../lib/session'
 import type { AppEnv, Bindings, SessionUser } from '../types'
 
 const OAUTH_COOKIE = 'glance_oauth'
@@ -90,11 +97,20 @@ auth.get('/callback', async (c) => {
 })
 
 auth.post('/logout', async (c) => {
+  // This route runs neither requireAuth nor requireSameOrigin's cookie gate, so the credential is
+  // resolved directly. A `glk_` API key is not a session — `glance logout` is the wrong verb for
+  // it (a key is revoked from the keys screen, not by logging out) — so report that rather than
+  // silently doing nothing: destroyCliToken below is a KV delete and no-ops on a D1 key, and a
+  // false { ok: true } would tell the caller a credential was revoked when it was not.
+  if ((await readCredential(c))?.kind === 'key') {
+    return c.json({ error: 'not_a_session', message: 'This is an API key — revoke it from the keys screen, not logout.' }, 400)
+  }
+
   await destroySession(c)
   // `glance logout` authenticates with a Bearer CLI token and no cookie, so also revoke that
   // token server-side — otherwise the logged-out CLI credential stays valid for its full 30d TTL.
-  const header = c.req.header('Authorization')
-  if (header?.startsWith('Bearer ')) await destroyCliToken(c, header.slice(7))
+  const token = bearerToken(c)
+  if (token) await destroyCliToken(c, token)
   return c.json({ ok: true })
 })
 

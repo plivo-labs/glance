@@ -2,7 +2,7 @@ import type { Context } from 'hono'
 import { getCookie } from 'hono/cookie'
 import { createMiddleware } from 'hono/factory'
 import { getUserById } from '../db/repo'
-import { readSessionOrBearer } from '../lib/session'
+import { bearerToken, readCredential } from '../lib/session'
 import type { AppEnv } from '../types'
 
 const SESSION_COOKIE = '__Host-glance_session'
@@ -38,23 +38,53 @@ export const requireSameOrigin = createMiddleware<AppEnv>(async (c, next) => {
   await next()
 })
 
-/** 401 unless a valid browser session OR CLI Bearer token exists; attaches the LIVE user. */
+/** 401 unless a valid browser session, CLI Bearer token, or D1 API key exists; attaches the LIVE
+ *  user plus the resolved Credential (which store authenticated the request). */
 export const requireAuth = createMiddleware<AppEnv>(async (c, next) => {
-  const session = await readSessionOrBearer(c)
-  if (!session) return c.json({ error: 'unauthorized' }, 401)
-  // The KV session is a snapshot frozen for the token's life (24h cookie / 30d CLI). Re-resolve
-  // the live row each request so a deleted user is rejected (401) and a role/email change takes
-  // effect immediately — e.g. a demoted superadmin loses privilege now (requireSuperAdmin sees
-  // the fresh role) rather than at token expiry. Single indexed PK read; the viewer hot path
-  // reads readSessionOrBearer inline (not this middleware), so FCP is unaffected.
-  const user = await getUserById(c.get('db'), session.id)
+  const credential = await readCredential(c)
+  if (!credential) return c.json({ error: 'unauthorized' }, 401)
+  // The KV session / D1 key lookup is a snapshot frozen for the token's life (24h cookie / 30d
+  // CLI / until the key is queried again). Re-resolve the live row each request so a deleted
+  // user is rejected (401) and a role/email change takes effect immediately — e.g. a demoted
+  // superadmin loses privilege now (requireSuperAdmin sees the fresh role) rather than at token
+  // expiry. Single indexed PK read; the viewer hot path reads readSessionOrBearer inline (not
+  // this middleware), so FCP is unaffected.
+  const user = await getUserById(c.get('db'), credential.user.id)
   if (!user) return c.json({ error: 'unauthorized' }, 401)
   c.set('user', user)
+  c.set('credential', credential)
   // Tag the credential for usage analytics. The CLI sends a Bearer token and never a cookie;
   // browsers always carry the cookie. Session cookie wins (mirrors readSessionOrBearer), so a
   // request is 'cli' only when there's no cookie AND a Bearer token is present.
-  const isBearer = c.req.header('Authorization')?.startsWith('Bearer ') ?? false
-  c.set('authKind', !cookieAuthed(c) && isBearer ? 'cli' : 'web')
+  // Both sides of the merge in one line: `cookieAuthed` is this branch's extraction of main's
+  // inline cookie check (the comments socket route needed the same predicate for its own
+  // same-origin guard), and `bearerToken` is main's — it parses the header rather than
+  // re-deriving `startsWith('Bearer ')` here.
+  c.set('authKind', !cookieAuthed(c) && bearerToken(c) !== null ? 'cli' : 'web')
+  await next()
+})
+
+// Methods that CHANGE control-plane state. A key without the control grant may still read
+// (listing sites, resolving a site before minting a data token); what it may not do is deploy,
+// create, fork, move or otherwise mutate. GET/HEAD are exactly the operations the data-only key
+// in the wireframe still needs.
+const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+
+/**
+ * Must run after requireAuth. 403s a key credential that was minted WITHOUT the control grant
+ * when it tries to change control-plane state.
+ *
+ * This exists because `grants.control` is a promise made to the user at mint time — the dialog
+ * offers it as an opt-in and the docs say it is what lets a key deploy. Storing that flag and
+ * never reading it is worse than not offering it: the operator believes they minted a data-only
+ * key and actually minted one with the full control plane. Session and CLI credentials are
+ * unaffected — they carry no grants and are governed by ownership alone, exactly as before.
+ */
+export const requireControlGrant = createMiddleware<AppEnv>(async (c, next) => {
+  const credential = c.get('credential')
+  if (credential?.kind === 'key' && !credential.grants.control && UNSAFE.has(c.req.method)) {
+    return c.json({ error: 'forbidden' }, 403)
+  }
   await next()
 })
 

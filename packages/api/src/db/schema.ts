@@ -1,4 +1,5 @@
 import { type AnySQLiteColumn, index, integer, primaryKey, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core'
+import type { ApiKeyGrants } from '../lib/api-key'
 
 // Column names mirror the spec's SQL exactly (camelCase) so raw `wrangler d1 execute`
 // queries in the runbook keep working. IDs are app-generated UUIDs; timestamps are ISO-8601.
@@ -373,6 +374,32 @@ export const siteSummaries = sqliteTable('site_summaries', {
     .$onUpdate(() => new Date().toISOString()),
 })
 
+// Control-plane API keys: a long-lived credential a user mints for CLI/CI use, distinct from the
+// GLANCE_SESSIONS browser cookie. Only `hash` (SHA-256 hex of the secret) is ever stored — the
+// secret itself is shown once at creation and never persisted. `grants` is a JSON blob (see
+// `documents.json` for the same text/json-mode idiom) holding the key's scoped permissions.
+// `revokedAt` is a manual kill switch; `expiresAt` is enforced independently at auth time.
+export const apiKeys = sqliteTable(
+  'api_keys',
+  {
+    id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: text('userId').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    hash: text('hash').notNull().unique(),
+    grants: text('grants', { mode: 'json' }).$type<ApiKeyGrants>().notNull(),
+    createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
+    expiresAt: text('expiresAt').notNull(),
+    revokedAt: text('revokedAt'),
+    lastUsedAt: text('lastUsedAt'),
+    // Non-secret display fragment for the key list UI (rendered as `${API_KEY_PREFIX}…${suffix}`,
+    // e.g. "glk_…4mR2"). ONLY the last 4 chars of the plaintext secret — nowhere near enough
+    // entropy to be useful to an attacker, and never enough to reconstruct the secret. Nullable so
+    // rows written before this column existed still read fine.
+    displaySuffix: text('displaySuffix'),
+  },
+  (t) => [index('api_keys_user_created').on(t.userId, t.createdAt)],
+)
+
 export type User = typeof users.$inferSelect
 export type NewUser = typeof users.$inferInsert
 export type Space = typeof spaces.$inferSelect
@@ -403,6 +430,8 @@ export type Notification = typeof notifications.$inferSelect
 export type NewNotification = typeof notifications.$inferInsert
 export type NotificationType = Notification['type']
 export type SiteSummary = typeof siteSummaries.$inferSelect
+export type ApiKey = typeof apiKeys.$inferSelect
+export type NewApiKey = typeof apiKeys.$inferInsert
 
 export type Visibility = Site['visibility']
 export type SpaceType = Space['type']

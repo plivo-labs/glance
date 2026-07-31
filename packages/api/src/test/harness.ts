@@ -7,7 +7,9 @@ import { join } from 'node:path'
 import { Database } from 'bun:sqlite'
 import { drizzle } from 'drizzle-orm/bun-sqlite'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
+import type { ApiKeyGrants } from '../lib/api-key'
 import {
+  type NewApiKey,
   type NewComment,
   type NewCommentThread,
   type NewEvent,
@@ -16,6 +18,7 @@ import {
   type NewSite,
   type NewSpace,
   type NewUser,
+  apiKeys,
   comments,
   commentThreads,
   events,
@@ -56,6 +59,8 @@ const MIGRATIONS = [
   'drizzle/0022_sites_feed_index.sql',
   'drizzle/0023_site_stars.sql',
   'drizzle/0024_comment_reactions.sql',
+  'drizzle/0025_api_keys.sql',
+  'drizzle/0026_api_key_display_suffix.sql',
 ]
 
 // --- S0 recorder: one shared, ordered timeline across D1/R2/cache mocks so perf specs can
@@ -485,7 +490,34 @@ export async function seedNotification(
   return id
 }
 
-/** In-memory stand-in for the GLANCE_SESSIONS KV namespace (get/put/delete + ttl peek). */
+// Default grants for a seeded key: full control-plane + data-plane ceiling (every cap, every
+// owned site). Tests that care about a narrower ceiling pass their own `grants`.
+export const FULL_GRANTS: ApiKeyGrants = {
+  control: true,
+  data: { scope: { kind: 'all-owned' }, caps: ['read', 'create', 'write', 'read_all'] },
+}
+
+/** Insert an `api_keys` row; returns its id. Defaults: full grants, far-future expiry. */
+export async function seedApiKey(db: DrizzleD1Database, o: { userId: string } & Partial<NewApiKey>): Promise<string> {
+  const id = o.id ?? nextId('ak')
+  await db.insert(apiKeys).values({
+    id,
+    userId: o.userId,
+    name: o.name ?? 'api key',
+    hash: o.hash ?? nextId('hash'),
+    grants: o.grants ?? FULL_GRANTS,
+    expiresAt: o.expiresAt ?? '2999-01-01T00:00:00.000Z',
+    revokedAt: o.revokedAt ?? null,
+    lastUsedAt: o.lastUsedAt ?? null,
+    displaySuffix: o.displaySuffix ?? null,
+    ...(o.createdAt !== undefined && { createdAt: o.createdAt }),
+  })
+  return id
+}
+
+/** In-memory stand-in for the GLANCE_SESSIONS KV namespace (get/put/delete/list + ttl peek).
+ *  `list` returns every matching key in one page (list_complete: true, no cursor) — enough to
+ *  drive `revokeUserCliTokens`'s prefix enumeration; it never needs to exercise pagination. */
 export function makeKv() {
   const store = new Map<string, string>()
   const ttls = new Map<string, number | undefined>()
@@ -500,6 +532,11 @@ export function makeKv() {
       store.delete(key)
       ttls.delete(key)
       return Promise.resolve()
+    },
+    list: (options?: { prefix?: string; cursor?: string }) => {
+      const prefix = options?.prefix ?? ''
+      const keys = [...store.keys()].filter((k) => k.startsWith(prefix)).map((name) => ({ name }))
+      return Promise.resolve({ keys, list_complete: true, cursor: undefined })
     },
     store,
     ttls,

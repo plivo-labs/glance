@@ -9,6 +9,7 @@ import { isGoogleEnabled } from './lib/oauth'
 import { trackCliUsage } from './middleware/analytics'
 import { requireSameOrigin } from './middleware/auth'
 import { admin } from './routes/admin'
+import { apiKeys } from './routes/api-keys'
 import { auth } from './routes/auth'
 import { avatars } from './routes/avatars'
 import { commentFeed } from './routes/comment-feed'
@@ -119,6 +120,8 @@ app.route('/api/users', users)
 // off the browser, so the CSP above stays `img-src 'self'`.
 app.route('/api/avatars', avatars)
 app.route('/api/notifications', notifications)
+// Self-service control-plane API keys (mint/list/revoke), scoped to the caller's own keys.
+app.route('/api/api-keys', apiKeys)
 app.route('/api/whats-new', whatsNew)
 app.route('/api/admin', admin)
 // Slack Events API (link_shared → chat.unfurl). Authenticated by Slack's HMAC signature, not a

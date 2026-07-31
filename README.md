@@ -87,6 +87,18 @@ Defaults: `--space` = your personal space · `--name` = file/folder name slugifi
 
 The CLI keeps itself current (once-a-day background check, atomic in-place swap). Opt out with `GLANCE_NO_UPDATE=1`.
 
+## API keys & HTTP API
+
+`glance login` is interactive, so CI mints an **API key** at `/settings/keys` instead and exports it — `GLANCE_TOKEN` takes precedence over the stored config:
+
+```bash
+export GLANCE_TOKEN=glk_...              # shown exactly once at mint
+glance deploy ./dist                     # or call the API directly:
+curl -H "Authorization: Bearer $GLANCE_TOKEN" https://your-instance/api/sites/mine
+```
+
+A key authenticates the control plane as you and can only ever narrow your own access: it may create and deploy sites, never delete one, and never mint or revoke another key. Full endpoint reference, request/response shapes, grant semantics and the data-token exchange: **[packages/api/API.md](packages/api/API.md)**. In-app: `/docs/api-keys`.
+
 ## Security model
 
 - **Uploaded HTML/JS is untrusted** — served from a separate content origin (`CONTENT_URL`), so app session cookies never reach it. This is why Glance stands up two Workers, not one.
