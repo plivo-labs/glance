@@ -9,7 +9,7 @@ import { capTitle, extractHtmlMeta, NO_META, pickEntry } from '../lib/extract'
 import { isValidSlug } from '../lib/slug'
 import { deleteKeys, MAX_FILE_BYTES, sanitizePath } from '../lib/storage'
 import { isVisibility, normalizeVisibility } from '../lib/visibility'
-import { requireAuth } from '../middleware/auth'
+import { requireAuth, requireControlGrant } from '../middleware/auth'
 import type { AppEnv } from '../types'
 
 // Phase 4: multipart create-or-replace upload. Mounted at /api/upload.
@@ -29,7 +29,7 @@ const UPLOAD_CONCURRENCY = 10 // bounded parallelism for the R2 put loop
 export const upload = new Hono<AppEnv>()
 
 // POST /api/upload/:spaceSlug/:siteSlug — upload a folder of files, creating or replacing the site.
-upload.post('/:spaceSlug/:siteSlug', requireAuth, async (c) => {
+upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c) => {
   // Defensive per-IP rate limit (binding is optional / absent in local dev).
   if (c.env.UPLOAD_LIMITER) {
     const ip = c.req.header('CF-Connecting-IP') ?? 'local'

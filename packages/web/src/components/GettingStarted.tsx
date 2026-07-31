@@ -1,4 +1,5 @@
 import { MessageSquareText, Terminal } from 'lucide-react'
+import { Link } from 'react-router'
 import { CopyButton } from '@/components/CopyButton'
 
 // The onboarding walkthrough, rendered in TWO surfaces: the dashboard's empty sites tab and the
@@ -71,6 +72,11 @@ export function GettingStarted() {
       </ol>
       <p className="border-t pt-4 text-muted-foreground text-xs">
         No CLI? Drop a folder or a lone HTML file on the dashboard to ship it straight from the browser.
+      </p>
+      <p className="text-xs">
+        <Link to="/docs/api-keys" className="font-medium text-primary hover:underline">
+          Scripting instead? Set up API keys →
+        </Link>
       </p>
     </div>
   )

@@ -1,4 +1,5 @@
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
+import type { ApiKeyGrants } from './lib/api-key'
 import type { OgCard } from './lib/og-image'
 
 /** Worker bindings + secrets/vars. Secrets come from `.dev.vars` locally and
@@ -64,12 +65,24 @@ export interface SessionUser {
   role: 'member' | 'superadmin'
 }
 
+// HOW the caller authenticated, resolved by readCredential (see lib/session.ts) and attached to
+// the request by requireAuth. Distinct from `authKind` below: this is the full resolution
+// (session cookie / KV CLI token / D1 api key), not the two-bucket analytics tag.
+export type Credential =
+  | { kind: 'session' | 'cli'; user: SessionUser }
+  | { kind: 'key'; user: SessionUser; keyId: string; grants: ApiKeyGrants }
+
 /** Hono context variables set by middleware. */
 export interface Variables {
   db: DrizzleD1Database
   user: SessionUser
+  // The resolved credential (session / cli / key), set by requireAuth. Absent on unauthenticated
+  // routes.
+  credential: Credential
   // Which credential authenticated the request, set by requireAuth. 'cli' = Bearer token,
-  // 'web' = session cookie. Drives CLI-usage analytics. Absent on unauthenticated routes.
+  // 'web' = session cookie. Drives CLI-usage analytics. Absent on unauthenticated routes. A
+  // D1-key-authenticated request is also tagged 'cli' here (no cookie + a Bearer token) — key-vs-
+  // CLI analytics is a separate, not-yet-built slice (would need an events-table migration).
   authKind: 'cli' | 'web'
 }
 
