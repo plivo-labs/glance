@@ -18,6 +18,26 @@ function Code({ children }: { children: string }) {
   return <code className="rounded bg-muted px-1 py-0.5 text-xs">{children}</code>
 }
 
+// [method, path, what it does, whether a key credential may call it]
+function EndpointTable({ rows }: { rows: [string, string, string, string][] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs">
+        <tbody>
+          {rows.map(([method, path, purpose, keyAllowed]) => (
+            <tr key={`${method} ${path}`} className="border-b last:border-0">
+              <td className="py-1.5 pr-3 align-top font-mono text-foreground">{method}</td>
+              <td className="py-1.5 pr-3 align-top font-mono">{path}</td>
+              <td className="py-1.5 pr-3 align-top">{purpose}</td>
+              <td className="py-1.5 align-top whitespace-nowrap">{keyAllowed}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="space-y-2">
@@ -75,6 +95,58 @@ export function Component() {
             key can still read and use the data plane, but any request that would change a site — deploy, create,
             fork, move, rename, share — is refused. It can never delete a site, and it can never mint or revoke
             another key: both are denied outright, whatever its grants.
+          </p>
+          <p>
+            <strong className="text-foreground">One gap to scope around:</strong> deleting a{' '}
+            <em>space</em> is not covered by that rule. A key with the "manage sites" grant can delete a group space
+            it created, which destroys every site inside it. Personal spaces are protected, and the delete is
+            refused if the space holds sites owned by other members — but your own sites in your own group space can
+            be erased this way despite the per-site rule above.
+          </p>
+        </Section>
+
+        <Section title="Call the API directly">
+          <p>
+            The CLI is a convenience — a key is a bearer token against the same HTTP API. Send it as an{' '}
+            <Code>Authorization</Code> header:
+          </p>
+          <CodeBlock>
+            {'curl -H "Authorization: Bearer $GLANCE_TOKEN" \\\n  <this instance origin>/api/sites/mine'}
+          </CodeBlock>
+          <p>Key management lives at {'/api/api-keys'}, and is refused to a key credential except for the list:</p>
+          <EndpointTable
+            rows={[
+              ['POST', '/api/api-keys', 'mint — returns the secret once', '403 for a key'],
+              ['GET', '/api/api-keys', 'list your keys (no secrets, no hashes)', 'allowed'],
+              ['DELETE', '/api/api-keys/:id', 'revoke — idempotent', '403 for a key'],
+            ]}
+          />
+          <p>Minting takes a name, one of the six fixed durations, and the grants:</p>
+          <CodeBlock>
+            {`POST /api/api-keys
+{
+  "name": "CI deploy bot",
+  "expiresInDays": 30,
+  "grants": {
+    "control": true,
+    "data": { "scope": { "kind": "all-owned" }, "caps": ["read"] }
+  }
+}`}
+          </CodeBlock>
+          <p>
+            An <Code>expiresAt</Code> in the body is ignored — it's always derived server-side from{' '}
+            <Code>expiresInDays</Code>. You may hold 10 active keys; revoked and expired ones don't count.
+          </p>
+          <p>Deploying is a multipart upload, one form field per file:</p>
+          <CodeBlock>
+            {`curl -X POST "<origin>/api/upload/<space>/<site>" \\
+  -H "Authorization: Bearer $GLANCE_TOKEN" \\
+  -F "files=@dist/index.html;filename=index.html" \\
+  -F "visibility=team"`}
+          </CodeBlock>
+          <p>
+            Full endpoint reference — sites, spaces, shares, forks, response shapes and status codes — is in{' '}
+            <Code>packages/api/API.md</Code>.
           </p>
         </Section>
 
