@@ -3,7 +3,7 @@ title: Star a page
 slug: star-a-page
 date: 2026-07-29T18:00:00.000Z
 image: star-a-page.png
-featured: true
+featured: false
 ---
 The page you keep hunting for in search is now one click away. Hit the **star** on any page — from a row on your dashboard or from the top bar while you're reading it — and it pins to a new **Starred** tab.
 

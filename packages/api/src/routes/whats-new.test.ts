@@ -18,7 +18,7 @@ const APP_URL = 'https://glance.example.com'
 // Adding a release note NEWER than MID bumps them — rebuild with `bun run build:whatsnew`, then
 // bump these. (links 06-20 | MID | voice 07-01, comments-tab 07-11, fork 07-14, tldr 07-14T18,
 // live-data 07-29, star-a-page 07-29T18, name-your-fork 07-30T10, emoji-reactions 07-30T14,
-// comment-on-the-page 07-30T16, api-keys 07-31T10, realtime-comments 08-01 → 11 unread.)
+// comment-on-the-page 07-30T16, realtime-comments 08-01T10, api-keys 08-01T12 → 11 unread.)
 const MID = '2026-06-25T00:00:00.000Z'
 
 function setup() {

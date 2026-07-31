@@ -2,7 +2,7 @@
 title: Comment on the page, not on a sentence
 slug: comment-on-the-page
 date: 2026-07-30T16:00:00.000Z
-featured: true
+featured: false
 ---
 Saying something about a page as a whole — *"this chart is wrong"*, *"ship it"*, *"who owns this?"* — used to mean picking some arbitrary sentence to hang the comment off. Now the page itself takes comments.
 
