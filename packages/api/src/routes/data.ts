@@ -18,6 +18,7 @@ import {
 import { decodeCursor, encodeCursor } from '../realtime/cursor'
 import { notifyChange } from '../realtime/notify'
 import { TOKEN_HEADER, WS_PROTOCOL } from '../realtime/protocol'
+import { isUpgrade, reissueUpgrade, subprotocols } from '../realtime/upgrade'
 import type { AppEnv, Bindings, SessionUser } from '../types'
 
 // The shared-backend data plane (`glance.db`). Two surfaces:
@@ -119,16 +120,8 @@ dataApi.use('*', async (c, next) => {
 
 // --- Upgrade credential ---
 
-// Browsers cannot set `Authorization` on `new WebSocket()`, and a token in the query string is
-// written to Cloudflare's request logs forever. The subprotocol list is the only channel a browser
-// controls that is neither, so an upgrade presents `new WebSocket(url, [WS_PROTOCOL, token])`.
-
-const subprotocols = (c: DataCtx): string[] => {
-  const raw = c.req.header('Sec-WebSocket-Protocol')
-  return raw ? raw.split(',').map((p) => p.trim()) : []
-}
-
-const isUpgrade = (c: DataCtx): boolean => c.req.header('Upgrade')?.toLowerCase() === 'websocket'
+// `isUpgrade`/`subprotocols` live in realtime/upgrade.ts: routes/comments.ts's own socket route
+// reads the very same offer, so the pair is shared machinery rather than a copy per route.
 
 // The subprotocol credential counts ONLY on a real upgrade, so no ordinary request on this surface
 // gains a second way to authenticate.
@@ -213,22 +206,20 @@ dataApi.get('/_sync/socket', async (c) => {
   // notify.ts keys the write side the same way, and the DO hard-compares its own name against the
   // claims it re-verifies, so all three agree or nothing is delivered.
   const stub = room.get(room.idFromName(claims.siteId))
+  // HARD-CODED, exactly like the comments route's `channel=comments`, and for the same reason in
+  // reverse: the channel tag is the ONLY wall between the two streams — `caps: []` is not one, since
+  // `readsEveryCreator` holds for any `shared-*` collection regardless of caps. THIS is the token
+  // the browser itself holds, so honouring a caller-supplied `?channel` would let any page with a
+  // data token dial `chan:comments` and receive every thread body, author name and typing ping on
+  // the site. No caller has ever sent the param: the shipped SDK dials bare.
   const res = await stub.fetch(
-    new Request('https://site-room/subscribe', {
+    new Request('https://site-room/subscribe?channel=db', {
       // The token rides one dedicated header — never a URL, never the DO's own name. The worker's
       // check above is a cheap quota guard, NOT the authority: the DO verifies the token again.
       headers: { Upgrade: 'websocket', [TOKEN_HEADER]: c.get('token') },
     }),
   )
-  // The 101 is re-issued here rather than passed through: the browser's subprotocol offer is
-  // negotiated by the worker (the DO never sees it) and a subrequest response's headers are
-  // immutable. A client that offered a subprotocol closes the connection unless the 101 picks one.
-  const negotiated = res.status === 101 && subprotocols(c).includes(WS_PROTOCOL)
-  return new Response(null, {
-    status: res.status,
-    webSocket: res.webSocket,
-    headers: negotiated ? { 'Sec-WebSocket-Protocol': WS_PROTOCOL } : {},
-  })
+  return reissueUpgrade(c, res)
 })
 
 // Create a document (server-generated id).

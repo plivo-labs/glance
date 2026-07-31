@@ -4,8 +4,9 @@ import { describe, expect, test } from 'bun:test'
 import { type DataCapability, signDataToken } from '../lib/data-token'
 import { type FakeWebSocket, installWorkerSocketGlobals, makeDurableObjectState, makeWebSocket } from '../test/harness'
 import type { ChangeEvent } from './change-log'
+import type { CommentEvent } from './comment-events'
 import { decodeCursor } from './cursor'
-import { notifySiteRoom } from './notify'
+import { notifyCommentEvent, notifyCommentRoom, notifySiteRoom } from './notify'
 import {
   SiteRoom,
   TOKEN_HEADER,
@@ -36,7 +37,7 @@ type Room = ReturnType<typeof makeRoom>
  *  accepted (the server half of the pair — the client half goes back in the 101). */
 async function subscribe(
   r: Room,
-  o: { viewerId: string; caps?: DataCapability[]; siteId?: string; ttlSec?: number; token?: string },
+  o: { viewerId: string; caps?: DataCapability[]; siteId?: string; ttlSec?: number; token?: string; channel?: string },
 ) {
   const token =
     o.token ??
@@ -45,9 +46,8 @@ async function subscribe(
       { siteId: o.siteId ?? 'siteA', viewerId: o.viewerId, caps: o.caps ?? VIEWER },
       o.ttlSec ?? 300,
     ))
-  const res = await r.room.fetch(
-    new Request('https://site-room/subscribe', { headers: { Upgrade: 'websocket', [TOKEN_HEADER]: token } }),
-  )
+  const url = o.channel ? `https://site-room/subscribe?channel=${o.channel}` : 'https://site-room/subscribe'
+  const res = await r.room.fetch(new Request(url, { headers: { Upgrade: 'websocket', [TOKEN_HEADER]: token } }))
   return { res, token, ws: r.state.accepted[r.state.accepted.length - 1]?.ws as FakeWebSocket }
 }
 
@@ -60,6 +60,29 @@ function event(o: Partial<ChangeEvent> = {}): ChangeEvent {
     createdBy: 'userA',
     type: 'create',
     at: '2026-07-29T00:00:00.000Z',
+    ...o,
+  }
+}
+
+/** A minimal, valid S4-shaped comment.created event — these specs exercise routing/plumbing
+ *  (misrouted siteId, deploy wiring), not payload content, so any real CommentEvent will do. */
+function commentEvent(o: Partial<Extract<CommentEvent, { type: 'comment.created' }>> = {}): CommentEvent {
+  return {
+    type: 'comment.created',
+    siteId: 'siteA',
+    filePath: 'index.html',
+    threadId: 't1',
+    comment: {
+      id: 'c1',
+      authorId: null,
+      author: null,
+      body: 'hi',
+      deleted: false,
+      hasAudio: false,
+      reactions: [],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      editedAt: null,
+    },
     ...o,
   }
 }
@@ -105,7 +128,7 @@ describe('SiteRoom — #1/#2/#3/#4: the hibernation contract', () => {
     // GB-s budget for ONE site.
     expect(ws.accepts).toBe(0)
     // Tags let a woken room select a subset without deserializing every attachment.
-    expect(r.state.getTags(ws)).toEqual(['site:siteA', 'viewer:userA'])
+    expect(r.state.getTags(ws)).toEqual(['site:siteA', 'viewer:userA', 'chan:db'])
     // The class implements the close half of the hibernation API too.
     await r.room.webSocketClose(ws as never, 1000, 'bye', true)
     expect(ws.closed).toEqual([{ code: 1000, reason: 'bye' }])
@@ -321,6 +344,299 @@ describe('SiteRoom — #9/#10: the delivered frame', () => {
   })
 })
 
+describe('SiteRoom — S1: channel-tagged sockets', () => {
+  test('C1 ATTACK: a comments-channel socket is never a candidate for a shared-* document event', async () => {
+    const r = makeRoom()
+    const { ws: dbSocket } = await subscribe(r, { viewerId: 'userA', channel: 'db' })
+    const { ws: commentsSocket } = await subscribe(r, { viewerId: 'userA', channel: 'comments' })
+    // shared-* would deliver to every site viewer on the db channel — the comments socket must
+    // not even be a CANDIDATE, not merely filtered out by policy.
+    await broadcast(r, event({ collection: 'shared-poll', createdBy: 'userA' }))
+    expect(dbSocket.sent).toHaveLength(1)
+    expect(commentsSocket.sent).toHaveLength(0)
+    expect(commentsSocket.closed).toEqual([])
+  })
+
+  test('default-channel characterization: /subscribe with no channel param behaves exactly as today', async () => {
+    const r = makeRoom()
+    const { ws } = await subscribe(r, { viewerId: 'userA' })
+    expect(r.state.getTags(ws)).toContain('chan:db')
+    await broadcast(r, event({ createdBy: 'userA' }))
+    expect(ws.sent).toHaveLength(1)
+  })
+
+  test('an unrecognised channel value also defaults to db', async () => {
+    const r = makeRoom()
+    const { ws } = await subscribe(r, { viewerId: 'userA', channel: 'bogus' })
+    expect(r.state.getTags(ws)).toContain('chan:db')
+  })
+
+  test('C4: a db frame carries events + cursor at the same keys, plus channel:"db", and is still additive to dbBroker.parseFrame', async () => {
+    const r = makeRoom()
+    const { ws } = await subscribe(r, { viewerId: 'userA' })
+    await broadcast(r, event({ seq: 42, createdBy: 'userA' }))
+    const [frame] = frames(ws)
+    expect(frame).toEqual({
+      channel: 'db',
+      events: [{ type: 'create', collection: 'notes', id: 'doc1', createdBy: 'userA', at: '2026-07-29T00:00:00.000Z' }],
+      cursor: expect.any(String),
+    })
+    // Mirrors packages/web/src/lib/dbBroker.ts's parseFrame (not imported — the repo deliberately
+    // keeps api and web decoupled): it reads only f.events + f.cursor and ignores unknown keys, so
+    // an additive `channel` field must not break it.
+    const parseFrame = (data: string): { events: unknown[]; cursor: string } | null => {
+      const f = JSON.parse(data) as { events?: unknown; cursor?: unknown }
+      return Array.isArray(f?.events) && typeof f.cursor === 'string' ? { events: f.events, cursor: f.cursor } : null
+    }
+    expect(parseFrame(ws.sent[0])).toEqual({ events: frame.events, cursor: frame.cursor })
+  })
+
+  test('a comments frame carries the whole event payload, not just siteId — the spread must actually reach the wire', async () => {
+    const r = makeRoom()
+    const { ws } = await subscribe(r, { viewerId: 'userA', channel: 'comments' })
+    const e = commentEvent({ filePath: 'index.html', threadId: 't1' })
+    await r.room.fetch(
+      new Request('https://site-room/broadcast-comment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(e),
+      }),
+    )
+    // `{ channel: 'comments', ...e }` must survive the wire round trip: a frame reduced to just
+    // siteId would still pass every other spec here (they only check length/type/threadId), so
+    // this asserts the FULL parsed frame — type/filePath/thread|comment included.
+    const [frame] = frames(ws)
+    expect(frame).toEqual({ channel: 'comments', ...e })
+  })
+})
+
+describe('SiteRoom — T2: a misrouted broadcast body is a no-op, not a site-wide disconnect', () => {
+  test('T2 db: a room named siteA receiving a broadcast body for siteB delivers to nobody and closes nobody', async () => {
+    const r = makeRoom('siteA')
+    const { ws } = await subscribe(r, { viewerId: 'userA' })
+    await broadcast(r, event({ siteId: 'siteB', createdBy: 'userA' }))
+    expect(ws.sent).toEqual([])
+    expect(ws.closed).toEqual([])
+  })
+
+  test('T2 comments: a room named siteA receiving a comment-broadcast body for siteB delivers to nobody and closes nobody', async () => {
+    const r = makeRoom('siteA')
+    const { ws } = await subscribe(r, { viewerId: 'userA', channel: 'comments' })
+    await r.room.fetch(
+      new Request('https://site-room/broadcast-comment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(commentEvent({ siteId: 'siteB' })),
+      }),
+    )
+    expect(ws.sent).toEqual([])
+    expect(ws.closed).toEqual([])
+  })
+
+  test('T2 regression guard: a correctly-routed db broadcast still delivers exactly as before', async () => {
+    const r = makeRoom('siteA')
+    const { ws } = await subscribe(r, { viewerId: 'userA' })
+    await broadcast(r, event({ createdBy: 'userA' }))
+    expect(ws.sent).toHaveLength(1)
+    expect(ws.closed).toEqual([])
+  })
+})
+
+describe('SiteRoom — S10: typing, the first inbound message that is not auth', () => {
+  const typing = (r: Room, ws: FakeWebSocket, msg: unknown) => r.room.webSocketMessage(ws as never, JSON.stringify(msg))
+
+  test('a typing message fans out {viewerId, threadId, expiresAt} to the OTHER comments sockets — never the sender, never a chan:db socket', async () => {
+    const r = makeRoom('siteA')
+    const { ws: sender } = await subscribe(r, { viewerId: 'userA', channel: 'comments' })
+    const { ws: peer } = await subscribe(r, { viewerId: 'userB', channel: 'comments' })
+    // caps:[] is NOT what keeps this off the db rail (Phase 2's journal) — the channel tag is.
+    const { ws: dbSocket } = await subscribe(r, { viewerId: 'userC', channel: 'db' })
+    const before = Date.now()
+    await typing(r, sender, { type: 'typing', threadId: 't1' })
+
+    expect(frames(peer)).toEqual([
+      { channel: 'comments', type: 'typing', viewerId: 'userA', threadId: 't1', expiresAt: expect.any(Number) },
+    ])
+    // Absolute, so the RECEIVER forgets the indicator on its own clock and the DO needs no timer.
+    expect(frames(peer)[0].expiresAt).toBeGreaterThan(before)
+    // The sender already knows it is typing, and a db socket is not even a candidate.
+    expect([sender.sent, dbSocket.sent]).toEqual([[], []])
+    expect([sender.closed, peer.closed, dbSocket.closed]).toEqual([[], [], []])
+  })
+
+  test('C17 ATTACK: a viewerId in the payload is ignored — attribution is the attachment subject', async () => {
+    const r = makeRoom('siteA')
+    const { ws: sender } = await subscribe(r, { viewerId: 'userA', channel: 'comments' })
+    const { ws: peer } = await subscribe(r, { viewerId: 'riya', channel: 'comments' })
+    // Everything a spoofer could try to smuggle in: a viewer id under both names the wire uses,
+    // and a longer expiry. The frame is built field-by-field from the attachment, so none land.
+    await typing(r, sender, { type: 'typing', threadId: 't1', viewerId: 'riya', subject: 'riya', expiresAt: 1e15 })
+    expect(frames(peer)).toEqual([
+      { channel: 'comments', type: 'typing', viewerId: 'userA', threadId: 't1', expiresAt: expect.any(Number) },
+    ])
+    expect(frames(peer)[0].expiresAt).toBeLessThan(1e15)
+  })
+
+  test('C18 ATTACK: typing on an expired attachment is dropped and the socket closed', async () => {
+    const r = makeRoom('siteA')
+    const { ws: sender } = await subscribe(r, { viewerId: 'userA', channel: 'comments' })
+    const { ws: peer } = await subscribe(r, { viewerId: 'userB', channel: 'comments' })
+    // One second past its token's exp — the state a 300s token reaches on its own.
+    reattach(sender, { subject: 'userA', owner: 'siteA', exp: nowSec() - 1 })
+    await typing(r, sender, { type: 'typing', threadId: 't1' })
+    expect(peer.sent).toEqual([])
+    expect(sender.closed).toEqual([{ code: 1008, reason: expect.any(String) }])
+  })
+
+  test('an expired PEER is closed rather than delivered to — the wall holds on the receive side too', async () => {
+    const r = makeRoom('siteA')
+    const { ws: sender } = await subscribe(r, { viewerId: 'userA', channel: 'comments' })
+    const { ws: stale } = await subscribe(r, { viewerId: 'userB', channel: 'comments' })
+    const { ws: live } = await subscribe(r, { viewerId: 'userC', channel: 'comments' })
+    reattach(stale, { subject: 'userB', owner: 'siteA', exp: nowSec() - 1 })
+    await typing(r, sender, { type: 'typing', threadId: 't1' })
+    expect(stale.sent).toEqual([])
+    expect(stale.closed).toEqual([{ code: 1008, reason: expect.any(String) }])
+    // …and one dropped peer does not cost the rest of the site its frame.
+    expect(live.sent).toHaveLength(1)
+  })
+
+  test('C19: an unknown inbound type still changes nothing and closes nothing — two known types is not default-allow', async () => {
+    const r = makeRoom('siteA')
+    const { ws: sender } = await subscribe(r, { viewerId: 'userA', channel: 'comments' })
+    const { ws: peer } = await subscribe(r, { viewerId: 'userB', channel: 'comments' })
+    const before = sender.deserializeAttachment()
+    for (const m of [
+      { type: 'presence', threadId: 't1' },
+      { type: 'typing' }, // known type, no threadId: still not a message this room understands
+      { type: 'typing', threadId: 42 },
+      { threadId: 't1' },
+    ]) {
+      await typing(r, sender, m)
+    }
+    await r.room.webSocketMessage(sender as never, 'not json at all')
+    expect([sender.sent, peer.sent]).toEqual([[], []])
+    expect([sender.closed, peer.closed]).toEqual([[], []])
+    expect(sender.deserializeAttachment()).toEqual(before)
+  })
+
+  // C20 (no setTimeout/setInterval added by this path) is pinned by '#2: no file under src/realtime
+  // uses setTimeout/setInterval' at the top of this file — it reads every non-test .ts in this
+  // directory, so it covers the typing path the moment it lands. Expiry is on the wire instead.
+
+  // The client sends this on blur, submit and cancel. Until it was handled here it woke the room and
+  // did NOTHING — the exact per-message cost the 15s rate cap exists to avoid, paid for a no-op.
+  test('typing.stop fans out an already-elapsed expiry, so the peer drops the indicator at once', async () => {
+    const r = makeRoom('siteA')
+    const { ws: sender } = await subscribe(r, { viewerId: 'userA', channel: 'comments' })
+    const { ws: peer } = await subscribe(r, { viewerId: 'userB', channel: 'comments' })
+
+    // A stop only ever follows a ping — the rail's own sendTypingStop returns early for a thread it
+    // never announced, and the room bounds stops by ping for the same reason (see the floor test).
+    await typing(r, sender, { type: 'typing', threadId: 't1' })
+    await typing(r, sender, { type: 'typing.stop', threadId: 't1' })
+
+    // Same shape as a ping — the receiver has ONE code path, and `expiresAt: 0` is what "over" is.
+    expect(frames(peer).at(-1)).toEqual({ channel: 'comments', type: 'typing', viewerId: 'userA', threadId: 't1', expiresAt: 0 })
+    expect([sender.sent, sender.closed, peer.closed]).toEqual([[], [], []])
+  })
+
+  // The TTL is the whole feature on the receiving side: at 1ms the indicator expires before it can
+  // paint, and every assertion above (`expiresAt > before`) still passes.
+  test('a ping is good for a WHILE — the TTL is a real duration, not an epsilon', async () => {
+    const r = makeRoom('siteA')
+    const { ws: sender } = await subscribe(r, { viewerId: 'userA', channel: 'comments' })
+    const { ws: peer } = await subscribe(r, { viewerId: 'userB', channel: 'comments' })
+    const before = Date.now()
+
+    await typing(r, sender, { type: 'typing', threadId: 't1' })
+
+    // Long enough to survive a slow keystroke, short enough that a closed laptop clears quickly.
+    const ttl = frames(peer)[0].expiresAt - before
+    expect(ttl).toBeGreaterThanOrEqual(10_000)
+    expect(ttl).toBeLessThanOrEqual(60_000)
+  })
+
+  // The 15s cap lives in the browser, where a viewer with devtools simply does not run it. Each
+  // frame wakes the room and fans out to every socket on the site, so one flooding client is
+  // multiplied by N — the cost model has to be ENFORCED here, not requested there.
+  test('a flood of typing frames from one socket is throttled at the room, not just at the composer', async () => {
+    const r = makeRoom('siteA')
+    const { ws: sender } = await subscribe(r, { viewerId: 'userA', channel: 'comments' })
+    const { ws: peer } = await subscribe(r, { viewerId: 'userB', channel: 'comments' })
+
+    for (let i = 0; i < 50; i++) await typing(r, sender, { type: 'typing', threadId: 't1' })
+
+    // One got through; the other 49 never reached the fan-out.
+    expect(peer.sent).toHaveLength(1)
+    // …and a throttled socket is DROPPED, never closed: a burst is as likely to be a wedged client
+    // as an attacker, and closing would only hand it a redial loop.
+    expect([sender.closed, peer.closed]).toEqual([[], []])
+  })
+
+  // …and the floor must not eat the STOP: type, blur 200ms later, and the peer has to be told, or
+  // the indicator it is holding stays up for the whole 20s TTL on a composer that is already closed.
+  test('a stop right after a ping still goes out — the floor limits stops by ping, not by clock', async () => {
+    const r = makeRoom('siteA')
+    const { ws: sender } = await subscribe(r, { viewerId: 'userA', channel: 'comments' })
+    const { ws: peer } = await subscribe(r, { viewerId: 'userB', channel: 'comments' })
+
+    await typing(r, sender, { type: 'typing', threadId: 't1' })
+    await typing(r, sender, { type: 'typing.stop', threadId: 't1' }) // same millisecond
+
+    expect(frames(peer).map((f) => f.expiresAt === 0)).toEqual([false, true])
+    // One stop per ping, though — a stop cannot be flooded either, and it does not reopen the
+    // ping's window (otherwise ping/stop/ping/stop is an unbounded loop straight through the floor).
+    for (let i = 0; i < 20; i++) await typing(r, sender, { type: 'typing.stop', threadId: 't1' })
+    for (let i = 0; i < 20; i++) await typing(r, sender, { type: 'typing', threadId: 't1' })
+    expect(peer.sent).toHaveLength(2)
+  })
+
+  // The id is echoed verbatim to every peer, so its size is multiplied by the size of the room.
+  test('an oversized threadId is dropped rather than amplified across the room', async () => {
+    const r = makeRoom('siteA')
+    const { ws: sender } = await subscribe(r, { viewerId: 'userA', channel: 'comments' })
+    const { ws: peer } = await subscribe(r, { viewerId: 'userB', channel: 'comments' })
+
+    await typing(r, sender, { type: 'typing', threadId: 'x'.repeat(100_000) })
+
+    expect(peer.sent).toEqual([])
+    expect(sender.closed).toEqual([])
+  })
+
+  // The third copy of the site wall (subscribe and selectRecipients have the other two, each with
+  // its own test). A peer holding a token for ANOTHER site is an IDOR, not a routing accident.
+  test('a peer whose attachment names another site is closed, not delivered to', async () => {
+    const r = makeRoom('siteA')
+    const { ws: sender } = await subscribe(r, { viewerId: 'userA', channel: 'comments' })
+    const { ws: foreign } = await subscribe(r, { viewerId: 'userB', channel: 'comments' })
+    const { ws: live } = await subscribe(r, { viewerId: 'userC', channel: 'comments' })
+    reattach(foreign, { subject: 'userB', owner: 'siteB', exp: nowSec() + 300 })
+
+    await typing(r, sender, { type: 'typing', threadId: 't1' })
+
+    expect(foreign.sent).toEqual([])
+    expect(foreign.closed).toEqual([{ code: 1008, reason: expect.any(String) }])
+    expect(live.sent).toHaveLength(1)
+  })
+
+  // Parity with the db path's own spec ('a socket whose send() throws is closed and does not stop
+  // delivery to the rest'): without the try/catch, one dead peer aborts the loop for everyone after
+  // it — and which peers those are is just iteration order, so the loss would be invisible.
+  test('a peer whose send() throws is closed and does not cost the rest of the site its frame', async () => {
+    const r = makeRoom('siteA')
+    const { ws: sender } = await subscribe(r, { viewerId: 'userA', channel: 'comments' })
+    const { ws: dead } = await subscribe(r, { viewerId: 'userB', channel: 'comments' })
+    const { ws: live } = await subscribe(r, { viewerId: 'userC', channel: 'comments' })
+    dead.failNextSend(new Error('socket gone'))
+
+    await typing(r, sender, { type: 'typing', threadId: 't1' })
+
+    expect(dead.closed).toEqual([{ code: 1011, reason: expect.any(String) }])
+    expect(live.sent).toHaveLength(1)
+  })
+})
+
 describe('SiteRoom — deploy wiring', () => {
   test('contract: the request notifySiteRoom sends is the one SiteRoom.fetch accepts', async () => {
     const r = makeRoom('siteA')
@@ -346,5 +662,96 @@ describe('SiteRoom — deploy wiring', () => {
   test('#1: index.ts exports SiteRoom (the wrangler class_name binding resolves by export name)', async () => {
     const mod = (await import('../index')) as { SiteRoom?: unknown }
     expect(mod.SiteRoom).toBe(SiteRoom)
+  })
+})
+
+describe('SiteRoom — comment deploy wiring', () => {
+  // No executionCtx in this harness (there is no real Worker request) — the same fallback
+  // fireAndForget takes in prod when a caller has none: catch the access, await inline.
+  const fakeCtx = (env: unknown) =>
+    ({
+      env,
+      get executionCtx(): never {
+        throw new Error('no executionCtx in test')
+      },
+    }) as never
+
+  test('contract: the request notifyCommentRoom sends is the one SiteRoom.fetch\'s broadcast-comment accepts', async () => {
+    const r = makeRoom('siteA')
+    const { ws } = await subscribe(r, { viewerId: 'userA', channel: 'comments' })
+    const names: string[] = []
+    const env = {
+      SITE_ROOM: {
+        idFromName(name: string) {
+          names.push(name)
+          return { name }
+        },
+        get: () => ({ fetch: (input: string, init?: RequestInit) => r.room.fetch(new Request(input, init)) }),
+      },
+    }
+    const res = await notifyCommentRoom(env as never, commentEvent())
+    // Same key as the write side and the subscribe side — siteId — or one site splits across two rooms.
+    expect(names).toEqual(['siteA'])
+    expect(res).toBeUndefined()
+    expect(ws.sent).toHaveLength(1)
+  })
+
+  test('SITE_ROOM unbound: notifyCommentRoom resolves without touching `ns.get`, notifyCommentEvent never throws', async () => {
+    const env = { SITE_ROOM: undefined }
+    // Direct call — nothing here swallows a throw, so this is the assertion the `if (!ns) return`
+    // guard actually has to earn. Without it, `ns.get` on undefined throws and this rejects.
+    await expect(notifyCommentRoom(env as never, commentEvent())).resolves.toBeUndefined()
+    await expect(notifyCommentEvent(fakeCtx(env), commentEvent())).resolves.toBeUndefined()
+  })
+
+  test('a rejecting DO stub: the returned promise still resolves, the error never escapes', async () => {
+    const env = {
+      SITE_ROOM: {
+        idFromName: () => ({}),
+        get: () => ({ fetch: () => Promise.reject(new Error('boom')) }),
+      },
+    }
+    await expect(notifyCommentEvent(fakeCtx(env), commentEvent())).resolves.toBeUndefined()
+  })
+
+  test('undefined event: no stub fetch at all — nothing to push, inventing one would be a phantom', async () => {
+    let getCalls = 0
+    const env = {
+      SITE_ROOM: {
+        idFromName: () => ({}),
+        get: () => {
+          getCalls += 1
+          return { fetch: () => Promise.resolve(new Response(null, { status: 204 })) }
+        },
+      },
+    }
+    await notifyCommentEvent(fakeCtx(env), undefined)
+    expect(getCalls).toBe(0)
+  })
+
+  test('happy path: the stub is fetched exactly once, POST /broadcast-comment, event as JSON body', async () => {
+    const calls: { url: string; init: RequestInit }[] = []
+    const names: string[] = []
+    const env = {
+      SITE_ROOM: {
+        idFromName(name: string) {
+          names.push(name)
+          return { name }
+        },
+        get: () => ({
+          fetch: (url: string, init: RequestInit) => {
+            calls.push({ url, init })
+            return Promise.resolve(new Response(null, { status: 204 }))
+          },
+        }),
+      },
+    }
+    const e = commentEvent({ siteId: 'siteB' })
+    await notifyCommentEvent(fakeCtx(env), e)
+    expect(names).toEqual(['siteB'])
+    expect(calls).toHaveLength(1)
+    expect(calls[0].url).toBe('https://site-room/broadcast-comment')
+    expect(calls[0].init.method).toBe('POST')
+    expect(JSON.parse(String(calls[0].init.body))).toEqual(e)
   })
 })

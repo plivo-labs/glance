@@ -18,11 +18,26 @@ export function ThreadCard({
   thread,
   onChanged,
   onFocusAnchor,
+  typing,
+  onTyping,
+  onTypingStop,
 }: {
   site: ViewerSite
   me: Me | null
   thread: Thread
-  onChanged: () => void
+  // The other direction of `typing`: THIS viewer is composing a reply here. Optional, like `typing`
+  // itself — a rail with no socket behind it simply never pings, so no component test needs them.
+  onTyping?: () => void
+  onTypingStop?: () => void
+  // Someone is replying to THIS thread right now (S12), or null/undefined when nobody is. `name` is
+  // null when the rail could not match the ping's viewer id to one of this thread's participants —
+  // the wire carries no name, so an unrecognised id renders as "Someone" and never as a name the
+  // sender chose.
+  typing?: { name: string | null } | null
+  // `pushed` says whether the room fans THIS change back to us over the comments socket (S9): a
+  // reply is pushed, resolve/reopen/delete are not (ruled decision 5). The caller needs the
+  // distinction to know whether its refetch is the only thing that will ever show the change.
+  onChanged: (change: { pushed: boolean }) => void
   // Scroll only: a click jumps the iframe to the anchor. It doesn't light anything — every anchor
   // on the page is already highlighted for as long as the rail is open.
   onFocusAnchor: (thread: Thread) => void
@@ -45,14 +60,14 @@ export function ThreadCard({
   // RETHROWS after toasting: a reply that resolves on failure lets the caller close the composer
   // and Composer clear the draft, so the typed reply (or the recording) is gone with nothing to
   // retry. Callers that close UI on success must therefore await this and let a rejection stop them.
-  async function run(fn: () => Promise<unknown>) {
+  async function run(fn: () => Promise<unknown>, pushed: boolean) {
     try {
       await fn()
     } catch (err) {
       toastError(err)
       throw err
     }
-    onChanged()
+    onChanged({ pushed })
   }
 
   /** What to render for a comment: the override, but only while it still describes the list it was
@@ -77,7 +92,8 @@ export function ThreadCard({
 
   // onClick handler for the button actions: they have no draft to protect and their failure is
   // already a toast, so the rejection `run` raises is deliberately dropped rather than left unhandled.
-  const act = (fn: () => Promise<unknown>) => () => void run(fn).catch(() => {})
+  // Every button action here (delete, resolve, reopen) is one the room does NOT push back.
+  const act = (fn: () => Promise<unknown>) => () => void run(fn, false).catch(() => {})
 
   return (
     // id lets a notification deep-link scroll this card into view (viewer S11).
@@ -177,6 +193,10 @@ export function ThreadCard({
         ))}
       </ul>
 
+      {typing && (
+        <p className="mt-2 text-muted-foreground text-xs italic">{`${typing.name ?? 'Someone'} is replying…`}</p>
+      )}
+
       {replying ? (
         <div className="mt-3">
           <Composer
@@ -184,13 +204,20 @@ export function ThreadCard({
             placeholder="Reply…"
             submitLabel="Reply"
             loadMentions={() => comments.mentionable(site)}
-            onCancel={() => setReplying(false)}
+            onTyping={onTyping}
+            onTypingStop={onTypingStop}
+            onCancel={() => {
+              // Closing the composer is as much a stop as blurring it: the draft is gone, so a peer
+              // left showing "…is replying" would be waiting on something that no longer exists.
+              onTypingStop?.()
+              setReplying(false)
+            }}
             onSubmit={async (body, mentions) => {
-              await run(() => comments.reply(site, thread.id, body, mentions))
+              await run(() => comments.reply(site, thread.id, body, mentions), true)
               setReplying(false)
             }}
             onSubmitVoice={async (blob) => {
-              await run(() => comments.replyVoice(site, thread.id, blob))
+              await run(() => comments.replyVoice(site, thread.id, blob), true)
               setReplying(false)
             }}
           />

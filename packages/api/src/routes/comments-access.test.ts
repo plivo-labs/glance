@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import { seedComment, seedMember, seedSite, seedSpace, seedThread } from '../test/harness'
+import { verifyDataToken } from '../lib/data-token'
+import { TOKEN_HEADER, WS_PROTOCOL } from '../realtime/protocol'
+import { seedComment, seedMember, seedSite, seedSpace, seedThread, seedUserShare } from '../test/harness'
 import { APP_URL, auth, makeRouteApp, mintUser } from '../test/route-fixtures'
 
 // S9 pins for the comments routes' access gate (T9.1), read-your-write ordering (T9.2), and the
@@ -464,5 +466,337 @@ describe('comments routes — T9.5 mutations fuse target reads into the access b
       shape(ctx.db, 1, 1, 7)
     }
     expect(ctx.r2.gets()).toBe(0)
+  })
+})
+
+// --- S6: GET .../comments/socket — authenticated WS upgrade for the comments channel -----------
+// The highest-risk route in the plan: a mistake here is an IDOR that leaks another site's
+// comments. C9 pins every denial status, including a DIRECT comparison against the LIST
+// endpoint's status for the same caller/slug — proof the gate cannot drift weaker. C10 pins the
+// minted internal token: it is scoped (siteId + caps:[]) and NEVER reaches the browser. The DO's
+// own fan-out mechanics are pinned in realtime/site-room.test.ts — this file only checks what the
+// WORKER does before (and instead of) addressing it, exactly like data-ws.test.ts does for
+// data.ts's twin route.
+
+const HMAC = 'glance-test-comments-socket'
+const socketUrl = (space: string, site: string) => `/api/sites/${space}/${site}/comments/socket`
+const wsHeaders = (proto?: string) => ({
+  Upgrade: 'websocket',
+  Connection: 'Upgrade',
+  ...(proto === undefined ? {} : { 'Sec-WebSocket-Protocol': proto }),
+})
+
+/** A DurableObjectNamespace that records every hop toward the object — so a denial test can prove
+ *  the DO was NEVER addressed, not just that the response looked right. Mirrors data-ws.test.ts's
+ *  recordingRoom (this route's DO mechanics are pinned there / in site-room.test.ts, not here). */
+function recordingRoom(respond: (req: Request) => Response = () => new Response(null, { status: 101 })) {
+  const names: string[] = []
+  const requests: Request[] = []
+  const ns = {
+    idFromName(name: string) {
+      names.push(name)
+      return { name }
+    },
+    get(_id: { name: string }) {
+      return {
+        fetch: async (input: Request | string, init?: RequestInit) => {
+          const req = input instanceof Request ? input : new Request(input, init)
+          requests.push(req)
+          return respond(req)
+        },
+      }
+    },
+  }
+  return { ns, names, requests }
+}
+
+const withRoom = (env: unknown, room: ReturnType<typeof recordingRoom>) =>
+  ({ ...(env as object), SITE_ROOM: room.ns, DATA_TOKEN_SECRET: HMAC }) as never
+
+describe('comments routes — S6 GET .../comments/socket (authenticated WS upgrade)', () => {
+  test('C9: no Upgrade header → 426, DO never touched', async () => {
+    const { app, env, db, kv } = makeRouteApp()
+    const owner = await mintUser(db, kv, 'owner')
+    await seedCommentedSite(db, owner)
+    const room = recordingRoom()
+    const res = await app.request(socketUrl('acme', 'doc'), { headers: auth(owner) }, withRoom(env, room))
+    expect(res.status).toBe(426)
+    expect(room.requests).toHaveLength(0)
+  })
+
+  test('C9: no session → 401 (requireAuth), same as an ordinary comments request', async () => {
+    const { app, env, db, kv } = makeRouteApp()
+    const owner = await mintUser(db, kv, 'owner')
+    await seedCommentedSite(db, owner)
+    const room = recordingRoom()
+    const res = await app.request(socketUrl('acme', 'doc'), { headers: wsHeaders() }, withRoom(env, room))
+    expect(res.status).toBe(401)
+    expect(room.requests).toHaveLength(0)
+  })
+
+  test('C9: a site the caller may not read → the SAME status the LIST endpoint returns, DO never touched', async () => {
+    const { app, env, db, kv } = makeRouteApp()
+    const owner = await mintUser(db, kv, 'owner')
+    const outsider = await mintUser(db, kv, 'outsider')
+    await seedCommentedSite(db, owner, 'private')
+    const room = recordingRoom()
+    const listRes = await app.request(url('acme', 'doc'), { headers: auth(outsider) }, env)
+    const res = await app.request(
+      socketUrl('acme', 'doc'),
+      { headers: { ...auth(outsider), ...wsHeaders() } },
+      withRoom(env, room),
+    )
+    expect(listRes.status).toBe(403) // sanity: pins what "the list endpoint's status" concretely is
+    expect(res.status).toBe(listRes.status)
+    expect(room.requests).toHaveLength(0)
+  })
+
+  test('C9: a missing site → the SAME status the LIST endpoint returns, DO never touched', async () => {
+    const { app, env, db, kv } = makeRouteApp()
+    const owner = await mintUser(db, kv, 'owner')
+    await seedCommentedSite(db, owner)
+    const room = recordingRoom()
+    const listRes = await app.request(url('acme', 'nope'), { headers: auth(owner) }, env)
+    const res = await app.request(
+      socketUrl('acme', 'nope'),
+      { headers: { ...auth(owner), ...wsHeaders() } },
+      withRoom(env, room),
+    )
+    expect(listRes.status).toBe(404)
+    expect(res.status).toBe(listRes.status)
+    // Status alone doesn't prove THIS route's own gate produced it: an unrouted path also lands
+    // on a 404 (Hono's built-in "no handler matched"), which would make this test pass even
+    // against a socket route that doesn't exist. That built-in 404 is plain text; `gated()`'s is
+    // JSON `{error:'not found'}` — the SAME body the list endpoint's 404 gives — so comparing
+    // bodies proves the SAME gate ran, not an accidental status collision.
+    expect(res.headers.get('content-type')).toContain('application/json')
+    expect(await res.clone().json()).toEqual(await listRes.clone().json())
+    expect(room.requests).toHaveLength(0)
+  })
+
+  test('C9: an archived site → the SAME status (410) the LIST endpoint returns, DO never touched', async () => {
+    const { app, env, db, kv } = makeRouteApp()
+    const owner = await mintUser(db, kv, 'owner')
+    await seedCommentedSite(db, owner, 'team', 'archived')
+    const room = recordingRoom()
+    const listRes = await app.request(url('acme', 'doc'), { headers: auth(owner) }, env)
+    const res = await app.request(
+      socketUrl('acme', 'doc'),
+      { headers: { ...auth(owner), ...wsHeaders() } },
+      withRoom(env, room),
+    )
+    expect(listRes.status).toBe(410)
+    expect(res.status).toBe(listRes.status)
+    expect(room.requests).toHaveLength(0)
+  })
+
+  // Two independent optional bindings guard this route (see comments.ts's own two `!room`/`!secret`
+  // checks). A single "one of them is missing" test can't tell the two branches apart — deleting
+  // EITHER guard would still leave the other firing and the test green. Pin each bind state alone.
+  test('C9: DATA_TOKEN_SECRET set, SITE_ROOM unbound → 503, matching the data route', async () => {
+    const { app, env, db, kv } = makeRouteApp()
+    const owner = await mintUser(db, kv, 'owner')
+    await seedCommentedSite(db, owner)
+    const res = await app.request(
+      socketUrl('acme', 'doc'),
+      { headers: { ...auth(owner), ...wsHeaders() } },
+      { ...(env as object), DATA_TOKEN_SECRET: HMAC } as never,
+    )
+    expect(res.status).toBe(503)
+  })
+
+  test('C9: SITE_ROOM bound, DATA_TOKEN_SECRET unbound → 503, matching the data route', async () => {
+    const { app, env, db, kv } = makeRouteApp()
+    const owner = await mintUser(db, kv, 'owner')
+    await seedCommentedSite(db, owner)
+    const room = recordingRoom()
+    const res = await app.request(
+      socketUrl('acme', 'doc'),
+      { headers: { ...auth(owner), ...wsHeaders() } },
+      { ...(env as object), SITE_ROOM: room.ns } as never,
+    )
+    expect(res.status).toBe(503)
+  })
+
+  test('C10: the minted token is scoped (siteId, caps:[]) and NEVER reaches the browser', async () => {
+    const { app, env, db, kv } = makeRouteApp()
+    const owner = await mintUser(db, kv, 'owner')
+    // A non-owner (userShare) caller, not the owner: owner id and caller id must differ, or a
+    // `viewerId: site.ownerId` mutant is indistinguishable from the real `c.get('user').id`.
+    const viewer = await mintUser(db, kv, 'viewer')
+    const { siteId } = await seedCommentedSite(db, owner, 'private')
+    await seedUserShare(db, siteId, viewer)
+    const room = recordingRoom()
+    const res = await app.request(
+      socketUrl('acme', 'doc'),
+      // A spoofed x-viewer header claiming to be the owner: the token must ignore it and still
+      // pin to the AUTHENTICATED caller, or a `viewerId: header('x-viewer') ?? user.id` mutant
+      // (which happens to equal the correct value whenever no such header is sent) survives.
+      { headers: { ...auth(viewer), 'x-viewer': owner, ...wsHeaders() } },
+      withRoom(env, room),
+    )
+    expect(res.status).toBe(101)
+    expect(room.requests).toHaveLength(1)
+    const forwarded = room.requests[0] as Request
+    const token = forwarded.headers.get(TOKEN_HEADER)
+    expect(token).toBeTruthy()
+
+    const claims = await verifyDataToken(HMAC, token)
+    expect(claims?.siteId).toBe(siteId)
+    expect(claims?.viewerId).toBe(viewer) // the CALLER, never the owner or a spoofed header
+    expect(claims?.caps).toEqual([])
+    // TTL pins the 300s revocation window (the reason a short-lived socket credential is
+    // acceptable at all: a redial re-runs the access gate, so revoked access dies within 300s).
+    // Tolerant, not exact — real wall-clock time elapses between mint and this assertion.
+    const nowSec = Math.floor(Date.now() / 1000)
+    expect(claims?.exp).toBeGreaterThan(nowSec + 290)
+    expect(claims?.exp).toBeLessThanOrEqual(nowSec + 300)
+
+    // Absent from every response header AND the body...
+    for (const [, v] of res.headers.entries()) expect(v).not.toContain(token as string)
+    expect(await res.text()).not.toContain(token as string)
+    // ...and travels only on the DO subrequest's dedicated header, never its URL.
+    const carrying = [...forwarded.headers.entries()].filter(([, v]) => v.includes(token as string))
+    expect(carrying.map(([k]) => k)).toEqual([TOKEN_HEADER])
+    expect(forwarded.url).not.toContain(token as string)
+  })
+
+  test('the forwarded DO subrequest carries ?channel=comments — not db, not absent', async () => {
+    const { app, env, db, kv } = makeRouteApp()
+    const owner = await mintUser(db, kv, 'owner')
+    await seedCommentedSite(db, owner)
+    const room = recordingRoom()
+    await app.request(socketUrl('acme', 'doc'), { headers: { ...auth(owner), ...wsHeaders() } }, withRoom(env, room))
+    expect(room.requests).toHaveLength(1)
+    const forwarded = room.requests[0] as Request
+    expect(new URL(forwarded.url).pathname).toBe('/subscribe')
+    expect(new URL(forwarded.url).search).toBe('?channel=comments')
+  })
+
+  // `channel=comments` is hard-coded, not read off the request — it is the ONLY wall keeping this
+  // socket off the site's document events (readsEveryCreator grants shared-* reads to ANY
+  // capability-less viewer, so caps:[] alone does not stop a mis-routed push — see the route's own
+  // comment). A caller-supplied `channel` query param must be silently ignored, not forwarded.
+  test.each(['db', '', 'garbage'])(
+    'a caller-supplied ?channel=%s query param is ignored — the DO still gets channel=comments',
+    async (callerChannel) => {
+      const { app, env, db, kv } = makeRouteApp()
+      const owner = await mintUser(db, kv, 'owner')
+      await seedCommentedSite(db, owner)
+      const room = recordingRoom()
+      await app.request(
+        `${socketUrl('acme', 'doc')}?channel=${callerChannel}`,
+        { headers: { ...auth(owner), ...wsHeaders() } },
+        withRoom(env, room),
+      )
+      expect(room.requests).toHaveLength(1)
+      const forwarded = room.requests[0] as Request
+      expect(forwarded.url).toBe('https://site-room/subscribe?channel=comments')
+    },
+  )
+
+  test('subprotocol negotiation mirrors data.ts: echoed back on the 101 when offered, silent when not', async () => {
+    const { app, env, db, kv } = makeRouteApp()
+    const owner = await mintUser(db, kv, 'owner')
+    await seedCommentedSite(db, owner)
+
+    const offered = await app.request(
+      socketUrl('acme', 'doc'),
+      { headers: { ...auth(owner), ...wsHeaders(WS_PROTOCOL) } },
+      withRoom(env, recordingRoom()),
+    )
+    expect(offered.status).toBe(101)
+    expect(offered.headers.get('Sec-WebSocket-Protocol')).toBe(WS_PROTOCOL)
+
+    const silent = await app.request(
+      socketUrl('acme', 'doc'),
+      { headers: { ...auth(owner), ...wsHeaders() } },
+      withRoom(env, recordingRoom()),
+    )
+    expect(silent.status).toBe(101)
+    expect(silent.headers.get('Sec-WebSocket-Protocol')).toBeNull()
+  })
+
+  test('CSWSH: cookie-authed + foreign Origin → 403, DO never touched; cookie-authed + APP_URL ' +
+    'Origin (or Sec-Fetch-Site: same-origin) still upgrades', async () => {
+    const { app, env, db, kv } = makeRouteApp()
+    const owner = await mintUser(db, kv, 'owner')
+    await seedCommentedSite(db, owner)
+    const room = recordingRoom()
+    // Presence of the cookie, not its validity, is the signal (matches requireSameOrigin) — the
+    // Bearer token still authenticates the request; a foreign Origin alone must deny it.
+    const res = await app.request(
+      socketUrl('acme', 'doc'),
+      { headers: { ...auth(owner), cookie: '__Host-glance_session=x', Origin: 'https://evil.example.com', ...wsHeaders() } },
+      withRoom(env, room),
+    )
+    expect(res.status).toBe(403)
+    expect(room.requests).toHaveLength(0)
+
+    // 'same-site' is NOT 'same-origin': the sandboxed content origin (glance-content.*.workers.dev)
+    // shares this app's registrable domain (workers.dev is a public suffix) but is untrusted — a
+    // predicate loosened to accept same-site would let that origin ride the session cookie and
+    // hijack the socket. isSameOrigin's own doc comment says never to loosen it; pin the refusal.
+    // No Origin header (matches the secFetchSite success case below) — Sec-Fetch-Site is the ONLY
+    // signal under test; auth()'s Origin: APP_URL would pass the gate on its own and prove nothing.
+    const sameSiteRoom = recordingRoom()
+    const sameSite = await app.request(
+      socketUrl('acme', 'doc'),
+      {
+        headers: {
+          Authorization: `Bearer tok-${owner}`,
+          'Content-Type': 'application/json',
+          cookie: '__Host-glance_session=x',
+          'Sec-Fetch-Site': 'same-site',
+          ...wsHeaders(),
+        },
+      },
+      withRoom(env, sameSiteRoom),
+    )
+    expect(sameSite.status).toBe(403)
+    expect(sameSiteRoom.requests).toHaveLength(0)
+
+    const sameOrigin = await app.request(
+      socketUrl('acme', 'doc'),
+      { headers: { ...auth(owner), cookie: '__Host-glance_session=x', ...wsHeaders() } }, // auth() sets Origin: APP_URL
+      withRoom(env, recordingRoom()),
+    )
+    expect(sameOrigin.status).toBe(101)
+
+    const secFetchSite = await app.request(
+      socketUrl('acme', 'doc'),
+      {
+        headers: {
+          Authorization: `Bearer tok-${owner}`,
+          'Content-Type': 'application/json',
+          cookie: '__Host-glance_session=x',
+          'Sec-Fetch-Site': 'same-origin',
+          ...wsHeaders(),
+        },
+      },
+      withRoom(env, recordingRoom()),
+    )
+    expect(secFetchSite.status).toBe(101)
+  })
+
+  test('the room is addressed by site.id, never the URL slugs: an identical slug on a DIFFERENT ' +
+    'site reaches a DIFFERENT room, and the caller\'s own site always reaches the same one', async () => {
+    const { app, env, db, kv } = makeRouteApp()
+    const owner = await mintUser(db, kv, 'owner')
+    const { siteId: siteA } = await seedCommentedSite(db, owner) // acme/doc
+    const spaceB = await seedSpace(db, { createdBy: owner, slug: 'other' })
+    const siteB = await seedSite(db, { spaceId: spaceB, ownerId: owner, slug: 'doc', visibility: 'team' })
+
+    const roomA1 = recordingRoom()
+    await app.request(socketUrl('acme', 'doc'), { headers: { ...auth(owner), ...wsHeaders() } }, withRoom(env, roomA1))
+    const roomA2 = recordingRoom()
+    await app.request(socketUrl('acme', 'doc'), { headers: { ...auth(owner), ...wsHeaders() } }, withRoom(env, roomA2))
+    const roomB = recordingRoom()
+    await app.request(socketUrl('other', 'doc'), { headers: { ...auth(owner), ...wsHeaders() } }, withRoom(env, roomB))
+
+    expect(roomA1.names).toEqual([siteA])
+    expect(roomA2.names).toEqual([siteA]) // same site, same slug, same room — every time
+    expect(roomB.names).toEqual([siteB]) // same SLUG ("doc"), different site → different room
+    expect(siteA).not.toBe(siteB)
   })
 })

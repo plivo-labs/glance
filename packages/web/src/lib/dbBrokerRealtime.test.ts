@@ -182,6 +182,20 @@ describe('broker realtime relay', () => {
     s.broker.dispose()
   })
 
+  test('a frame tagged channel:"db" (new server) is handled identically to a channel-less one (old server)', async () => {
+    // S1 made the server add `channel: 'db'` to the frame. This is the REAL dbBroker, not a copy —
+    // it must still parse and dispatch the tagged frame exactly like the untagged one it always sent.
+    const s = await subscribed((url) => (url.startsWith('/api/data-token/') ? mintOk() : frame([], 'c1')))
+    s.sock.emit({ channel: 'db', events: [EVENT], cursor: 'c2' })
+    const evts = await until('event', () => {
+      const m = typed(s.received, 'glance:db-event')
+      return m.length > 0 ? m : false
+    })
+    expect(evts[0]).toEqual({ type: 'glance:db-event', events: [EVENT], cursor: 'c2' })
+    expect('channel' in evts[0]).toBe(false)
+    s.broker.dispose()
+  })
+
   test('a new glance:db-hello re-establishes subscriptions and resumes from the stored cursor', async () => {
     const changes: string[] = []
     const s = await subscribed((url) => {

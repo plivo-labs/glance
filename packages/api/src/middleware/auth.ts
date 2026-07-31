@@ -1,3 +1,4 @@
+import type { Context } from 'hono'
 import { getCookie } from 'hono/cookie'
 import { createMiddleware } from 'hono/factory'
 import { getUserById } from '../db/repo'
@@ -7,22 +8,32 @@ import type { AppEnv } from '../types'
 const SESSION_COOKIE = '__Host-glance_session'
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
+/** True when the request's cookie jar carries a session cookie AT ALL — presence, not validity,
+ *  is the signal: a stale/tampered cookie still proves "this came from a browser that has this
+ *  app's origin in its jar" which is exactly the context CSWSH/CSRF need to worry about. */
+export const cookieAuthed = (c: Context<AppEnv>): boolean => getCookie(c, SESSION_COOKIE) !== undefined
+
+/** Origin matches APP_URL, or Sec-Fetch-Site is 'same-origin' — the one predicate every
+ *  same-origin gate in this file shares. Intentionally strict and fail-closed: 'same-site' is
+ *  deliberately NOT accepted (it would open subdomain-based CSRF/CSWSH — the sandboxed content
+ *  origin shares this app's registrable domain and must never pass); 'cross-site', 'none', and
+ *  missing headers all fail both checks → deny. Do not loosen this to 'same-site'. */
+export const isSameOrigin = (c: Context<AppEnv>): boolean => {
+  const appOrigin = new URL(c.env.APP_URL).origin
+  return c.req.header('Origin') === appOrigin || c.req.header('Sec-Fetch-Site') === 'same-origin'
+}
+
 /**
  * CSRF defense-in-depth. Only enforces on cookie-authenticated, state-changing requests:
  * if the `glance_session` cookie is present AND the method is unsafe, require same-origin
- * (Origin matches APP_URL, or Sec-Fetch-Site is 'same-origin') else 403. Bearer-token CLI
- * calls carry no cookie and pass through untouched; GET/HEAD always pass.
+ * else 403. Bearer-token CLI calls carry no cookie and pass through untouched; GET/HEAD
+ * always pass — safe because a foreign origin's fetch/XHR still can't READ the JSON body
+ * without this app's CORS allowing it (unlike a WebSocket upgrade, which is CORS-exempt;
+ * see comments.ts's own same-origin guard on its socket route for that case).
  */
 export const requireSameOrigin = createMiddleware<AppEnv>(async (c, next) => {
-  const cookieAuthed = getCookie(c, SESSION_COOKIE) !== undefined
-  if (cookieAuthed && UNSAFE_METHODS.has(c.req.method)) {
-    const appOrigin = new URL(c.env.APP_URL).origin
-    // Intentionally strict and fail-closed: ONLY an exact Origin match or Sec-Fetch-Site
-    // 'same-origin' passes. 'same-site' is deliberately NOT accepted (it would open
-    // subdomain-based CSRF); 'cross-site', 'none', and missing headers all fail both
-    // checks → deny. Do not loosen this to 'same-site'.
-    const sameOrigin = c.req.header('Origin') === appOrigin || c.req.header('Sec-Fetch-Site') === 'same-origin'
-    if (!sameOrigin) return c.json({ error: 'csrf' }, 403)
+  if (cookieAuthed(c) && UNSAFE_METHODS.has(c.req.method) && !isSameOrigin(c)) {
+    return c.json({ error: 'csrf' }, 403)
   }
   await next()
 })
@@ -45,8 +56,11 @@ export const requireAuth = createMiddleware<AppEnv>(async (c, next) => {
   // Tag the credential for usage analytics. The CLI sends a Bearer token and never a cookie;
   // browsers always carry the cookie. Session cookie wins (mirrors readSessionOrBearer), so a
   // request is 'cli' only when there's no cookie AND a Bearer token is present.
-  const hasCookie = getCookie(c, SESSION_COOKIE) !== undefined
-  c.set('authKind', !hasCookie && bearerToken(c) !== null ? 'cli' : 'web')
+  // Both sides of the merge in one line: `cookieAuthed` is this branch's extraction of main's
+  // inline cookie check (the comments socket route needed the same predicate for its own
+  // same-origin guard), and `bearerToken` is main's — it parses the header rather than
+  // re-deriving `startsWith('Bearer ')` here.
+  c.set('authKind', !cookieAuthed(c) && bearerToken(c) !== null ? 'cli' : 'web')
   await next()
 })
 

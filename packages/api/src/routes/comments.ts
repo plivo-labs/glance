@@ -5,6 +5,8 @@ import { type ElementAnchor, type StoredTextContext, normalizeText, parseElement
 import {
   addComment,
   assembleThreadViews,
+  buildCommentCreatedView,
+  buildThreadCreatedView,
   commentByIdStmt,
   commentsWithAuthorsBySlugsStmt,
   createThread,
@@ -38,6 +40,7 @@ import {
 import { type Comment, type CommentThread, commentReactions } from '../db/schema'
 import { listMentionableUsers } from '../db/repo'
 import { batchAll } from '../lib/d1'
+import { signDataToken } from '../lib/data-token'
 import { fireAndForget } from '../lib/events'
 import { EXT_MIME, audioExtFromPart, contentType } from '../lib/mime'
 import type { AccessFacts, ResolvedSite } from '../lib/site-access'
@@ -45,7 +48,10 @@ import { fetchAccessFacts, siteAccessFromFacts } from '../lib/site-access'
 import { decideRange } from '../lib/range'
 import { deleteKeys } from '../lib/storage'
 import { transcribeVoice } from '../lib/transcribe'
-import { requireAuth } from '../middleware/auth'
+import { cookieAuthed, isSameOrigin, requireAuth } from '../middleware/auth'
+import { notifyCommentEvent } from '../realtime/notify'
+import { TOKEN_HEADER } from '../realtime/protocol'
+import { isUpgrade, reissueUpgrade } from '../realtime/upgrade'
 import type { AppEnv, SessionUser } from '../types'
 
 // Comments API. Mounted at /api/sites, so paths are /:space/:site/comments… — three segments,
@@ -335,6 +341,45 @@ function notifyReply(
   })
 }
 
+/** Push a just-created thread over the comments channel — the SAME ThreadView the list route
+ *  would return for it (buildThreadCreatedView, S4). `thread`/`comment` are the exact rows
+ *  `createThread` just inserted (its own `ts`, not a re-read — see its doc comment): building the
+ *  push from them costs ZERO extra D1 round trips, which the fused-batch D1 budget T9.5 pins on
+ *  this route requires. `notifyCommentEvent` already wraps `fireAndForget` — the risky/slow part
+ *  (the DO fetch) never rides the response's critical path, and never turns a successful create
+ *  into a failed request. Called only after the write commits (see the four call sites): every
+ *  early 400/403/404/410 returns before this, so a rejected create pushes nothing (ruled
+ *  decision: no phantoms, mirroring `notifyChange`'s `undefined` rule). */
+function pushThreadCreated(
+  c: Context<AppEnv>,
+  site: ResolvedSite,
+  filePath: string,
+  thread: CommentThread,
+  comment: Comment,
+): Promise<void> {
+  const author = c.get('user')
+  const view = buildThreadCreatedView(
+    { thread, creatorName: author.name, creatorEmail: author.email, resolverName: null, resolverEmail: null },
+    { comment, authorName: author.name, authorEmail: author.email },
+  )
+  return notifyCommentEvent(c, { type: 'thread.created', siteId: site.id, filePath, thread: view })
+}
+
+/** Push a just-created reply — the comments-channel analog of `pushThreadCreated`, reusing
+ *  `buildCommentCreatedView` (S4) so the pushed CommentView is byte-identical to what the list
+ *  route nests under the thread. `comment` is `addComment`'s own just-inserted row — again zero
+ *  extra reads. */
+function pushCommentCreated(
+  c: Context<AppEnv>,
+  site: ResolvedSite,
+  thread: Pick<CommentThread, 'id' | 'filePath'>,
+  comment: Comment,
+): Promise<void> {
+  const author = c.get('user')
+  const { comment: view } = buildCommentCreatedView(thread.id, { comment, authorName: author.name, authorEmail: author.email })
+  return notifyCommentEvent(c, { type: 'comment.created', siteId: site.id, filePath: thread.filePath, threadId: thread.id, comment: view })
+}
+
 type ThreadFields = {
   filePath: string
   quote: string | undefined
@@ -512,6 +557,54 @@ comments.get('/:space/:site/comments/audio/:commentId', async (c) => {
   return new Response(bytes, { headers })
 })
 
+// GET — authenticated WebSocket upgrade for the comments channel. Unlike data.ts's /_sync/socket
+// (a bearer DATA TOKEN the untrusted content page holds), this rail is PARENT-APP code, so it
+// authenticates with the session cookie: requireAuth (above, global on this router) guarantees a
+// live user, then `gated` — the SAME access gate every other comments route runs, not a weaker or
+// different one — decides whether the caller may subscribe at all. Only past that gate does the
+// worker mint an INTERNAL data token (siteId + viewerId + caps:[]) for the worker→DO hop alone —
+// it is NEVER handed to the browser. caps:[] denies read_all/write, but that does NOT block
+// `shared-*` document reads — readsEveryCreator grants those to any capability-less viewer. The
+// `channel=comments` tag below (hard-coded, never taken from the request) is the ONLY wall
+// between this socket and the site's document events — it is not backed up. The room is
+// addressed by `site.id` — resolved server-side, never the space/site strings off the URL — which
+// is exactly the IDOR data.ts's own comment warns about.
+comments.get('/:space/:site/comments/socket', async (c) => {
+  // CSWSH guard, unlike requireSameOrigin (which skips GET as safe): an ordinary cookie-
+  // authenticated GET is safe because a foreign origin's fetch/XHR can't READ the JSON body
+  // without this app granting it CORS — but a WebSocket upgrade is EXEMPT from the Same-Origin
+  // Policy entirely, so any origin that can make the browser dial this URL can read every frame.
+  // The sandboxed content origin shares this app's registrable domain, so its SameSite=Lax
+  // session cookie rides along regardless — without this check, untrusted content-origin JS could
+  // hijack the victim's own session to read every site's comments the victim can read. Bearer/CLI
+  // callers carry no cookie, so they are untouched (`cookieAuthed` is false for them).
+  if (cookieAuthed(c) && !isSameOrigin(c)) return c.json({ error: 'csrf' }, 403)
+
+  const gate = await gated(c)
+  if (gate instanceof Response) return gate
+  const { site } = gate
+
+  if (!isUpgrade(c)) return c.text('expected websocket', 426)
+  const room = c.env.SITE_ROOM
+  // Optional binding, like data.ts's own /_sync/socket: a deploy that never enabled realtime
+  // keeps ordinary comments working and simply cannot be subscribed to.
+  if (!room) return c.json({ error: 'realtime unavailable' }, 503)
+  const secret = c.env.DATA_TOKEN_SECRET
+  if (!secret) return c.json({ error: 'realtime unavailable' }, 503)
+
+  const token = await signDataToken(secret, { siteId: site.id, viewerId: c.get('user').id, caps: [] })
+  const stub = room.get(room.idFromName(site.id))
+  const res = await stub.fetch(
+    new Request('https://site-room/subscribe?channel=comments', {
+      // The token rides the ONE dedicated header — never a URL, never the DO's own name. The DO
+      // re-verifies it itself; this worker-side gate is a cheap quota guard, not the authority.
+      headers: { Upgrade: 'websocket', [TOKEN_HEADER]: token },
+    }),
+  )
+  // Shared with data.ts's own upgrade — same immutable-subrequest-headers reason, one implementation.
+  return reissueUpgrade(c, res)
+})
+
 // POST — create a thread + its opening comment. The anchor is stored, not resolved (the client
 // paints it against the rendered DOM at view time).
 comments.post('/:space/:site/comments', async (c) => {
@@ -536,8 +629,9 @@ comments.post('/:space/:site/comments', async (c) => {
     element: fields.element,
     context: fields.context,
   })
+  await pushThreadCreated(c, site, fields.filePath, out.thread, out.comment)
   await notifyThreadCreated(c, site, { out, filePath: fields.filePath, snippet: body, rawMentions: raw?.mentions })
-  return c.json(out, 201)
+  return c.json({ threadId: out.threadId, openingCommentId: out.openingCommentId }, 201)
 })
 
 /** Multipart (voice) create: shape the anchor fields from the FormData (element arrives as a JSON
@@ -589,8 +683,9 @@ async function createVoiceThread(c: Context<AppEnv>, site: ResolvedSite): Promis
     await deleteKeys(c.env.GLANCE_FILES, [audioKey]) // compensation: don't orphan the R2 object
     throw e
   }
+  await pushThreadCreated(c, site, fields.filePath, out.thread, out.comment)
   await notifyThreadCreated(c, site, { out, filePath: fields.filePath, snippet: body })
-  return c.json(out, 201)
+  return c.json({ threadId: out.threadId, openingCommentId: out.openingCommentId }, 201)
 }
 
 // POST — flat reply to a thread. S9c: the thread read rides the access batch (siteWithUrlThread),
@@ -605,9 +700,10 @@ comments.post('/:space/:site/comments/:threadId/replies', async (c) => {
   const raw = await c.req.json().catch(() => null)
   const body = cleanBody(raw?.body)
   if (!body) return c.json({ error: 'invalid body' }, 400)
-  const id = await addComment(c.get('db'), { threadId: thread.id, authorId: c.get('user').id, body })
-  await notifyReply(c, site, { thread, commentId: id, snippet: body, rawMentions: raw?.mentions })
-  return c.json({ id }, 201)
+  const added = await addComment(c.get('db'), { threadId: thread.id, authorId: c.get('user').id, body })
+  await pushCommentCreated(c, site, thread, added)
+  await notifyReply(c, site, { thread, commentId: added.id, snippet: body, rawMentions: raw?.mentions })
+  return c.json({ id: added.id }, 201)
 })
 
 /** Multipart (voice) reply: ingest the audio (transcript is the whole body — a reply has no anchor
@@ -618,15 +714,16 @@ async function replyVoiceComment(c: Context<AppEnv>, site: ResolvedSite, thread:
   const ingested = await ingestVoiceComment(c, form)
   if (ingested instanceof Response) return ingested
   const { commentId, audioKey, body } = ingested
-  let id: string
+  let added: Comment
   try {
-    id = await addComment(c.get('db'), { threadId: thread.id, authorId: c.get('user').id, body, commentId, audioKey })
+    added = await addComment(c.get('db'), { threadId: thread.id, authorId: c.get('user').id, body, commentId, audioKey })
   } catch (e) {
     await deleteKeys(c.env.GLANCE_FILES, [audioKey]) // compensation: don't orphan the R2 object
     throw e
   }
-  await notifyReply(c, site, { thread, commentId: id, snippet: body })
-  return c.json({ id }, 201)
+  await pushCommentCreated(c, site, thread, added)
+  await notifyReply(c, site, { thread, commentId: added.id, snippet: body })
+  return c.json({ id: added.id }, 201)
 }
 
 // PATCH — resolve / reopen a thread (owner or superadmin only). S9c fused pre-write batch; the
