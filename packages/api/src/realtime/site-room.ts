@@ -35,6 +35,12 @@ import { type Channel, TOKEN_HEADER, parseChannel } from './protocol'
  *  snapshot of its verified claims, so a leaked attachment cannot be replayed as a credential. */
 export type SocketAuth = { subject: string; owner: string; exp: number; caps: DataCapability[] }
 
+/** How long one `typing` ping keeps an indicator alive on the receiving page. It rides the wire as
+ *  an ABSOLUTE `expiresAt` so the receiver forgets it on its own clock — the room schedules nothing
+ *  (rule 2). Longer than the send cap the composer will apply, or a viewer who never stops typing
+ *  would flicker between pings. */
+const TYPING_TTL_MS = 20_000
+
 const siteTag = (siteId: string) => `site:${siteId}`
 const viewerTag = (viewerId: string) => `viewer:${viewerId}`
 const chanTag = (channel: Channel) => `chan:${channel}`
@@ -168,16 +174,25 @@ export class SiteRoom {
     return new Response(null, { status: 101, webSocket: pair[0] })
   }
 
-  /** The ONLY message the room understands is a re-auth: a data token lives 300s, and a page that
-   *  merely listens would otherwise have its socket closed out from under it. A fresh token can
-   *  only ever REFRESH the identity a socket already has — never widen or re-point it. */
+  /** TWO messages, each recognised by its own full-shape guard so a second known type never turns
+   *  the handler into a default-allow: anything that matches neither still falls through to a
+   *  no-op. `typing` is fan-out only (below); `auth` is a re-auth — a data token lives 300s, and a
+   *  page that merely listens would otherwise have its socket closed out from under it. A fresh
+   *  token can only ever REFRESH the identity a socket already has — never widen or re-point it. */
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     if (typeof message !== 'string') return
-    let msg: { type?: string; token?: string }
+    let msg: { type?: string; token?: string; threadId?: string }
     try {
       msg = JSON.parse(message)
     } catch {
       return
+    }
+    // A stop is the SAME fan-out with an already-elapsed expiry. The receiver's clock is the only
+    // clock this feature has (rule 2 — no timer in this object), so the only way to say "stop" is to
+    // say "the ping you are holding is over". Without this branch the client's stop frame wakes the
+    // room and changes nothing, which is precisely the cost the rate cap exists to avoid.
+    if ((msg?.type === 'typing' || msg?.type === 'typing.stop') && typeof msg.threadId === 'string') {
+      return this.fanOutTyping(ws, msg.threadId, msg.type === 'typing.stop')
     }
     if (msg?.type !== 'auth' || typeof msg.token !== 'string') return
     const current = decodeAttachment(ws.deserializeAttachment())
@@ -186,6 +201,57 @@ export class SiteRoom {
       return closeQuietly(ws, 1008, 'unauthorized')
     }
     ws.serializeAttachment(encodeAttachment(claimsToAuth(claims)))
+  }
+
+  /** Fan out one "still typing" ping to the OTHER comments-channel sockets on this site. It STORES
+   *  NOTHING and logs nothing — the frame is the whole feature, and a ping nobody is around to
+   *  receive simply evaporates.
+   *
+   *  Attribution is read from the socket's ATTACHMENT — the subject this DO verified at upgrade and
+   *  re-verifies on every re-auth. Nothing but `threadId` is ever read out of the payload: a
+   *  client-supplied viewer id would make "Riya is replying…" claimable by anyone with a socket. */
+  private fanOutTyping(ws: WebSocket, threadId: string, stop = false): void {
+    const now = Date.now()
+    const nowSec = Math.floor(now / 1000)
+    const auth = decodeAttachment(ws.deserializeAttachment())
+    // The same boundary the `auth` path enforces: an expired (or unreadable) attachment is not a
+    // weaker identity, it is NO identity — so the ping is dropped and the socket goes.
+    if (!auth || isAttachmentExpired(auth, nowSec)) {
+      closeQuietly(ws, 1008, 'unauthorized')
+      return
+    }
+
+    // Viewer-independent, so it is built ONCE — there is no cursor and nothing per-recipient here.
+    const frame = JSON.stringify({
+      channel: 'comments',
+      type: 'typing',
+      viewerId: auth.subject,
+      threadId,
+      // `0`, not `now`: an already-elapsed expiry is what a stop IS, and a constant makes it
+      // unambiguous on the receiving side rather than a millisecond race with the receiver's clock.
+      expiresAt: stop ? 0 : now + TYPING_TTL_MS,
+    })
+    // Selecting on the CHANNEL tag exactly like `broadcastComment`: a `chan:db` socket is never
+    // even a candidate for a comments frame.
+    for (const peer of this.state.getWebSockets(chanTag('comments'))) {
+      // The sender already knows it is typing; echoing it back would only make the rail filter its
+      // own id back out.
+      if (peer === ws) continue
+      const peerAuth = decodeAttachment(peer.deserializeAttachment())
+      // Close-vs-skip mirrors selectCommentRecipients (not reused: a typing ping is not a
+      // CommentEvent — no filePath, no view, and it never comes from the worker). A socket that is
+      // no longer AUTHORIZED at all is disconnected rather than quietly skipped.
+      if (!peerAuth || isAttachmentExpired(peerAuth, nowSec) || peerAuth.owner !== auth.owner) {
+        closeQuietly(peer, 1008, 'unauthorized')
+        continue
+      }
+      try {
+        peer.send(frame)
+      } catch {
+        // One dead socket must never cost the rest of the site its frame.
+        closeQuietly(peer, 1011, 'send failed')
+      }
+    }
   }
 
   async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {

@@ -20,7 +20,7 @@ import { Spinner } from '@/components/states'
 import { CommandPalette } from '@/components/CommandPalette'
 import { ViewerTopBar } from '@/components/ViewerTopBar'
 import { CommentPopover } from '@/components/review/CommentPopover'
-import { ReviewRail } from '@/components/review/ReviewRail'
+import { ReviewRail, type TypingPing } from '@/components/review/ReviewRail'
 import { ViewerSidebar } from '@/components/ViewerSidebar'
 
 // S11: the loader resolves on SITE META alone; the comments prefetch for the predicted entry file
@@ -186,8 +186,31 @@ function Viewer() {
     filePathRef.current = filePath
   }, [filePath])
 
+  // S12 — who is replying right now. A ping carries its own ABSOLUTE expiry and is never retracted
+  // (the room schedules nothing; a closed laptop just stops sending), so the rail counts it down on
+  // its own clock and nothing here has to expire anything. Keyed by VIEWER: a person types in one
+  // place at a time, so a new ping replaces that viewer's previous one — and any ping already past
+  // its expiry is dropped on the way in, so this can't grow with the length of the session.
+  const [typing, setTyping] = useState<TypingPing[]>([])
+
   const onPushed = useCallback(
-    (event: CommentEvent) => {
+    // A typing ping shares the comments socket but is not a comment event — hence the widened
+    // parameter (accepted by createCommentStream, which only ever passes the narrower one).
+    (event: CommentEvent | ({ type: 'typing' } & TypingPing)) => {
+      if (event.type === 'typing') {
+        // Destructured, never spread: ONLY these three fields cross into the rail, so a payload
+        // that also carried a display name could not get it rendered.
+        const { viewerId, threadId, expiresAt } = event
+        const now = Date.now()
+        setTyping((live) => {
+          // Dropping this viewer's previous ping is what makes a stop (expiresAt 0) work: the ping
+          // it replaces is gone, and an already-elapsed one is never added back — so the list holds
+          // live pings only and cannot grow with the length of the session.
+          const others = live.filter((p) => p.viewerId !== viewerId && p.expiresAt > now)
+          return expiresAt > now ? [...others, { viewerId, threadId, expiresAt }] : others
+        })
+        return
+      }
       // The fold goes THROUGH the arbiter rather than straight to setThreads: a push landing while a
       // list read is unsettled must be applied to the list that read returns (applying it now would
       // paint it onto a list the settle is about to replace — the comment would vanish). Only the
@@ -228,6 +251,12 @@ function Viewer() {
   // else still reads: resolve/reopen/delete are never pushed (ruled decision 5), and with no live
   // socket (the redial gap, or realtime unavailable) the read is the only way the author ever sees
   // their own write. Returned so a mutation flow can keep its composer busy until the list lands.
+  // Stable across renders so ReviewRail's own memoized children don't churn: the stream itself is
+  // held in a ref precisely because it is replaced on redial, and neither of these should change
+  // identity when it is.
+  const sendTyping = useCallback((threadId: string) => streamRef.current?.sendTyping(threadId), [])
+  const sendTypingStop = useCallback((threadId: string) => streamRef.current?.sendTypingStop(threadId), [])
+
   const refreshUnlessPushed = useCallback(
     (fp: string, pushed: boolean) => (pushed && streamRef.current?.connected() ? Promise.resolve() : refresh(fp)),
     [refresh],
@@ -637,6 +666,12 @@ function Viewer() {
             // a resolve has no push and must keep it or it would be invisible until reload.
             onChanged={({ pushed }) => filePath && void refreshUnlessPushed(filePath, pushed)}
             onFocusAnchor={scrollAnchor}
+            typing={typing}
+            // The send side. `sendTyping` does its own 15s-per-thread rate cap (S11) — every
+            // keystroke calls it and all but one is swallowed there, so the composer needs no timer
+            // and no state of its own. With no live socket both are silent no-ops.
+            onTyping={sendTyping}
+            onTypingStop={sendTypingStop}
             onClose={closeRail}
             onStartComment={startPageComment}
             getCurrentTime={isAudio ? getCurrentTime : undefined}

@@ -18,10 +18,22 @@ export function ThreadCard({
   thread,
   onChanged,
   onFocusAnchor,
+  typing,
+  onTyping,
+  onTypingStop,
 }: {
   site: ViewerSite
   me: Me | null
   thread: Thread
+  // The other direction of `typing`: THIS viewer is composing a reply here. Optional, like `typing`
+  // itself — a rail with no socket behind it simply never pings, so no component test needs them.
+  onTyping?: () => void
+  onTypingStop?: () => void
+  // Someone is replying to THIS thread right now (S12), or null/undefined when nobody is. `name` is
+  // null when the rail could not match the ping's viewer id to one of this thread's participants —
+  // the wire carries no name, so an unrecognised id renders as "Someone" and never as a name the
+  // sender chose.
+  typing?: { name: string | null } | null
   // `pushed` says whether the room fans THIS change back to us over the comments socket (S9): a
   // reply is pushed, resolve/reopen/delete are not (ruled decision 5). The caller needs the
   // distinction to know whether its refetch is the only thing that will ever show the change.
@@ -181,6 +193,10 @@ export function ThreadCard({
         ))}
       </ul>
 
+      {typing && (
+        <p className="mt-2 text-muted-foreground text-xs italic">{`${typing.name ?? 'Someone'} is replying…`}</p>
+      )}
+
       {replying ? (
         <div className="mt-3">
           <Composer
@@ -188,7 +204,14 @@ export function ThreadCard({
             placeholder="Reply…"
             submitLabel="Reply"
             loadMentions={() => comments.mentionable(site)}
-            onCancel={() => setReplying(false)}
+            onTyping={onTyping}
+            onTypingStop={onTypingStop}
+            onCancel={() => {
+              // Closing the composer is as much a stop as blurring it: the draft is gone, so a peer
+              // left showing "…is replying" would be waiting on something that no longer exists.
+              onTypingStop?.()
+              setReplying(false)
+            }}
             onSubmit={async (body, mentions) => {
               await run(() => comments.reply(site, thread.id, body, mentions), true)
               setReplying(false)

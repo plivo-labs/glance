@@ -2,11 +2,11 @@
 // so asking to reveal the SAME thread a second time was silently a no-op. It's now keyed on a
 // caller-bumped NONCE (lib/viewerCommands' shouldReveal) — same id + bumped nonce reveals again,
 // unchanged nonce across a re-render does not.
-import { describe, expect, spyOn, test } from 'bun:test'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import type { Thread } from '@/lib/comments'
+import { describe, expect, jest, spyOn, test } from 'bun:test'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import type { CommentItem, Thread } from '@/lib/comments'
 import type { Me, ViewerSite } from '@/lib/types'
-import { ReviewRail } from './ReviewRail'
+import { ReviewRail, type TypingPing } from './ReviewRail'
 
 const SITE: ViewerSite = {
   id: 's1',
@@ -140,6 +140,81 @@ describe('ReviewRail — the page-comment trigger (#112)', () => {
     const empty = screen.getByText(/Add a comment above/)
     expect(empty.textContent).not.toContain('select text')
     expect(empty.textContent).toContain('timestamp')
+  })
+})
+
+// S12 / C22 — "X is replying…". The wire carries a VIEWER ID and an ABSOLUTE expiry, nothing else:
+// the rail maps the id to a name it already had (the thread's own participants) and forgets the
+// ping on its OWN clock, because a closed laptop just stops pinging and no retraction is ever sent.
+describe('ReviewRail — the typing indicator (C22)', () => {
+  const riya: CommentItem = {
+    id: 'c1',
+    authorId: 'u2',
+    author: 'Riya',
+    body: 'the axis label is cropped',
+    deleted: false,
+    reactions: [],
+    createdAt: '2024-01-01',
+    editedAt: null,
+  }
+  const THREADS = [mkThread({ id: 't1', comments: [riya] }), mkThread({ id: 't2' })]
+
+  function renderTyping(typing: TypingPing[], threads: Thread[] = THREADS) {
+    return render(
+      <ReviewRail
+        site={SITE}
+        me={ME}
+        threads={threads}
+        composing={null}
+        onCancelComposer={() => {}}
+        onCreate={() => {}}
+        onCreateVoice={() => {}}
+        onChanged={() => {}}
+        onFocusAnchor={() => {}}
+        onClose={() => {}}
+        onStartComment={() => {}}
+        focusRequest={null}
+        typing={typing}
+      />,
+    )
+  }
+
+  /** A card's text, as a string — never a node assertion: a failing node comparison pretty-prints
+   *  the whole React-attached happy-dom tree (the S9 incident: 66 MB and no verdict). */
+  const cardText = (id: string) => document.getElementById(`thread-${id}`)?.textContent ?? `no card ${id}`
+
+  test('a ping names the typist from the thread’s OWN participants, and touches no other card', () => {
+    renderTyping([{ viewerId: 'u2', threadId: 't1', expiresAt: Date.now() + 20_000 }])
+
+    expect(cardText('t1')).toContain('Riya is replying…')
+    // The event names ONE thread; every other card is untouched by it.
+    expect(cardText('t2')).not.toContain('replying')
+  })
+
+  test('an id the rail does not recognise is "Someone", never a name it happens to have', () => {
+    // u9 has never written in t1, so the rail has no name for it. The only names in reach are the
+    // thread's own participants — rendering one of THOSE would make "Riya is replying…" claimable
+    // by anyone with a socket, which is the whole reason the wire carries an id and nothing else.
+    renderTyping([{ viewerId: 'u9', threadId: 't1', expiresAt: Date.now() + 20_000 }])
+
+    expect(cardText('t1')).toContain('Someone is replying…')
+    expect(cardText('t1')).not.toContain('Riya is replying…')
+  })
+
+  test('the indicator expires on the LOCAL clock — no second message, no server timer', () => {
+    // The closed-laptop case: the sender stops pinging and NOTHING else ever arrives. Only this
+    // rail's own timer can take the line down.
+    jest.useFakeTimers()
+    try {
+      renderTyping([{ viewerId: 'u2', threadId: 't1', expiresAt: Date.now() + 20_000 }])
+      expect(cardText('t1')).toContain('Riya is replying…')
+
+      act(() => void jest.advanceTimersByTime(20_000))
+
+      expect(cardText('t1')).not.toContain('replying')
+    } finally {
+      jest.useRealTimers()
+    }
   })
 })
 

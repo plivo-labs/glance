@@ -129,11 +129,16 @@ class FakeSocket {
   onmessage: ((e: { data: unknown }) => void) | null = null
   onclose: (() => void) | null = null
   closed = false
+  /** Rail → room: what this viewer actually put on the wire (typing pings, S11). */
+  sent: string[] = []
   constructor(
     readonly url: string,
     readonly protocols: string[],
   ) {
     sockets.push(this)
+  }
+  send(data: string) {
+    this.sent.push(data)
   }
   close() {
     this.closed = true
@@ -809,6 +814,86 @@ describe('viewer wiring — pushed comment events (S9)', () => {
         return s
       })
       expect(redialled.url).toBe(`${window.location.origin.replace(/^http/, 'ws')}/api/sites/sp/other/comments/socket`)
+    } finally {
+      list.mockRestore()
+    }
+  })
+
+  // S12 / C22 — a typing ping rides the SAME socket as the comment events above, but it is not a
+  // list change: it names a viewer and a thread, and the rail counts its expiry down locally.
+  // THREADS' cards carry no comments, so u9 is an id this rail cannot put a name to — and the name
+  // the payload offers must never be how it gets one, or "Riya is replying…" becomes claimable by
+  // anyone with a socket.
+  test('a typing ping renders on its thread — and a name in the PAYLOAD is never used', async () => {
+    const cardText = (id: string) => document.getElementById(`thread-${id}`)?.textContent ?? `no card ${id}`
+    const list = spyOn(comments, 'list').mockResolvedValue(THREADS)
+    try {
+      const { socket } = await mounted(list)
+
+      await pushFrame(socket, {
+        type: 'typing',
+        viewerId: 'u9',
+        threadId: 't1',
+        expiresAt: Date.now() + 20_000,
+        viewerName: 'Riya',
+      })
+
+      // Asserted straight after the act(), not through waitFor: the frame renders synchronously, and
+      // a waitFor that times out red dumps the whole rendered tree into the failure.
+      expect(cardText('t1')).toContain('Someone is replying…')
+      expect(cardText('t1')).not.toContain('Riya')
+      expect(cardText('t2')).not.toContain('replying')
+      expect(list).not.toHaveBeenCalled() // a ping says nothing about the list, so nothing re-reads it
+    } finally {
+      list.mockRestore()
+    }
+  })
+
+  // One viewer is in ONE place at a time, so their newer ping replaces the older one rather than
+  // adding to it. Without that, moving between threads leaves "…is replying" behind on every thread
+  // that viewer ever touched, all of them true-looking and none of them current.
+  test('a viewer’s newer ping REPLACES their older one — an indicator never piles up', async () => {
+    const cardText = (id: string) => document.getElementById(`thread-${id}`)?.textContent ?? `no card ${id}`
+    const list = spyOn(comments, 'list').mockResolvedValue(THREADS)
+    try {
+      const { socket } = await mounted(list)
+      const ping = (threadId: string, expiresAt: number) =>
+        pushFrame(socket, { type: 'typing', viewerId: 'u9', threadId, expiresAt })
+
+      await ping('t1', Date.now() + 20_000)
+      await ping('t2', Date.now() + 20_000) // same viewer, moved to the other thread
+
+      expect(cardText('t2')).toContain('is replying…')
+      expect(cardText('t1')).not.toContain('replying')
+
+      // …and a stop (the server says "over" as an already-elapsed expiry) clears the last one.
+      await ping('t2', 0)
+      expect(cardText('t2')).not.toContain('replying')
+    } finally {
+      list.mockRestore()
+    }
+  })
+
+  // The send half, end to end: keystroke -> Composer.onTyping -> ReviewRail -> viewer -> the socket.
+  // Every piece of this existed and was unit-tested while NOTHING connected them — the composer's
+  // props were optional and no caller passed them, so the whole feature was unreachable and green.
+  test('typing a reply puts a typing frame on the socket, and blurring the composer takes it back', async () => {
+    const list = spyOn(comments, 'list').mockResolvedValue(THREADS)
+    try {
+      const { socket } = await mounted(list)
+      const card = within(document.getElementById('thread-t1') as HTMLElement)
+
+      fireEvent.click(card.getByRole('button', { name: 'Reply' }))
+      const box = card.getByRole('textbox')
+      fireEvent.change(box, { target: { value: 'typing a reply…' } })
+
+      expect(socket.sent).toEqual([JSON.stringify({ type: 'typing', threadId: 't1' })])
+
+      fireEvent.blur(box)
+      expect(socket.sent).toEqual([
+        JSON.stringify({ type: 'typing', threadId: 't1' }),
+        JSON.stringify({ type: 'typing.stop', threadId: 't1' }),
+      ])
     } finally {
       list.mockRestore()
     }

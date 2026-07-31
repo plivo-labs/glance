@@ -20,6 +20,7 @@ export type CommentStreamSite = { spaceSlug: string; siteSlug: string }
 /** Only what the rail uses — so a test can stand in for a real socket. */
 export type CommentStreamSocket = {
   close: () => void
+  send: (data: string) => void
   onopen: (() => void) | null
   onmessage: ((e: { data: unknown }) => void) | null
   onclose: (() => void) | null
@@ -27,6 +28,11 @@ export type CommentStreamSocket = {
 
 const WS_PROTOCOL = 'glance.db.v1'
 const RECONNECT_MS = 3000
+/** The whole cost control for the send half: every inbound message WAKES the Durable Object, so an
+ *  uncapped keystroke stream is the bill. One ping per thread per window, no matter how fast the
+ *  typing. It lives here rather than in the composer so no caller can forget it — and it is shorter
+ *  than the room's TYPING_TTL_MS (20s), or a viewer who never stops typing would flicker. */
+const TYPING_MIN_INTERVAL_MS = 15_000
 
 export type CommentStream = {
   dispose: () => void
@@ -35,6 +41,12 @@ export type CommentStream = {
    *  is what replaces it, so a viewer in the redial gap must keep refetching or it stops seeing its
    *  own writes. */
   connected: () => boolean
+  /** "I am still typing in this thread" — call it on EVERY keystroke; the rail drops all but one
+   *  per TYPING_MIN_INTERVAL_MS per thread. */
+  sendTyping: (threadId: string) => void
+  /** "I stopped" — blur and submit. Never rate-capped (there is at most one per compose) and never
+   *  sent for a thread this rail never pinged. */
+  sendTypingStop: (threadId: string) => void
 }
 
 export function createCommentStream(
@@ -49,6 +61,8 @@ export function createCommentStream(
   let redialTimer: ReturnType<typeof setTimeout> | null = null
   let dials = 0
   let open = false
+  /** threadId → when this rail last actually PUT a typing ping on the wire for it. */
+  const lastTypingAt = new Map<string, number>()
 
   /** Never lets a throwing consumer callback take the socket's event loop down with it. */
   function safely(fn: () => void): void {
@@ -105,15 +119,46 @@ export function createCommentStream(
     }, reconnectMs)
   }
 
+  /** One frame out, or nothing. There is no queue: the socket is closed for the whole redial gap
+   *  (and the 300s server-side close is routine), and a typing ping is worthless by the time a
+   *  later socket could flush it — buffering keystrokes would only grow without bound and then
+   *  deliver a lie. Returns whether the frame actually left. */
+  function post(frame: object): boolean {
+    if (disposed || !open || !socket) return false
+    try {
+      socket.send(JSON.stringify(frame))
+      return true
+    } catch {
+      // A socket that rejects a send is already gone — onclose (and the redial) handles it.
+      return false
+    }
+  }
+
   dial()
 
   return {
     connected: () => open,
+    sendTyping(threadId) {
+      const now = Date.now()
+      const last = lastTypingAt.get(threadId)
+      if (last !== undefined && now - last < TYPING_MIN_INTERVAL_MS) return
+      // The window opens only on a ping that was really SENT: a keystroke swallowed by a closed
+      // socket must not silence the first one that could have gone out.
+      if (post({ type: 'typing', threadId })) lastTypingAt.set(threadId, now)
+    },
+    sendTypingStop(threadId) {
+      // Nothing was ever announced for this thread (a composer opened and abandoned without a
+      // keystroke), so there is nothing to take back — and waking the object to say so is exactly
+      // the cost this slice exists to avoid.
+      if (!lastTypingAt.delete(threadId)) return
+      post({ type: 'typing.stop', threadId })
+    },
     dispose() {
       disposed = true
       open = false
       if (redialTimer) clearTimeout(redialTimer)
       redialTimer = null
+      lastTypingAt.clear()
       const ws = socket
       socket = null
       ws?.close()

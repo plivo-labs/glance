@@ -1,4 +1,4 @@
-import { describe, expect, spyOn, test } from 'bun:test'
+import { afterEach, describe, expect, setSystemTime, spyOn, test } from 'bun:test'
 import { createCommentStream } from './commentStream'
 
 // S8: the transport that feeds S7's applyCommentEvent. Unlike dbBroker.ts's socket half, this
@@ -17,12 +17,17 @@ class FakeSocket {
   onmessage: ((e: { data: unknown }) => void) | null = null
   onclose: (() => void) | null = null
   closed = false
+  /** Rail → server: every frame this socket was asked to send, in order. */
+  sent: string[] = []
   constructor(
     readonly url: string,
     readonly protocols: string[],
   ) {}
   close() {
     this.closed = true
+  }
+  send(data: string) {
+    this.sent.push(data)
   }
   /** Server → rail: one pushed frame. */
   emit(data: unknown) {
@@ -271,6 +276,139 @@ describe('createCommentStream connected()', () => {
     const { stream, sockets } = makeStream()
     sockets[0].onopen?.()
     stream.dispose()
+    expect(stream.connected()).toBe(false)
+  })
+})
+
+// C21 is the cost model, so it IS a test. Every inbound message wakes the Durable Object, so an
+// uncapped keystroke stream is the bill: the rail — not the composer — is where the cap lives, so
+// no caller can forget it.
+describe('createCommentStream sendTyping()', () => {
+  afterEach(() => setSystemTime())
+
+  test('C21: continuous typing sends at most ONE "still typing" per 15s per thread', () => {
+    setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+    const { stream, sockets } = makeStream()
+    sockets[0].onopen?.()
+    // A fast typist inside one 15s window: 40 keystrokes, one frame.
+    for (let i = 0; i < 40; i++) stream.sendTyping('t1')
+    expect(sockets[0].sent).toEqual([JSON.stringify({ type: 'typing', threadId: 't1' })])
+
+    // Still inside the window at 14.999s — the second ping is not due yet.
+    setSystemTime(new Date('2026-01-01T00:00:14.999Z'))
+    stream.sendTyping('t1')
+    expect(sockets[0].sent).toHaveLength(1)
+
+    // The window elapses and the next keystroke pings again — the indicator must not go stale
+    // under a viewer who never stopped typing.
+    setSystemTime(new Date('2026-01-01T00:00:15.000Z'))
+    stream.sendTyping('t1')
+    expect(sockets[0].sent).toHaveLength(2)
+  })
+})
+
+describe('createCommentStream sendTyping() — the rest of C21', () => {
+  afterEach(() => setSystemTime())
+
+  test('C21: two DIFFERENT threads each get their own 15s budget', () => {
+    setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+    const { stream, sockets } = makeStream()
+    sockets[0].onopen?.()
+    // A reply composer open on t1 must not silence the one on t2 — the cap is per thread, and the
+    // room's indicator is per thread too.
+    stream.sendTyping('t1')
+    stream.sendTyping('t2')
+    stream.sendTyping('t1')
+    stream.sendTyping('t2')
+    expect(sockets[0].sent).toEqual([
+      JSON.stringify({ type: 'typing', threadId: 't1' }),
+      JSON.stringify({ type: 'typing', threadId: 't2' }),
+    ])
+  })
+
+  test('C21: a stop is sent on blur and on submit — and it reopens the budget so the next keystroke pings', () => {
+    setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+    const { stream, sockets } = makeStream()
+    sockets[0].onopen?.()
+    stream.sendTyping('t1')
+    stream.sendTypingStop('t1') // blur
+    // Not rate-capped and not deferred: "I stopped" is what takes the indicator down early, and
+    // there is at most one per compose.
+    expect(sockets[0].sent).toEqual([
+      JSON.stringify({ type: 'typing', threadId: 't1' }),
+      JSON.stringify({ type: 'typing.stop', threadId: 't1' }),
+    ])
+    // Refocus and type again inside the same 15s: the peer was told the typing ENDED, so the next
+    // keystroke must say it started again rather than wait out a window nobody can see.
+    stream.sendTyping('t1')
+    expect(sockets[0].sent).toHaveLength(3)
+    expect(sockets[0].sent[2]).toBe(JSON.stringify({ type: 'typing', threadId: 't1' }))
+    stream.sendTypingStop('t1') // submit
+    expect(sockets[0].sent).toHaveLength(4)
+  })
+
+  test('C21: a stop for a thread this rail never pinged sends nothing — a blur is not a message', () => {
+    const { stream, sockets } = makeStream()
+    sockets[0].onopen?.()
+    // Opening a composer, clicking away, and never typing wakes the object for nothing.
+    stream.sendTypingStop('t1')
+    expect(sockets[0].sent).toEqual([])
+  })
+
+  test('a send while the socket is not open is a silent no-op — the redial gap neither throws nor queues', async () => {
+    const { stream, sockets } = makeStream({ reconnectMs: 5 })
+    // Dialled but never opened: nothing to send on.
+    expect(() => stream.sendTyping('t1')).not.toThrow()
+    expect(sockets[0].sent).toEqual([])
+
+    sockets[0].onopen?.()
+    stream.sendTyping('t1')
+    sockets[0].onclose?.()
+    // The whole gap: 50 keystrokes, no throw, and nothing buffered to flush at the other end.
+    for (let i = 0; i < 50; i++) expect(() => stream.sendTyping('t1')).not.toThrow()
+    expect(() => stream.sendTypingStop('t1')).not.toThrow()
+    const s2 = await until('redial socket', () => sockets[1])
+    s2.onopen?.()
+    expect(s2.sent).toEqual([])
+    // …and the swallowed keystrokes did not burn the budget: the first ping on the live socket goes.
+    stream.sendTyping('t1')
+    expect(s2.sent).toEqual([JSON.stringify({ type: 'typing', threadId: 't1' })])
+    stream.dispose()
+  })
+
+  // The window opens on a ping that was really SENT, not on one that was merely attempted. The
+  // above test looks like it covers this, but its `sendTypingStop` deletes the budget entry on the
+  // way past — so the naive `lastTypingAt.set(now); post(...)` passes it. Here nothing intervenes:
+  // a keystroke swallowed by the redial gap must not silence the first one that CAN go out, or the
+  // peer sees no indicator for up to 15s after the socket comes back.
+  test('C21: a keystroke swallowed by a dead socket does not burn the 15s window', () => {
+    const { stream, sockets } = makeStream()
+    stream.sendTyping('t1') // dialled, not yet open — this one cannot go anywhere
+    expect(sockets[0].sent).toEqual([])
+
+    sockets[0].onopen?.()
+    stream.sendTyping('t1') // same millisecond, and it must still go out
+
+    expect(sockets[0].sent).toEqual([JSON.stringify({ type: 'typing', threadId: 't1' })])
+  })
+
+  test('a socket whose send() throws does not take the rail down', () => {
+    const { stream, sockets } = makeStream()
+    sockets[0].onopen?.()
+    sockets[0].send = () => {
+      throw new Error('socket is closing')
+    }
+    expect(() => stream.sendTyping('t1')).not.toThrow()
+  })
+
+  test('dispose still closes the socket and stops everything — including sends', () => {
+    const { stream, sockets } = makeStream()
+    sockets[0].onopen?.()
+    stream.dispose()
+    expect(sockets[0].closed).toBe(true)
+    stream.sendTyping('t1')
+    stream.sendTypingStop('t1')
+    expect(sockets[0].sent).toEqual([])
     expect(stream.connected()).toBe(false)
   })
 })

@@ -11,6 +11,11 @@ import { ThreadCard } from '@/components/review/ThreadCard'
 
 const byUpdatedDesc = (a: Thread, b: Thread) => b.updatedAt.localeCompare(a.updatedAt)
 
+/** One "still typing" ping, as the room fans it out (S10): the viewer it came from, the thread it
+ *  names, and an ABSOLUTE expiry. No display name — attribution is the rail's job (typistOn), so
+ *  nothing a sender could choose is ever rendered. */
+export type TypingPing = { viewerId: string; threadId: string; expiresAt: number }
+
 // Resize bounds: never narrower than the classic default, never wider than half the screen.
 export const RAIL_MIN_WIDTH = 360
 export const clampRailWidth = (width: number, viewportWidth: number): number =>
@@ -34,6 +39,9 @@ export function ReviewRail({
   onStartComment,
   getCurrentTime,
   focusRequest,
+  typing = [],
+  onTyping,
+  onTypingStop,
 }: {
   site: ViewerSite
   me: Me | null
@@ -59,6 +67,13 @@ export function ReviewRail({
   // audio view, so the type is what keeps it ungated. Text selection still composes in the
   // popover; this is the "about the page as a whole" path.
   onStartComment: () => void
+  // Live "still typing" pings from the other viewers on this site (S12). Empty by default — a rail
+  // rendered without a socket behind it simply never shows an indicator.
+  typing?: TypingPing[]
+  // The send side of the same feature, per thread. Optional for the same reason `typing` is: with no
+  // socket behind the rail there is nowhere to send, and no component test has to care.
+  onTyping?: (threadId: string) => void
+  onTypingStop?: (threadId: string) => void
   // Set only for the audio view — lets the composer's timestamp button read the player's
   // current position (via a ref, at click time) without any state/effect wiring.
   getCurrentTime?: () => number
@@ -87,6 +102,28 @@ export function ReviewRail({
   }
 
   const active = useMemo(() => threads.filter((t) => t.status === filter).sort(byUpdatedDesc), [threads, filter])
+
+  // C22 — an indicator dies on a LOCAL clock. Nothing retracts a ping: a closed laptop just stops
+  // sending, and the room schedules nothing (it would pay for a timer per typist). So the receiver
+  // counts the expiry down itself — this wakes at the earliest one still ahead and moves the rail's
+  // clock to it. It advances to `next` rather than to Date.now() so "expired is expired" holds
+  // however late the timer actually ran.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const next = Math.min(...typing.filter((p) => p.expiresAt > now).map((p) => p.expiresAt))
+    if (!Number.isFinite(next)) return // nothing live — no timer at all until the next ping arrives
+    const timer = setTimeout(() => setNow(next), Math.max(0, next - Date.now()))
+    return () => clearTimeout(timer)
+  }, [typing, now])
+
+  /** Who is replying on this thread, or null. The wire carries an ID, so the name comes from the
+   *  thread's OWN participants — the rail already had them. An id it does not recognise stays
+   *  nameless (ThreadCard renders "Someone"), because a name the payload could pick would be a name
+   *  anyone with a socket could claim. */
+  const typistOn = (t: Thread) => {
+    const ping = typing.find((p) => p.threadId === t.id && p.expiresAt > now)
+    return ping ? { name: t.comments.find((c) => c.authorId === ping.viewerId)?.author ?? null } : null
+  }
 
   // Reveal: when a requested thread arrives, switch to its status tab (so a resolved thread isn't
   // hidden by the default 'open' filter) and scroll its card into view. Guarded by NONCE, not id
@@ -214,6 +251,9 @@ export function ReviewRail({
             thread={t}
             onChanged={onChanged}
             onFocusAnchor={onFocusAnchor}
+            typing={typistOn(t)}
+            onTyping={onTyping && (() => onTyping(t.id))}
+            onTypingStop={onTypingStop && (() => onTypingStop(t.id))}
           />
         ))}
       </div>

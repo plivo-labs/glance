@@ -25,6 +25,8 @@ export function Composer({
   timestampButton,
   loadMentions,
   onDirtyChange,
+  onTyping,
+  onTypingStop,
 }: {
   placeholder: string
   submitLabel: string
@@ -48,6 +50,13 @@ export function Composer({
   // the popover reducer needs `dirty` as an input (it decides whether a new selection may re-anchor
   // an open composer), while the draft itself stays owned here.
   onDirtyChange?: (dirty: boolean) => void
+  // Reported on EVERY keystroke — the rate cap that keeps this off the Durable Object's bill lives
+  // in commentStream, so a second copy of it here would only drift. Text path only: a voice clip
+  // isn't typing.
+  onTyping?: () => void
+  // The draft stopped: blur, or a submit that actually landed. A rejected write leaves the user
+  // sitting on their text, still typing — same rule the draft itself follows.
+  onTypingStop?: () => void
 }) {
   const [body, setBody] = useState('')
   const [busy, setBusy] = useState(false)
@@ -111,6 +120,7 @@ export function Composer({
   function onBodyChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
     setBody(e.target.value)
     syncMenu(e.target.value, e.target.selectionStart)
+    onTyping?.()
   }
 
   // Same insert-at-the-caret contract as a mention, minus the token to replace: the picker is a
@@ -174,6 +184,7 @@ export function Composer({
     setBusy(true)
     try {
       await onSubmit(trimmed, activeMentionIds(trimmed))
+      onTypingStop?.()
       setBody('')
       chosen.current.clear()
       setMenu(null)
@@ -251,7 +262,10 @@ export function Composer({
           onKeyDown={onTextareaKeyDown}
           // Keep the menu in sync when the caret moves without an edit (click, arrow keys).
           onClick={(e) => syncMenu(e.currentTarget.value, e.currentTarget.selectionStart)}
-          onBlur={() => setMenu(null)}
+          onBlur={() => {
+            setMenu(null)
+            onTypingStop?.()
+          }}
           placeholder={placeholder}
           rows={3}
           className="w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none placeholder:text-muted-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
