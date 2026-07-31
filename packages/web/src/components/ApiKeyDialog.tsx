@@ -175,7 +175,10 @@ export function ApiKeyDialog({
                 Copy it now — this is the only time it’s shown. Glance stores only its hash.
               </DialogDescription>
             </DialogHeader>
-            <div className="flex items-center gap-2">
+            {/* min-w-0: this row is a grid item of DialogContent, so min-width:auto pins it to the
+                secret's min-content width (the string never wraps) and pushes Copy past the dialog
+                edge. Shrinking below that is what lets the `truncate` below actually engage. */}
+            <div className="flex min-w-0 items-center gap-2">
               <code className="flex-1 truncate rounded-md border bg-muted px-3 py-2 font-mono text-sm">
                 {minted.secret}
               </code>
