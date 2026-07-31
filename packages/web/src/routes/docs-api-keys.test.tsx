@@ -37,6 +37,17 @@ describe('docs/api-keys', () => {
     expect(text?.toLowerCase()).toContain('delete')
   })
 
+  // Every curl on this page is meant to be copy-pasteable against THIS instance — a `<origin>`
+  // placeholder creeping back in silently turns them into commands that 404 for whoever runs them.
+  test('the curl examples carry the real instance origin, not a placeholder', async () => {
+    renderDocs()
+    const blocks = (await screen.findByRole('heading', { name: 'API Keys' })).closest('div')?.parentElement
+    const text = blocks?.textContent ?? ''
+    expect(text).not.toContain('<origin>')
+    expect(text).toContain(`${window.location.origin}/api/install`)
+    expect(text).toContain(`${window.location.origin}/api/data-token/`)
+  })
+
   // The reason a script reaches for a key at all is reading/writing a page's data, and that needs
   // BOTH halves: the mint (a key is refused on the data plane) and the CRUD surface it unlocks.
   // Documenting one without the other leaves a reader stuck, so assert the pair.

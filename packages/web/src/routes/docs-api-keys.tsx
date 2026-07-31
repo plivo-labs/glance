@@ -48,6 +48,12 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 export function Component() {
+  // The reader's own instance, so every command below is copy-pasteable as-is rather than a
+  // placeholder they have to substitute. Same treatment as the install command in GettingStarted:
+  // the SPA is served FROM the app origin, so this is always the right host — and the source stays
+  // vendor-neutral for a self-hosted deploy.
+  const origin = window.location.origin
+
   return (
     <div className="mx-auto max-w-2xl">
       <div className="mb-8 flex items-center gap-2">
@@ -80,7 +86,7 @@ export function Component() {
             entirely:
           </p>
           <CodeBlock>
-            {'curl -fsSL <origin>/api/install | sh\nexport GLANCE_TOKEN=glk_...\nglance deploy ./my-site'}
+            {`curl -fsSL ${origin}/api/install | sh\nexport GLANCE_TOKEN=glk_...\nglance deploy ./my-site`}
           </CodeBlock>
           <p>
             The CLI reads its target instance from <Code>~/.glance/config.json</Code>, not from the key, so the install
@@ -111,10 +117,10 @@ export function Component() {
             The CLI is a convenience — a key is a bearer token against the same HTTP API. Send it as an{' '}
             <Code>Authorization</Code> header:
           </p>
-          <CodeBlock>{'curl -H "Authorization: Bearer $GLANCE_TOKEN" \\\n  <origin>/api/sites/mine'}</CodeBlock>
+          <CodeBlock>{`curl -H "Authorization: Bearer $GLANCE_TOKEN" \\\n  ${origin}/api/sites/mine`}</CodeBlock>
           <p>Deploying is a multipart upload, one form field per file:</p>
           <CodeBlock>
-            {`curl -X POST "<origin>/api/upload/<space>/<site>" \\
+            {`curl -X POST "${origin}/api/upload/<space>/<site>" \\
   -H "Authorization: Bearer $GLANCE_TOKEN" \\
   -F "files=@dist/index.html;filename=index.html" \\
   -F "visibility=team"`}
@@ -139,7 +145,7 @@ export function Component() {
           <CodeBlock>
             {`TOKEN=$(curl -fsS -X POST \\
   -H "Authorization: Bearer $GLANCE_TOKEN" \\
-  "<origin>/api/data-token/<space>/<site>" | jq -r .token)`}
+  "${origin}/api/data-token/<space>/<site>" | jq -r .token)`}
           </CodeBlock>
           <p>
             That token lasts <strong className="text-foreground">300 seconds</strong> — mint one per run, never bake it
@@ -171,7 +177,7 @@ export function Component() {
   -H "Authorization: Bearer $TOKEN" \\
   -H "Content-Type: application/json" \\
   -d '{"signups": 412, "mrr": 91400}' \\
-  "<origin>/api/_data/shared-metrics/today"`}
+  "${origin}/api/_data/shared-metrics/today"`}
           </CodeBlock>
           <p>
             <strong className="text-foreground">Two rules worth knowing.</strong> Reads are scoped to your own rows by
