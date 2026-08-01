@@ -456,13 +456,44 @@ export async function editComment(
 /** Soft delete: keep the row (and thread shape); body is redacted on read. Bumps the thread so
  *  the change resurfaces in the updatedAt-sorted rail. Voice asymmetry: the audio is hard-deleted
  *  (the caller fires the R2 delete), so we null `audioKey` here — the row survives redacted, but
- *  hasAudio flips false and the audio route 404s. */
+ *  hasAudio flips false and the audio route 404s.
+ *
+ *  #116 narrowed WHEN this runs: a tombstone is only worth rendering when it holds the context for
+ *  replies that are still there, so this is now the OPENING comment's delete alone. Everything else
+ *  takes `hardDeleteComment` / `deleteThread` below. */
 export async function deleteComment(db: DrizzleD1Database, threadId: string, commentId: string): Promise<void> {
   const ts = now()
   await db.batch([
     db.update(comments).set({ deletedAt: ts, audioKey: null }).where(eq(comments.id, commentId)),
     touchThread(db, threadId, ts),
   ])
+}
+
+/** Hard delete one comment: the row goes, and with it its reactions (comment_reactions.commentId
+ *  cascades). Notifications pointing at it survive — notifications.commentId is `set null`, and the
+ *  row's denormalized siteLabel/filePath/snippet keep it readable; only its deep link stops
+ *  focusing a thread. Same thread bump as the soft path, for the same reason. */
+export async function hardDeleteComment(db: DrizzleD1Database, threadId: string, commentId: string): Promise<void> {
+  await db.batch([db.delete(comments).where(eq(comments.id, commentId)), touchThread(db, threadId, now())])
+}
+
+/** Delete a whole thread — for when its last meaningful comment goes (#116 case 3). One statement:
+ *  comments.threadId cascades from comment_threads, so the thread's comments (and their reactions,
+ *  cascading again) go with it. No thread bump: there is no thread left to resurface. */
+export async function deleteThread(db: DrizzleD1Database, threadId: string): Promise<void> {
+  await db.delete(commentThreads).where(eq(commentThreads.id, threadId))
+}
+
+/** Statement: the thread's comments in the SAME order the list route assembles them (createdAt,
+ *  rowid), so `[0]` is the opening comment by the one definition the rail already renders. Id-keyed
+ *  from the URL, so it fuses into the delete route's access batch. Only what the decision needs:
+ *  identity, tombstone state, and the audio each row would orphan. */
+export function commentsByThreadStmt(db: DrizzleD1Database, threadId: string) {
+  return db
+    .select({ id: comments.id, deletedAt: comments.deletedAt, audioKey: comments.audioKey })
+    .from(comments)
+    .where(eq(comments.threadId, threadId))
+    .orderBy(comments.createdAt, sql`"comments".rowid`)
 }
 
 // --- S9c: id-keyed target-read statements for fusing into the access-facts batch. The ids come

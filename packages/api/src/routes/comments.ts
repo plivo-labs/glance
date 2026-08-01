@@ -8,10 +8,13 @@ import {
   buildCommentCreatedView,
   buildThreadCreatedView,
   commentByIdStmt,
+  commentsByThreadStmt,
   commentsWithAuthorsBySlugsStmt,
   createThread,
   deleteComment,
+  deleteThread,
   editComment,
+  hardDeleteComment,
   type ReactionRow,
   reactionsByComment,
   reactionsByCommentStmt,
@@ -756,17 +759,42 @@ comments.patch('/:space/:site/comments/:threadId/messages/:commentId', async (c)
   return c.json({ ok: true })
 })
 
-// DELETE — soft-delete a comment (author only, like edit). S9c fused pre-write batch.
+// DELETE — remove a comment (author only, like edit). S9c fused pre-write batch, now carrying the
+// thread's whole comment list: which of the three deletes this is depends on the target's place in
+// that list, and the list is id-keyed from the URL like everything else riding the batch.
+//
+// #116 — a tombstone is only worth rendering where it holds the context for replies that are still
+// there, so it stopped being the universal answer:
+//   • nothing meaningful left behind  → the THREAD goes, and its on-page highlight with it. That
+//     covers both "the opening comment was the only one" and the edge where the last live reply is
+//     deleted off an already-tombstoned opening — a thread of nothing but tombstones is the same
+//     noise, however it got there.
+//   • the target IS the opening comment  → soft delete, the one surviving tombstone case.
+//   • anything else (a reply)            → the row goes.
 comments.delete('/:space/:site/comments/:threadId/messages/:commentId', async (c) => {
-  const gate = await siteWithUrlComment(c)
+  const { threadId } = c.req.param()
+  const gate = await siteWithUrlComment(c, commentsByThreadStmt(c.get('db'), threadId))
   if (gate instanceof Response) return gate
   const { comment } = gate
   if (comment.authorId !== c.get('user').id) return c.json({ error: 'forbidden' }, 403)
-  // Capture the audio key before the delete nulls it, then hard-delete the recording off the
-  // serving path — the row survives redacted, the audio does not (documented voice asymmetry).
-  const { audioKey } = comment
-  await deleteComment(c.get('db'), comment.threadId, comment.id)
-  if (audioKey) await fireAndForget(c, deleteKeys(c.env.GLANCE_FILES, [audioKey]))
+
+  const siblings = gate.extras[0].filter((r) => r.id !== comment.id)
+  // Rows come back in the assembler's order, so the head IS the opening comment.
+  const isOpening = gate.extras[0][0]?.id === comment.id
+  const nothingLeft = siblings.every((r) => r.deletedAt !== null)
+
+  // Every recording about to lose its row, captured BEFORE the write — a soft delete nulls the key
+  // and a cascade takes the sibling rows outright, so after the write there is nothing left to read
+  // it off. Only the thread delete can orphan more than the target's own audio.
+  const audioKeys = [comment.audioKey, ...(nothingLeft ? siblings.map((r) => r.audioKey) : [])].filter(
+    (k): k is string => k !== null,
+  )
+
+  if (nothingLeft) await deleteThread(c.get('db'), comment.threadId)
+  else if (isOpening) await deleteComment(c.get('db'), comment.threadId, comment.id)
+  else await hardDeleteComment(c.get('db'), comment.threadId, comment.id)
+
+  if (audioKeys.length > 0) await fireAndForget(c, deleteKeys(c.env.GLANCE_FILES, audioKeys))
   return c.json({ ok: true })
 })
 

@@ -1,7 +1,21 @@
 import { describe, expect, test } from 'bun:test'
+import { eq } from 'drizzle-orm'
 import { Hono } from 'hono'
+import { commentReactions, comments as commentRows, notifications } from '../db/schema'
 import { requireSameOrigin } from '../middleware/auth'
-import { makeDb, makeKv, makeR2, seedComment, seedFile, seedMember, seedSite, seedSpace, seedThread, seedUser } from '../test/harness'
+import {
+  makeDb,
+  makeKv,
+  makeR2,
+  seedComment,
+  seedFile,
+  seedMember,
+  seedNotification,
+  seedSite,
+  seedSpace,
+  seedThread,
+  seedUser,
+} from '../test/harness'
 import type { AppEnv } from '../types'
 import { comments } from './comments'
 import { sites } from './sites'
@@ -171,11 +185,114 @@ describe('comments routes — auth / access / authz', () => {
     const authorDelete = await app.request(msgPath, { method: 'DELETE', headers: auth(member) }, env)
     expect(authorDelete.status).toBe(200)
 
-    // soft-delete-keeps-thread-shape: the comment row survives, body redacted.
+    // #116: that comment was the thread's only one, so there is no tombstone worth rendering and
+    // the thread goes with it. (The surviving tombstone case has its own describe below.)
     const after = await (await app.request(url('?filePath=index.html'), { headers: auth(owner) }, env)).json()
-    expect(after[0].comments).toHaveLength(1)
-    expect(after[0].comments[0].deleted).toBe(true)
-    expect(after[0].comments[0].body).toBeNull()
+    expect(after).toEqual([])
+  })
+})
+
+// #116 — a tombstone is noise unless it holds the context for replies that are still there, so it
+// stopped being what every delete leaves behind. The three outcomes are decided from the target's
+// place in its thread, so each case is driven through the real DELETE route and read back through
+// the real list route: what the rail would actually render.
+describe('comments routes — delete leaves a tombstone only where one carries meaning (#116)', () => {
+  /** A thread of `bodies`, all authored by a fresh owner who can therefore delete any of them. */
+  async function seedConversation(bodies: string[]) {
+    const ctx = await setup()
+    const { db, r2, kv } = ctx
+    const owner = await mintUser(db, kv, { id: 'owner' })
+    const { siteId } = await seedSiteWithFile(db, r2, owner)
+    const threadId = await seedThread(db, { siteId, filePath: 'index.html', createdBy: owner })
+    const ids: string[] = []
+    for (const body of bodies) ids.push(await seedComment(db, { threadId, authorId: owner, body }))
+    const del = (commentId: string) =>
+      ctx.app.request(url(`/${threadId}/messages/${commentId}`), { method: 'DELETE', headers: auth(owner) }, ctx.env)
+    const list = async () => await (await ctx.app.request(url('?filePath=index.html'), { headers: auth(owner) }, ctx.env)).json()
+    return { ...ctx, owner, threadId, ids, del, list }
+  }
+
+  test('a reply is hard-deleted — the row goes, and the rest of the thread is untouched', async () => {
+    const { ids, del, list } = await seedConversation(['the opening', 'a reply', 'another reply'])
+    expect((await del(ids[1])).status).toBe(200)
+
+    const [thread] = await list()
+    expect(thread.comments.map((c: { body: string | null }) => c.body)).toEqual(['the opening', 'another reply'])
+  })
+
+  test('the opening comment is soft-deleted while replies remain — the one surviving tombstone', async () => {
+    const { ids, del, list } = await seedConversation(['the opening', 'a reply'])
+    expect((await del(ids[0])).status).toBe(200)
+
+    const [thread] = await list()
+    expect(thread.comments).toHaveLength(2)
+    expect(thread.comments[0]).toMatchObject({ deleted: true, body: null })
+    expect(thread.comments[1]).toMatchObject({ deleted: false, body: 'a reply' })
+  })
+
+  test('the opening comment with nothing else in the thread takes the whole thread with it', async () => {
+    const { ids, del, list } = await seedConversation(['the only comment'])
+    expect((await del(ids[0])).status).toBe(200)
+    expect(await list()).toEqual([]) // thread gone ⇒ so is its on-page highlight
+  })
+
+  test('deleting the LAST reply off an already-tombstoned opening takes the thread too', async () => {
+    // The edge the rule has to name: a thread of nothing but tombstones is the same noise, however
+    // it got there. Two deletes, in the order a real conversation dies.
+    const { ids, del, list } = await seedConversation(['the opening', 'the last reply'])
+    expect((await del(ids[0])).status).toBe(200)
+    expect((await list())[0].comments).toHaveLength(2) // tombstone + reply, still worth rendering
+
+    expect((await del(ids[1])).status).toBe(200)
+    expect(await list()).toEqual([])
+  })
+
+  test('a hard-deleted comment takes its reactions and leaves its notification readable', async () => {
+    // The FK story the rule rests on: comment_reactions cascades (nothing to clean up), while
+    // notifications.commentId is `set null` — the row survives with its denormalized text, and only
+    // its deep link stops focusing a thread.
+    const { db, owner, threadId, ids, del } = await seedConversation(['the opening', 'a reply'])
+    await db.insert(commentReactions).values({ commentId: ids[1], userId: owner, emoji: '👍', createdAt: new Date().toISOString() })
+    const notificationId = await seedNotification(db, {
+      recipientId: owner,
+      threadId,
+      commentId: ids[1],
+      snippet: 'a reply',
+    })
+
+    expect((await del(ids[1])).status).toBe(200)
+
+    expect(await db.select().from(commentReactions).where(eq(commentReactions.commentId, ids[1]))).toEqual([])
+    const [note] = await db.select().from(notifications).where(eq(notifications.id, notificationId))
+    expect(note).toMatchObject({ commentId: null, threadId, snippet: 'a reply' }) // still readable
+  })
+
+  test('a thread delete sweeps the recordings on the rows it cascades away, not just the target’s', async () => {
+    // The one case that can orphan R2 objects the old route never had to name: the thread delete
+    // takes SIBLING rows with it, so their keys must be collected before the write. Reachable on a
+    // pre-W2-14 tombstone — one soft-deleted back when the delete did not null `audioKey`, so the
+    // row is redacted but its recording is still sitting in R2 under a row about to disappear.
+    const { db, r2, owner, threadId, ids, del } = await seedConversation(['the opening'])
+    await db
+      .update(commentRows)
+      .set({ deletedAt: new Date().toISOString(), audioKey: 'comment-audio/legacy.webm' })
+      .where(eq(commentRows.id, ids[0]))
+    const replyId = await seedComment(db, { threadId, authorId: owner, body: 'the last reply' })
+    await r2.put('comment-audio/legacy.webm', new Uint8Array([1]))
+    expect(r2.store.has('comment-audio/legacy.webm')).toBe(true)
+
+    // Nothing live is left behind ⇒ the thread goes, and the tombstone's audio goes with the row.
+    expect((await del(replyId)).status).toBe(200)
+    expect(r2.store.has('comment-audio/legacy.webm')).toBe(false)
+  })
+
+  test('a hard-deleted voice reply does not orphan its own recording', async () => {
+    const { db, r2, owner, threadId, del } = await seedConversation(['the opening'])
+    const replyId = await seedComment(db, { threadId, authorId: owner, body: 'transcript', audioKey: 'comment-audio/reply.webm' })
+    await r2.put('comment-audio/reply.webm', new Uint8Array([2]))
+
+    expect((await del(replyId)).status).toBe(200)
+    expect(r2.store.has('comment-audio/reply.webm')).toBe(false)
   })
 })
 
@@ -466,6 +583,9 @@ describe('comments routes — input sanitization + lifecycle guards', () => {
     const { siteId } = await seedSiteWithFile(db, r2, owner)
     const threadId = await seedThread(db, { siteId, filePath: 'index.html', createdBy: owner })
     const commentId = await seedComment(db, { threadId, authorId: owner, body: 'mine' })
+    // A reply is what keeps the delete on the SOFT path (#116) — without one the thread would go
+    // and these 404s would prove nothing about the tombstone guard.
+    await seedComment(db, { threadId, authorId: owner, body: 'still here' })
     const path = url(`/${threadId}/messages/${commentId}`)
 
     const del = await app.request(path, { method: 'DELETE', headers: auth(owner) }, env)
