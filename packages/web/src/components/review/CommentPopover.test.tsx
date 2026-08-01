@@ -65,6 +65,17 @@ describe('A2-ui — the selection chip', () => {
     expect(screen.queryByPlaceholderText('Add a comment…')).toBeNull()
   })
 
+  test('the chip advertises the C binding, without renaming itself for a screen reader', () => {
+    // The binding lives inside the content iframe, so the chip is the only place it can be
+    // discovered — it appears in no menu and no command palette (#117). The keycap must not leak
+    // into the button's accessible name, which is what every other test here selects on.
+    render(<Harness />)
+    const chip = screen.getByRole('button', CHIP)
+
+    expect(chip.querySelector('kbd')?.textContent?.trim()).toBe('C')
+    expect(screen.queryByRole('button', { name: 'Comment C' })).toBeNull()
+  })
+
   test('clicking the chip opens the popover with the quote and a Composer', () => {
     render(<Harness />)
     openComposer()
