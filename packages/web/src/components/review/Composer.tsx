@@ -327,8 +327,17 @@ export function Composer({
               <Mic className="size-3.5" />
             </Button>
           )}
-          <Button type="button" size="sm" disabled={!trimmed || busy} onClick={submit}>
+          {/* The explicit aria-label is load-bearing, not decoration: the keycap below is button
+              CONTENT, so without it the accessible name becomes "Comment ⌘↵" — for every screen
+              reader, and for the 13 `getByRole('button', {name: 'Comment'})` selectors in the
+              suite. Labelling the button pins the name to the word, whatever is rendered inside. */}
+          <Button type="button" size="sm" aria-label={submitLabel} disabled={!trimmed || busy} onClick={submit}>
             {submitLabel}
+            {/* The ⌘/Ctrl+Enter binding on the textarea above, made visible. Tinted off the primary
+                fill rather than `bg-muted` like AppShell's ⌘K, which sits on an outline button. */}
+            <kbd className="hidden rounded border border-primary-foreground/30 bg-primary-foreground/15 px-1 py-px font-mono text-[10px] text-primary-foreground/90 sm:inline">
+              ⌘↵
+            </kbd>
           </Button>
         </div>
       </div>
