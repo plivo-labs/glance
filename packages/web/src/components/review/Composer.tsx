@@ -8,6 +8,11 @@ import { formatTimestamp } from '@/lib/audio'
 import { type MentionUser, filterMentions, insertMention, mentionLabel, mentionQuery } from '@/lib/mentions'
 import { cn } from '@/lib/utils'
 
+/** One key of the submit button's shortcut hint. Sized to sit inside a `size-sm` Button without
+ *  changing its height — `py-px`, not a padding that would grow the row. */
+const KEYCAP =
+  'rounded border border-primary-foreground/30 bg-primary-foreground/15 px-1 py-px font-mono text-[10px] leading-none text-primary-foreground/90'
+
 // Shared composer for a new thread or a flat reply. Text and voice are alternative submit paths:
 // typing submits trimmed non-empty bodies via onSubmit (clears on success); the mic records a clip
 // that submits via onSubmitVoice. When `loadMentions` is set, an `@` opens an autocomplete of
@@ -333,11 +338,14 @@ export function Composer({
               suite. Labelling the button pins the name to the word, whatever is rendered inside. */}
           <Button type="button" size="sm" aria-label={submitLabel} disabled={!trimmed || busy} onClick={submit}>
             {submitLabel}
-            {/* The ⌘/Ctrl+Enter binding on the textarea above, made visible. Tinted off the primary
-                fill rather than `bg-muted` like AppShell's ⌘K, which sits on an outline button. */}
-            <kbd className="hidden rounded border border-primary-foreground/30 bg-primary-foreground/15 px-1 py-px font-mono text-[10px] text-primary-foreground/90 sm:inline">
-              ⌘↵
-            </kbd>
+            {/* The ⌘/Ctrl+Enter binding on the textarea above, made visible. ONE CAP PER PHYSICAL
+                KEY: `⌘↵` sharing a single frame reads as one unfamiliar glyph at 10px rather than
+                as two keys you press together. Tinted off the primary fill rather than `bg-muted`
+                like AppShell's ⌘K, which sits on an outline button. */}
+            <span className="hidden items-center gap-0.5 sm:inline-flex">
+              <kbd className={KEYCAP}>⌘</kbd>
+              <kbd className={KEYCAP}>↵</kbd>
+            </span>
           </Button>
         </div>
       </div>

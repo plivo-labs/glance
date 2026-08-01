@@ -127,9 +127,10 @@ describe('A — ⌘/Ctrl+Enter submits, and the button says so', () => {
     expect(onSubmit).toHaveBeenCalledTimes(0)
   })
 
-  test('the keycap is on the button but NOT in its accessible name', () => {
+  test('the keycaps are on the button but NOT in its accessible name', () => {
     const { submitButton } = renderDeferred()
-    expect(submitButton.querySelector('kbd')?.textContent?.trim()).toBe('⌘↵')
+    // One cap per physical key — two frames, not `⌘↵` sharing one.
+    expect([...submitButton.querySelectorAll('kbd')].map((k) => k.textContent?.trim())).toEqual(['⌘', '↵'])
     // The button's own aria-label is what keeps this true; without it the keycap joins the content
     // and the name becomes "Comment ⌘↵".
     expect(screen.getByRole('button', { name: 'Comment' })).toBe(submitButton)
