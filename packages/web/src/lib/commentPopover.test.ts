@@ -95,6 +95,42 @@ describe('chip activation survives the select-clear it causes', () => {
   })
 })
 
+describe('C opens the composer in exactly one state (#117)', () => {
+  test('chip showing, no composer: commentKey opens the composer on the chip — same as a click', () => {
+    const clicked = run([{ type: 'select', anchor: A, dirty: false }, { type: 'activate' }])
+    const keyed = run([{ type: 'select', anchor: A, dirty: false }, { type: 'commentKey' }])
+    expect(keyed).toEqual(clicked)
+  })
+
+  test('composer already open: inert, draft and all — the user is typing, `c` is a letter', () => {
+    for (const dirty of [false, true]) {
+      const open = run([
+        { type: 'select', anchor: A, dirty: false },
+        { type: 'activate' },
+        { type: 'select', anchor: B, dirty },
+      ])
+      expect(stepPopover(open, { type: 'commentKey' })).toBe(open) // same reference: nothing happened
+    }
+  })
+
+  test('no chip: inert — the iframe fires on its own selection, the parent may have dismissed', () => {
+    // Exactly the state Escape/click-away leaves behind while the frame's selection survives, which
+    // is why the iframe is allowed to fire liberally.
+    const dismissed = run([{ type: 'select', anchor: A, dirty: false }, { type: 'dismiss' }])
+    expect(stepPopover(dismissed, { type: 'commentKey' })).toBe(dismissed)
+    expect(run([{ type: 'commentKey' }])).toEqual(initialPopover())
+  })
+
+  test('a saving composer is still a composer: commentKey cannot mint one over an in-flight write', () => {
+    const saving = run([
+      { type: 'select', anchor: A, dirty: false },
+      { type: 'activate' },
+      { type: 'submit' },
+    ])
+    expect(stepPopover(saving, { type: 'commentKey' })).toBe(saving)
+  })
+})
+
 describe('saving(A) -> select(B) -> saveSettled(ok,A) leaves B live', () => {
   test('a settle whose id no longer matches the open composer clears saving and NOTHING else', () => {
     const savingA = run([{ type: 'select', anchor: A, dirty: false }, { type: 'activate' }, { type: 'submit' }])

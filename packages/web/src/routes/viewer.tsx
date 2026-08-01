@@ -340,6 +340,9 @@ function Viewer() {
       // Neither of these is observable from the parent: they happen inside a cross-origin document.
       else if (intent.type === 'clickAway') dispatchPopover({ type: 'clickAway', dirty: dirtyRef.current })
       else if (intent.type === 'escape') dispatchPopover({ type: 'dismiss' })
+      // Nor is a keystroke inside the frame — the reason ⌘K doesn't work there either. The reducer
+      // is the authority on whether this opens anything (#117).
+      else if (intent.type === 'commentKey') dispatchPopover({ type: 'commentKey' })
       // A click on a painted highlight — the page→rail direction. The id is looked up in OUR
       // threads (a forged one matches nothing and reveals nothing), and the rail is necessarily
       // already open, since nothing is painted while it's closed.
