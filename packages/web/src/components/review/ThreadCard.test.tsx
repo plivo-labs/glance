@@ -106,6 +106,104 @@ describe('ThreadCard — a click scrolls, and the card has no hover behaviour', 
   })
 })
 
+// The card reads as a chat, not a form: consecutive messages from one author collapse into a group
+// so the avatar/name/date row is stated once per turn instead of once per message. Four "Riya ·
+// 2 Aug" headers on four messages a minute apart was the bulk of the card's dead space.
+describe('ThreadCard — consecutive messages from one author group under one header', () => {
+  const at = (min: number) => new Date(Date.UTC(2024, 0, 1, 12, min)).toISOString()
+
+  test('a burst from one author states the author once, and still renders every message', () => {
+    renderCard({
+      comments: [
+        mkComment({ id: 'c1', body: 'yo yo', createdAt: at(0) }),
+        mkComment({ id: 'c2', body: 'this is cool?', createdAt: at(1) }),
+        mkComment({ id: 'c3', body: 'yes cool', createdAt: at(2) }),
+      ],
+    })
+    expect(screen.getAllByText('Riya')).toHaveLength(1)
+    for (const body of ['yo yo', 'this is cool?', 'yes cool']) {
+      expect(screen.getByText(body).isConnected).toBe(true)
+    }
+  })
+
+  test('a different author always starts a new header', () => {
+    renderCard({
+      comments: [
+        mkComment({ id: 'c1', createdAt: at(0) }),
+        mkComment({ id: 'c2', authorId: 'u1', author: 'U1', createdAt: at(1) }),
+        mkComment({ id: 'c3', createdAt: at(2) }),
+      ],
+    })
+    expect(screen.getAllByText('Riya')).toHaveLength(2)
+    expect(screen.getByText('You').isConnected).toBe(true) // authorId === me.id
+  })
+
+  test('a gap longer than the group window re-states who is speaking and when', () => {
+    renderCard({
+      comments: [mkComment({ id: 'c1', createdAt: at(0) }), mkComment({ id: 'c2', createdAt: at(6) })],
+    })
+    expect(screen.getAllByText('Riya')).toHaveLength(2)
+  })
+
+  test('an unparseable date breaks the group rather than guessing — the header always says who', () => {
+    renderCard({
+      comments: [mkComment({ id: 'c1', createdAt: 'not a date' }), mkComment({ id: 'c2', createdAt: 'nor this' })],
+    })
+    expect(screen.getAllByText('Riya')).toHaveLength(2)
+  })
+})
+
+// Resolve is a THREAD-level action, so it moved out of the footer (where it shared a row with Reply
+// and vanished the moment the composer opened) into the card's own header. Triage is the reason the
+// rail is open, so it must be reachable at all times — including mid-reply.
+describe('ThreadCard — resolve lives in the thread header', () => {
+  const renderOwned = (overrides: { comments?: CommentItem[]; status?: Thread['status'] } = {}) =>
+    render(
+      <ThreadCard
+        site={{ ...SITE, isOwner: true }}
+        me={ME}
+        thread={mkThread({ id: 't1', status: overrides.status ?? 'open', comments: overrides.comments ?? [] })}
+        onChanged={mock(() => {})}
+        onFocusAnchor={mock((_t: Thread) => {})}
+      />,
+    )
+
+  test('Resolve stays reachable while the reply composer is open', () => {
+    renderOwned()
+    fireEvent.click(screen.getByRole('button', { name: 'Reply' }))
+    expect(screen.getByPlaceholderText('Reply…').isConnected).toBe(true)
+    expect(screen.getByRole('button', { name: 'Resolve' }).isConnected).toBe(true)
+  })
+
+  test('a resolved thread offers Reopen instead', () => {
+    renderOwned({ status: 'resolved' })
+    expect(screen.getByRole('button', { name: 'Reopen' }).isConnected).toBe(true)
+    expect(screen.queryByRole('button', { name: 'Resolve' })).toBe(null)
+  })
+
+  test('a viewer who cannot moderate gets neither, but still gets Reply', () => {
+    renderCard() // SITE.isOwner false, ME.role member
+    expect(screen.queryByRole('button', { name: 'Resolve' })).toBe(null)
+    expect(screen.getByRole('button', { name: 'Reply' }).isConnected).toBe(true)
+  })
+})
+
+// The reply affordance is collapsed on a thread of one and pinned once the thread is a conversation
+// — but it is NEVER `display:none`, or it would drop out of the accessibility tree and off the tab
+// order, and a keyboard user could not reach it at all (hover is not available to them).
+describe('ThreadCard — the collapsed reply trigger stays reachable', () => {
+  test('a thread with no replies still exposes the reply trigger to the a11y tree', () => {
+    renderCard({ comments: [mkComment({ id: 'c1' })] })
+    // getByRole excludes anything hidden from assistive tech, so this passing IS the assertion.
+    expect(screen.getByRole('button', { name: 'Reply' }).isConnected).toBe(true)
+  })
+
+  test('the add-reaction trigger survives moving into the hover bar, on every live comment', () => {
+    renderCard({ comments: [mkComment({ id: 'c1' }), mkComment({ id: 'c2', createdAt: '2024-06-01' })] })
+    expect(screen.getAllByRole('button', { name: 'Add reaction' })).toHaveLength(2)
+  })
+})
+
 // GF — A-FAILED-WRITE-PRESERVES-THE-DRAFT, reply path. Composer's own test pins the TEXT half at the
 // component level (a rejected onSubmit keeps the draft); this pins the half ThreadCard owns: `run`
 // toasts and RETHROWS, and the reply handler awaits it, so `setReplying(false)` never runs on a
