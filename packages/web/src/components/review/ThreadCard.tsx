@@ -95,9 +95,14 @@ export function ThreadCard({
   // Every button action here (delete, resolve, reopen) is one the room does NOT push back.
   const act = (fn: () => Promise<unknown>) => () => void run(fn, false).catch(() => {})
 
+  // A thread nobody has replied to yet is a remark, not a conversation, so it does not pay for a
+  // permanently mounted reply bar (measured: that bar costs more than the chrome it replaced, and a
+  // rail is mostly threads of one). Once a thread HAS replies it is a conversation and keeps it.
+  const pinnedReply = thread.comments.length > 1
+
   return (
     // id lets a notification deep-link scroll this card into view (viewer S11).
-    <div id={`thread-${thread.id}`} className="rounded-lg border bg-card p-3 text-card-foreground">
+    <div id={`thread-${thread.id}`} className="group/card rounded-lg border bg-card p-3 text-card-foreground">
       <div className="mb-2 flex items-start justify-between gap-2">
         {thread.anchorType === 'element' && thread.anchor ? (
           <button type="button" onClick={() => onFocusAnchor(thread)} className="text-left hover:opacity-80">
@@ -121,76 +126,153 @@ export function ThreadCard({
             Page
           </span>
         )}
+
+        {/* Resolve/Reopen is a THREAD-level action, so it sits in the thread's own chrome rather
+            than under the last message. Always visible, never hover-gated: triage is the reason the
+            rail is open at all. */}
+        {canModerate &&
+          (thread.status === 'open' ? (
+            <button
+              type="button"
+              onClick={act(() => comments.setStatus(site, thread.id, 'resolved'))}
+              className="-my-0.5 flex shrink-0 items-center gap-1 rounded px-1.5 py-1 text-muted-foreground text-xs transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <Check className="size-3" />
+              Resolve
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={act(() => comments.setStatus(site, thread.id, 'open'))}
+              className="-my-0.5 flex shrink-0 items-center gap-1 rounded px-1.5 py-1 text-muted-foreground text-xs transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <RotateCcw className="size-3" />
+              Reopen
+            </button>
+          ))}
       </div>
 
-      <ul className="flex flex-col gap-2">
-        {thread.comments.map((c) => (
-          <li key={c.id} className="group text-sm">
-            <div className="flex items-center gap-2 text-muted-foreground text-xs">
-              <UserAvatar userId={c.authorId} name={c.author} className="size-5" fallbackClassName="text-[0.6rem]" />
-              <span className="font-medium text-foreground">{c.authorId === me?.id ? 'You' : (c.author ?? 'Reviewer')}</span>
-              <span>{fmt(c.createdAt)}</span>
-              {c.hasAudio && !c.deleted && (
-                <Badge variant="secondary" className="gap-1 px-1.5 py-0 font-medium">
-                  <Mic className="size-2.5" />
-                  Voice
-                </Badge>
-              )}
-              {c.editedAt && !c.deleted && <span>(edited)</span>}
-              {!c.deleted && c.authorId === me?.id && (
-                <button
-                  type="button"
-                  onClick={act(() => comments.remove(site, thread.id, c.id))}
-                  className="ml-auto opacity-0 transition-opacity group-hover:opacity-100"
-                  aria-label="Delete comment"
-                >
-                  <Trash2 className="size-3.5 text-muted-foreground hover:text-destructive" />
-                </button>
-              )}
-            </div>
-            <p className={c.deleted ? 'text-muted-foreground italic' : 'whitespace-pre-wrap'}>
-              {c.deleted ? 'comment deleted' : c.body}
-            </p>
-            {/* Voice comment: the transcript above stays always-visible; the recording plays from
-                the auth-gated audio route (deleted comments lose hasAudio, so they never reach here). */}
-            {c.hasAudio && !c.deleted && (
-              <div className="mt-1.5 rounded-md border bg-muted/40 px-2.5 py-1.5">
-                <AudioPlayer compact src={`/api/sites/${site.spaceSlug}/${site.siteSlug}/comments/audio/${c.id}`} />
-              </div>
-            )}
-            <div className="mt-1.5 flex flex-wrap items-center gap-1">
-              {reactionsOf(c).map((r) => (
-                <button
-                  key={r.emoji}
-                  type="button"
-                  // A toggle, so it announces as one: pressed IS `mine`, which is the same fact the
-                  // filled chip shows sighted users.
-                  aria-pressed={r.mine}
-                  aria-label={`${r.emoji} ${r.count}`}
-                  onClick={toggle(c, r.emoji, r.mine)}
-                  className={cn(
-                    'flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs transition-colors',
-                    r.mine
-                      ? 'border-primary/40 bg-primary/10 text-foreground'
-                      : 'border-transparent bg-muted text-muted-foreground hover:bg-muted/70',
-                  )}
-                >
-                  {r.emoji}
-                  <span className="tabular-nums">{r.count}</span>
-                </button>
-              ))}
-              {/* No add trigger on a soft-deleted comment: the server 404s a new reaction there, so
-                  offering one would only produce a toast. The chips it already carries stay. */}
+      <ul className="flex flex-col">
+        {thread.comments.map((c, i) => {
+          // Consecutive messages from one author collapse into a group: only the first carries the
+          // avatar/name/date, the rest indent to the same text column. Four "You · 2 Aug" headers on
+          // four messages sent a minute apart is the bulk of what made this card read as a form.
+          const head = startsGroup(thread.comments[i - 1], c)
+          // Still worth a row on a follow-up: both say something about THAT message, not its author.
+          const meta = head || (!c.deleted && (c.hasAudio || !!c.editedAt))
+          return (
+            <li key={c.id} className="group/msg relative rounded-md py-0.5 text-sm hover:bg-muted/40">
+              {/* Rest state is empty: opacity, never `hidden`, so the controls stay in the
+                  accessibility tree and stay tab-reachable — focus-within brings them up for anyone
+                  not using a mouse.
+                  Tailwind compiles group-hover under `@media (hover:hover)`, so on a touch device
+                  the bar would never appear and the emoji picker (which used to be a permanent chip)
+                  would be unreachable. Where there is no hover, it is simply always on — the same
+                  deal touch users get today, minus the desktop clutter. */}
               {!c.deleted && (
-                <EmojiPicker
-                  label="Add reaction"
-                  className="size-6 rounded-full border-dashed px-0 text-muted-foreground"
-                  onPick={(emoji) => toggle(c, emoji, false)()}
-                />
+                <div className="absolute -top-2 right-1 z-10 flex items-center gap-0.5 rounded-md border bg-popover p-0.5 opacity-0 shadow-sm transition-opacity focus-within:opacity-100 group-hover/msg:opacity-100 [@media(hover:none)]:opacity-100">
+                  <EmojiPicker
+                    label="Add reaction"
+                    className="size-6 rounded px-0 text-muted-foreground"
+                    onPick={(emoji) => toggle(c, emoji, false)()}
+                  />
+                  {c.authorId === me?.id && (
+                    <button
+                      type="button"
+                      onClick={act(() => comments.remove(site, thread.id, c.id))}
+                      className="flex size-6 items-center justify-center rounded hover:bg-muted"
+                      aria-label="Delete comment"
+                    >
+                      <Trash2 className="size-3.5 text-muted-foreground hover:text-destructive" />
+                    </button>
+                  )}
+                </div>
               )}
-            </div>
-          </li>
-        ))}
+
+              <div className="grid grid-cols-[20px_1fr] gap-2">
+                <div className="pt-0.5">
+                  {head ? (
+                    <UserAvatar
+                      userId={c.authorId}
+                      name={c.author}
+                      className="size-5"
+                      fallbackClassName="text-[0.6rem]"
+                    />
+                  ) : (
+                    // The gutter a grouped message frees up: the time it was sent, on hover, where
+                    // the avatar would have been.
+                    <span className="block text-center text-[0.6rem] text-muted-foreground opacity-0 transition-opacity group-hover/msg:opacity-100">
+                      {fmtTime(c.createdAt)}
+                    </span>
+                  )}
+                </div>
+
+                <div className="min-w-0">
+                  {meta && (
+                    <div className="flex items-baseline gap-2 text-muted-foreground text-xs">
+                      {head && (
+                        <>
+                          <span className="font-medium text-foreground">
+                            {c.authorId === me?.id ? 'You' : (c.author ?? 'Reviewer')}
+                          </span>
+                          <span>{fmt(c.createdAt)}</span>
+                        </>
+                      )}
+                      {c.hasAudio && !c.deleted && (
+                        <Badge variant="secondary" className="gap-1 px-1.5 py-0 font-medium">
+                          <Mic className="size-2.5" />
+                          Voice
+                        </Badge>
+                      )}
+                      {c.editedAt && !c.deleted && <span>(edited)</span>}
+                    </div>
+                  )}
+                  <p className={c.deleted ? 'text-muted-foreground italic' : 'whitespace-pre-wrap'}>
+                    {c.deleted ? 'comment deleted' : c.body}
+                  </p>
+                  {/* Voice comment: the transcript above stays always-visible; the recording plays
+                      from the auth-gated audio route (deleted comments lose hasAudio, so they never
+                      reach here). */}
+                  {c.hasAudio && !c.deleted && (
+                    <div className="mt-1.5 rounded-md border bg-muted/40 px-2.5 py-1.5">
+                      <AudioPlayer
+                        compact
+                        src={`/api/sites/${site.spaceSlug}/${site.siteSlug}/comments/audio/${c.id}`}
+                      />
+                    </div>
+                  )}
+                  {/* Only when there are chips to show. The add trigger moved into the hover bar, so
+                      a comment nobody reacted to now costs nothing here instead of a permanent
+                      dashed circle — the single biggest source of dead space on this card. */}
+                  {reactionsOf(c).length > 0 && (
+                    <div className="mt-1 flex flex-wrap items-center gap-1">
+                      {reactionsOf(c).map((r) => (
+                        <button
+                          key={r.emoji}
+                          type="button"
+                          // A toggle, so it announces as one: pressed IS `mine`, which is the same
+                          // fact the filled chip shows sighted users.
+                          aria-pressed={r.mine}
+                          aria-label={`${r.emoji} ${r.count}`}
+                          onClick={toggle(c, r.emoji, r.mine)}
+                          className={cn(
+                            'flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs transition-colors',
+                            r.mine
+                              ? 'border-primary/40 bg-primary/10 text-foreground'
+                              : 'border-transparent bg-muted text-muted-foreground hover:bg-muted/70',
+                          )}
+                        >
+                          {r.emoji}
+                          <span className="tabular-nums">{r.count}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </li>
+          )
+        })}
       </ul>
 
       {typing && (
@@ -223,36 +305,41 @@ export function ThreadCard({
           />
         </div>
       ) : (
-        // Low-emphasis text actions — kept quiet so the thread, not its controls, reads first.
-        // Right-aligned so the transcript/reply reads first and the controls sit out of the way.
-        <div className="mt-2 flex items-center justify-end gap-4">
-          <button
-            type="button"
-            onClick={() => setReplying(true)}
-            className="text-muted-foreground text-xs transition-colors hover:text-foreground"
-          >
-            Reply
-          </button>
-          {canModerate &&
-            (thread.status === 'open' ? (
-              <button
-                type="button"
-                onClick={act(() => comments.setStatus(site, thread.id, 'resolved'))}
-                className="flex items-center gap-1 text-muted-foreground text-xs transition-colors hover:text-foreground"
-              >
-                <Check className="size-3" />
-                Resolve
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={act(() => comments.setStatus(site, thread.id, 'open'))}
-                className="flex items-center gap-1 text-muted-foreground text-xs transition-colors hover:text-foreground"
-              >
-                <RotateCcw className="size-3" />
-                Reopen
-              </button>
-            ))}
+        // A chat's message box, collapsed. On a thread that is already a conversation it stays put;
+        // on a thread of one it takes no height until the card is hovered or focused.
+        //
+        // grid-rows 0fr→1fr, NOT `hidden`: the button has to stay in the accessibility tree and stay
+        // tab-reachable while collapsed. Focusing it is itself a focus-within on the card, so it
+        // opens as it is reached — keyboard users never have to hover to find the reply box.
+        <div
+          className={cn(
+            'grid transition-all duration-150',
+            pinnedReply
+              ? 'mt-2 grid-rows-[1fr]'
+              : // The touch clause is not optional: group-hover compiles under `@media (hover:hover)`,
+                // so without it a phone would have no way at all to open a reply on a thread of one.
+                'grid-rows-[0fr] group-focus-within/card:mt-2 group-focus-within/card:grid-rows-[1fr] group-hover/card:mt-2 group-hover/card:grid-rows-[1fr] [@media(hover:none)]:mt-2 [@media(hover:none)]:grid-rows-[1fr]',
+          )}
+        >
+          <div className="overflow-hidden">
+            <button
+              type="button"
+              // "Reply", not "Reply…": the label names the action, the ellipsis is the placeholder
+              // styling of an input this button stands in for.
+              aria-label="Reply"
+              onClick={() => setReplying(true)}
+              className="flex w-full items-center gap-2 rounded-md border bg-background/40 px-2.5 py-1.5 text-left text-muted-foreground text-xs transition-colors hover:border-foreground/20 hover:text-foreground"
+            >
+              <UserAvatar
+                userId={me?.id}
+                name={me?.name}
+                email={me?.email}
+                className="size-4"
+                fallbackClassName="text-[0.5rem]"
+              />
+              Reply…
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -262,4 +349,24 @@ export function ThreadCard({
 function fmt(iso: string): string {
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+function fmtTime(iso: string): string {
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+}
+
+/** Five minutes: long enough that a burst of messages reads as one turn, short enough that coming
+ *  back to a thread later re-states who is speaking and when. */
+const GROUP_WINDOW_MS = 5 * 60 * 1000
+
+/** Does this comment open a new group (avatar + name + date), or continue the one above it?
+ *  An unparseable date on either side breaks the group rather than guessing — the header is the
+ *  safe answer, since it always says who and when. */
+function startsGroup(prev: CommentItem | undefined, c: CommentItem): boolean {
+  if (!prev || prev.authorId !== c.authorId) return true
+  const a = Date.parse(prev.createdAt)
+  const b = Date.parse(c.createdAt)
+  if (Number.isNaN(a) || Number.isNaN(b)) return true
+  return b - a > GROUP_WINDOW_MS
 }
