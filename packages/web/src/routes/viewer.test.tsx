@@ -295,6 +295,33 @@ describe('viewer wiring — adding a comment opens the rail', () => {
   })
 })
 
+// #117 — the reducer suite pins WHEN C opens a composer; this pins that the message reaches it at
+// all. The binding lives in the iframe (the parent never sees a keystroke inside a cross-origin
+// document), so nothing but a wired postMessage path can make the composer appear here.
+describe('viewer wiring — C on a selection opens the composer (#117)', () => {
+  test('a comment-key message from the frame opens the same composer the chip click does', async () => {
+    const list = spyOn(comments, 'list').mockResolvedValue(THREADS)
+    const mentionable = spyOn(comments, 'mentionable').mockResolvedValue([])
+    try {
+      const { container } = renderViewer('/sp/site')
+      await waitFor(() => expect(container.querySelector('iframe')).not.toBeNull())
+      const { iframe, send } = armIframe(container)
+      loadIframe(iframe)
+      act(() => send({ type: 'glance:ready', filePath: 'index.html' }))
+
+      act(() => send({ type: 'glance:select', quote: 'the quoted sentence', rect: { top: 10, left: 10, width: 50, height: 12 } }))
+      expect(await screen.findByRole('button', { name: 'Comment on selection' })).not.toBeNull()
+      expect(screen.queryByRole('textbox')).toBeNull() // a chip only — select never opens a composer
+
+      act(() => send({ type: 'glance:comment-key' }))
+      expect(await screen.findByRole('textbox')).not.toBeNull()
+    } finally {
+      list.mockRestore()
+      mentionable.mockRestore()
+    }
+  })
+})
+
 // #112 — the whole bug was one wiring line here: `onStartComment={isAudio ? startPageComment :
 // undefined}`, which handed the rail its page-comment trigger only on the audio view. SITE in this
 // file is an HTML page (index.html), so this is the non-audio case the gate excluded, driven

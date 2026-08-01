@@ -16,12 +16,23 @@ export type ClearIntent = { type: 'clear' }
  *  either. Payload-free — the parent decides what (if anything) they close. */
 export type ClickAwayIntent = { type: 'clickAway' }
 export type EscapeIntent = { type: 'escape' }
+/** `C` pressed on a live selection inside the frame — "comment on this" from the keyboard. Fired
+ *  liberally by the annotate client, which cannot see the parent's popover state; the reducer
+ *  decides whether there is anything to open. */
+export type CommentKeyIntent = { type: 'commentKey' }
 /** A click that landed on a painted anchor (see annotate/reflow.ts's anchorIdAtPoint) — the page's
  *  only route back to the rail now that badges are gone. Intent-only, like every other message
  *  here: `id` is a thread id the parent looks up in its OWN loaded threads, so a forged one that
  *  matches nothing simply reveals nothing. */
 export type AnchorClickIntent = { type: 'anchorClick'; id: string }
-export type Intent = SelectIntent | ReadyIntent | ClearIntent | ClickAwayIntent | EscapeIntent | AnchorClickIntent
+export type Intent =
+  | SelectIntent
+  | ReadyIntent
+  | ClearIntent
+  | ClickAwayIntent
+  | EscapeIntent
+  | CommentKeyIntent
+  | AnchorClickIntent
 
 export type DOMRectLike = { top: number; left: number; width: number; height: number }
 
@@ -88,6 +99,8 @@ export function parseIntent(event: MessageEvent, expected: ExpectedSource): Inte
       return { type: 'clickAway' }
     case 'glance:escape':
       return { type: 'escape' }
+    case 'glance:comment-key':
+      return { type: 'commentKey' }
     case 'glance:anchor-click': {
       const id = str((data as { id?: unknown }).id)
       return id ? { type: 'anchorClick', id } : null

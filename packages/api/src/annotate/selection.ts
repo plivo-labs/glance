@@ -28,11 +28,17 @@ export type ClearMessage = { type: 'glance:select-clear' }
 export type ClickAwayMessage = { type: 'glance:click-away' }
 /** Escape pressed inside the iframe, forwarded for the same reason. */
 export type EscapeMessage = { type: 'glance:escape' }
+/** `C` pressed while a selection is live: "comment on this", the keyboard's route to what clicking
+ *  the chip does. Payload-free INTENT, deliberately fired liberally — this realm cannot see whether
+ *  the parent still has a chip on screen (it may have dismissed one on click-away or Escape while
+ *  the selection survived here), so the parent's reducer is the authority on whether it means
+ *  anything. See commentPopover.ts's 'commentKey'. */
+export type CommentKeyMessage = { type: 'glance:comment-key' }
 
 export type SelectionDeps = {
   doc: Document
   getSelection: () => Selection | null
-  emit: (msg: SelectMessage | ClearMessage | ClickAwayMessage | EscapeMessage) => void
+  emit: (msg: SelectMessage | ClearMessage | ClickAwayMessage | EscapeMessage | CommentKeyMessage) => void
 }
 
 /** Keys a keyup commits on. A BARE keyup is too wide: it would re-walk the whole document text index
@@ -45,6 +51,20 @@ const SELECTION_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown
 
 function isSelectionKey(e: KeyboardEvent): boolean {
   return SELECTION_KEYS.has(e.key) || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a')
+}
+
+/** Bare `c` only: ⌘C/^C is copy, and stealing it would break the most common thing anyone does with
+ *  a selection. Shift is allowed through — capital `C` is the same key press. */
+const isCommentKey = (e: KeyboardEvent): boolean => e.key.toLowerCase() === 'c' && !e.ctrlKey && !e.metaKey && !e.altKey
+
+/** Is the keystroke going INTO a field on the hosted page? The chip gate below is normally enough
+ *  (focusing a field collapses the page selection, which retires the chip) — but a contenteditable
+ *  reports its selection through `window.getSelection()` like any other, so there the chip and a
+ *  live cursor genuinely coexist, and `c` is a character the author is typing. */
+function isEditableTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null
+  if (!el || typeof el.tagName !== 'string') return false
+  return el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT'
 }
 
 /** Wire the capture onto `doc` and return a dispose that unwires it completely. */
@@ -96,8 +116,13 @@ export function installSelectionCapture({ doc, getSelection, emit }: SelectionDe
 
   // keydown, not keyup: Escape must reach the parent BEFORE the page's own handlers act on it. No
   // drag-commit concern here, so nothing is gained by waiting for the key to come back up.
+  //
+  // `c` rides the same handler, gated on `hadSelection` — the parent was told there is something to
+  // comment on and has not been told otherwise. That gate is what keeps this from being a key
+  // grabber: with no selection outstanding, `c` is just a letter on someone else's page.
   const onKeyDown = (e: KeyboardEvent): void => {
     if (e.key === 'Escape') emit({ type: 'glance:escape' })
+    else if (hadSelection && isCommentKey(e) && !isEditableTarget(e.target)) emit({ type: 'glance:comment-key' })
   }
 
   doc.addEventListener('pointerup', commit)

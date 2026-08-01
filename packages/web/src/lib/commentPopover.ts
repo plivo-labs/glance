@@ -30,6 +30,9 @@ export type PopoverEvent =
   | { type: 'clear' }
   /** The user clicked the chip. */
   | { type: 'activate' }
+  /** `C` pressed on a live selection inside the iframe (#117). Same outcome as 'activate' in the
+   *  one state the binding exists for, and inert everywhere else — see the case below. */
+  | { type: 'commentKey' }
   /** A pointerdown inside the iframe / outside the popover. */
   | { type: 'clickAway'; dirty: boolean }
   /** Explicit teardown: Escape or Cancel. */
@@ -67,6 +70,18 @@ export function stepPopover(state: PopoverState, event: PopoverEvent): PopoverSt
       // Clicking the chip is explicit intent to comment on THIS selection, so it mints a fresh
       // composer even when one is already open — including a dirty one, whose draft the UI drops
       // with the id change. Rule 2 shields a draft from an INCIDENTAL selection, not from a click.
+      const seq = state.seq + 1
+      return { ...state, seq, composer: { id: seq, anchor: state.chip } }
+    }
+
+    case 'commentKey': {
+      // THE binding lives in exactly one state: a chip is offered and no composer is open. The
+      // iframe fires this whenever it has a selection — it cannot see the chip, which the parent
+      // may have retired on click-away or Escape — so the narrowing happens here, in the one place
+      // that knows. Refusing it while a composer is open is what makes the binding safe rather than
+      // a keystroke thief: that is the only state in which a text field of ours has focus, and
+      // there `c` is a letter the user is typing, not a command.
+      if (state.chip === null || state.composer !== null) return state
       const seq = state.seq + 1
       return { ...state, seq, composer: { id: seq, anchor: state.chip } }
     }

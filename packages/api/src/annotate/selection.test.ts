@@ -4,6 +4,7 @@ import { findRange } from './locator'
 import {
   type ClearMessage,
   type ClickAwayMessage,
+  type CommentKeyMessage,
   type EscapeMessage,
   installSelectionCapture,
   type SelectMessage,
@@ -28,7 +29,7 @@ function setup(html = HTML) {
   const window = new Window()
   window.document.body.innerHTML = html
   const doc = window.document as unknown as Document
-  const emitted: (SelectMessage | ClearMessage | ClickAwayMessage | EscapeMessage)[] = []
+  const emitted: (SelectMessage | ClearMessage | ClickAwayMessage | EscapeMessage | CommentKeyMessage)[] = []
   let selection: Selection | null = doc.getSelection()
 
   const dispose = installSelectionCapture({
@@ -57,7 +58,15 @@ function setup(html = HTML) {
     doc.dispatchEvent(new window.KeyboardEvent(type, init as never) as unknown as Event)
   }
 
-  return { doc, window, emitted, dispose, select, collapse, detach, fire }
+  /** The same keystroke, but dispatched AT an element so the handler sees a real `target` — the
+   *  only way to ask what a key pressed inside a field on the page does. Bubbles to the document. */
+  const fireAt = (selector: string, type: string, init?: Record<string, unknown>): void => {
+    doc
+      .querySelector(selector)!
+      .dispatchEvent(new window.KeyboardEvent(type, { bubbles: true, ...init } as never) as unknown as Event)
+  }
+
+  return { doc, window, emitted, dispose, select, collapse, detach, fire, fireAt }
 }
 
 describe('installSelectionCapture — only a COMMITTED selection emits a chip intent', () => {
@@ -180,6 +189,53 @@ describe('installSelectionCapture — dismissal signals the parent cannot see fo
     fire('keydown', { key: 'Escape' })
 
     expect(emitted).toEqual([])
+  })
+})
+
+describe('installSelectionCapture — C on a live selection (#117)', () => {
+  /** Get to the one state the binding exists in: a committed selection the parent has been told about. */
+  const withSelection = (s: ReturnType<typeof setup>) => {
+    s.select('Revenue is up.')
+    s.doc.dispatchEvent(new s.window.Event('pointerup') as unknown as Event)
+    s.emitted.length = 0
+    return s
+  }
+
+  test('c emits a comment-key intent; C (shift) is the same key press', () => {
+    const { emitted, fire } = withSelection(setup())
+    fire('keydown', { key: 'c' })
+    fire('keydown', { key: 'C', shiftKey: true })
+    expect(emitted).toEqual([{ type: 'glance:comment-key' }, { type: 'glance:comment-key' }])
+  })
+
+  test('with no selection outstanding, c is just a letter on someone else’s page', () => {
+    const { emitted, fire } = setup()
+    fire('keydown', { key: 'c' })
+    expect(emitted).toEqual([])
+  })
+
+  test('a cleared selection retires the binding with the chip', () => {
+    const s = withSelection(setup())
+    s.collapse() // the clear the parent acts on
+    s.fire('keydown', { key: 'c' })
+    expect(s.emitted).toEqual([{ type: 'glance:select-clear' }])
+  })
+
+  test('⌘C / ^C stay copy — the most common thing anyone does with a selection', () => {
+    const { emitted, fire } = withSelection(setup())
+    fire('keydown', { key: 'c', metaKey: true })
+    fire('keydown', { key: 'c', ctrlKey: true })
+    fire('keydown', { key: 'c', altKey: true })
+    expect(emitted).toEqual([])
+  })
+
+  test('c typed into a contenteditable is a character, not a command', () => {
+    // The one place a page cursor and a reported selection genuinely coexist: `window.getSelection()`
+    // sees inside a contenteditable, so the chip gate alone would not save the keystroke.
+    const s = setup('<div contenteditable="true">Alpha lead in. Revenue is up. trailing words.</div>')
+    withSelection(s)
+    s.fireAt('div', 'keydown', { key: 'c' })
+    expect(s.emitted).toEqual([])
   })
 })
 

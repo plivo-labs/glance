@@ -67,8 +67,12 @@ describe('parseIntent', () => {
     expect(parseIntent(ev({ data: { type: 'glance:escape' } }), expected)).toEqual({ type: 'escape' })
   })
 
+  test('parses the comment-key intent (#117) — payload-free, like the dismissals', () => {
+    expect(parseIntent(ev({ data: { type: 'glance:comment-key' } }), expected)).toEqual({ type: 'commentKey' })
+  })
+
   test('dismissal intents are rejected on a wrong origin or wrong source, like every other intent', () => {
-    for (const type of ['glance:click-away', 'glance:escape']) {
+    for (const type of ['glance:click-away', 'glance:escape', 'glance:comment-key']) {
       expect(parseIntent(ev({ origin: 'https://evil.com', data: { type } }), expected)).toBeNull()
       expect(parseIntent(ev({ source: otherWin, data: { type } }), expected)).toBeNull()
     }
