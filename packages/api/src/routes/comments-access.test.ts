@@ -411,14 +411,28 @@ describe('comments routes — T9.5 mutations fuse target reads into the access b
     expect(writes(db)).toBe(0)
   })
 
-  test('delete: gate batch of 7, then ONLY the write batch of 2 (text comment — no R2)', async () => {
+  // #116 gave delete a branch, so it gets both arms. Its gate batch is 8, not 7: the thread's
+  // comment list rides it (id-keyed from the URL like every other fused read), because WHICH delete
+  // this is depends on the target's place in that list. Total D1 requests are unchanged either way
+  // — 3 — since the branch it feeds writes at most one batch.
+  test('delete: gate batch of 8, then ONLY the write — 3 D1 requests on both arms (text comment, no R2)', async () => {
     const { app, env, db, kv } = makeRouteApp()
     const owner = await mintUser(db, kv, 'owner')
     const { threadId, commentId } = await seedCommentedSite(db, owner)
+    const del = (id: string) =>
+      app.request(url('acme', 'doc', `/${threadId}/messages/${id}`), { method: 'DELETE', headers: auth(owner) }, env)
+
+    // A reply present ⇒ the opening is soft-deleted: gate (8) + deleteComment's write batch (2).
+    const replyId = await seedComment(db, { threadId, authorId: owner, body: 'a reply' })
     db.resetCounters()
-    const res = await app.request(url('acme', 'doc', `/${threadId}/messages/${commentId}`), { method: 'DELETE', headers: auth(owner) }, env)
-    expect(res.status).toBe(200)
-    shape(db, 1, 2, 9)
+    expect((await del(replyId)).status).toBe(200) // a reply — the hard-delete arm, same write batch
+    shape(db, 1, 2, 10)
+
+    // Nothing else left ⇒ the thread goes, in ONE statement (comments cascade off it), so the write
+    // is a loose delete rather than a batch. Still 1 + 1 + 1 requests.
+    db.resetCounters()
+    expect((await del(commentId)).status).toBe(200)
+    shape(db, 2, 1, 8)
   })
 
   test('voice-audio GET: pre-R2 D1 = 2 requests total (1 loose + 1 fused batch of 7), one R2 get', async () => {

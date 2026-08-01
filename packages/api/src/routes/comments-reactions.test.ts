@@ -198,6 +198,9 @@ describe('comment reactions — the access gate is the message routes’ own', (
 
   test('a SOFT-DELETED comment takes no reaction — same 404 edit and delete already give it', async () => {
     const ctx = await setup()
+    // A reply is what leaves a tombstone behind at all (#116): delete the opening of a thread with
+    // nothing else in it and the thread goes, taking the very row this test is about.
+    await seedComment(ctx.db, { threadId: ctx.threadId, authorId: ctx.owner, body: 'a reply' })
     await react(ctx, 'member', ctx, { emoji: '🔥' })
     const gone = await ctx.app.request(
       `/api/sites/acme/doc/comments/${ctx.threadId}/messages/${ctx.commentId}`,
