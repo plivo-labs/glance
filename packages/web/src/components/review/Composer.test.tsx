@@ -91,6 +91,51 @@ describe('A — Composer text submit', () => {
   })
 })
 
+// The submit button advertises ⌘↵, so the binding it advertises had better exist — and the keycap
+// must not rename the button, which is how 13 selectors across this suite (and every screen reader)
+// refer to it.
+describe('A — ⌘/Ctrl+Enter submits, and the button says so', () => {
+  const enter = (textarea: HTMLTextAreaElement, mods: Record<string, boolean>) =>
+    fireEvent.keyDown(textarea, { key: 'Enter', ...mods })
+
+  // Separate tests, not a loop: renderDeferred mounts into the shared container, so a second render
+  // in one test leaves two composers and every by-placeholder lookup goes ambiguous.
+  for (const [name, mods] of [
+    ['⌘+Enter', { metaKey: true }],
+    ['Ctrl+Enter', { ctrlKey: true }],
+  ] as const) {
+    test(`${name} submits the draft`, () => {
+      const { onSubmit, textarea } = renderDeferred()
+      type(textarea, DRAFT)
+      enter(textarea, mods)
+      expect(onSubmit).toHaveBeenCalledTimes(1)
+      expect(onSubmit.mock.calls[0]).toEqual([DRAFT, []])
+    })
+  }
+
+  test('a bare Enter does NOT submit — it types a newline, which is what a comment box is for', () => {
+    const { onSubmit, textarea } = renderDeferred()
+    type(textarea, DRAFT)
+    enter(textarea, {})
+    expect(onSubmit).toHaveBeenCalledTimes(0)
+  })
+
+  test('an empty draft is not submittable by keyboard either', () => {
+    const { onSubmit, textarea } = renderDeferred()
+    type(textarea, '   ')
+    enter(textarea, { metaKey: true })
+    expect(onSubmit).toHaveBeenCalledTimes(0)
+  })
+
+  test('the keycap is on the button but NOT in its accessible name', () => {
+    const { submitButton } = renderDeferred()
+    expect(submitButton.querySelector('kbd')?.textContent?.trim()).toBe('⌘↵')
+    // The button's own aria-label is what keeps this true; without it the keycap joins the content
+    // and the name becomes "Comment ⌘↵".
+    expect(screen.getByRole('button', { name: 'Comment' })).toBe(submitButton)
+  })
+})
+
 describe('A — emoji picker', () => {
   // Appending to the end would be the easy implementation and the wrong one: the trigger is a click
   // away from a textarea the user is mid-sentence in, so the glyph has to land where the caret was
