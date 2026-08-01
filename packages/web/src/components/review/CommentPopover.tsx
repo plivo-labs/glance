@@ -49,6 +49,13 @@ export function CommentPopover({
         >
           <MessageSquarePlus className="size-3.5" />
           Comment
+          {/* The chip is the ONLY place the C binding is discoverable — it lives in the iframe, so
+              it appears in no menu and no palette (#117). Same keycap treatment as AppShell's ⌘K.
+              Hidden on small screens for the same reason that one is: no keyboard, no hint. The
+              button's aria-label already replaces its content, so this is never announced. */}
+          <kbd className="hidden rounded border bg-muted px-1.5 py-px font-mono text-[10px] text-muted-foreground sm:inline">
+            C
+          </kbd>
         </button>
       )}
       {composer && (
