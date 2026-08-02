@@ -11,6 +11,7 @@ import { AnchorChip } from '@/components/review/AnchorChip'
 import { Composer } from '@/components/review/Composer'
 import { EmojiPicker } from '@/components/review/EmojiPicker'
 import { Badge } from '@/components/ui/badge'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
 export function ThreadCard({
   site,
@@ -171,16 +172,20 @@ export function ThreadCard({
                   deal touch users get today, minus the desktop clutter. */}
               {!c.deleted && (
                 <div className="absolute -top-2 right-1 z-10 flex items-center gap-0.5 rounded-md border bg-popover p-0.5 opacity-0 shadow-sm transition-opacity focus-within:opacity-100 group-hover/msg:opacity-100 [@media(hover:none)]:opacity-100">
+                  {/* rounded-sm, not the default `rounded`: the bar's own corner is rounded-md and
+                      it holds its buttons 2px in, so a flat 4px child reads as a square in a round
+                      box. The scale's next step down is what CONCENTRIC corners want here. */}
                   <EmojiPicker
                     label="Add reaction"
-                    className="size-6 rounded px-0 text-muted-foreground"
+                    variant="ghost"
+                    className="size-6 rounded-sm px-0 text-muted-foreground"
                     onPick={(emoji) => toggle(c, emoji, false)()}
                   />
                   {c.authorId === me?.id && (
                     <button
                       type="button"
                       onClick={act(() => comments.remove(site, thread.id, c.id))}
-                      className="flex size-6 items-center justify-center rounded hover:bg-muted"
+                      className="flex size-6 items-center justify-center rounded-sm hover:bg-muted"
                       aria-label="Delete comment"
                     >
                       <Trash2 className="size-3.5 text-muted-foreground hover:text-destructive" />
@@ -245,28 +250,40 @@ export function ThreadCard({
                       a comment nobody reacted to now costs nothing here instead of a permanent
                       dashed circle — the single biggest source of dead space on this card. */}
                   {reactionsOf(c).length > 0 && (
-                    <div className="mt-1 flex flex-wrap items-center gap-1">
-                      {reactionsOf(c).map((r) => (
-                        <button
-                          key={r.emoji}
-                          type="button"
-                          // A toggle, so it announces as one: pressed IS `mine`, which is the same
-                          // fact the filled chip shows sighted users.
-                          aria-pressed={r.mine}
-                          aria-label={`${r.emoji} ${r.count}`}
-                          onClick={toggle(c, r.emoji, r.mine)}
-                          className={cn(
-                            'flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs transition-colors',
-                            r.mine
-                              ? 'border-primary/40 bg-primary/10 text-foreground'
-                              : 'border-transparent bg-muted text-muted-foreground hover:bg-muted/70',
-                          )}
-                        >
-                          {r.emoji}
-                          <span className="tabular-nums">{r.count}</span>
-                        </button>
-                      ))}
-                    </div>
+                    <TooltipProvider delayDuration={150}>
+                      <div className="mt-1 flex flex-wrap items-center gap-1">
+                        {reactionsOf(c).map((r) => {
+                          // A count alone doesn't say who is behind it. Hover (or focus — radix
+                          // opens on both, and points the trigger's aria-describedby at the content,
+                          // so the names reach a screen reader too) answers that.
+                          const who = reactorList(r)
+                          return (
+                            <Tooltip key={r.emoji}>
+                              <TooltipTrigger asChild>
+                                <button
+                                  type="button"
+                                  // A toggle, so it announces as one: pressed IS `mine`, which is
+                                  // the same fact the filled chip shows sighted users.
+                                  aria-pressed={r.mine}
+                                  aria-label={`${r.emoji} ${r.count}`}
+                                  onClick={toggle(c, r.emoji, r.mine)}
+                                  className={cn(
+                                    'flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs transition-colors',
+                                    r.mine
+                                      ? 'border-primary/40 bg-primary/10 text-foreground'
+                                      : 'border-transparent bg-muted text-muted-foreground hover:bg-muted/70',
+                                  )}
+                                >
+                                  {r.emoji}
+                                  <span className="tabular-nums">{r.count}</span>
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent className="max-w-56">{`${who} reacted ${r.emoji}`}</TooltipContent>
+                            </Tooltip>
+                          )
+                        })}
+                      </div>
+                    </TooltipProvider>
                   )}
                 </div>
               </div>
@@ -344,6 +361,17 @@ export function ThreadCard({
       )}
     </div>
   )
+}
+
+/** Who reacted, in one phrase: the viewer first (as "You" — the server sends `mine`, never the
+ *  caller's own name), then the names it did send, then "and N others" for everyone `count` knows
+ *  about but the server's name cap left out. The count is the truth; the names are as many of it
+ *  as fit. */
+export function reactorList(r: CommentReaction): string {
+  const who = r.mine ? ['You', ...r.names] : [...r.names]
+  const rest = r.count - who.length
+  if (rest > 0) who.push(`${rest} other${rest === 1 ? '' : 's'}`)
+  return who.length > 1 ? `${who.slice(0, -1).join(', ')} and ${who[who.length - 1]}` : who.join('')
 }
 
 function fmt(iso: string): string {

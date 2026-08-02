@@ -36,10 +36,16 @@ function touchThread(db: DrizzleD1Database, threadId: string, ts: string) {
   return db.update(commentThreads).set({ updatedAt: ts }).where(eq(commentThreads.id, threadId))
 }
 
-/** One DISTINCT emoji on a comment, aggregated server-side: how many people used it and whether
- *  the caller is one of them. The individual reactor ids never leave the server — the client needs
- *  a count and a toggle state, and nothing else. */
-export type CommentReaction = { emoji: string; count: number; mine: boolean }
+/** One DISTINCT emoji on a comment, aggregated server-side: how many people used it, whether the
+ *  caller is one of them, and WHO the others are — a chip that only counts leaves the reader
+ *  guessing. `names` are display names in reaction order, capped at REACTION_NAMES_MAX and never
+ *  including the caller (that is `mine`), so `count` stays the total and the client says "and N
+ *  others" for the remainder. Reactor IDS still never leave the server. */
+export type CommentReaction = { emoji: string; count: number; mine: boolean; names: string[] }
+
+/** How many reactor names one chip carries. A tooltip nobody can read is no better than a count,
+ *  and this is what keeps a wildly popular emoji from growing the list payload without bound. */
+const REACTION_NAMES_MAX = 8
 
 export type CommentView = {
   id: string
@@ -129,15 +135,22 @@ const COMMENT_LIST_COLUMNS = { comment: comments, authorName: users.name, author
 // GROUP BY would be one row per (comment, emoji) — but `mine` needs the caller's own row, so the
 // grouped form would still owe a second correlated read. Folding in JS costs one pass over rows
 // that are already bounded per comment (20 distinct emojis per user) and keeps the read to ONE
-// statement. `createdAt` is read only to order them; the reactor ids never leave the server.
+// statement. `createdAt` is read only to order them; the reactor ids never leave the server —
+// the JOINed name/email do, aggregated into `names` exactly like a comment author's is.
 const REACTION_COLUMNS = {
   commentId: commentReactions.commentId,
   userId: commentReactions.userId,
   emoji: commentReactions.emoji,
+  reactorName: users.name,
+  reactorEmail: users.email,
 }
 
-/** Row shape of both reaction statements — the raw (comment, reactor, emoji) triples. */
-export type ReactionRow = Pick<CommentReactionRow, 'commentId' | 'userId' | 'emoji'>
+/** Row shape of both reaction statements — the raw (comment, reactor, emoji) triples, plus the
+ *  reactor's JOINed user fields (same null-on-miss semantics as the rows above). */
+export type ReactionRow = Pick<CommentReactionRow, 'commentId' | 'userId' | 'emoji'> & {
+  reactorName: string | null
+  reactorEmail: string | null
+}
 
 const reactionOrder = [commentReactions.createdAt, sql`"comment_reactions".rowid`] as const
 
@@ -195,6 +208,7 @@ export function reactionsBySlugsStmt(db: DrizzleD1Database, spaceSlug: string, s
     .innerJoin(commentThreads, eq(comments.threadId, commentThreads.id))
     .innerJoin(sites, eq(commentThreads.siteId, sites.id))
     .innerJoin(spaces, eq(sites.spaceId, spaces.id))
+    .leftJoin(users, eq(commentReactions.userId, users.id))
     .where(slugThreadScope(spaceSlug, siteSlug, filePath))
     .orderBy(...reactionOrder)
 }
@@ -205,6 +219,7 @@ export function reactionsByCommentStmt(db: DrizzleD1Database, commentId: string)
   return db
     .select(REACTION_COLUMNS)
     .from(commentReactions)
+    .leftJoin(users, eq(commentReactions.userId, users.id))
     .where(eq(commentReactions.commentId, commentId))
     .orderBy(...reactionOrder)
 }
@@ -220,13 +235,29 @@ export function reactionsByComment(rows: ReactionRow[], viewerId: string | null)
       list = []
       byComment.set(r.commentId, list)
     }
+    const mine = r.userId === viewerId
     const hit = list.find((x) => x.emoji === r.emoji)
     if (hit) {
       hit.count++
-      hit.mine ||= r.userId === viewerId
-    } else list.push({ emoji: r.emoji, count: 1, mine: r.userId === viewerId })
+      hit.mine ||= mine
+      addReactorName(hit, r, mine)
+    } else {
+      const entry = { emoji: r.emoji, count: 1, mine, names: [] }
+      addReactorName(entry, r, mine)
+      list.push(entry)
+    }
   }
   return byComment
+}
+
+/** Append one reactor to a chip's `names`, or don't: the caller is `mine` rather than a name, the
+ *  list stops at REACTION_NAMES_MAX, and a reactor whose user row is missing (impossible under the
+ *  FK, but the join is typed for it) is simply left out. Everyone skipped is still in `count`, so
+ *  the client renders them as "and N others" — an omission that reads as one, not as a wrong name. */
+function addReactorName(entry: CommentReaction, row: ReactionRow, mine: boolean): void {
+  if (mine || entry.names.length >= REACTION_NAMES_MAX) return
+  const name = joinedDisplayName(row.userId, row.reactorName, row.reactorEmail)
+  if (name !== null) entry.names.push(name)
 }
 
 /** Display name from JOINed user fields: null id → null; id whose join found no row (dangling
