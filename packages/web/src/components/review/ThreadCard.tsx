@@ -365,15 +365,11 @@ export function ThreadCard({
   )
 }
 
-/** Who reacted, in one phrase: the viewer first (as "You" — the server sends `mine`, never the
- *  caller's own name), then the names it did send, then "and N others" for everyone `count` knows
- *  about but the server's name cap left out. The count is the truth; the names are as many of it
- *  as fit. */
+/** Who reacted: the viewer first as "You" (the server sends `mine`, never the caller's own name),
+ *  then everyone else in reaction order, comma-separated. The whole list, however long — a name
+ *  the reader was looking for is no use summarised away. */
 export function reactorList(r: CommentReaction): string {
-  const who = r.mine ? ['You', ...r.names] : [...r.names]
-  const rest = r.count - who.length
-  if (rest > 0) who.push(`${rest} other${rest === 1 ? '' : 's'}`)
-  return who.length > 1 ? `${who.slice(0, -1).join(', ')} and ${who[who.length - 1]}` : who.join('')
+  return (r.mine ? ['You', ...r.names] : r.names).join(', ')
 }
 
 function fmt(iso: string): string {

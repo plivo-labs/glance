@@ -38,14 +38,11 @@ function touchThread(db: DrizzleD1Database, threadId: string, ts: string) {
 
 /** One DISTINCT emoji on a comment, aggregated server-side: how many people used it, whether the
  *  caller is one of them, and WHO the others are — a chip that only counts leaves the reader
- *  guessing. `names` are display names in reaction order, capped at REACTION_NAMES_MAX and never
- *  including the caller (that is `mine`), so `count` stays the total and the client says "and N
- *  others" for the remainder. Reactor IDS still never leave the server. */
+ *  guessing. `names` are EVERY other reactor's display name in reaction order, never including the
+ *  caller (that is `mine`), so `count` is `names.length` plus the caller. Uncapped on purpose: the
+ *  tooltip names everyone, and a comment's reactors are bounded by the people who can see the page.
+ *  Reactor IDS still never leave the server. */
 export type CommentReaction = { emoji: string; count: number; mine: boolean; names: string[] }
-
-/** How many reactor names one chip carries. A tooltip nobody can read is no better than a count,
- *  and this is what keeps a wildly popular emoji from growing the list payload without bound. */
-const REACTION_NAMES_MAX = 8
 
 export type CommentView = {
   id: string
@@ -250,12 +247,11 @@ export function reactionsByComment(rows: ReactionRow[], viewerId: string | null)
   return byComment
 }
 
-/** Append one reactor to a chip's `names`, or don't: the caller is `mine` rather than a name, the
- *  list stops at REACTION_NAMES_MAX, and a reactor whose user row is missing (impossible under the
- *  FK, but the join is typed for it) is simply left out. Everyone skipped is still in `count`, so
- *  the client renders them as "and N others" — an omission that reads as one, not as a wrong name. */
+/** Append one reactor to a chip's `names`, or don't: the caller is `mine` rather than a name, and a
+ *  reactor whose user row is missing (impossible under the FK, but the join is typed for it) is
+ *  left out rather than named wrongly — `count` still has them. */
 function addReactorName(entry: CommentReaction, row: ReactionRow, mine: boolean): void {
-  if (mine || entry.names.length >= REACTION_NAMES_MAX) return
+  if (mine) return
   const name = joinedDisplayName(row.userId, row.reactorName, row.reactorEmail)
   if (name !== null) entry.names.push(name)
 }
