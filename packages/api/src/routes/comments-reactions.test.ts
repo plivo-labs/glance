@@ -221,8 +221,8 @@ describe('comment reactions — the access gate is the message routes’ own', (
 })
 
 // A chip that only counts leaves the reader guessing who is behind it, so each one carries the
-// reactors' display names — the caller excluded (that is `mine`), in reaction order, capped so a
-// popular emoji cannot grow the list payload without bound.
+// reactors' display names — the caller excluded (that is `mine`), in reaction order, and ALL of
+// them: a reader hunting for one name gets nothing out of "and 4 others".
 describe('comment reactions — who reacted', () => {
   test('names are the OTHER reactors, in reaction order, and never the caller', async () => {
     const ctx = await setup()
@@ -245,7 +245,7 @@ describe('comment reactions — who reacted', () => {
     ])
   })
 
-  test('names stop at 8; whoever they leave out is still in `count`', async () => {
+  test('a crowd is named in full — the list is not summarised at some cap', async () => {
     const ctx = await setup()
     const crowd = Array.from({ length: 10 }, (_, i) => `fan${i}`)
     for (const who of crowd) {
@@ -254,8 +254,9 @@ describe('comment reactions — who reacted', () => {
       await react(ctx, who, ctx, { emoji: '🔥' })
     }
     const res = await react(ctx, 'member', ctx, { emoji: '🔥' })
+    // Every reactor but the caller, so `count` is exactly `names.length` + 1.
     expect(await res.json()).toEqual([
-      { emoji: '🔥', count: 11, mine: true, names: crowd.slice(0, 8).map((w) => `${w}@example.com`) },
+      { emoji: '🔥', count: 11, mine: true, names: crowd.map((w) => `${w}@example.com`) },
     ])
   })
 

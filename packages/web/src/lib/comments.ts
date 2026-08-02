@@ -24,9 +24,8 @@ export interface ElementAnchor {
 }
 
 /** One DISTINCT emoji on a comment, aggregated server-side: how many people used it, whether the
- *  caller is one of them, and the other reactors' display names in reaction order. Mirrors the api
- *  CommentReaction — reactor IDS stay on the server, and `names` is capped there, so it can be
- *  SHORTER than `count` implies: whoever it leaves out is the "and N others" the chip spells out. */
+ *  caller is one of them, and EVERY other reactor's display name in reaction order. Mirrors the api
+ *  CommentReaction — the reactor ids stay on the server; the names do not. */
 export type CommentReaction = { emoji: string; count: number; mine: boolean; names: string[] }
 
 export interface CommentItem {
