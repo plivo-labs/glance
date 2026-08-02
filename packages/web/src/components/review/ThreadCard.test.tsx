@@ -7,7 +7,7 @@ import { toast } from 'sonner'
 import { ApiError } from '@/lib/api'
 import { comments, type CommentItem, type CommentReaction, type Thread } from '@/lib/comments'
 import type { Me, ViewerSite } from '@/lib/types'
-import { ThreadCard } from './ThreadCard'
+import { ThreadCard, reactorList } from './ThreadCard'
 
 const SITE: ViewerSite = {
   id: 's1',
@@ -259,8 +259,8 @@ describe('ThreadCard — a failed reply keeps the composer open on its draft', (
 // what re-renders the chips, and onChanged stays untouched.
 describe('ThreadCard — reaction chips', () => {
   const one = (reactions: CommentReaction[]) => [mkComment({ id: 'c1', reactions })]
-  const FIRE_THEIRS: CommentReaction = { emoji: '🔥', count: 2, mine: false }
-  const THUMB_MINE: CommentReaction = { emoji: '👍', count: 1, mine: true }
+  const FIRE_THEIRS: CommentReaction = { emoji: '🔥', count: 2, mine: false, names: ['Ada', 'Bo'] }
+  const THUMB_MINE: CommentReaction = { emoji: '👍', count: 1, mine: true, names: [] }
 
   test('chips render from the comment, with the caller’s own pressed', () => {
     renderCard({ comments: one([FIRE_THEIRS, THUMB_MINE]) })
@@ -277,7 +277,7 @@ describe('ThreadCard — reaction chips', () => {
   test('clicking someone else’s chip reacts, and re-renders from the RESPONSE — no refetch', async () => {
     const { onChanged } = renderCard({ comments: one([FIRE_THEIRS]) })
     const react = spyOn(comments, 'react').mockImplementation(() =>
-      Promise.resolve([{ emoji: '🔥', count: 3, mine: true }]),
+      Promise.resolve([{ emoji: '🔥', count: 3, mine: true, names: ['Ada', 'Bo'] }]),
     )
 
     await act(async () => {
@@ -308,7 +308,7 @@ describe('ThreadCard — reaction chips', () => {
   test('picking from the emoji picker adds a chip', async () => {
     renderCard({ comments: one([]) })
     const react = spyOn(comments, 'react').mockImplementation(() =>
-      Promise.resolve([{ emoji: '🚀', count: 1, mine: true }]),
+      Promise.resolve([{ emoji: '🚀', count: 1, mine: true, names: [] }]),
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'Add reaction' }))
@@ -349,6 +349,45 @@ describe('ThreadCard — reaction chips', () => {
   })
 })
 
+// A chip that only counts is a question, not an answer: "two people liked this — which two?". The
+// names ride the same payload the count does; hover (or focus, which is how the chip is REACHED
+// without a mouse) is what asks.
+describe('ThreadCard — who reacted', () => {
+  const chipTip = async (name: string) => {
+    fireEvent.focus(screen.getByRole('button', { name }))
+    return await screen.findByRole('tooltip')
+  }
+
+  test('a chip names its reactors, and calls the caller “You” rather than repeating their name', async () => {
+    renderCard({
+      comments: [
+        mkComment({
+          id: 'c1',
+          reactions: [
+            { emoji: '🔥', count: 2, mine: false, names: ['Ada', 'Bo'] },
+            // `names` never carries the caller — `mine` is how the caller appears, so the phrase
+            // reads the way the reader thinks of it.
+            { emoji: '👍', count: 2, mine: true, names: ['Ada'] },
+          ],
+        }),
+      ],
+    })
+    expect((await chipTip('🔥 2')).textContent).toBe('Ada and Bo reacted 🔥')
+    expect((await chipTip('👍 2')).textContent).toBe('You and Ada reacted 👍')
+  })
+
+  test('past the server’s name cap the rest are counted, not dropped in silence', async () => {
+    const names = ['Ada', 'Bo', 'Cy', 'Di', 'Eli', 'Fay', 'Gus', 'Hal'] // the server sends at most 8
+    renderCard({ comments: [mkComment({ id: 'c1', reactions: [{ emoji: '🎉', count: 11, mine: true, names }] })] })
+    expect((await chipTip('🎉 11')).textContent).toBe(`You, ${names.join(', ')} and 2 others reacted 🎉`)
+  })
+
+  test('one unnamed reactor is “1 other”, not “1 others”', () => {
+    expect(reactorList({ emoji: '🎉', count: 2, mine: true, names: [] })).toBe('You and 1 other')
+    expect(reactorList({ emoji: '🎉', count: 1, mine: false, names: ['Ada'] })).toBe('Ada')
+  })
+})
+
 // The override that keeps a toggle from refetching has to STOP winning once a refetch happens, or
 // it silently freezes that comment: everything anyone else reacts with afterwards is invisible to
 // this reader until they reload the page. There is no polling, so nothing else would ever correct
@@ -357,10 +396,10 @@ describe('ThreadCard — reaction chips', () => {
 describe('ThreadCard — a refetched reaction list supersedes the local override', () => {
   test('reactions other people added after a toggle still render', async () => {
     const { onChanged, refetch } = renderCard({
-      comments: [mkComment({ id: 'c1', reactions: [{ emoji: '🔥', count: 2, mine: false }] })],
+      comments: [mkComment({ id: 'c1', reactions: [{ emoji: '🔥', count: 2, mine: false, names: ['Ada', 'Bo'] }] })],
     })
     const react = spyOn(comments, 'react').mockImplementation(() =>
-      Promise.resolve([{ emoji: '🔥', count: 3, mine: true }]),
+      Promise.resolve([{ emoji: '🔥', count: 3, mine: true, names: ['Ada', 'Bo'] }]),
     )
 
     await act(async () => {
@@ -375,8 +414,8 @@ describe('ThreadCard — a refetched reaction list supersedes the local override
         mkComment({
           id: 'c1',
           reactions: [
-            { emoji: '🔥', count: 4, mine: true },
-            { emoji: '🎉', count: 1, mine: false },
+            { emoji: '🔥', count: 4, mine: true, names: ['Ada', 'Bo', 'Cy'] },
+            { emoji: '🎉', count: 1, mine: false, names: ['Cy'] },
           ],
         }),
       ])
@@ -393,10 +432,10 @@ describe('ThreadCard — a refetched reaction list supersedes the local override
   test('a re-render that did NOT bring a new list leaves the override in charge', async () => {
     // The other half: React re-renders for all sorts of reasons. Only a genuinely new `reactions`
     // array may discard the toggle's answer, or every unrelated re-render would flash the old count.
-    const stable = [{ emoji: '👍', count: 1, mine: false }]
+    const stable = [{ emoji: '👍', count: 1, mine: false, names: ['Ada'] }]
     const { refetch } = renderCard({ comments: [mkComment({ id: 'c1', reactions: stable })] })
     const react = spyOn(comments, 'react').mockImplementation(() =>
-      Promise.resolve([{ emoji: '👍', count: 2, mine: true }]),
+      Promise.resolve([{ emoji: '👍', count: 2, mine: true, names: ['Ada'] }]),
     )
 
     await act(async () => {

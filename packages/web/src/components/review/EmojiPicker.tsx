@@ -1,4 +1,5 @@
 import { Smile } from 'lucide-react'
+import type * as React from 'react'
 import { useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
@@ -16,14 +17,19 @@ export function EmojiPicker({
   onPick,
   disabled,
   label = 'Insert emoji',
+  variant = 'outline',
   className,
 }: {
   onPick: (emoji: string) => void
   disabled?: boolean
   // The two callers want the same picker under different affordances: the composer's action-row
   // button, and a chip-sized "add reaction" trigger in a thread. Only the trigger differs, so it
-  // takes a label and a class rather than the picker being forked in two.
+  // takes a label, a variant and a class rather than the picker being forked in two.
   label?: string
+  // Outline stands alone in the composer's row; inside the message hover bar, which already draws
+  // its own border, a second border a hair inside the first is the whole reason that bar's corners
+  // looked wrong — `ghost` there matches the delete button beside it.
+  variant?: React.ComponentProps<typeof Button>['variant']
   className?: string
 }) {
   const [open, setOpen] = useState(false)
@@ -49,7 +55,7 @@ export function EmojiPicker({
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>
-        <Button type="button" variant="outline" size="sm" disabled={disabled} aria-label={label} className={className}>
+        <Button type="button" variant={variant} size="sm" disabled={disabled} aria-label={label} className={className}>
           <Smile className="size-3.5" />
         </Button>
       </PopoverTrigger>

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { commentReactions } from '../db/schema'
+import { eq } from 'drizzle-orm'
+import { commentReactions, users } from '../db/schema'
 import { seedComment, seedMember, seedSite, seedSpace, seedThread } from '../test/harness'
 import { auth, makeRouteApp, mintUser, type RouteApp } from '../test/route-fixtures'
 
@@ -55,11 +56,11 @@ describe('PUT/DELETE comment reactions — the toggle', () => {
     const ctx = await setup()
     const first = await react(ctx, 'member', ctx, { emoji: '🔥' })
     expect(first.status).toBe(200)
-    expect(await first.json()).toEqual([{ emoji: '🔥', count: 1, mine: true }])
+    expect(await first.json()).toEqual([{ emoji: '🔥', count: 1, mine: true, names: [] }])
 
     const again = await react(ctx, 'member', ctx, { emoji: '🔥' })
     expect(again.status).toBe(200)
-    expect(await again.json()).toEqual([{ emoji: '🔥', count: 1, mine: true }])
+    expect(await again.json()).toEqual([{ emoji: '🔥', count: 1, mine: true, names: [] }])
     expect(await ctx.db.select().from(commentReactions)).toHaveLength(1)
   })
 
@@ -83,29 +84,31 @@ describe('PUT/DELETE comment reactions — the toggle', () => {
     const two = await react(ctx, 'member', ctx, { emoji: '🎉' })
     // Order is first-reacted-first — the set is stable across polls, not re-sorted by count.
     expect(await two.json()).toEqual([
-      { emoji: '🔥', count: 1, mine: true },
-      { emoji: '🎉', count: 1, mine: true },
+      { emoji: '🔥', count: 1, mine: true, names: [] },
+      { emoji: '🎉', count: 1, mine: true, names: [] },
     ])
 
     const after = await react(ctx, 'member', ctx, { emoji: '🔥' }, 'DELETE')
-    expect(await after.json()).toEqual([{ emoji: '🎉', count: 1, mine: true }])
+    expect(await after.json()).toEqual([{ emoji: '🎉', count: 1, mine: true, names: [] }])
   })
 
   test('two users on the SAME emoji aggregate to count 2, and `mine` is per caller', async () => {
     const ctx = await setup()
     await react(ctx, 'owner', ctx, { emoji: '👍' })
     const second = await react(ctx, 'member', ctx, { emoji: '👍' })
-    expect(await second.json()).toEqual([{ emoji: '👍', count: 2, mine: true }])
+    expect(await second.json()).toEqual([{ emoji: '👍', count: 2, mine: true, names: ['owner@example.com'] }])
 
     // The owner's view of the same row set: still 2, still mine.
     const ownersView = await react(ctx, 'owner', ctx, { emoji: '👍' })
-    expect(await ownersView.json()).toEqual([{ emoji: '👍', count: 2, mine: true }])
+    expect(await ownersView.json()).toEqual([{ emoji: '👍', count: 2, mine: true, names: ['member@example.com'] }])
 
     // A third user who has not reacted sees the count without `mine`.
     await mintUser(ctx.db, ctx.kv, 'watcher')
     await seedMember(ctx.db, ctx.spaceId, 'watcher')
     const [thread] = await list(ctx, 'watcher')
-    expect(thread.comments[0].reactions).toEqual([{ emoji: '👍', count: 2, mine: false }])
+    expect(thread.comments[0].reactions).toEqual([
+      { emoji: '👍', count: 2, mine: false, names: ['owner@example.com', 'member@example.com'] },
+    ])
   })
 
   test('a MULTI-code-unit emoji round-trips whole (family = 11 UTF-16 units, not one char)', async () => {
@@ -113,7 +116,7 @@ describe('PUT/DELETE comment reactions — the toggle', () => {
     const family = '👨‍👩‍👧‍👦'
     expect(family.length).toBe(11) // the reason the cap is measured generously, not at 1 or 2
     const res = await react(ctx, 'member', ctx, { emoji: family })
-    expect(await res.json()).toEqual([{ emoji: family, count: 1, mine: true }])
+    expect(await res.json()).toEqual([{ emoji: family, count: 1, mine: true, names: [] }])
     expect((await ctx.db.select().from(commentReactions))[0].emoji).toBe(family)
   })
 })
@@ -217,6 +220,54 @@ describe('comment reactions — the access gate is the message routes’ own', (
   })
 })
 
+// A chip that only counts leaves the reader guessing who is behind it, so each one carries the
+// reactors' display names — the caller excluded (that is `mine`), in reaction order, capped so a
+// popular emoji cannot grow the list payload without bound.
+describe('comment reactions — who reacted', () => {
+  test('names are the OTHER reactors, in reaction order, and never the caller', async () => {
+    const ctx = await setup()
+    for (const who of ['watcher', 'member']) {
+      if (who === 'watcher') {
+        await mintUser(ctx.db, ctx.kv, who)
+        await seedMember(ctx.db, ctx.spaceId, who)
+      }
+      await react(ctx, who, ctx, { emoji: '👍' })
+    }
+    const mine = await react(ctx, 'owner', ctx, { emoji: '👍' })
+    // Reaction order, not caller-first: the owner reacted last and is absent from its own list.
+    expect(await mine.json()).toEqual([
+      { emoji: '👍', count: 3, mine: true, names: ['watcher@example.com', 'member@example.com'] },
+    ])
+    // …and the same rows, read by someone who has not reacted, name all three.
+    const [thread] = await list(ctx, 'watcher')
+    expect(thread.comments[0].reactions).toEqual([
+      { emoji: '👍', count: 3, mine: true, names: ['member@example.com', 'owner@example.com'] },
+    ])
+  })
+
+  test('names stop at 8; whoever they leave out is still in `count`', async () => {
+    const ctx = await setup()
+    const crowd = Array.from({ length: 10 }, (_, i) => `fan${i}`)
+    for (const who of crowd) {
+      await mintUser(ctx.db, ctx.kv, who)
+      await seedMember(ctx.db, ctx.spaceId, who)
+      await react(ctx, who, ctx, { emoji: '🔥' })
+    }
+    const res = await react(ctx, 'member', ctx, { emoji: '🔥' })
+    expect(await res.json()).toEqual([
+      { emoji: '🔥', count: 11, mine: true, names: crowd.slice(0, 8).map((w) => `${w}@example.com`) },
+    ])
+  })
+
+  test('a reactor with a name uses it, not the email the fallback would show', async () => {
+    const ctx = await setup()
+    await ctx.db.update(users).set({ name: 'Ada Lovelace' }).where(eq(users.id, ctx.owner))
+    await react(ctx, 'owner', ctx, { emoji: '🎉' })
+    const res = await react(ctx, 'member', ctx, { emoji: '🎉' })
+    expect(await res.json()).toEqual([{ emoji: '🎉', count: 2, mine: true, names: ['Ada Lovelace'] }])
+  })
+})
+
 describe('comment reactions — the GET fold', () => {
   test('reactions ride the list response, and a comment with none reads as []', async () => {
     const ctx = await setup()
@@ -230,8 +281,8 @@ describe('comment reactions — the GET fold', () => {
       [
         ctx.commentId,
         [
-          { emoji: '🔥', count: 2, mine: true },
-          { emoji: '🎉', count: 1, mine: false },
+          { emoji: '🔥', count: 2, mine: true, names: ['owner@example.com'] },
+          { emoji: '🎉', count: 1, mine: false, names: ['owner@example.com'] },
         ],
       ],
       [bare, []],

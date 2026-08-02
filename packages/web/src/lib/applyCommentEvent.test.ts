@@ -79,7 +79,7 @@ describe('applyCommentEvent', () => {
       siteId: SITE,
       filePath: FILE,
       threadId: 't1',
-      comment: mkComment({ id: 'c1', body: 'edited', reactions: [{ emoji: '👍', count: 1, mine: true }] }),
+      comment: mkComment({ id: 'c1', body: 'edited', reactions: [{ emoji: '👍', count: 1, mine: true, names: [] }] }),
     }
     const result = applyCommentEvent(threads, event, FILE)
     expect(result).toBe(threads)
