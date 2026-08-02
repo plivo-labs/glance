@@ -278,7 +278,9 @@ export function ThreadCard({
                                   <span className="tabular-nums">{r.count}</span>
                                 </button>
                               </TooltipTrigger>
-                              <TooltipContent className="max-w-56">{`${who} reacted ${r.emoji}`}</TooltipContent>
+                              {/* Names only. The chip under the cursor already shows the emoji, so
+                                  "reacted 👍" spent the tooltip's width restating what was asked. */}
+                              <TooltipContent className="max-w-56">{who}</TooltipContent>
                             </Tooltip>
                           )
                         })}

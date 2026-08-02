@@ -372,14 +372,14 @@ describe('ThreadCard — who reacted', () => {
         }),
       ],
     })
-    expect((await chipTip('🔥 2')).textContent).toBe('Ada and Bo reacted 🔥')
-    expect((await chipTip('👍 2')).textContent).toBe('You and Ada reacted 👍')
+    expect((await chipTip('🔥 2')).textContent).toBe('Ada and Bo')
+    expect((await chipTip('👍 2')).textContent).toBe('You and Ada')
   })
 
   test('past the server’s name cap the rest are counted, not dropped in silence', async () => {
     const names = ['Ada', 'Bo', 'Cy', 'Di', 'Eli', 'Fay', 'Gus', 'Hal'] // the server sends at most 8
     renderCard({ comments: [mkComment({ id: 'c1', reactions: [{ emoji: '🎉', count: 11, mine: true, names }] })] })
-    expect((await chipTip('🎉 11')).textContent).toBe(`You, ${names.join(', ')} and 2 others reacted 🎉`)
+    expect((await chipTip('🎉 11')).textContent).toBe(`You, ${names.join(', ')} and 2 others`)
   })
 
   test('one unnamed reactor is “1 other”, not “1 others”', () => {
