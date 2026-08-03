@@ -38,12 +38,17 @@ export interface TopSite {
   views: number
 }
 
-export interface Stats {
-  totals: StatsTotals
+/** The rolling-window half of `Stats` — everything bounded by WINDOW_DAYS. Cached separately from
+ *  the all-time totals, so the two refresh on their own clocks (see the cache front below). */
+export interface WindowStats {
   activeViewers30d: number
   series: DailyPoint[] // one zero-filled row per day, oldest → newest
   topSites: TopSite[]
   windowDays: number
+}
+
+export interface Stats extends WindowStats {
+  totals: StatsTotals
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -58,7 +63,38 @@ async function scalarCount(query: Promise<{ n: number }[]>): Promise<number> {
   return Number(rows[0]?.n ?? 0)
 }
 
-export async function computeStats(db: DrizzleD1Database, now: Date = new Date()): Promise<Stats> {
+/**
+ * The ALL-TIME half: headline totals over the full table. Every one of these is a scan whose cost
+ * grows with history forever (`count(*)`/`count(distinct)` over every `view` row ever, `count(*)`
+ * and `sum(size)` over every file) — this is the unbounded term, and the reason the cache below
+ * gives it its own long-lived key. Nothing here moves fast enough to be worth a live scan.
+ */
+export async function computeTotals(db: DrizzleD1Database): Promise<StatsTotals> {
+  const [u, s, f, storage, cm, vw, uv] = await Promise.all([
+    scalarCount(db.select({ n: count() }).from(users)),
+    scalarCount(db.select({ n: count() }).from(sites)),
+    scalarCount(db.select({ n: count() }).from(files)),
+    db
+      .select({ n: sql<number>`coalesce(sum(${files.size}), 0)` })
+      .from(files)
+      .then((r) => Number(r[0]?.n ?? 0)),
+    scalarCount(db.select({ n: count() }).from(comments).where(isNull(comments.deletedAt))),
+    scalarCount(db.select({ n: count() }).from(events).where(eq(events.type, 'view'))),
+    db
+      .select({ n: sql<number>`count(distinct ${events.userId})` })
+      .from(events)
+      .where(eq(events.type, 'view'))
+      .then((r) => Number(r[0]?.n ?? 0)),
+  ])
+  return { users: u, sites: s, files: f, storageBytes: storage, comments: cm, views: vw, uniqueViewers: uv }
+}
+
+/**
+ * The ROLLING-WINDOW half: everything bounded by the 30-day window, so its cost is flat as the
+ * database grows (a busier month costs more, a longer-lived deploy does not). Refreshed far more
+ * often than the totals — it is the half that actually changes day to day.
+ */
+export async function computeWindow(db: DrizzleD1Database, now: Date = new Date()): Promise<WindowStats> {
   // Inclusive 30-day window: today back through 29 days ago, from midnight UTC of the first day.
   const startDay = new Date(now.getTime() - (WINDOW_DAYS - 1) * DAY_MS)
   const sinceTs = `${dayKey(startDay)}T00:00:00.000Z`
@@ -67,35 +103,7 @@ export async function computeStats(db: DrizzleD1Database, now: Date = new Date()
   const sDay = sql<string>`substr(${sites.createdAt}, 1, 10)`
   const cDay = sql<string>`substr(${comments.createdAt}, 1, 10)`
 
-  const [totals, activeViewers30d, signupsByDay, sitesByDay, viewsByDay, commentsByDay, topSites] = await Promise.all([
-    // Headline totals (all-time).
-    (async (): Promise<StatsTotals> => {
-      const [u, s, f, storage, cm, vw, uv] = await Promise.all([
-        scalarCount(db.select({ n: count() }).from(users)),
-        scalarCount(db.select({ n: count() }).from(sites)),
-        scalarCount(db.select({ n: count() }).from(files)),
-        db
-          .select({ n: sql<number>`coalesce(sum(${files.size}), 0)` })
-          .from(files)
-          .then((r) => Number(r[0]?.n ?? 0)),
-        scalarCount(db.select({ n: count() }).from(comments).where(isNull(comments.deletedAt))),
-        scalarCount(db.select({ n: count() }).from(events).where(eq(events.type, 'view'))),
-        db
-          .select({ n: sql<number>`count(distinct ${events.userId})` })
-          .from(events)
-          .where(eq(events.type, 'view'))
-          .then((r) => Number(r[0]?.n ?? 0)),
-      ])
-      return {
-        users: u,
-        sites: s,
-        files: f,
-        storageBytes: storage,
-        comments: cm,
-        views: vw,
-        uniqueViewers: uv,
-      }
-    })(),
+  const [activeViewers30d, signupsByDay, sitesByDay, viewsByDay, commentsByDay, topSites] = await Promise.all([
     // Distinct viewers active in the window.
     db
       .select({ n: sql<number>`count(distinct ${events.userId})` })
@@ -137,7 +145,6 @@ export async function computeStats(db: DrizzleD1Database, now: Date = new Date()
   })
 
   return {
-    totals,
     activeViewers30d,
     series,
     topSites: topSites.map((t) => ({ siteId: t.siteId, siteLabel: t.siteLabel ?? null, views: Number(t.views) })),
@@ -145,15 +152,37 @@ export async function computeStats(db: DrizzleD1Database, now: Date = new Date()
   }
 }
 
+/** Both halves, uncached. The `cachedStats` path deliberately does NOT call this — it refreshes
+ *  the two halves on their own clocks. Kept as the single-shot entry point (and what a deploy with
+ *  no KV binding falls back to). */
+export async function computeStats(db: DrizzleD1Database, now: Date = new Date()): Promise<Stats> {
+  const [totals, window] = await Promise.all([computeTotals(db), computeWindow(db, now)])
+  return { totals, ...window }
+}
+
 // --- Cache front for the admin dashboard ----------------------------------------------------
 //
 // `computeStats` is 13 aggregates and most of them are unavoidable FULL SCANS (all-time counts,
-// `count(distinct userId)`, `sum(files.size)`, the 30-day group-bys) — ~33k D1 rows read per call
-// (measured per-aggregate against prod, 2026-07-29; was ~55k before the CLI rollups came out)
-// against a database whose largest table is ~10k rows. The admin page is a React Router loader,
-// so every navigation, back button, and tab switch re-ran the whole thing: measured at ~73% of
-// the account's ENTIRE D1 rows-read budget. Nothing here is real-time by nature (the window is
-// per-DAY buckets), so a short shared TTL costs nothing in usefulness.
+// `count(distinct userId)`, `sum(files.size)`, the 30-day group-bys) — ~10k D1 rows read per call
+// (measured via `wrangler d1 insights --time-period 30d`, 2026-08-03) against a database whose
+// largest table is ~10k rows. The admin page is a React Router loader, so every navigation, back
+// button, and tab switch re-ran the whole thing: 770 recomputes in 30 days, 7.4M rows read, 57%
+// of the account's ENTIRE D1 rows-read budget. Nothing here is real-time by nature (the window is
+// per-DAY buckets), so a shared TTL costs nothing in usefulness.
+//
+// SPLIT BY HOW FAST THE NUMBERS ACTUALLY MOVE, not one TTL over the lot. The two halves have
+// different cost curves, so one shared expiry priced them wrong in both directions:
+//   • totals (all-time) — cost grows with history FOREVER, and "total users ever" does not move
+//     minute to minute. Long TTL. This is the half that would otherwise get slowly worse for good.
+//   • window (rolling 30d) — cost is flat as the DB grows (bounded by the window), and it IS what
+//     changes day to day. Short TTL.
+// Recomputing the unbounded half on the bounded half's clock was the actual waste.
+//
+// STALE-WHILE-REVALIDATE on top: past the soft TTL a half is served STALE and recomputed off the
+// critical path via `defer`, so no visitor ever waits on a recount and a cold-ish cache never
+// stampedes into a synchronous 13-aggregate scan. The KV entry's own `expirationTtl` is the soft
+// TTL × STATS_STALE_FACTOR — the hard floor past which stale is no longer worth serving and the
+// next caller pays for a fresh compute.
 
 // SUBSTRATE — KV, deliberately NOT the Workers Cache API. `caches.default` is only documented as
 // functional for Workers on CUSTOM DOMAINS (and Pages on `*.pages.dev`); `*.workers.dev` is
@@ -164,14 +193,26 @@ export async function computeStats(db: DrizzleD1Database, now: Date = new Date()
 // than a Cache-Control the runtime may or may not honour. It is also GLOBAL, not per-colo, so one
 // compute serves every region instead of one per colo.
 
-/** KV key for the single account-wide rollup entry. Namespaced under `stats:` alongside the
- *  namespace's `session:`/`cli:` keys. VERSIONED: the cached value is a serialized `Stats`, so any
- *  change to that shape must bump `v<n>` — otherwise the deploy keeps serving the previous shape
- *  until the TTL lapses and the dashboard renders `undefined` for the fields that moved. */
-export const STATS_CACHE_KEY = 'stats:admin:v2'
+/** KV keys for the two halves of the rollup. Namespaced under `stats:` alongside the namespace's
+ *  `session:`/`cli:` keys. VERSIONED: the cached value is a serialized payload, so any change to
+ *  its shape must bump `v<n>` — otherwise the deploy keeps serving the previous shape until the
+ *  TTL lapses and the dashboard renders `undefined` for the fields that moved. v3 is where the
+ *  single `stats:admin:v2` entry became these two (and gained the `{at,v}` envelope); the old key
+ *  is simply abandoned and expires on its own. */
+export const STATS_CACHE_KEY = 'stats:admin:window:v3'
+export const STATS_TOTALS_CACHE_KEY = 'stats:admin:totals:v3'
 
-/** Freshness window for the cached rollup, in seconds. */
-export const STATS_CACHE_SECONDS = 300
+/** Soft TTL for the rolling-window half, in seconds. Past this it is served stale and refreshed
+ *  in the background. Bounded cost, and it is the half that genuinely moves — 1 hour. */
+export const STATS_CACHE_SECONDS = 3600
+
+/** Soft TTL for the all-time totals, in seconds. Unbounded cost, near-static value — 24 hours.
+ *  This single number is what stops the dashboard's cost growing with history forever. */
+export const STATS_TOTALS_CACHE_SECONDS = 86_400
+
+/** How far past its soft TTL an entry stays servable-as-stale. The KV `expirationTtl` is
+ *  soft × this, so a half that nobody refreshes eventually falls out and is recomputed fresh. */
+export const STATS_STALE_FACTOR = 4
 
 /** Minimal KV surface this layer uses — the real KVNamespace binding satisfies it structurally,
  *  as does the harness mock. */
@@ -180,29 +221,78 @@ export type StatsCacheKv = {
   put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>
 }
 
-/** `computeStats` fronted by KV. Hit → the stored JSON, ZERO D1 reads. Miss (or a KV that throws —
- *  a broken cache must never break the dashboard) → compute, then write the entry off the critical
- *  path via `defer`. NOT an authorization boundary: this returns the whole account rollup to whoever
- *  calls it, so it must stay behind the superadmin gate its only caller (routes/admin.ts) sits under.
- *  `kv` may be null, which degrades to computing every call — today's exact behaviour. */
+/** Cache envelope. The stamp is what makes stale-while-revalidate possible at all: KV can only
+ *  tell us an entry EXISTS, never how old it is, so freshness has to ride inside the value. */
+type Entry<T> = { at: number; v: T }
+
+/** Read + validate one entry. Anything unreadable is a MISS, never an error — KV throwing, torn
+ *  JSON, or a pre-v3 payload that has no envelope. A broken cache must not break the dashboard. */
+async function readEntry<T>(kv: StatsCacheKv, key: string): Promise<Entry<T> | null> {
+  try {
+    const raw = await kv.get(key)
+    if (!raw) return null
+    const entry = JSON.parse(raw) as Entry<T>
+    return typeof entry?.at === 'number' && entry.v != null ? entry : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * One cached half. Fresh hit → serve it, ZERO D1 statements. Stale hit → serve the STALE value and
+ * recompute off the critical path, so the caller never waits on a recount. Miss → compute inline
+ * (nothing to serve) and warm the entry via `defer`.
+ *
+ * A `null` kv degrades to computing every call — a deploy with no KV binding still works, it just
+ * pays full price, exactly as before this layer existed.
+ */
+async function cachedHalf<T>(
+  kv: StatsCacheKv | null,
+  key: string,
+  ttlSeconds: number,
+  compute: () => Promise<T>,
+  defer: (p: Promise<unknown>) => Promise<void>,
+  now: Date,
+): Promise<T> {
+  if (!kv) return compute()
+
+  const write = (v: T): Promise<void> =>
+    kv.put(key, JSON.stringify({ at: now.getTime(), v } satisfies Entry<T>), {
+      expirationTtl: ttlSeconds * STATS_STALE_FACTOR,
+    })
+
+  const hit = await readEntry<T>(kv, key)
+  if (hit && now.getTime() - hit.at < ttlSeconds * 1000) return hit.v
+  if (hit) {
+    // Stale: hand back the old numbers now, let the recount land behind the response. A failed
+    // refresh is silent — the entry just stays stale until someone else's request retries it.
+    await defer(
+      compute()
+        .then(write)
+        .catch(() => {}),
+    )
+    return hit.v
+  }
+  const value = await compute()
+  await defer(write(value).catch(() => {}))
+  return value
+}
+
+/** The two halves fronted by KV, each on its own clock, recombined into the `Stats` shape the
+ *  dashboard already consumes. NOT an authorization boundary: this returns the whole account
+ *  rollup to whoever calls it, so it must stay behind the superadmin gate its only caller
+ *  (routes/admin.ts) sits under. */
 export async function cachedStats(
   kv: StatsCacheKv | null,
   db: DrizzleD1Database,
   defer: (p: Promise<unknown>) => Promise<void>,
+  now: Date = new Date(),
 ): Promise<Stats> {
-  if (kv) {
-    try {
-      const hit = await kv.get(STATS_CACHE_KEY)
-      if (hit) return JSON.parse(hit) as Stats
-    } catch {
-      // fall through and compute — an unreadable or malformed entry is a miss, never an error
-    }
-  }
-  const stats = await computeStats(db)
-  if (kv) {
-    await defer(kv.put(STATS_CACHE_KEY, JSON.stringify(stats), { expirationTtl: STATS_CACHE_SECONDS }).catch(() => {}))
-  }
-  return stats
+  const [totals, window] = await Promise.all([
+    cachedHalf(kv, STATS_TOTALS_CACHE_KEY, STATS_TOTALS_CACHE_SECONDS, () => computeTotals(db), defer, now),
+    cachedHalf(kv, STATS_CACHE_KEY, STATS_CACHE_SECONDS, () => computeWindow(db, now), defer, now),
+  ])
+  return { totals, ...window }
 }
 
 type DayRows = { date: string; n: number }[]

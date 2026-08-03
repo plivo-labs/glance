@@ -10,7 +10,15 @@ import {
   seedThread,
   seedUser,
 } from '../test/harness'
-import { STATS_CACHE_KEY, STATS_CACHE_SECONDS, cachedStats, computeStats } from './stats'
+import {
+  STATS_CACHE_KEY,
+  STATS_CACHE_SECONDS,
+  STATS_STALE_FACTOR,
+  STATS_TOTALS_CACHE_KEY,
+  STATS_TOTALS_CACHE_SECONDS,
+  cachedStats,
+  computeStats,
+} from './stats'
 
 // A fixed "now" so window math is deterministic. Days are UTC.
 const NOW = new Date('2026-07-03T12:00:00.000Z')
@@ -100,26 +108,85 @@ describe('computeStats topSites', () => {
 
 describe('cachedStats', () => {
   const defer = (p: Promise<unknown>) => p.then(() => undefined)
+  /** `now` shifted by whole seconds — the knob every staleness test turns. */
+  const plus = (seconds: number) => new Date(NOW.getTime() + seconds * 1000)
+  const stampOf = (kv: { store: Map<string, string> }, key: string) =>
+    JSON.parse(kv.store.get(key) as string).at as number
 
-  test('miss computes and warms the entry; hit serves it with ZERO D1 statements', async () => {
+  test('miss computes and warms BOTH halves; hit serves them with ZERO D1 statements', async () => {
     const { db, u1, siteA } = await fixture()
     await seedEvent(db, { type: 'view', userId: u1, siteId: siteA, siteLabel: 'acme/a' })
     const kv = countingKv()
 
     db.resetCounters()
-    const first = await cachedStats(kv, db, defer)
+    const first = await cachedStats(kv, db, defer, NOW)
     expect(first.totals.views).toBe(1)
-    expect(kv.ops().put).toBe(1)
-    // The entry MUST carry a server-side expiry — without it a stale rollup lives forever.
-    expect(kv.ttls.get(STATS_CACHE_KEY)).toBe(STATS_CACHE_SECONDS)
+    expect(kv.ops().put).toBe(2) // totals + window, written separately
+    // Each entry MUST carry a server-side expiry — without it a stale rollup lives forever. The
+    // hard expiry is the SOFT ttl × the stale factor: the window past which stale stops being served.
+    expect(kv.ttls.get(STATS_CACHE_KEY)).toBe(STATS_CACHE_SECONDS * STATS_STALE_FACTOR)
+    expect(kv.ttls.get(STATS_TOTALS_CACHE_KEY)).toBe(STATS_TOTALS_CACHE_SECONDS * STATS_STALE_FACTOR)
     expect(db.counters.loose + db.counters.batchStmts).toBeGreaterThan(0)
 
     // A view landing between the two calls must NOT show up — that staleness is the point.
     await seedEvent(db, { type: 'view', userId: u1, siteId: siteA, siteLabel: 'acme/a' })
     db.resetCounters()
-    const second = await cachedStats(kv, db, defer)
+    const second = await cachedStats(kv, db, defer, NOW)
     expect(second).toEqual(first)
     expect(db.counters.loose + db.counters.batchStmts).toBe(0)
+  })
+
+  test('past the soft TTL the window serves STALE, then the background refresh lands', async () => {
+    const { db, u1, siteA } = await fixture()
+    await seedEvent(db, { type: 'view', userId: u1, siteId: siteA, createdAt: daysAgo(0) })
+    const kv = countingKv()
+    expect((await cachedStats(kv, db, defer, NOW)).series[29].views).toBe(1)
+
+    await seedEvent(db, { type: 'view', userId: u1, siteId: siteA, createdAt: daysAgo(0) })
+    const later = plus(STATS_CACHE_SECONDS + 1)
+    // The stale call is the one that must NOT block: it hands back the old number...
+    expect((await cachedStats(kv, db, defer, later)).series[29].views).toBe(1)
+    // ...and the deferred recompute it kicked off is what the NEXT caller sees.
+    expect((await cachedStats(kv, db, defer, later)).series[29].views).toBe(2)
+  })
+
+  test('a stale window does NOT drag the all-time totals along — the whole point of the split', async () => {
+    const { db, u1, siteA } = await fixture()
+    await seedEvent(db, { type: 'view', userId: u1, siteId: siteA, createdAt: daysAgo(0) })
+    const kv = countingKv()
+    await cachedStats(kv, db, defer, NOW)
+    expect(stampOf(kv, STATS_TOTALS_CACHE_KEY)).toBe(NOW.getTime())
+
+    // A new user lands, then the WINDOW ttl lapses while the TOTALS ttl still has ~23h left.
+    await seedUser(db, { id: 'u3' })
+    const later = plus(STATS_CACHE_SECONDS + 1)
+    await cachedStats(kv, db, defer, later)
+    const after = await cachedStats(kv, db, defer, later)
+
+    expect(after.totals.users).toBe(2) // u3 not counted: the expensive half was never rescanned
+    expect(stampOf(kv, STATS_TOTALS_CACHE_KEY)).toBe(NOW.getTime()) // never rewritten
+    expect(stampOf(kv, STATS_CACHE_KEY)).toBe(later.getTime()) // the cheap half did refresh
+  })
+
+  test('past its own soft TTL the totals half refreshes too', async () => {
+    const { db } = await fixture()
+    const kv = countingKv()
+    expect((await cachedStats(kv, db, defer, NOW)).totals.users).toBe(2)
+
+    await seedUser(db, { id: 'u3' })
+    const nextDay = plus(STATS_TOTALS_CACHE_SECONDS + 1)
+    expect((await cachedStats(kv, db, defer, nextDay)).totals.users).toBe(2) // stale served
+    expect((await cachedStats(kv, db, defer, nextDay)).totals.users).toBe(3) // refresh landed
+  })
+
+  test('a pre-v3 payload with no {at,v} envelope is a miss, not a crash', async () => {
+    const { db } = await fixture()
+    const kv = countingKv()
+    // Exactly what `stats:admin:v2` held: a bare serialized Stats, no stamp to age it by.
+    await kv.put(STATS_CACHE_KEY, JSON.stringify({ totals: { users: 99 }, series: [] }), {})
+    const stats = await cachedStats(kv, db, defer, NOW)
+    expect(stats.totals.users).toBe(2)
+    expect(stats.series).toHaveLength(30)
   })
 
   test('a read that throws still serves fresh stats', async () => {
