@@ -1,14 +1,17 @@
 import { ChevronRight, Command, GitFork, History, Menu, MessageSquare, Share2, Sparkles, Star } from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router'
+import { toast } from 'sonner'
 import { useStar } from '@/hooks/useStar'
-import type { ViewerSite } from '@/lib/types'
+import { api } from '@/lib/api'
+import type { ViewerSite, Visibility } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { ForkDialog } from '@/components/ForkDialog'
 import { ShareDialog } from '@/components/ShareDialog'
 import { SummarySheet } from '@/components/SummarySheet'
+import { VISIBILITY_META, VisibilityBadge, VisibilityMenu } from '@/components/visibility'
 import { BrandMark } from '@/components/states'
 
 // The persistent top chrome for the viewer: brand (→ dashboard) + a breadcrumb, then one action
@@ -65,6 +68,10 @@ export function ViewerTopBar({
           </>
         )}
       </nav>
+
+      {/* Right after the name, so "what site is this — private / members / team" is answered
+          without opening a dialog. The owner gets the live picker; everyone else a read-only chip. */}
+      {site.isOwner ? <ViewerVisibility site={site} /> : <VisibilityBadge value={site.visibility} className="shrink-0" />}
 
       <div className="ml-auto flex shrink-0 items-center gap-2">
         <Button
@@ -147,5 +154,30 @@ export function ViewerTopBar({
         />
       )}
     </header>
+  )
+}
+
+// Owner-only tier picker, same chip as the dashboard table. It holds its own value rather than
+// revalidating: the viewer's loader also re-fires the comments prefetch, and a visibility PATCH is
+// no reason to pay for that — the tier is the only thing that changed.
+function ViewerVisibility({ site }: { site: ViewerSite }) {
+  const [visibility, setVisibility] = useState(site.visibility)
+
+  async function change(v: Visibility) {
+    const prev = visibility
+    setVisibility(v)
+    try {
+      await api.patch(`/api/sites/${site.spaceSlug}/${site.siteSlug}`, { visibility: v })
+      toast.success('Visibility updated', { description: VISIBILITY_META[v].label })
+    } catch (err) {
+      setVisibility(prev)
+      toast.error('Could not update visibility', { description: err instanceof Error ? err.message : undefined })
+    }
+  }
+
+  return (
+    <span className="shrink-0">
+      <VisibilityMenu trigger="chip" value={visibility} onChange={change} />
+    </span>
   )
 }

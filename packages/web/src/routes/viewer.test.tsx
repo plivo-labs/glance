@@ -46,7 +46,7 @@ const SITE: ViewerSite = {
   spaceSlug: 'sp',
   siteSlug: 'site',
   title: 'T',
-  visibility: 'public',
+  visibility: 'team',
   status: 'active',
   isOwner: true,
   contentUrl: 'https://content.example.com/sp/site/',

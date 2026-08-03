@@ -11,7 +11,7 @@ const SITE: ViewerSite = {
   spaceSlug: 'sp',
   siteSlug: 'site',
   title: 'T',
-  visibility: 'public',
+  visibility: 'team',
   status: 'active',
   isOwner: false,
   contentUrl: 'https://content.example.com/sp/site/',
@@ -20,14 +20,16 @@ const SITE: ViewerSite = {
 
 // A DATA router, not MemoryRouter: the star control (useStar) calls useRevalidator, which throws
 // outside one — the top bar cannot be rendered bare any more.
-function renderTopBar(overrides: Partial<{ railOpen: boolean; commentCount: number; onToggleRail: () => void }> = {}) {
+function renderTopBar(
+  overrides: Partial<{ railOpen: boolean; commentCount: number; onToggleRail: () => void; site: ViewerSite }> = {},
+) {
   const onToggleRail = overrides.onToggleRail ?? mock(() => {})
   const router = createMemoryRouter([
     {
       path: '/',
       element: (
         <ViewerTopBar
-          site={SITE}
+          site={overrides.site ?? SITE}
           sitePath=""
           railOpen={overrides.railOpen ?? false}
           commentCount={overrides.commentCount ?? 0}
@@ -67,5 +69,19 @@ describe('ViewerTopBar — Comments is an always-present toggle (C2b: Done is go
     expect(screen.getByRole('button', { name: /Comments/ }).textContent).toContain('3')
     renderTopBar({ railOpen: true, commentCount: 5 })
     expect(screen.getAllByRole('button', { name: /Comments/ }).at(-1)?.textContent).toContain('5')
+  })
+})
+
+describe('ViewerTopBar — the visibility tier rides beside the site name', () => {
+  test('a viewer (not the owner) sees the tier as a read-only chip', () => {
+    renderTopBar({ site: { ...SITE, visibility: 'members', isOwner: false } })
+    expect(screen.getByText('Members')).toBeTruthy()
+    // Read-only: the chip is text, not a picker trigger.
+    expect(screen.queryByRole('button', { name: /Members/ })).toBeNull()
+  })
+
+  test('the owner gets the picker trigger for the tier', () => {
+    renderTopBar({ site: { ...SITE, visibility: 'private', isOwner: true } })
+    expect(screen.getByRole('button', { name: /Private/ })).toBeTruthy()
   })
 })
