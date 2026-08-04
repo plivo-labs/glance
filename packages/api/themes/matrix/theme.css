@@ -1,39 +1,31 @@
-/* Glance theme: Matrix — phosphor green on black, CRT glow and scanlines.
- * Classless: element selectors only (see plivo/theme.css for the injection contract). */
+/* Glance theme: Matrix — phosphor green on black, CRT texture. v2 design rules:
+ * texture lives on the GROUND (body background layers), never as an overlay above content — a
+ * page that paints its own surfaces covers the CRT cleanly instead of being striped by it.
+ * Glow is reserved for h1/h2 (body text stays crisp), and images are never filtered.
+ * Classless: element selectors only. */
 :root {
   --glance-bg: #000000;
-  --glance-fg: #00ff41;
-  --glance-fg-dim: #00b32e;
+  --glance-fg: #00e63a;
+  --glance-fg-dim: #00a32c;
   --glance-fg-bright: #ccffcc;
-  --glance-surface: #030a04;
-  --glance-border: #0a3d17;
-  --glance-glow: 0 0 6px rgba(0, 255, 65, 0.55);
+  --glance-surface: #041207;
+  --glance-border: #0c4d1d;
   color-scheme: dark;
 }
 html {
   background: var(--glance-bg);
 }
 body {
-  background: var(--glance-bg);
+  /* CRT ground: a soft green vignette under fine scanlines, on pure black. Content with its own
+   * background sits ON this and stays clean; bare text sits directly in the glow. */
+  background-color: var(--glance-bg);
+  background-image:
+    repeating-linear-gradient(to bottom, rgba(0, 230, 58, 0.05) 0 1px, transparent 1px 3px),
+    radial-gradient(ellipse 80% 60% at 50% 0%, rgba(0, 230, 58, 0.08), transparent 70%);
+  background-attachment: fixed;
   color: var(--glance-fg);
-  font-family: 'Courier New', ui-monospace, SFMono-Regular, Menlo, monospace;
-  line-height: 1.55;
-  text-shadow: var(--glance-glow);
-}
-/* CRT scanlines, fixed over the page; inert to clicks. */
-body::after {
-  content: '';
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  background: repeating-linear-gradient(
-    to bottom,
-    transparent 0,
-    transparent 2px,
-    rgba(0, 0, 0, 0.22) 3px,
-    transparent 4px
-  );
-  z-index: 2147483646;
+  font-family: ui-monospace, SFMono-Regular, Menlo, 'Courier New', monospace;
+  line-height: 1.6;
 }
 h1, h2, h3, h4, h5, h6 {
   color: var(--glance-fg-bright);
@@ -41,18 +33,20 @@ h1, h2, h3, h4, h5, h6 {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  text-shadow: 0 0 10px rgba(0, 255, 65, 0.8);
 }
+/* Glow is a headline privilege — body copy stays crisp and readable. */
+h1, h2 { text-shadow: 0 0 8px rgba(0, 230, 58, 0.5); }
 h1::before, h2::before { content: '> '; color: var(--glance-fg-dim); }
-a { color: var(--glance-fg-bright); text-decoration-color: var(--glance-fg-dim); }
-a:hover { background: rgba(0, 255, 65, 0.12); }
-p, li, td { color: var(--glance-fg); }
 small { color: var(--glance-fg-dim); }
 strong, b { color: var(--glance-fg-bright); }
+em, i { color: var(--glance-fg-bright); }
+mark { background: var(--glance-fg); color: #000000; padding: 0 0.25em; }
+a { color: var(--glance-fg-bright); text-decoration-color: var(--glance-fg-dim); text-underline-offset: 3px; }
+a:hover { background: rgba(0, 230, 58, 0.15); }
 hr { border: 0; border-top: 1px dashed var(--glance-border); }
 blockquote {
   margin-left: 0;
-  padding: 0.25rem 0 0.25rem 1rem;
+  padding: 0.4rem 0 0.4rem 1rem;
   border-left: 2px solid var(--glance-fg-dim);
   color: var(--glance-fg-dim);
 }
@@ -68,43 +62,45 @@ pre {
   border: 1px solid var(--glance-border);
   padding: 1rem;
   overflow: auto;
-  box-shadow: inset 0 0 24px rgba(0, 255, 65, 0.06);
 }
 pre code { background: none; border: 0; padding: 0; }
 table { border-collapse: collapse; }
-th, td { border: 1px solid var(--glance-border); padding: 0.4rem 0.8rem; }
-th { color: var(--glance-fg-bright); text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.85em; }
+th, td { border: 1px solid var(--glance-border); padding: 0.5rem 0.9rem; text-align: left; }
+thead th {
+  background: var(--glance-surface);
+  color: var(--glance-fg-bright);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.85em;
+}
 button {
   background: transparent;
   color: var(--glance-fg);
   border: 1px solid var(--glance-fg-dim);
-  padding: 0.5rem 1rem;
+  border-radius: 2px;
+  padding: 0.5rem 1.1rem;
   font-family: inherit;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   cursor: pointer;
 }
 button:hover {
-  background: rgba(0, 255, 65, 0.15);
+  background: rgba(0, 230, 58, 0.15);
   color: var(--glance-fg-bright);
-  box-shadow: var(--glance-glow);
+  box-shadow: 0 0 10px rgba(0, 230, 58, 0.35);
 }
 input, select, textarea {
   background: var(--glance-surface);
   color: var(--glance-fg);
   border: 1px solid var(--glance-border);
+  border-radius: 2px;
   padding: 0.5rem 0.75rem;
   font-family: inherit;
   caret-color: var(--glance-fg);
 }
+input::placeholder, textarea::placeholder { color: var(--glance-fg-dim); }
 input:focus, select:focus, textarea:focus { outline: 1px solid var(--glance-fg); }
-::selection { background: rgba(0, 255, 65, 0.35); color: #000; text-shadow: none; }
-img { filter: sepia(1) hue-rotate(70deg) saturate(3) brightness(0.85); }
-@media (prefers-reduced-motion: no-preference) {
-  h1 { animation: glance-matrix-flicker 4s infinite; }
-  @keyframes glance-matrix-flicker {
-    0%, 97%, 100% { opacity: 1; }
-    98% { opacity: 0.82; }
-    99% { opacity: 0.94; }
-  }
-}
+::selection { background: rgba(0, 230, 58, 0.4); color: #000000; text-shadow: none; }
+fieldset { border: 1px solid var(--glance-border); }
+legend { color: var(--glance-fg-bright); text-transform: uppercase; letter-spacing: 0.08em; padding: 0 0.4em; }
+figcaption { color: var(--glance-fg-dim); font-size: 0.85em; }
