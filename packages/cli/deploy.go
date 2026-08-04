@@ -105,7 +105,8 @@ func (c *client) deploy(argv []string) error {
 		visibility = "team"
 	}
 	// Optional design theme. Sent explicit-only (the visibility idiom below): absent on replace →
-	// server keeps the current theme. `--theme none` clears it (the server treats 'none' as clear).
+	// server keeps the current theme. `--theme default` (or `none`) resets to the page's own
+	// design — the server treats both as clear.
 	theme := ""
 	themeSet := false
 	if raw, present := flags["theme"]; present {
@@ -113,7 +114,7 @@ func (c *client) deploy(argv []string) error {
 		themeSet = true
 	}
 	if path == "" {
-		return fmt.Errorf("Usage: glance deploy <path> [--space <slug>] [--name <slug>] [--visibility team|private|members] [--theme <slug>|none] [--include-hidden]")
+		return fmt.Errorf("Usage: glance deploy <path> [--space <slug>] [--name <slug>] [--visibility team|private|members] [--theme <slug>|default] [--include-hidden]")
 	}
 	if err := c.requireAuth(); err != nil {
 		return err

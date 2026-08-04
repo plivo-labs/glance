@@ -7,6 +7,11 @@ export const THEME_INFO = [
     "description": "LaTeX-paper look: warm-white page, Palatino serif, justified text, booktabs tables, centered headings. For reports that should read like a published paper."
   },
   {
+    "slug": "cyberpunk",
+    "name": "Night City",
+    "description": "Cyberpunk 2077: acid yellow on black, clipped corners, cyan links that flicker red. Flat and hard-edged — wake up, samurai."
+  },
+  {
     "slug": "matrix",
     "name": "Matrix",
     "description": "Phosphor-green code-rain terminal: #00ff41 on black, glow text, scanlines, monospace everything. Follow the white rabbit."
@@ -17,9 +22,14 @@ export const THEME_INFO = [
     "description": "Developer-precision, monochrome-first: near-neutral surfaces, one blue accent, Sora display type, JetBrains Mono metadata, hairline elevation. First-class light and dark."
   },
   {
-    "slug": "terminal",
-    "name": "Terminal",
-    "description": "Amber-phosphor terminal: warm #ffb000 on near-black, monospace, prompt-prefixed headings. A 1980s VT220 for your artifacts."
+    "slug": "synthwave",
+    "name": "Synthwave '84",
+    "description": "Outrun neon: deep-purple night, hot-pink glow headings, cyan links, a sunset-gradient rule. The only theme that glows."
+  },
+  {
+    "slug": "win98",
+    "name": "Windows 98",
+    "description": "Silver chrome, navy title-bar headings, beveled buttons, sunken white fields. It is now safe to turn off your computer."
   }
 ] as const
 

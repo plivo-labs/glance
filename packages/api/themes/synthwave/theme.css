@@ -1,0 +1,109 @@
+/* Glance theme: Synthwave '84 — outrun neon on a deep-purple night. Palette anchored to Robb
+ * Owen's Synthwave '84 (bg #262335, pink #ff7edb, cyan #36f9f6) + the classic sunset ramp.
+ * Soft corners + glow — the deliberate opposite of Night City's flat clipped edges.
+ * Classless: element selectors only. */
+:root {
+  --glance-bg: #262335;
+  --glance-surface: #241b2f;
+  --glance-raised: #34294f;
+  --glance-fg: #f4f2f7;
+  --glance-muted: #848bbd;
+  --glance-border: #495495;
+  --glance-pink: #ff7edb;
+  --glance-pink-hot: #ff2975;
+  --glance-cyan: #36f9f6;
+  --glance-orange: #ff8b39;
+  color-scheme: dark;
+}
+html {
+  background: var(--glance-bg);
+}
+body {
+  background: var(--glance-bg);
+  color: var(--glance-fg);
+  font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
+  line-height: 1.65;
+}
+h1, h2, h3, h4, h5, h6 {
+  color: var(--glance-pink);
+  font-family: inherit;
+  font-weight: 700;
+  text-shadow: 0 0 2px #000, 0 0 10px rgba(255, 41, 117, 0.65), 0 0 22px rgba(255, 41, 117, 0.35);
+}
+/* The canonical Synthwave Sunset ramp as the h1 rule. */
+h1 {
+  padding-bottom: 0.25em;
+  border-bottom: 3px solid;
+  border-image: linear-gradient(90deg, #ffd319, #ff901f, #ff2975, #f222ff, #8c1eff) 1;
+}
+h3, h4 { color: var(--glance-orange); text-shadow: 0 0 8px rgba(255, 139, 57, 0.4); }
+small { color: var(--glance-muted); }
+strong, b { color: var(--glance-cyan); }
+a { color: var(--glance-cyan); text-decoration-color: rgba(54, 249, 246, 0.4); }
+a:hover { text-shadow: 0 0 8px rgba(54, 249, 246, 0.8); text-decoration-color: var(--glance-cyan); }
+hr {
+  border: 0;
+  border-top: 2px solid var(--glance-pink);
+  box-shadow: 0 0 8px rgba(255, 126, 219, 0.6);
+}
+blockquote {
+  margin-left: 0;
+  padding: 0.4rem 0 0.4rem 1rem;
+  border-left: 3px solid var(--glance-cyan);
+  box-shadow: inset 3px 0 8px -4px rgba(54, 249, 246, 0.5);
+  color: var(--glance-muted);
+}
+code, kbd, samp, pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+}
+code, kbd, samp {
+  background: var(--glance-surface);
+  color: var(--glance-cyan);
+  border-radius: 4px;
+  padding: 0.12em 0.4em;
+}
+pre {
+  background: var(--glance-surface);
+  color: var(--glance-cyan);
+  border: 1px solid var(--glance-raised);
+  border-radius: 6px;
+  padding: 1rem;
+  overflow: auto;
+}
+pre code { background: none; padding: 0; }
+table { border-collapse: collapse; }
+thead th { background: var(--glance-surface); color: var(--glance-pink); }
+th, td { border-bottom: 1px solid var(--glance-raised); padding: 0.5rem 0.9rem; text-align: left; }
+tbody tr:hover { background: var(--glance-raised); }
+button {
+  background: transparent;
+  color: var(--glance-pink);
+  border: 1px solid var(--glance-pink);
+  border-radius: 6px;
+  padding: 0.55rem 1.2rem;
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+button:hover {
+  color: #ffffff;
+  border-color: var(--glance-pink-hot);
+  box-shadow: 0 0 12px rgba(255, 41, 117, 0.6), inset 0 0 12px rgba(255, 41, 117, 0.25);
+}
+input, select, textarea {
+  background: var(--glance-surface);
+  color: var(--glance-fg);
+  border: 1px solid var(--glance-border);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  font-family: inherit;
+}
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--glance-cyan);
+  box-shadow: 0 0 8px rgba(54, 249, 246, 0.5);
+}
+::selection { background: var(--glance-raised); }
+fieldset { border: 1px solid var(--glance-border); border-radius: 6px; }
+legend { color: var(--glance-pink); }

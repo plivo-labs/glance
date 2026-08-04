@@ -93,10 +93,14 @@ describe('upload theme field', () => {
     expect(await themeOf(db, 'site')).toBeNull()
   })
 
-  test('empty string clears like none (HTML form with an unselected picker)', async () => {
+  test("empty string and 'default' clear like none (the page's own design)", async () => {
     const { app, env, db } = await setup()
-    await post(app, env, 'site', { theme: 'terminal' })
+    await post(app, env, 'site', { theme: 'synthwave' })
     expect((await post(app, env, 'site', { replace: true, theme: '' })).status).toBe(200)
+    expect(await themeOf(db, 'site')).toBeNull()
+
+    await post(app, env, 'site', { replace: true, theme: 'cyberpunk' })
+    expect((await post(app, env, 'site', { replace: true, theme: 'default' })).status).toBe(200)
     expect(await themeOf(db, 'site')).toBeNull()
   })
 })

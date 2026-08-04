@@ -59,7 +59,7 @@ export function useThemes(): ThemeInfo[] {
 }
 
 export function themeLabel(themes: ThemeInfo[], slug: string | null): string {
-  if (!slug) return 'No theme'
+  if (!slug) return 'Default'
   return themes.find((t) => t.slug === slug)?.name ?? slug
 }
 
@@ -75,8 +75,8 @@ function ThemeRadioItems({
   return (
     <DropdownMenuRadioGroup value={value ?? NONE} onValueChange={(v) => onChange(v === NONE ? null : v)}>
       <DropdownMenuRadioItem value={NONE} className="gap-2">
-        <span className="flex-1">None</span>
-        <span className="text-xs text-muted-foreground">as uploaded</span>
+        <span className="flex-1">Default</span>
+        <span className="text-xs text-muted-foreground">the page's own design</span>
       </DropdownMenuRadioItem>
       {themes.map((t) => (
         <DropdownMenuRadioItem key={t.slug} value={t.slug} title={t.description}>

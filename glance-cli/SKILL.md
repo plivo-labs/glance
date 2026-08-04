@@ -61,7 +61,7 @@ A key can deploy, create, fork and move, but **never deletes a site** and never 
 - `--name` defaults to the **file name (sans extension)** or **folder name**, slugified. Pass `--name` to override (required if the derived name isn't a valid slug — lowercase, 3–40 chars).
 - `--space` defaults to your **personal space**. Pass `--space` to target a team/group space.
 - `--visibility` defaults to `team`.
-- `--theme <slug>` applies a **design theme** (server-injected stylesheet — see "Design themes" below). `--theme none` clears it. Omitted on a replace → the site keeps its current theme.
+- `--theme <slug>` applies a **design theme** (server-injected stylesheet — see "Design themes" below). `--theme default` (or `none`) resets to the page's own design. Omitted on a replace → the site keeps its current theme.
 - If the site already exists and you own it, prompts `Replace? (y/N)`. If owned by someone else, it aborts.
 - Prints `✓ Deployed → <url>`.
 
@@ -231,9 +231,10 @@ Two ways to use a theme — pick by intent:
 glance deploy report.html --theme plivo      # brand-styled report
 glance deploy postmortem/ --theme matrix     # green phosphor, scanlines
 glance deploy paper.md --theme academic      # LaTeX-paper look (works on rendered markdown too)
+glance deploy dashboard/ --theme default     # reset: serve the page's own design untouched
 ```
 
-The theme is a site property, not a file: the owner can switch it later from the viewer's theme chip or the dashboard row menu without a redeploy. Semantic HTML (`<h1>`, `<p>`, `<table>`, `<code>`, …) gets the most from a theme — a page that is one big `<div>` soup with inline styles will barely change.
+The theme is a site property, not a file: the owner can switch it later from the viewer's theme chip or the dashboard row menu without a redeploy — **Default** always means the page's own design, exactly as uploaded. Semantic HTML (`<h1>`, `<p>`, `<table>`, `<code>`, …) gets the most from a theme — a page that is one big `<div>` soup with inline styles will barely change.
 
 ## Saving data from your pages — `glance.db` (experimental)
 

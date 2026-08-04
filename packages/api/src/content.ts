@@ -136,27 +136,50 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
   // file row, fused into a single batch. The file statement joins by BOTH slugs too (the site id
   // is unknown before the batch runs), and every statement returns empty rows rather than
   // throwing, so the 404/403/410 precedence below is decided AFTER the batch in today's order.
-  const fileStmt = db
-    .select(cols)
-    .from(files)
-    .innerJoin(sites, eq(files.siteId, sites.id))
-    .innerJoin(spaces, eq(sites.spaceId, spaces.id))
-    .where(and(eq(spaces.slug, spaceSlug), eq(sites.slug, siteSlug), eq(files.path, reqPath)))
-    .limit(1)
+  // Statements are built fresh PER ATTEMPT (drizzle builders own their SQL chunks) — see the
+  // retry below.
+  const fileStmt = () =>
+    db
+      .select(cols)
+      .from(files)
+      .innerJoin(sites, eq(files.siteId, sites.id))
+      .innerJoin(spaces, eq(sites.spaceId, spaces.id))
+      .where(and(eq(spaces.slug, spaceSlug), eq(sites.slug, siteSlug), eq(files.path, reqPath)))
+      .limit(1)
   // Index-ish request (`…/` or explicit index.html): the single-file/dir-listing fallback's
   // all-files read rides the SAME batch — a single-file site's every page view otherwise pays a
   // serial follow-up round trip. Bounded by the 200-file upload cap; non-index assets (css/js/
   // img — the traffic bulk) keep the lean batch.
   const isIndexReq = reqPath === 'index.html' || reqPath.endsWith('/index.html')
-  const allFilesStmt = db
-    .select(cols)
-    .from(files)
-    .innerJoin(sites, eq(files.siteId, sites.id))
-    .innerJoin(spaces, eq(sites.spaceId, spaces.id))
-    .where(and(eq(spaces.slug, spaceSlug), eq(sites.slug, siteSlug)))
-  const { facts, extras } = isIndexReq
-    ? await fetchAccessFacts(db, spaceSlug, siteSlug, userId, fileStmt, allFilesStmt)
-    : await fetchAccessFacts(db, spaceSlug, siteSlug, userId, fileStmt)
+  const allFilesStmt = () =>
+    db
+      .select(cols)
+      .from(files)
+      .innerJoin(sites, eq(files.siteId, sites.id))
+      .innerJoin(spaces, eq(sites.spaceId, spaces.id))
+      .where(and(eq(spaces.slug, spaceSlug), eq(sites.slug, siteSlug)))
+  const readFacts = () =>
+    isIndexReq
+      ? fetchAccessFacts(db, spaceSlug, siteSlug, userId, fileStmt(), allFilesStmt())
+      : fetchAccessFacts(db, spaceSlug, siteSlug, userId, fileStmt())
+  // D1 occasionally surfaces a TRANSIENT internal error (and local dev makes them easy to hit:
+  // two `wrangler dev` processes share one --persist-to sqlite, so a concurrent control-plane
+  // write — e.g. a theme switch racing the page reload it triggers — can fail this read). The
+  // batch is read-only and idempotent, so retrying is safe and turns a user-visible 500 into a
+  // served page. Two retries with a short backoff (an immediate retry lands inside the same
+  // contention window and fails with it); a third consecutive failure is a real outage and
+  // propagates as before. Total added latency on the unhappy path is ≤240ms.
+  let read: Awaited<ReturnType<typeof readFacts>> | null = null
+  for (let attempt = 0; ; attempt++) {
+    try {
+      read = await readFacts()
+      break
+    } catch (err) {
+      if (attempt >= 2) throw err
+      await new Promise((r) => setTimeout(r, [60, 240][attempt]))
+    }
+  }
+  const { facts, extras } = read
   const [fileRows, allFileRows] = extras as [(typeof extras)[0], (typeof extras)[0]?]
 
   const siteRow = facts.site

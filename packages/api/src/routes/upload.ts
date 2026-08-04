@@ -50,12 +50,13 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
   const hasVisibility = typeof rawVisibility === 'string' && rawVisibility !== ''
   const visibility = normalizeVisibility(rawVisibility || 'team')
   // Optional design theme, mirroring visibility's create/replace split: CREATE applies it (absent →
-  // unthemed); REPLACE only touches sites.theme when the field was explicitly sent, so an agent's
-  // plain redeploy never strips a theme picked in the UI. 'none'/'' explicitly CLEARS it. Validated
-  // against the registry so a typo 400s here instead of silently serving unthemed.
+  // default); REPLACE only touches sites.theme when the field was explicitly sent, so an agent's
+  // plain redeploy never strips a theme picked in the UI. 'default'/'none'/'' explicitly CLEARS it
+  // (default = the page's own design, exactly as uploaded). Validated against the registry so a
+  // typo 400s here instead of silently serving unthemed.
   const rawTheme = form.get('theme')
   const hasTheme = typeof rawTheme === 'string'
-  const theme = hasTheme && rawTheme !== '' && rawTheme !== 'none' ? rawTheme : null
+  const theme = hasTheme && rawTheme !== '' && rawTheme !== 'none' && rawTheme !== 'default' ? rawTheme : null
   if (theme !== null && !isTheme(theme)) return c.json({ error: 'unknown theme', theme }, 400)
   // Optional display title. CREATE: an explicit form title wins; absent one, the entry HTML's
   // <title> is derived below. REPLACE never renames a titled site — a re-upload/record must not
