@@ -65,14 +65,14 @@ describe('theme in read payloads', () => {
     await mintUser(db, kv, 'owner')
     const sp = await seedSpace(db, { createdBy: 'owner', slug: 'docs' })
     await seedMember(db, sp, 'owner')
-    await seedSite(db, { spaceId: sp, ownerId: 'owner', slug: 'report', theme: 'academic' })
+    await seedSite(db, { spaceId: sp, ownerId: 'owner', slug: 'report', theme: 'broadsheet' })
 
     const view = await app.request('/api/sites/docs/report', { headers: auth('owner') }, env)
-    expect(((await view.json()) as { theme: string | null }).theme).toBe('academic')
+    expect(((await view.json()) as { theme: string | null }).theme).toBe('broadsheet')
 
     const mine = await app.request('/api/sites/mine', { headers: auth('owner') }, env)
     const rows = (await mine.json()) as { siteSlug: string; theme: string | null }[]
-    expect(rows.find((r) => r.siteSlug === 'report')?.theme).toBe('academic')
+    expect(rows.find((r) => r.siteSlug === 'report')?.theme).toBe('broadsheet')
   })
 })
 

@@ -1,0 +1,122 @@
+/* Glance theme: Flat-Pack — furniture-manual / safety-card information design. Clinical calm:
+ * instructional blue, giant step numbers on ordered lists, safety-yellow warning quotes, hairline
+ * diagram frames, rigid whitespace. The humor is the deadpan. Light ground → dark text,
+ * inherently safe on author-painted surfaces. Classless: element selectors only. */
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;700&display=swap');
+
+:root {
+  --glance-bg: #ffffff;
+  --glance-fg: #3d3e42;
+  --glance-blue: #0058a3;
+  --glance-safety: #ffdb00;
+  --glance-hairline: #d1d1d1;
+  --glance-part: #8a8a8a;
+  color-scheme: light;
+}
+html {
+  background: var(--glance-bg);
+}
+body {
+  background: var(--glance-bg);
+  color: var(--glance-fg);
+  font-family: 'Archivo', 'Helvetica Neue', Arial, sans-serif;
+  line-height: 1.6;
+}
+h1, h2, h3, h4, h5, h6 {
+  color: var(--glance-blue);
+  font-family: inherit;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
+}
+h1 { font-size: 1.9rem; }
+/* Each section is a new assembly step: thin blue rule above, generous air. */
+h2 {
+  font-size: 1.15rem;
+  margin-top: 3rem;
+  padding-top: 0.9rem;
+  border-top: 3px solid var(--glance-blue);
+}
+h3 { font-size: 0.95rem; color: var(--glance-fg); }
+small { color: var(--glance-part); }
+strong, b { color: #1c1d20; font-weight: 700; }
+mark { background: var(--glance-safety); padding: 0 0.25em; font-weight: 700; }
+a { color: var(--glance-blue); text-decoration: underline; text-underline-offset: 3px; }
+a:hover { text-decoration-thickness: 3px; }
+hr { border: 0; border-top: 1px solid var(--glance-hairline); margin: 2.5rem 0; }
+/* The safety-card warning panel. */
+blockquote {
+  margin-left: 0;
+  background: var(--glance-safety);
+  color: #1c1d20;
+  font-weight: 700;
+  padding: 0.9rem 1.2rem 0.9rem 3rem;
+  position: relative;
+  border-radius: 0;
+}
+blockquote::before {
+  content: '⚠';
+  position: absolute;
+  left: 1rem;
+  top: 0.8rem;
+  font-size: 1.25em;
+}
+/* Ordered lists are the hero: giant outdented step numbers. */
+ol { padding-left: 3.2rem; }
+ol > li { margin: 1.1rem 0; }
+ol > li::marker { font-size: 1.6em; font-weight: 700; color: var(--glance-blue); }
+ul > li::marker { color: var(--glance-blue); }
+code, kbd, samp, pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.88em;
+}
+code, kbd, samp { background: #f2f2f2; border: 1px solid var(--glance-hairline); padding: 0.08em 0.3em; }
+pre {
+  background: #f7f7f7;
+  border: 1px solid var(--glance-hairline);
+  padding: 1rem;
+  overflow: auto;
+}
+pre code { background: none; border: 0; padding: 0; }
+/* Diagram frames: hairlines only, part-number captions. */
+table { border-collapse: collapse; border: 1px solid var(--glance-hairline); }
+th { background: #f2f2f2; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.75em; color: var(--glance-fg); }
+th, td { border: 1px solid var(--glance-hairline); padding: 0.5rem 0.9rem; text-align: left; }
+img, figure { background: #ffffff; }
+img { border: 1px solid var(--glance-hairline); }
+figcaption {
+  color: var(--glance-part);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.75em;
+  margin-top: 0.4rem;
+}
+button {
+  background: var(--glance-blue);
+  color: #ffffff;
+  border: 0;
+  border-radius: 0;
+  padding: 0.65rem 1.6rem;
+  font-family: inherit;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+button:hover { background: #003e73; }
+input, select, textarea {
+  background: #ffffff;
+  color: var(--glance-fg);
+  border: 1px solid var(--glance-part);
+  border-radius: 0;
+  padding: 0.5rem 0.75rem;
+  font-family: inherit;
+}
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--glance-blue); outline-offset: 1px; }
+::selection { background: var(--glance-safety); }
+fieldset { border: 1px solid var(--glance-hairline); padding: 1.5rem; }
+legend { color: var(--glance-blue); font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.8em; padding: 0 0.5em; }
+
+/* Reading measure: flowing text caps at ~72ch so a bare full-width document stays readable. */
+p, ul, ol, dl { max-width: 72ch; }

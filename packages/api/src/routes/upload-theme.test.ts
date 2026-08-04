@@ -85,8 +85,8 @@ describe('upload theme field', () => {
     expect(await themeOf(db, 'site')).toBe('matrix')
 
     // Explicit switch on replace.
-    expect((await post(app, env, 'site', { replace: true, theme: 'academic' })).status).toBe(200)
-    expect(await themeOf(db, 'site')).toBe('academic')
+    expect((await post(app, env, 'site', { replace: true, theme: 'kapow' })).status).toBe(200)
+    expect(await themeOf(db, 'site')).toBe('kapow')
 
     // Explicit clear.
     expect((await post(app, env, 'site', { replace: true, theme: 'none' })).status).toBe(200)
@@ -95,7 +95,7 @@ describe('upload theme field', () => {
 
   test("empty string and 'default' clear like none (the page's own design)", async () => {
     const { app, env, db } = await setup()
-    await post(app, env, 'site', { theme: 'synthwave' })
+    await post(app, env, 'site', { theme: 'lineprinter' })
     expect((await post(app, env, 'site', { replace: true, theme: '' })).status).toBe(200)
     expect(await themeOf(db, 'site')).toBeNull()
 

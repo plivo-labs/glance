@@ -2,24 +2,29 @@
 // Run `bun run build:themes` after changing anything under themes/.
 export const THEME_INFO = [
   {
-    "slug": "academic",
-    "name": "Academic",
-    "description": "LaTeX-paper look: warm-white page, Palatino serif, justified text, booktabs tables, centered headings. For reports that should read like a published paper."
-  },
-  {
     "slug": "broadsheet",
     "name": "Broadsheet",
     "description": "Newspaper front page: cream paper, Georgia serif, masthead headline between double rules, drop cap, column-rule tables. Read all about it."
   },
   {
-    "slug": "brutalist",
-    "name": "Brutalist",
-    "description": "Neo-brutalism: raw white, 3px black borders, hard offset shadows, marker-yellow highlights, shouty headings. Zero subtlety, on purpose."
-  },
-  {
     "slug": "cyberpunk",
     "name": "Night City",
     "description": "Cyberpunk 2077: acid yellow on black, clipped corners, cyan links that flicker red. Flat and hard-edged — wake up, samurai."
+  },
+  {
+    "slug": "flatpack",
+    "name": "Flat-Pack",
+    "description": "Assembly-manual deadpan: instructional blue, giant step numbers, safety-yellow warnings, hairline diagram frames. Some assembly required."
+  },
+  {
+    "slug": "kapow",
+    "name": "Kapow",
+    "description": "A comic book page: halftone newsprint, Bangers action headings, speech-bubble quotes, yellow caption boxes, hard-inked panels. THWACK."
+  },
+  {
+    "slug": "lineprinter",
+    "name": "Line Printer",
+    "description": "1978 greenbar tractor-feed printout: alternating green bars, punched margins, Courier everything, perforation rules. Your dashboard as a payroll run."
   },
   {
     "slug": "matrix",
@@ -35,21 +40,6 @@ export const THEME_INFO = [
     "slug": "sketchbook",
     "name": "Sketchbook",
     "description": "Hand-drawn on paper: wobbly ink borders, marker highlights, handwritten headings. Like your best engineer's notebook."
-  },
-  {
-    "slug": "swiss",
-    "name": "Swiss",
-    "description": "International Typographic Style: white, Helvetica, hairline grid, one red accent. Müller-Brockmann would approve."
-  },
-  {
-    "slug": "synthwave",
-    "name": "Synthwave '84",
-    "description": "Outrun neon: deep-purple night, hot-pink glow headings, cyan links, a sunset-gradient rule. The only theme that glows."
-  },
-  {
-    "slug": "win98",
-    "name": "Windows 98",
-    "description": "Silver chrome, navy title-bar headings, beveled buttons, sunken white fields. It is now safe to turn off your computer."
   }
 ] as const
 
