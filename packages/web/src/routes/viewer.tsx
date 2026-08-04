@@ -589,6 +589,12 @@ function Viewer() {
         onToggleRail={toggleRail}
         onToggleSidebar={() => setSidebarOpen((o) => !o)}
         onSearch={() => setCmdOpen(true)}
+        // Print rides the annotate client's command channel; audio has no document to print.
+        onPrint={
+          isAudio
+            ? undefined
+            : () => iframeRef.current?.contentWindow?.postMessage({ type: 'glance:print' }, contentOrigin)
+        }
       />
 
       <CommandPalette open={cmdOpen} onOpenChange={setCmdOpen} user={me} />
@@ -627,7 +633,11 @@ function Viewer() {
                 // allow-popups + allow-popups-to-escape-sandbox: the content worker rewrites external
                 // links (other origins) to target=_blank; these two flags let that click open a REAL
                 // new tab that isn't itself sandboxed, so the destination site loads normally.
-                sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms allow-top-navigation-by-user-activation"
+                // allow-modals: window.print() counts as a modal, and Chromium blocks it in a
+                // sandboxed frame without this flag — required by the Print / Save as PDF action
+                // (the annotate client's glance:print handler). Also un-blocks alert()/confirm()
+                // for hosted pages, which matches how interactive artifacts behave elsewhere.
+                sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms allow-top-navigation-by-user-activation allow-modals"
               />
             )}
             {/* Sibling of the iframe ON PURPOSE: this wrapper is the iframe's own box, so the rect

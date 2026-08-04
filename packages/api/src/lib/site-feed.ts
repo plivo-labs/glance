@@ -14,6 +14,7 @@ export function siteFeedColumns(userId: string) {
     title: sites.title,
     visibility: sites.visibility,
     status: sites.status,
+    theme: sites.theme,
     createdAt: sites.createdAt,
     updatedAt: sites.updatedAt,
     audio: pureAudioSql(sites.id),
@@ -29,6 +30,7 @@ type FeedSourceRow = {
   title: string | null
   visibility: Visibility
   status: 'active' | 'archived'
+  theme: string | null
   createdAt: string
   updatedAt: string
   audio: number
@@ -44,6 +46,7 @@ export function toFeedRow(row: FeedSourceRow, appUrl: string) {
     title: row.title,
     visibility: row.visibility,
     status: row.status,
+    theme: row.theme,
     audio: row.audio === 1,
     hasSummary: row.hasSummary === 1,
     starred: row.starred === 1,

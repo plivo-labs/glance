@@ -258,3 +258,21 @@ describe('client.ts — clicking a painted anchor posts glance:anchor-click', ()
     expect(clicks()).toHaveLength(before)
   })
 })
+
+describe('client.ts — glance:print prints in the frame realm (the parent cannot call print cross-origin)', () => {
+  test('a trusted glance:print calls window.print exactly once; a foreign origin never does', () => {
+    const win = (globalThis as unknown as AnyRecord).window as unknown as Window & AnyRecord
+    let printed = 0
+    Object.defineProperty(win, 'print', { value: () => printed++, configurable: true })
+
+    send({ type: 'glance:print' })
+    expect(printed).toBe(1)
+
+    // Same payload from a hostile origin is ignored — commands are trusted ONLY from the app origin.
+    const MessageEventCtor = (win as AnyRecord).MessageEvent as typeof MessageEvent
+    win.dispatchEvent(
+      new MessageEventCtor('message', { data: { type: 'glance:print' }, origin: 'https://evil.example.com' }) as unknown as Event,
+    )
+    expect(printed).toBe(1)
+  })
+})

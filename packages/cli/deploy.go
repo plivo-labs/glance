@@ -104,8 +104,16 @@ func (c *client) deploy(argv []string) error {
 		fmt.Fprintln(c.errOut, "note: --visibility public was removed — using team (everyone in your org).")
 		visibility = "team"
 	}
+	// Optional design theme. Sent explicit-only (the visibility idiom below): absent on replace →
+	// server keeps the current theme. `--theme none` clears it (the server treats 'none' as clear).
+	theme := ""
+	themeSet := false
+	if raw, present := flags["theme"]; present {
+		theme = raw.(string)
+		themeSet = true
+	}
 	if path == "" {
-		return fmt.Errorf("Usage: glance deploy <path> [--space <slug>] [--name <slug>] [--visibility team|private|members] [--include-hidden]")
+		return fmt.Errorf("Usage: glance deploy <path> [--space <slug>] [--name <slug>] [--visibility team|private|members] [--theme <slug>|none] [--include-hidden]")
 	}
 	if err := c.requireAuth(); err != nil {
 		return err
@@ -228,6 +236,11 @@ func (c *client) deploy(argv []string) error {
 	// private) site to team on a routine content update. Absent on replace → server keeps the tier.
 	if visibilitySet || !replace {
 		_ = mw.WriteField("visibility", visibility)
+	}
+	// Theme is strictly explicit-only (no create default): the server leaves an absent field alone
+	// on replace and creates unthemed, so this writes the field only when --theme was passed.
+	if themeSet {
+		_ = mw.WriteField("theme", theme)
 	}
 	// Pulled redeploy: send the version we pulled as the CAS token. The server REQUIRES it for an
 	// editor replace (409 on a stale one) and treats it as advisory for an owner.

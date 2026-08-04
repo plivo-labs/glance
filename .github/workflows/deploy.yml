@@ -140,6 +140,7 @@ jobs:
           bun run build:db
           bun run build:install
           bun run build:whatsnew
+          bun run build:themes
 
       # CLOUDFLARE_API_TOKEN is scoped to ONLY the wrangler steps (not the whole job) so it never
       # sits in the env of `bun install` / `build:web` / the bundle build, which execute third-party

@@ -100,7 +100,7 @@ func printHelp() {
 	fmt.Println("glance — deploy folders to Glance")
 	fmt.Println()
 	fmt.Println("  glance login")
-	fmt.Println("  glance deploy <path> [--space <slug>] [--name <slug>] [--visibility team|private|members]")
+	fmt.Println("  glance deploy <path> [--space <slug>] [--name <slug>] [--visibility team|private|members] [--theme <slug>|none]")
 	fmt.Println("  glance list")
 	fmt.Println("  glance delete <space/slug>")
 	fmt.Println("  glance move <space/slug> <new-space>")

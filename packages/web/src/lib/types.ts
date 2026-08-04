@@ -38,6 +38,8 @@ export interface SiteSummary {
   title: string | null
   visibility: Visibility
   status: SiteStatus
+  // Design theme slug (server-injected stylesheet), null/absent = unthemed.
+  theme?: string | null
   audio?: boolean // every file is audio — a recording/voice site; shows a Mic badge
   hasSummary?: boolean // the site has a stored AI summary; shows a sparkle badge
   // Whether the CALLER has starred this site — per-user state riding a shared feed, never the
@@ -81,6 +83,8 @@ export interface ViewerSite {
   title: string | null
   visibility: Visibility
   status: SiteStatus
+  // Design theme slug applied at serve time; null = unthemed.
+  theme: string | null
   isOwner: boolean
   // The caller's own star on this site, resolved in the viewer's single metadata batch so the
   // top-bar button is correct on first paint.
@@ -107,6 +111,13 @@ export interface ShareSet {
 }
 
 export type SlugExists = { exists: false } | { exists: true; owned: boolean }
+
+// GET /api/themes — one entry per shipped design theme (packages/api/themes/*).
+export interface ThemeInfo {
+  slug: string
+  name: string
+  description: string
+}
 
 // Mirrors packages/api/src/routes/api-keys.ts KEY_DURATIONS — the only expiries the server will
 // ever accept. Keep this list in sync with that one; it is what drives the expiry dropdown.

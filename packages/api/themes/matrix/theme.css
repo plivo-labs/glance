@@ -1,0 +1,110 @@
+/* Glance theme: Matrix — phosphor green on black, CRT glow and scanlines.
+ * Classless: element selectors only (see plivo/theme.css for the injection contract). */
+:root {
+  --glance-bg: #000000;
+  --glance-fg: #00ff41;
+  --glance-fg-dim: #00b32e;
+  --glance-fg-bright: #ccffcc;
+  --glance-surface: #030a04;
+  --glance-border: #0a3d17;
+  --glance-glow: 0 0 6px rgba(0, 255, 65, 0.55);
+  color-scheme: dark;
+}
+html {
+  background: var(--glance-bg);
+}
+body {
+  background: var(--glance-bg);
+  color: var(--glance-fg);
+  font-family: 'Courier New', ui-monospace, SFMono-Regular, Menlo, monospace;
+  line-height: 1.55;
+  text-shadow: var(--glance-glow);
+}
+/* CRT scanlines, fixed over the page; inert to clicks. */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 2px,
+    rgba(0, 0, 0, 0.22) 3px,
+    transparent 4px
+  );
+  z-index: 2147483646;
+}
+h1, h2, h3, h4, h5, h6 {
+  color: var(--glance-fg-bright);
+  font-family: inherit;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  text-shadow: 0 0 10px rgba(0, 255, 65, 0.8);
+}
+h1::before, h2::before { content: '> '; color: var(--glance-fg-dim); }
+a { color: var(--glance-fg-bright); text-decoration-color: var(--glance-fg-dim); }
+a:hover { background: rgba(0, 255, 65, 0.12); }
+p, li, td { color: var(--glance-fg); }
+small { color: var(--glance-fg-dim); }
+strong, b { color: var(--glance-fg-bright); }
+hr { border: 0; border-top: 1px dashed var(--glance-border); }
+blockquote {
+  margin-left: 0;
+  padding: 0.25rem 0 0.25rem 1rem;
+  border-left: 2px solid var(--glance-fg-dim);
+  color: var(--glance-fg-dim);
+}
+code, kbd, samp, pre { font-family: inherit; }
+code, kbd, samp {
+  background: var(--glance-surface);
+  border: 1px solid var(--glance-border);
+  padding: 0.1em 0.35em;
+  border-radius: 2px;
+}
+pre {
+  background: var(--glance-surface);
+  border: 1px solid var(--glance-border);
+  padding: 1rem;
+  overflow: auto;
+  box-shadow: inset 0 0 24px rgba(0, 255, 65, 0.06);
+}
+pre code { background: none; border: 0; padding: 0; }
+table { border-collapse: collapse; }
+th, td { border: 1px solid var(--glance-border); padding: 0.4rem 0.8rem; }
+th { color: var(--glance-fg-bright); text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.85em; }
+button {
+  background: transparent;
+  color: var(--glance-fg);
+  border: 1px solid var(--glance-fg-dim);
+  padding: 0.5rem 1rem;
+  font-family: inherit;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+button:hover {
+  background: rgba(0, 255, 65, 0.15);
+  color: var(--glance-fg-bright);
+  box-shadow: var(--glance-glow);
+}
+input, select, textarea {
+  background: var(--glance-surface);
+  color: var(--glance-fg);
+  border: 1px solid var(--glance-border);
+  padding: 0.5rem 0.75rem;
+  font-family: inherit;
+  caret-color: var(--glance-fg);
+}
+input:focus, select:focus, textarea:focus { outline: 1px solid var(--glance-fg); }
+::selection { background: rgba(0, 255, 65, 0.35); color: #000; text-shadow: none; }
+img { filter: sepia(1) hue-rotate(70deg) saturate(3) brightness(0.85); }
+@media (prefers-reduced-motion: no-preference) {
+  h1 { animation: glance-matrix-flicker 4s infinite; }
+  @keyframes glance-matrix-flicker {
+    0%, 97%, 100% { opacity: 1; }
+    98% { opacity: 0.82; }
+    99% { opacity: 0.94; }
+  }
+}

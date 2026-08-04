@@ -279,6 +279,11 @@ window.addEventListener('message', (e: MessageEvent) => {
   if (d?.type === 'glance:paint' && Array.isArray(d.anchors)) paint(d.anchors)
   else if (d?.type === 'glance:focus') focus({ quote: d.quote, selector: d.selector, context: d.context })
   else if (d?.type === 'glance:pending') setPending(typeof d.selector === 'string' ? d.selector : null)
+  // Print/Save-as-PDF: the viewer iframe is cross-origin, so the parent can't call
+  // iframe.contentWindow.print() itself (SecurityError) — it asks, and the page prints in its own
+  // realm with the browser's native dialog (the user picks "Save as PDF" there). Full fidelity:
+  // the page's own renderer does the layout, including the injected theme stylesheet.
+  else if (d?.type === 'glance:print') window.print()
 })
 
 // Boot handshake: tell the parent which file is mounted (intent-only; parent re-validates).

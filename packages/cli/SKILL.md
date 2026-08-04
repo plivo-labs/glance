@@ -61,6 +61,7 @@ A key can deploy, create, fork and move, but **never deletes a site** and never 
 - `--name` defaults to the **file name (sans extension)** or **folder name**, slugified. Pass `--name` to override (required if the derived name isn't a valid slug — lowercase, 3–40 chars).
 - `--space` defaults to your **personal space**. Pass `--space` to target a team/group space.
 - `--visibility` defaults to `team`.
+- `--theme <slug>` applies a **design theme** (server-injected stylesheet — see "Design themes" below). `--theme none` clears it. Omitted on a replace → the site keeps its current theme.
 - If the site already exists and you own it, prompts `Replace? (y/N)`. If owned by someone else, it aborts.
 - Prints `✓ Deployed → <url>`.
 
@@ -211,6 +212,28 @@ You can update that site's content even though you don't own it and aren't in it
 `team` (default) · `private` · `members`.
 
 `members` = people in the site's own space only (it was renamed from `group`; the old value is still accepted and mapped to `members`). There is no public/anonymous tier — `public` is still accepted on the wire but mapped to `team` (everyone in your org).
+
+## Design themes
+
+A site can carry a **theme** — a server-injected stylesheet that skins its HTML at serve time (the stored files are never modified; `read --pull` stays byte-identical). Discover what's available on this instance:
+
+```bash
+curl -s $GLANCE_API_URL/api/themes                          # catalog: slug + name + description
+curl -s $GLANCE_API_URL/api/themes/plivo/DESIGN.md          # a theme's full design brief
+```
+
+Two ways to use a theme — pick by intent:
+
+1. **Building a page in a theme's style** (the high-fidelity path): fetch the theme's `DESIGN.md` FIRST and follow it while writing the HTML — it carries the tokens (colors, type, spacing), component recipes, and do/don'ts. Then deploy with `--theme <slug>` so the injected stylesheet reinforces the same system. A brief beats injection: injection can only restyle semantic HTML, while you can build the layout, texture, and voice the brief asks for.
+2. **Re-skinning existing/plain HTML** (the quick path): just deploy with `--theme <slug>`. The injected stylesheet is classless (element selectors only), so it restyles semantic HTML — headings, text, links, tables, code, forms. Pages with heavy inline/class styling keep most of their own look; plain documents transform completely.
+
+```bash
+glance deploy report.html --theme plivo      # brand-styled report
+glance deploy postmortem/ --theme matrix     # green phosphor, scanlines
+glance deploy paper.md --theme academic      # LaTeX-paper look (works on rendered markdown too)
+```
+
+The theme is a site property, not a file: the owner can switch it later from the viewer's theme chip or the dashboard row menu without a redeploy. Semantic HTML (`<h1>`, `<p>`, `<table>`, `<code>`, …) gets the most from a theme — a page that is one big `<div>` soup with inline styles will barely change.
 
 ## Saving data from your pages — `glance.db` (experimental)
 

@@ -61,6 +61,7 @@ const MIGRATIONS = [
   'drizzle/0024_comment_reactions.sql',
   'drizzle/0025_api_keys.sql',
   'drizzle/0026_api_key_display_suffix.sql',
+  'drizzle/0027_site_theme.sql',
 ]
 
 // --- S0 recorder: one shared, ordered timeline across D1/R2/cache mocks so perf specs can
@@ -349,6 +350,8 @@ export async function seedSite(
     // A fresh site's updatedAt == createdAt (no replace yet); default it so createdAt-pinned ordering
     // specs stay deterministic under the updatedAt sort. Override explicitly to simulate a replace.
     ...(o.updatedAt !== undefined ? { updatedAt: o.updatedAt } : o.createdAt !== undefined ? { updatedAt: o.createdAt } : {}),
+    // Design theme (null = unthemed, the schema default) — themed-serve specs opt in explicitly.
+    ...(o.theme !== undefined && { theme: o.theme }),
   })
   return id
 }

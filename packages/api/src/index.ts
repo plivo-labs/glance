@@ -20,6 +20,7 @@ import { notifications } from './routes/notifications'
 import { whatsNew } from './routes/whats-new'
 import { sites } from './routes/sites'
 import { slackEvents } from './routes/slack-events'
+import { themes } from './routes/themes'
 import { spaces } from './routes/spaces'
 import { stars } from './routes/stars'
 import { upload } from './routes/upload'
@@ -73,6 +74,10 @@ app.get('/api/install', (c) => {
 app.get('/api/glance.js', (c) =>
   c.body(GLANCE_DB_JS, 200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' }),
 )
+
+// Design-theme catalog + agent briefs. Public GETs, no DB — registered before the guards
+// (the /api/install idiom) so agents can fetch a brief with plain curl before generating.
+app.route('/api/themes', themes)
 
 // Shared-backend data plane. Registered BEFORE the /api/* guards (like /api/install): it is
 // bearer-token authenticated and cross-origin from the content origin, so it must NOT inherit
