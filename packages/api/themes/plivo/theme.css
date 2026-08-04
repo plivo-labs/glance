@@ -2,7 +2,10 @@
  * Tokens from themes/plivo/DESIGN.md (the production plivo.com values).
  * Classless: element selectors only, so it reskins arbitrary uploaded HTML. Injected LAST in
  * <head>, so it wins order ties against a page's own element rules while any class/inline
- * styling the page carries still takes precedence. */
+ * styling the page carries still takes precedence.
+ * The INJECTED skin is light-only: an auto-dark variant would drop near-white text onto cards
+ * an author painted white (unreadable). Agents building natively from the DESIGN.md brief still
+ * get the full first-class dark mode — this file is only the re-skin for existing HTML. */
 @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 :root {
@@ -17,23 +20,7 @@
   --glance-code-fg: #1b1d22;
   --glance-accent: #323dfe;
   --glance-accent-text: #323dfe;
-  color-scheme: light dark;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --glance-bg: #0a0c11;
-    --glance-fg: #f4f4f5;
-    --glance-surface: #11131b;
-    --glance-surface-2: #181b24;
-    --glance-muted-fg: #a0a1a8;
-    --glance-border: #282c34;
-    --glance-border-strong: #414651;
-    --glance-code: #181b24;
-    --glance-code-fg: #e4e5e9;
-    --glance-accent: #4f5cff;
-    /* Brand blue is a low-contrast TEXT color on dark - lift text/links, keep fills. */
-    --glance-accent-text: #4d6aff;
-  }
+  color-scheme: light;
 }
 
 html {

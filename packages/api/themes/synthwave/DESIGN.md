@@ -8,13 +8,15 @@ colors:
   background: "#262335"
   surface: "#241b2f"
   raised: "#34294f"          # hovers, selection
-  foreground: "#f4f2f7"
-  muted: "#848bbd"           # lavender secondary text
+  foreground: "#8079ad"      # balance-point lavender (readable on purple AND author-white)
+  muted: "#6e679b"           # secondary text
   border: "#495495"
-  pink: "#ff7edb"            # headings (glowing)
-  pink-hot: "#ff2975"        # glow color, hot accents
-  cyan: "#36f9f6"            # links, code, strong
-  orange: "#ff8b39"          # h3/h4, warm accents
+  pink: "#d81fa4"            # headings, bare text (glowing)
+  pink-neon: "#ff7edb"       # ONLY on theme-owned dark surfaces (thead strip)
+  pink-hot: "#ff2975"        # glow color, never bare text
+  cyan: "#1a8f9e"            # links, strong - bare text
+  cyan-neon: "#36f9f6"       # ONLY on theme-owned dark surfaces (code, pre)
+  orange: "#b35b16"          # h3/h4, warm accents
   sunset-ramp: "linear-gradient(90deg, #ffd319, #ff901f, #ff2975, #f222ff, #8c1eff)"
 typography:
   body:
@@ -39,8 +41,11 @@ GLOWS, soft edges. Palette anchored to the Synthwave '84 editor theme.
    `hr` is a glowing pink line. This is the ONLY theme allowed to glow.
 3. **The sunset ramp** (`#ffd319 → #ff901f → #ff2975 → #f222ff → #8c1eff`)
    appears exactly once per page, as the h1's 3px border-image underline.
-4. **Four neon voices**: pink = headings, cyan = links/code/strong,
-   orange = h3-h4 and warm accents, lavender `#848bbd` = secondary text.
+4. **Four voices, two tiers.** Bare text uses balance-point tones (pink
+   `#d81fa4` headings, cyan `#1a8f9e` links/strong, orange `#b35b16` h3-h4,
+   lavender `#8079ad` body) that stay readable on purple AND on any light
+   surface an author painted. The true neons (`#ff7edb`, `#36f9f6`) appear
+   ONLY on surfaces the theme itself paints dark (thead strip, code blocks).
 5. **Soft geometry**: 4-6px radii on buttons, inputs, code blocks — the
    deliberate opposite of Night City's flat clipped corners. No yellow-on-
    black dominance, no green, no clip-paths.
