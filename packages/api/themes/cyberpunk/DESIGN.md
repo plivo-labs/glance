@@ -7,11 +7,13 @@ description: >-
 colors:
   background: "#000000"
   surface: "#120f0a"
-  foreground: "#fcee0a"      # acid yellow - headings, emphasis, fills
-  foreground-soft: "#d8bc66" # body text (dirty gold)
+  yellow: "#fcee0a"          # acid yellow - FILLS ONLY (h1 block, thead, buttons), black text on it
+  foreground: "#8f7a00"      # dual-ground gold: readable on black AND author-white surfaces
+  foreground-soft: "#8a7a45" # body text
   border: "#58482c"
-  cyan: "#00f0ff"            # links, secondary voice
-  red: "#ff003c"             # danger, hover flicker, mark
+  cyan: "#00808f"            # links, annotations - dual-ground
+  cyan-neon: "#00f0ff"       # ONLY on theme-owned dark surfaces (code, pre)
+  red: "#d61639"             # danger, hover flicker, mark
 typography:
   body:
     fontFamily: "'Rajdhani', 'Bahnschrift', 'Arial Narrow', sans-serif"
@@ -35,9 +37,11 @@ scanlines, no monospace body.
    (black text on yellow) with one corner clipped
    (`clip-path: polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 0 100%)`).
    Buttons are the same: yellow fill, black text, clipped corner.
-2. **Three colors, three jobs.** Yellow `#fcee0a` = structure and emphasis;
-   cyan `#00f0ff` = links and annotations (`// ` prefix on h2, italics);
-   red `#ff003c` = danger and hover states only. Never green, never purple.
+2. **Yellow is a fill, never bare text.** Acid `#fcee0a` clears 1.1:1 on a
+   white author surface, so it only appears with black text on top of it
+   (h1 block, thead strip, buttons). Bare text uses dual-ground gold
+   `#8f7a00`; links/annotations dual-ground cyan `#00808f` (neon `#00f0ff`
+   only inside code surfaces); red `#d61639` = danger and hover only.
 3. **Flat and sharp.** Zero border-radius, zero blur, zero text-shadow.
    Edges, clips, and hairlines carry the aesthetic.
 4. **Tables are strips, not grids**: solid yellow header row (black text),

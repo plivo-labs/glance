@@ -6,10 +6,11 @@ description: >-
   CRT scanlines, monospace everything, uppercase prompt-prefixed headings.
 colors:
   background: "#000000"
-  foreground: "#00e63a"      # phosphor green - body text
-  foreground-dim: "#00a32c"  # secondary text, prompts, rules
-  foreground-bright: "#ccffcc" # headings, links, emphasis (the "white rabbit" tier)
-  surface: "#041207"         # code blocks, inputs
+  foreground: "#008722"      # dual-ground green: ~4.5:1 on BOTH black and white
+  foreground-dim: "#067027"  # secondary text, prompts, rules
+  foreground-bright: "#00e63a" # neon - ONLY on theme-owned dark surfaces (thead, code, buttons)
+  foreground-max: "#ccffcc"    # ONLY on the thead strip
+  surface: "#041207"         # code blocks, inputs, thead
   border: "#0c4d1d"
 typography:
   body:
@@ -29,9 +30,11 @@ pure black, soft CRT glow, scanlines, everything monospace.
 
 ## Rules
 
-1. **One color, three intensities.** Everything is green: dim `#00a32c` for
-   chrome and prompts, base `#00e63a` for body, bright `#ccffcc` for headings
-   and links. No other hues, ever. White appears only inside `::selection`.
+1. **One color, and it must read on ANY ground.** Bare text (body, headings,
+   links) is dual-ground green `#008722` - legible on the black page AND on a
+   card an author painted white. Neon `#00e63a`/`#ccffcc` appears ONLY on
+   surfaces the theme itself paints dark (thead strip, code blocks, button
+   hover). No other hues, ever.
 2. **Glow is a headline privilege.** Only h1/h2 carry the text-shadow glow
    (`0 0 8px rgba(0,230,58,.5)`); body copy stays crisp. Backgrounds stay
    pure black - the ground vignette provides the atmosphere.

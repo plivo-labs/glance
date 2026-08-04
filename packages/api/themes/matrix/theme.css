@@ -5,9 +5,14 @@
  * Classless: element selectors only. */
 :root {
   --glance-bg: #000000;
-  --glance-fg: #00e63a;
-  --glance-fg-dim: #00a32c;
-  --glance-fg-bright: #ccffcc;
+  /* Dual-ground green: ~4.5:1 against BOTH black and white. A classless theme cannot know
+   * whether its text lands on the black page or on a card the author painted white, so every
+   * color that can touch an author surface must read on both. Neon greens are reserved for
+   * surfaces THIS theme paints (thead strip, code blocks, buttons on hover). */
+  --glance-fg: #008722;
+  --glance-fg-dim: #067027;
+  --glance-fg-bright: #00e63a;   /* only on theme-owned dark surfaces */
+  --glance-fg-max: #ccffcc;      /* only on theme-owned dark surfaces */
   --glance-surface: #041207;
   --glance-border: #0c4d1d;
   color-scheme: dark;
@@ -28,20 +33,20 @@ body {
   line-height: 1.6;
 }
 h1, h2, h3, h4, h5, h6 {
-  color: var(--glance-fg-bright);
+  color: var(--glance-fg);
   font-family: inherit;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
-/* Glow is a headline privilege — body copy stays crisp and readable. */
-h1, h2 { text-shadow: 0 0 8px rgba(0, 230, 58, 0.5); }
+/* Subtle halo, not a smear — must stay legible when a heading sits on an author-white card. */
+h1, h2 { text-shadow: 0 0 10px rgba(0, 230, 58, 0.3); }
 h1::before, h2::before { content: '> '; color: var(--glance-fg-dim); }
 small { color: var(--glance-fg-dim); }
-strong, b { color: var(--glance-fg-bright); }
-em, i { color: var(--glance-fg-bright); }
+strong, b { color: inherit; font-weight: 700; }
+em, i { color: inherit; }
 mark { background: var(--glance-fg); color: #000000; padding: 0 0.25em; }
-a { color: var(--glance-fg-bright); text-decoration-color: var(--glance-fg-dim); text-underline-offset: 3px; }
+a { color: var(--glance-fg); text-decoration-color: var(--glance-fg-dim); text-underline-offset: 3px; }
 a:hover { background: rgba(0, 230, 58, 0.15); }
 hr { border: 0; border-top: 1px dashed var(--glance-border); }
 blockquote {
@@ -53,12 +58,14 @@ blockquote {
 code, kbd, samp, pre { font-family: inherit; }
 code, kbd, samp {
   background: var(--glance-surface);
+  color: var(--glance-fg-bright); /* theme-owned dark surface → neon allowed */
   border: 1px solid var(--glance-border);
   padding: 0.1em 0.35em;
   border-radius: 2px;
 }
 pre {
   background: var(--glance-surface);
+  color: var(--glance-fg-bright); /* theme-owned dark surface → neon allowed */
   border: 1px solid var(--glance-border);
   padding: 1rem;
   overflow: auto;
@@ -68,7 +75,7 @@ table { border-collapse: collapse; }
 th, td { border: 1px solid var(--glance-border); padding: 0.5rem 0.9rem; text-align: left; }
 thead th {
   background: var(--glance-surface);
-  color: var(--glance-fg-bright);
+  color: var(--glance-fg-max); /* theme-owned dark strip */
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-size: 0.85em;
@@ -85,7 +92,7 @@ button {
   cursor: pointer;
 }
 button:hover {
-  background: rgba(0, 230, 58, 0.15);
+  background: var(--glance-surface);
   color: var(--glance-fg-bright);
   box-shadow: 0 0 10px rgba(0, 230, 58, 0.35);
 }
@@ -102,5 +109,5 @@ input::placeholder, textarea::placeholder { color: var(--glance-fg-dim); }
 input:focus, select:focus, textarea:focus { outline: 1px solid var(--glance-fg); }
 ::selection { background: rgba(0, 230, 58, 0.4); color: #000000; text-shadow: none; }
 fieldset { border: 1px solid var(--glance-border); }
-legend { color: var(--glance-fg-bright); text-transform: uppercase; letter-spacing: 0.08em; padding: 0 0.4em; }
+legend { color: var(--glance-fg); text-transform: uppercase; letter-spacing: 0.08em; padding: 0 0.4em; }
 figcaption { color: var(--glance-fg-dim); font-size: 0.85em; }

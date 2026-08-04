@@ -6,11 +6,16 @@
 :root {
   --glance-bg: #000000;
   --glance-surface: #120f0a;
-  --glance-fg: #fcee0a;
-  --glance-fg-soft: #d8bc66;
+  /* Acid yellow #fcee0a is unreadable on a white author surface (1.1:1), so it only ever
+   * appears as a FILL with black text (h1 block, thead strip, buttons) — never as bare text.
+   * Bare text uses dual-ground tones that clear ~4.5:1 on BOTH black and white. */
+  --glance-yellow: #fcee0a;
+  --glance-fg: #8f7a00;
+  --glance-fg-soft: #8a7a45;
   --glance-border: #58482c;
-  --glance-cyan: #00f0ff;
-  --glance-red: #ff003c;
+  --glance-cyan: #00808f;
+  --glance-cyan-neon: #00f0ff; /* only on theme-owned dark surfaces */
+  --glance-red: #d61639;
   color-scheme: dark;
 }
 html {
@@ -32,9 +37,10 @@ h1, h2, h3, h4, h5, h6 {
   letter-spacing: 0.06em;
   line-height: 1.15;
 }
-/* The signature: an inverted acid-yellow block with one clipped corner. */
+/* The signature: an inverted acid-yellow block with one clipped corner. A fill with black
+ * text is ground-proof — it reads identically on the black page and on an author-white card. */
 h1 {
-  background: var(--glance-fg);
+  background: var(--glance-yellow);
   color: #000000;
   display: inline-block;
   padding: 0.15em 0.6em 0.1em;
@@ -42,8 +48,8 @@ h1 {
 }
 h2::before { content: '// '; color: var(--glance-cyan); }
 p, li, td { color: var(--glance-fg-soft); }
-strong, b { color: var(--glance-fg); }
-em, i { color: var(--glance-cyan); font-style: normal; }
+strong, b { color: var(--glance-fg); font-weight: 700; }
+em, i { color: var(--glance-cyan); }
 mark { background: var(--glance-red); color: #ffffff; padding: 0 0.25em; }
 small { color: color-mix(in srgb, var(--glance-fg-soft) 65%, transparent); }
 a {
@@ -66,25 +72,25 @@ code, kbd, samp, pre {
 }
 code, kbd, samp {
   background: var(--glance-surface);
-  color: var(--glance-cyan);
+  color: var(--glance-cyan-neon); /* theme-owned dark surface → neon allowed */
   border: 1px solid var(--glance-border);
   padding: 0.1em 0.35em;
 }
 pre {
   background: var(--glance-surface);
-  color: var(--glance-cyan);
+  color: var(--glance-cyan-neon); /* theme-owned dark surface → neon allowed */
   border: 1px solid var(--glance-border);
-  border-left: 3px solid var(--glance-fg);
+  border-left: 3px solid var(--glance-yellow);
   padding: 1rem;
   overflow: auto;
 }
 pre code { background: none; border: 0; padding: 0; }
 /* No full grid — bottom hairlines only; the header row is the solid yellow strip. */
 table { border-collapse: collapse; }
-thead th { background: var(--glance-fg); color: #000000; text-transform: uppercase; letter-spacing: 0.06em; }
-th, td { border-bottom: 1px solid color-mix(in srgb, var(--glance-fg) 40%, transparent); padding: 0.45rem 0.9rem; text-align: left; }
+thead th { background: var(--glance-yellow); color: #000000; text-transform: uppercase; letter-spacing: 0.06em; }
+th, td { border-bottom: 1px solid color-mix(in srgb, var(--glance-fg) 55%, transparent); padding: 0.45rem 0.9rem; text-align: left; }
 button {
-  background: var(--glance-fg);
+  background: var(--glance-yellow);
   color: #000000;
   border: 0;
   border-radius: 0;
@@ -99,14 +105,14 @@ button {
 button:hover { background: var(--glance-red); color: #ffffff; }
 input, select, textarea {
   background: var(--glance-surface);
-  color: var(--glance-fg);
+  color: var(--glance-yellow);
   border: 1px solid var(--glance-border);
   border-radius: 0;
   padding: 0.5rem 0.75rem;
   font-family: inherit;
 }
-input:focus, select:focus, textarea:focus { outline: 1px solid var(--glance-fg); border-color: var(--glance-fg); }
-::selection { background: var(--glance-fg); color: #000000; }
+input:focus, select:focus, textarea:focus { outline: 1px solid var(--glance-yellow); border-color: var(--glance-yellow); }
+::selection { background: var(--glance-yellow); color: #000000; }
 img { border: 1px solid var(--glance-border); }
 fieldset { border: 1px solid var(--glance-border); }
 legend { color: var(--glance-fg); text-transform: uppercase; letter-spacing: 0.06em; }
