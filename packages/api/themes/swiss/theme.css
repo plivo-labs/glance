@@ -1,0 +1,101 @@
+/* Glance theme: Swiss — International Typographic Style. White ground, Helvetica, extreme scale
+ * contrast, hairline rules, exactly one accent (Swiss red). Light ground → dark text, so it is
+ * inherently safe on any surface an author paints. Classless: element selectors only. */
+:root {
+  --glance-bg: #ffffff;
+  --glance-fg: #111111;
+  --glance-muted: #767676;
+  --glance-hairline: #111111;
+  --glance-red: #e30613;
+  color-scheme: light;
+}
+html {
+  background: var(--glance-bg);
+}
+body {
+  background: var(--glance-bg);
+  color: var(--glance-fg);
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  line-height: 1.55;
+}
+h1, h2, h3, h4, h5, h6 {
+  font-family: inherit;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  color: var(--glance-fg);
+}
+h1 { font-size: 3.2rem; }
+h2 { font-size: 1.6rem; margin-top: 2.5rem; }
+/* The red program-bar: a short rule above each section head. */
+h2::before {
+  content: '';
+  display: block;
+  width: 2.25rem;
+  height: 4px;
+  background: var(--glance-red);
+  margin-bottom: 0.6rem;
+}
+h3 { font-size: 1.15rem; }
+small { color: var(--glance-muted); }
+strong, b { font-weight: 700; }
+mark { background: var(--glance-red); color: #ffffff; padding: 0 0.25em; }
+a { color: var(--glance-fg); text-decoration: underline; text-decoration-color: var(--glance-red); text-decoration-thickness: 2px; text-underline-offset: 3px; }
+a:hover { color: var(--glance-red); }
+hr { border: 0; border-top: 2px solid var(--glance-hairline); }
+blockquote {
+  margin-left: 0;
+  padding-left: 1.25rem;
+  border-left: 4px solid var(--glance-red);
+  font-size: 1.15rem;
+  font-weight: 500;
+}
+code, kbd, samp, pre {
+  font-family: 'Helvetica Neue', Helvetica, monospace;
+  font-size: 0.92em;
+}
+code, kbd, samp { background: #f2f2f2; padding: 0.1em 0.35em; }
+pre {
+  background: #f2f2f2;
+  border-top: 2px solid var(--glance-hairline);
+  padding: 1rem;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+pre code { background: none; padding: 0; }
+/* Müller-Brockmann table: one heavy top rule, hairlines between rows, nothing vertical. */
+table { border-collapse: collapse; border-top: 3px solid var(--glance-hairline); }
+th { text-align: left; font-weight: 700; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
+th, td { border-bottom: 1px solid #d9d9d9; padding: 0.5rem 1rem 0.5rem 0; }
+thead th { border-bottom: 1px solid var(--glance-hairline); }
+button {
+  background: var(--glance-fg);
+  color: #ffffff;
+  border: 0;
+  border-radius: 0;
+  padding: 0.7rem 1.6rem;
+  font-family: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+button:hover { background: var(--glance-red); }
+input, select, textarea {
+  background: var(--glance-bg);
+  color: var(--glance-fg);
+  border: 0;
+  border-bottom: 2px solid var(--glance-hairline);
+  border-radius: 0;
+  padding: 0.5rem 0.1rem;
+  font-family: inherit;
+}
+input:focus, select:focus, textarea:focus { outline: none; border-bottom-color: var(--glance-red); }
+textarea { border: 1px solid var(--glance-hairline); padding: 0.6rem; }
+::selection { background: var(--glance-red); color: #ffffff; }
+figcaption { color: var(--glance-muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
+fieldset { border: 1px solid var(--glance-hairline); padding: 1.25rem; }
+legend { font-weight: 700; text-transform: uppercase; font-size: 0.8rem; letter-spacing: 0.05em; padding: 0 0.4em; }
+
+/* Reading measure: flowing text caps at ~72ch so a bare full-width document stays readable.
+ * Tables, code blocks, and headings run full width; author containers narrower than the cap
+ * are unaffected. */
+p, ul, ol, dl { max-width: 72ch; }

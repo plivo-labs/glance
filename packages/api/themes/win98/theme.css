@@ -92,3 +92,8 @@ fieldset {
 legend { background: var(--glance-silver); padding: 0 0.4em; }
 ::selection { background: var(--glance-navy); color: #ffffff; }
 img { box-shadow: var(--glance-sunken); padding: 2px; background: var(--glance-hilight); }
+
+/* Reading measure: flowing text caps at ~72ch so a bare full-width document stays readable.
+ * Tables, code blocks, and headings run full width; author containers narrower than the cap
+ * are unaffected. */
+p, ul, ol, dl { max-width: 72ch; }

@@ -111,3 +111,8 @@ input:focus, select:focus, textarea:focus {
 ::selection { background: var(--glance-raised); }
 fieldset { border: 1px solid var(--glance-border); border-radius: 6px; }
 legend { color: var(--glance-pink); }
+
+/* Reading measure: flowing text caps at ~72ch so a bare full-width document stays readable.
+ * Tables, code blocks, and headings run full width; author containers narrower than the cap
+ * are unaffected. */
+p, ul, ol, dl { max-width: 72ch; }
