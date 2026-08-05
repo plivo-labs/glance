@@ -99,7 +99,7 @@ describe('upload theme field', () => {
     expect((await post(app, env, 'site', { replace: true, theme: '' })).status).toBe(200)
     expect(await themeOf(db, 'site')).toBeNull()
 
-    await post(app, env, 'site', { replace: true, theme: 'cyberpunk' })
+    await post(app, env, 'site', { replace: true, theme: 'flatpack' })
     expect((await post(app, env, 'site', { replace: true, theme: 'default' })).status).toBe(200)
     expect(await themeOf(db, 'site')).toBeNull()
   })

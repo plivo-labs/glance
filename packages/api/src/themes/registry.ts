@@ -7,11 +7,6 @@ export const THEME_INFO = [
     "description": "Newspaper front page: cream paper, Georgia serif, masthead headline between double rules, drop cap, column-rule tables. Read all about it."
   },
   {
-    "slug": "cyberpunk",
-    "name": "Night City",
-    "description": "Cyberpunk 2077: acid yellow on black, clipped corners, cyan links that flicker red. Flat and hard-edged — wake up, samurai."
-  },
-  {
     "slug": "flatpack",
     "name": "Flat-Pack",
     "description": "Assembly-manual deadpan: instructional blue, giant step numbers, safety-yellow warnings, hairline diagram frames. Some assembly required."
@@ -35,11 +30,6 @@ export const THEME_INFO = [
     "slug": "plivo",
     "name": "Plivo",
     "description": "Developer-precision, monochrome-first: near-neutral surfaces, one blue accent, Sora display type, JetBrains Mono metadata, hairline elevation. First-class light and dark."
-  },
-  {
-    "slug": "sketchbook",
-    "name": "Sketchbook",
-    "description": "Hand-drawn on paper: wobbly ink borders, marker highlights, handwritten headings. Like your best engineer's notebook."
   }
 ] as const
 
