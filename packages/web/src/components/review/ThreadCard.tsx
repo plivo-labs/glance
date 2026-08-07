@@ -54,7 +54,9 @@ export function ThreadCard({
   // nothing polls, so every reaction anyone else added afterwards would stay invisible until a
   // reload.
   const [reacted, setReacted] = useState(new Map<string, { from: CommentReaction[]; value: CommentReaction[] }>())
-  const canModerate = site.isOwner || me?.role === 'superadmin'
+  // Site owner only — mirrors the API's `canModerate` (routes/comments.ts). A superadmin is NOT a
+  // moderator here; showing them the control would render a button the server 403s.
+  const canModerate = site.isOwner
 
   const toastError = (err: unknown) => toast.error(err instanceof ApiError ? err.message : 'Action failed')
 
@@ -328,8 +330,14 @@ export function ThreadCard({
         // on a thread of one it takes no height until the card is hovered or focused.
         //
         // grid-rows 0fr→1fr, NOT `hidden`: the button has to stay in the accessibility tree and stay
-        // tab-reachable while collapsed. Focusing it is itself a focus-within on the card, so it
-        // opens as it is reached — keyboard users never have to hover to find the reply box.
+        // tab-reachable while collapsed. Tabbing anywhere into the card opens it, so keyboard users
+        // never have to hover to find the reply box.
+        //
+        // :focus-visible, NOT :focus-within: a mouse click parks plain :focus on whatever button was
+        // clicked, and under focus-within that pinned the card open after hover-out — until the next
+        // mousedown anywhere else blurred it, collapsed this row, and yanked the page up between that
+        // click's mousedown and mouseup, so the victim's click never fired. Keyboard focus is
+        // :focus-visible; a mouse click is not.
         <div
           className={cn(
             'grid transition-all duration-150',
@@ -337,7 +345,7 @@ export function ThreadCard({
               ? 'mt-2 grid-rows-[1fr]'
               : // The touch clause is not optional: group-hover compiles under `@media (hover:hover)`,
                 // so without it a phone would have no way at all to open a reply on a thread of one.
-                'grid-rows-[0fr] group-focus-within/card:mt-2 group-focus-within/card:grid-rows-[1fr] group-hover/card:mt-2 group-hover/card:grid-rows-[1fr] [@media(hover:none)]:mt-2 [@media(hover:none)]:grid-rows-[1fr]',
+                'grid-rows-[0fr] group-has-[:focus-visible]/card:mt-2 group-has-[:focus-visible]/card:grid-rows-[1fr] group-hover/card:mt-2 group-hover/card:grid-rows-[1fr] [@media(hover:none)]:mt-2 [@media(hover:none)]:grid-rows-[1fr]',
           )}
         >
           <div className="overflow-hidden">
