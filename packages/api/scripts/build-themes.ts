@@ -19,6 +19,17 @@ const slugs = readdirSync(themesDir, { withFileTypes: true })
   .map((d) => d.name)
   .sort()
 if (slugs.length === 0) throw new Error('no theme directories under themes/')
+// Catalog order = picker order. theme.json may set `order` (lower first); unnumbered themes
+// follow alphabetically. The brand theme pins itself to the top with order: 0.
+const orderOf = (slug: string): number => {
+  try {
+    const { order } = JSON.parse(readFileSync(join(themesDir, slug, 'theme.json'), 'utf8')) as { order?: number }
+    return typeof order === 'number' ? order : 999
+  } catch {
+    return 999
+  }
+}
+slugs.sort((a, b) => orderOf(a) - orderOf(b) || a.localeCompare(b))
 
 const info: { slug: string; name: string; description: string }[] = []
 const css: Record<string, string> = {}

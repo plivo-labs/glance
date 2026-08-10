@@ -95,7 +95,7 @@ describe('upload theme field', () => {
 
   test("empty string and 'default' clear like none (the page's own design)", async () => {
     const { app, env, db } = await setup()
-    await post(app, env, 'site', { theme: 'lineprinter' })
+    await post(app, env, 'site', { theme: 'broadsheet' })
     expect((await post(app, env, 'site', { replace: true, theme: '' })).status).toBe(200)
     expect(await themeOf(db, 'site')).toBeNull()
 

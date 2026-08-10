@@ -10,31 +10,31 @@ description: >-
 colors:
   # Brand
   primary: "#323dfe"            # Plivo blue - accent, links, focus (light)
-  primary-dark: "#4f5cff"       # optically lifted blue for dark surfaces (fills)
+  primary-dark: "#323dfe"       # dark fills LOCKED to brand blue by the Instrument Panel theme
   primary-text-dark: "#4d6aff"  # blue TEXT on dark, lifted for legibility (~4.2:1)
   primary-foreground: "#ffffff"
   # Neutrals - light theme
   background: "#ffffff"
-  foreground: "#0a0a0f"
-  surface: "#f9f9fb"            # first elevation (cards on page)
-  surface-2: "#f3f4f6"          # second elevation (popovers, dark bands)
-  muted: "#f3f4f6"
-  muted-foreground: "#67686f"
-  border: "#e3e3e8"             # hairline
-  border-strong: "#c7c8ce"      # emphasis / focus border
-  code: "#f3f4f6"               # code + terminal surface
-  code-foreground: "#1b1d22"
+  foreground: "#09090b"
+  surface: "#fafafa"            # first elevation (cards on page)
+  surface-2: "#f4f4f5"          # second elevation (popovers, dark bands)
+  muted: "#f4f4f5"
+  muted-foreground: "#67676f"
+  border: "#e4e4e7"             # hairline
+  border-strong: "#c9c9cf"      # emphasis / focus border
+  code: "#f4f4f5"               # code + terminal surface
+  code-foreground: "#1c1c22"
   # Neutrals - dark theme
-  background-dark: "#0a0c11"
+  background-dark: "#0a0c0f"
   foreground-dark: "#f4f4f5"
-  surface-dark: "#11131b"
-  surface-2-dark: "#181b24"
-  muted-dark: "#1c2029"
-  muted-foreground-dark: "#a0a1a8"
-  border-dark: "#282c34"
-  border-strong-dark: "#414651"
-  code-dark: "#181b24"
-  code-foreground-dark: "#e4e5e9"
+  surface-dark: "#111317"
+  surface-2-dark: "#181a20"
+  muted-dark: "#1d1f26"
+  muted-foreground-dark: "#a0a0a7"
+  border-dark: "#282b33"
+  border-strong-dark: "#40444f"
+  code-dark: "#181a20"
+  code-foreground-dark: "#e4e4e7"
   # Semantic status (Tailwind scale; keep low saturation in dark)
   success: "#22c55e"
   warning: "#eab308"
@@ -93,12 +93,9 @@ typography:
     fontFeature: "tabular-nums"
 rounded:
   none: "0"
-  sm: "0.375rem"
-  md: "0.5rem"      # default: buttons, inputs, chips, small tiles
-  lg: "0.75rem"     # cards, panels, terminals
-  xl: "1rem"        # large cards, section boxes
-  "2xl": "1.25rem"  # feature cards, inline CTAs
-  full: "9999px"    # pills, dots, avatars
+  chamfer: "2px"    # UNIVERSAL: cards, panels, buttons, inputs, chips, tables, terminals
+  full: "9999px"    # pills, status dots, avatars ONLY (circles preserved)
+  note: "Instrument Panel theme (live site) forces a 2px chamfer on all containers"
 spacing:
   px: "1px"
   1: "0.25rem"
@@ -116,29 +113,30 @@ components:
     backgroundColor: "{colors.foreground}"
     textColor: "{colors.background}"
     typography: "{typography.body-sm}"
-    rounded: "{rounded.md}"
+    rounded: "{rounded.chamfer}"
     padding: "0.625rem 1rem"
     hover: "background {colors.primary}, text #ffffff"
+    note: "CTAs render JetBrains Mono UPPERCASE 11px/600/0.14em; active presses translateY(1px)"
   button-secondary:
     backgroundColor: "{colors.background}"
     textColor: "{colors.foreground}"
     border: "1px solid {colors.border-strong}"
-    rounded: "{rounded.md}"
+    rounded: "{rounded.chamfer}"
     padding: "0.625rem 1rem"
   button-accent:
     backgroundColor: "{colors.primary}"
     textColor: "#ffffff"
-    rounded: "{rounded.md}"
+    rounded: "{rounded.chamfer}"
     note: "use sparingly, one per view at most"
   input:
     backgroundColor: "{colors.background}"
     textColor: "{colors.foreground}"
     border: "1px solid {colors.border-strong}"
-    rounded: "{rounded.md}"
+    rounded: "{rounded.chamfer}"
   card:
     backgroundColor: "{colors.surface}"
     border: "1px solid {colors.border}"
-    rounded: "{rounded.lg}"
+    rounded: "{rounded.chamfer}"
   pill:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.muted-foreground}"
@@ -149,7 +147,7 @@ components:
     backgroundColor: "{colors.surface}"
     bodyColor: "{colors.code}"
     border: "1px solid {colors.border}"
-    rounded: "{rounded.lg}"
+    rounded: "{rounded.chamfer}"
 ---
 
 # Plivo DESIGN.md
@@ -181,7 +179,14 @@ Principles, in priority order:
 4. **Elevation by surface + hairline, not shadow.** Depth comes from the
    surface ladder (`background` to `surface` to `surface-2`) and 1px borders,
    not drop shadows. The look is flat and editorial.
-5. **Technical texture is a feature.** Monospace kicker labels with a numbered
+5. **The Instrument Panel chamfer governs everything.** A sitewide theme
+   (`.ip-cta-scope` on `<body>`, `src/styles/instrument-panel.css`) flattens
+   EVERY container to a **2px corner** with `!important`, sets CTAs in mono
+   uppercase, locks the accent to `#323dfe` in both themes, and presses
+   buttons down 1px on click. Whatever radius utility the markup carries
+   (`rounded-md`, `rounded-lg`), the rendered corner is 2px; only
+   `rounded-full` circles (pills, dots, avatars) stay round.
+6. **Technical texture is a feature.** Monospace kicker labels with a numbered
    index, dotted-grid backdrops, bracket "TechFrame" corners, and terminal /
    waveform panels give pages their signature. Reach for these before color.
 
@@ -198,27 +203,27 @@ value, the dark value, and the role. Consume via Tailwind utilities
 
 | Token (CSS var)         | Light      | Dark       | Role |
 |-------------------------|------------|------------|------|
-| `--background`          | `#ffffff`  | `#0a0c11`  | page background |
-| `--foreground`          | `#0a0a0f`  | `#f4f4f5`  | primary text, headlines |
-| `--surface`             | `#f9f9fb`  | `#11131b`  | first elevation, cards |
-| `--surface-2`           | `#f3f4f6`  | `#181b24`  | second elevation, popovers, dark bands |
-| `--muted`               | `#f3f4f6`  | `#1c2029`  | inert chips, tab tracks |
-| `--muted-foreground`    | `#67686f`  | `#a0a1a8`  | body, captions, metadata |
-| `--border`              | `#e3e3e8`  | `#282c34`  | hairline |
-| `--border-strong`       | `#c7c8ce`  | `#414651`  | emphasis, focus, input borders |
-| `--code`                | `#f3f4f6`  | `#181b24`  | code + terminal body |
-| `--code-foreground`     | `#1b1d22`  | `#e4e5e9`  | code text |
+| `--background`          | `#ffffff`  | `#0a0c0f`  | page background |
+| `--foreground`          | `#09090b`  | `#f4f4f5`  | primary text, headlines |
+| `--surface`             | `#fafafa`  | `#111317`  | first elevation, cards |
+| `--surface-2`           | `#f4f4f5`  | `#181a20`  | second elevation, popovers, dark bands |
+| `--muted`               | `#f4f4f5`  | `#1d1f26`  | inert chips, tab tracks |
+| `--muted-foreground`    | `#67676f`  | `#a0a0a7`  | body, captions, metadata |
+| `--border`              | `#e4e4e7`  | `#282b33`  | hairline |
+| `--border-strong`       | `#c9c9cf`  | `#40444f`  | emphasis, focus, input borders |
+| `--code`                | `#f4f4f5`  | `#181a20`  | code + terminal body |
+| `--code-foreground`     | `#1c1c22`  | `#e4e4e7`  | code text |
 
 ### Brand accent (blue)
 
 | Use                        | Light     | Dark      |
 |----------------------------|-----------|-----------|
-| Fills, buttons, dots, rings (`--primary`) | `#323dfe` | `#4f5cff` |
+| Fills, buttons, dots, rings (`--primary`) | `#323dfe` | `#323dfe` (locked by Instrument Panel theme) |
 | **Text and links** (lifted for legibility) | `#323dfe` | **`#4d6aff`** |
 | On-accent text (`--primary-foreground`)   | `#ffffff` | `#ffffff` |
 
 **Critical rule:** brand blue is a great *fill* but a low-contrast *text* color
-on dark surfaces (`#4f5cff` is ~4:1, `#323dfe` ~2.4:1). So **blue text lifts to
+on dark surfaces (`#323dfe` is ~2.4:1 on dark). So **blue text lifts to
 `#4d6aff`** (~4.2:1, a clear lift over the fill blue, just under strict AA 4.5
 for small text) in dark mode only. Fills, buttons,
 LED dots and waveforms keep the brand blue. On the site this is automatic (a
@@ -303,10 +308,10 @@ still uses `text-foreground` and resolves to white.
 
 ## Shapes
 
-- **Radius:** `rounded-md` (0.5rem) is the default for buttons, inputs and small
-  tiles; `rounded-lg` (0.75rem) for cards, panels and terminals; `rounded-xl` /
-  `rounded-2xl` for large feature cards and inline CTA boxes; `rounded-full` for
-  pills, status dots and avatars.
+- **Radius: a universal 2px chamfer.** The live site's Instrument Panel theme
+  flattens every container (cards, panels, buttons, inputs, chips, tables,
+  terminals) to `2px`; only true circles stay round (`rounded-full` pills,
+  status dots, avatars). One corner language across the site.
 - **Borders are 1px hairlines** in `--border`, stepping up to `--border-strong`
   for emphasis, focus, and input outlines.
 - **Corners can be "framed"** with the TechFrame device (see Signature Patterns):
@@ -315,6 +320,11 @@ still uses `text-foreground` and resolves to white.
 ## Components
 
 ### Buttons
+
+**Instrument Panel CTA voice (live site):** primary and outline CTAs render in
+JetBrains Mono, UPPERCASE, 11px, weight 600, letter-spacing 0.14em, 2px radius.
+Hover converges to solid brand blue `#323dfe` with white text; active presses
+down with `translateY(1px)`. Apply this to every button-like control.
 
 - **Primary** (default CTA): `bg-foreground text-background`, `rounded-md`,
   `px-4 py-2.5`, `text-[13.5px] font-medium`. Hover flips to
@@ -335,7 +345,8 @@ Labels: `text-sm font-medium text-foreground/80`.
 
 ### Cards
 
-`rounded-lg border border-border bg-surface`. Feature cards can add a subtle
+`rounded-lg border border-border bg-surface` in markup (the Instrument Panel
+theme renders every container corner at 2px). Feature cards can add a subtle
 accent wash (`bg-gradient-to-b from-primary/10 via-primary/5 to-transparent`)
 or stay neutral `bg-surface`. Always bordered so they read on any background.
 
@@ -359,7 +370,7 @@ text-foreground`. Accordion items divided by `border-border`, trigger hovers to
 
 ### Alerts
 
-Rounded, hairline, tinted background, theme-aware (light tint in light, ~30%
+2px chamfer, hairline, tinted background, theme-aware (light tint in light, ~30%
 dark tint in dark) for info / success / warning / danger, each with a leading
 icon.
 
@@ -368,6 +379,8 @@ icon.
 Restrained and quick. Transitions are `150-200ms ease`. Common:
 
 - `transition-colors` on hover for links, buttons, rows.
+- CTA press: buttons move down with `translateY(1px)` on `:active` (50ms), the
+  Instrument Panel button feel.
 - Hover lift `hover:-translate-y-0.5` on interactive tiles; hover border step
   `hover:border-border-strong` on panels.
 - `animate-appear` (fade + 10px rise, 0.5s) for on-load reveals; staggered
@@ -433,6 +446,8 @@ These are what make a page look like Plivo. Use them instead of decorative color
   rates shown together (pad with trailing zeros, e.g. `$0.0046` vs `$0.0070`).
 - Lift blue **text** to `#4d6aff` on dark; keep blue **fills** at brand blue.
 - Elevate with surface + hairline.
+- Keep the universal 2px chamfer on every container; round only pills, status
+  dots and avatars.
 
 **Don't**
 - Use em dashes or en dashes in any copy. Use a comma or hyphen. (Preserve a
@@ -440,6 +455,7 @@ These are what make a page look like Plivo. Use them instead of decorative color
 - Use the retired purple `#cd3ef9` or any gradient text/buttons.
 - Scatter bold decorative blue; it reads as "kiddish."
 - Use drop shadows to fake elevation, or heavy colored section backgrounds.
+- Soften the 2px chamfer back to 8-12px corners, or shape buttons as pills.
 - Hardcode hex, use tokens.
 - Mix decimal precision on numbers that sit near each other.
 - Center a heading while leaving its description left-aligned (add `mx-auto`).
@@ -456,23 +472,26 @@ Paste this to brief an agent quickly:
 > metadata, kickers and stats in **JetBrains Mono** with `tabular-nums`. Open sections
 > with a mono UPPERCASE numbered kicker + dashed rule. Elevate with 1px hairline
 > borders and the surface ladder, not shadows. Buttons: primary = foreground fill that
-> turns blue on hover; secondary = hairline outline. Add technical texture with bracket
+> turns blue on hover; secondary = hairline outline; all CTAs render mono
+> UPPERCASE 11px/600, letter-spacing 0.14em, and press down 1px on click.
+> Every container takes a **2px chamfer** corner; only pills, status dots and
+> avatars are round. Add technical texture with bracket
 > "TechFrame" corners, dotted-grid backdrops, and terminal/waveform panels. On **dark**,
-> lift blue **text** to `#4d6aff` (keep blue fills at `#4f5cff`). No em dashes, no purple,
+> lift blue **text** to `#4d6aff` (blue fills stay `#323dfe`, locked in both themes). No em dashes, no purple,
 > no gradients, no bold decorative blue.
 
 **Quick color reference**
 
 ```
-accent (fill)   #323dfe light / #4f5cff dark
+accent (fill)   #323dfe light AND dark (locked by Instrument Panel theme)
 accent (text)   #323dfe light / #4d6aff dark   <- lifted for legibility
-bg              #ffffff / #0a0c11
-fg              #0a0a0f / #f4f4f5
-surface         #f9f9fb / #11131b
-surface-2       #f3f4f6 / #181b24
-muted-fg        #67686f / #a0a1a8
-border          #e3e3e8 / #282c34
-border-strong   #c7c8ce / #414651
+bg              #ffffff / #0a0c0f
+fg              #09090b / #f4f4f5
+surface         #fafafa / #111317
+surface-2       #f4f4f5 / #181a20
+muted-fg        #67676f / #a0a0a7
+border          #e4e4e7 / #282b33
+border-strong   #c9c9cf / #40444f
 fonts           Sora (display) · Inter (body) · JetBrains Mono (mono)
-radius          md 0.5rem (controls) · lg 0.75rem (cards) · full (pills)
+radius          2px chamfer on ALL containers · full only for pills/dots
 ```
