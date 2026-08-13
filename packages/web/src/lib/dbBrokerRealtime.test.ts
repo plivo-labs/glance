@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { createDbBroker } from './dbBroker'
+import { createDbBroker, reconnectDelay } from './dbBroker'
 
 // The realtime half of the P0-1 boundary. A hosted page holds NO credential (the boot payload is
 // exactly {appOrigin}), so it can never open its own WebSocket: the parent owns the socket, binds
@@ -46,7 +46,7 @@ const mintOk = () => Response.json({ token: 'tok-1', caps: ['read', 'create'], e
 const frame = (events: unknown[], cursor: string) => Response.json({ events, cursor })
 const EVENT = { type: 'create', collection: 'notes', id: 'd1', createdBy: 'userA', at: '2026-07-01T00:00:00.000Z' }
 
-function makeBroker(handler: Handler, source: Window = iframeWin) {
+function makeBroker(handler: Handler, source: Window = iframeWin, reconnectBaseMs?: number) {
   const calls: Call[] = []
   const sockets: FakeSocket[] = []
   const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -63,6 +63,7 @@ function makeBroker(handler: Handler, source: Window = iframeWin) {
         sockets.push(s)
         return s
       },
+      reconnectBaseMs,
     },
   )
   return { broker, calls, sockets }
@@ -102,8 +103,8 @@ const typed = (msgs: Record<string, unknown>[], t: string) => msgs.filter((m) =>
 const replied = (msgs: Record<string, unknown>[], id: number) => msgs.find((m) => m.id === id)
 
 /** hello → ready → the page asks for the stream. Returns once the socket exists and is open. */
-async function subscribed(handler: Handler) {
-  const b = makeBroker(handler)
+async function subscribed(handler: Handler, reconnectBaseMs?: number) {
+  const b = makeBroker(handler, iframeWin, reconnectBaseMs)
   const h = hello(b.broker)
   await until('ready', () => typed(h.received, 'glance:db-ready').length > 0)
   h.port.postMessage({ id: 1, op: 'subscribe' })
@@ -291,5 +292,83 @@ describe('broker realtime relay', () => {
     s.port.postMessage({ id: 5, op: 'list', collection: 'notes' })
     await tick(30)
     expect(replied(s.received, 5)).toBeUndefined()
+  })
+
+  test('a 401 mint mid-stream KILLS the redial loop — one probe, then silence', async () => {
+    // The 2026-08-11 incident: a tab whose session expired kept re-minting every 3s forever
+    // (28,800 requests/day). Compressed here: the token expires in ~100ms (30.1s − 30s slack),
+    // the session dies, so the broker's own re-auth mint 401s. Exactly one probe may see the
+    // 401 — no timer may survive it.
+    let dead = false
+    let minted = 0
+    const s = await subscribed((url) => {
+      if (!url.startsWith('/api/data-token/')) return frame([], 'c1')
+      minted++
+      if (dead) return Response.json({ error: 'unauthorized' }, { status: 401 })
+      return Response.json({ token: `tok-${minted}`, caps: ['read'], expiresIn: 30.1 })
+    }, 5)
+    expect(minted).toBe(1)
+    dead = true
+    await until('the 401 probe', () => minted >= 2, 1000)
+    await tick(150) // ~30 base-delay periods: a surviving loop would mint dozens more
+    expect(minted).toBe(2)
+    expect(s.sockets).toHaveLength(1)
+
+    // A page that asks again gets a real answer, not a hung request — and still no loop.
+    s.port.postMessage({ id: 9, op: 'subscribe' })
+    const reply = (await until('terminal reply', () => replied(s.received, 9))) as { ok: boolean; status: number }
+    expect(reply.ok).toBe(false)
+    expect(reply.status).toBe(401)
+    await tick(100)
+    expect(minted).toBe(3)
+    s.broker.dispose()
+  })
+
+  test('a dropped socket redials with a cached token, and backoff resets once a dial lands', async () => {
+    const s = await subscribed((url) => (url.startsWith('/api/data-token/') ? mintOk() : frame([], 'c1')), 5)
+    s.sock.onclose?.()
+    const second = await until('redial', () => s.sockets[1])
+    second.onopen?.()
+    // The token is minutes from expiry: the redial must reuse it, not mint a fresh one.
+    expect(s.calls.filter((c) => c.url.startsWith('/api/data-token/'))).toHaveLength(1)
+    expect(second.protocols).toEqual(['glance.db.v1', 'tok-1'])
+    s.broker.dispose()
+  })
+
+  test('reconnectDelay grows exponentially, caps at 60s, and jitters within [half, full]', () => {
+    for (const [attempt, full] of [
+      [0, 3000],
+      [1, 6000],
+      [3, 24_000],
+      [10, 60_000],
+      [40, 60_000], // 2**40 overflows the cap arithmetic if written naively
+    ] as const) {
+      for (let i = 0; i < 20; i++) {
+        const d = reconnectDelay(attempt)
+        expect(d).toBeGreaterThanOrEqual(full / 2)
+        expect(d).toBeLessThanOrEqual(full)
+      }
+    }
+    const base = reconnectDelay(2, 10)
+    expect(base).toBeGreaterThanOrEqual(20)
+    expect(base).toBeLessThanOrEqual(40)
+  })
+
+  test('a hidden tab parks the redial until the tab is visible again', async () => {
+    const s = await subscribed((url) => (url.startsWith('/api/data-token/') ? mintOk() : frame([], 'c1')), 5)
+    Object.defineProperty(document, 'hidden', { value: true, configurable: true })
+    try {
+      s.sock.onclose?.()
+      await tick(150)
+      expect(s.sockets).toHaveLength(1) // no blind dialing in a background tab
+
+      Object.defineProperty(document, 'hidden', { value: false, configurable: true })
+      document.dispatchEvent(new Event('visibilitychange'))
+      const second = await until('resume dial', () => s.sockets[1])
+      second.onopen?.()
+    } finally {
+      Object.defineProperty(document, 'hidden', { value: false, configurable: true })
+    }
+    s.broker.dispose()
   })
 })
