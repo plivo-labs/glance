@@ -23,6 +23,7 @@ const enc = new TextEncoder()
 // there. R2 also rejects object keys over 1024 bytes; catch that up front too, else the reject
 // lands only after sibling objects are already committed and orphaned.
 const MAX_FILE_COUNT = 200 // one put per file; sized well under the subrequest budget (D1 + deletes need headroom)
+const MAX_TOTAL_BYTES = 100 * 1024 * 1024 // headroom under the 128MB isolate; multipart overhead pushes Content-Length slightly past file bytes, fine for a reject-over threshold
 const MAX_STORAGE_KEY_BYTES = 1024 // R2's hard object-key limit
 const UPLOAD_CONCURRENCY = 10 // bounded parallelism for the R2 put loop
 
@@ -40,6 +41,14 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
   const user = c.get('user')
   const db = c.get('db')
   const { spaceSlug, siteSlug } = c.req.param()
+
+  // Total-size cap, checked from the header BEFORE formData() — which buffers the ENTIRE multipart
+  // body in worker memory. The per-file cap below runs only after that buffering, so 200×20MB could
+  // otherwise materialize ~4GB against the 128MB isolate. This header check is the real memory guard.
+  const contentLength = Number(c.req.header('content-length'))
+  if (Number.isFinite(contentLength) && contentLength > MAX_TOTAL_BYTES) {
+    return c.json({ error: 'upload exceeds 100MB total' }, 413)
+  }
 
   const form = await c.req.formData()
   const rawVisibility = form.get('visibility')
@@ -73,6 +82,12 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
     items.push({ path, file })
   }
   if (items.length === 0) return c.json({ error: 'no files' }, 400)
+  // Backstop for a chunked/absent Content-Length: by this point formData() already buffered the
+  // body, so the header check above is the real memory guard — this only keeps the R2/D1 write
+  // path bounded when the header never came.
+  if (items.reduce((sum, { file }) => sum + file.size, 0) > MAX_TOTAL_BYTES) {
+    return c.json({ error: 'upload exceeds 100MB total' }, 413)
+  }
   // Cap the file COUNT before any R2 write — the mid-loop cleanup can't recover from subrequest
   // exhaustion, so this bound is what actually prevents that orphan case.
   if (items.length > MAX_FILE_COUNT) return c.json({ error: 'too many files', max: MAX_FILE_COUNT }, 400)
