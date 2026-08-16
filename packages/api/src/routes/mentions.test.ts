@@ -692,14 +692,16 @@ describe('S2 C19 — direct-share participant mention dedupes to one mention', (
 })
 
 describe('S2 C20 — archived sites suppress comment audience notifications', () => {
-  test('a superadmin may comment but the normal owner receives nothing', async () => {
+  // Archive is one rule for everyone, so nobody comments on an archived site — the superadmin
+  // included (it has no role bypass) — and no audience notification is raised either way.
+  test('a superadmin cannot comment on an archived site, and the owner receives nothing', async () => {
     const { app, env, db, r2, kv } = await setup()
     const owner = await mintUser(db, kv, 'owner')
     const admin = await mintUser(db, kv, 'admin', { role: 'superadmin' })
     await seedSiteWithFile(db, r2, owner, 'team', 'archived')
 
     const res = await app.request(commentsUrl, postThread(admin, { body: 'admin note' }), env)
-    expect(res.status).toBe(201)
+    expect(res.status).toBe(410)
     expect((await listNotifications(db, owner)).unreadCount).toBe(0)
   })
 })

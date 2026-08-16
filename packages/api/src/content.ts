@@ -159,9 +159,9 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
   }
   // Gated path: the token-bound user was re-read live in the batch; a deleted user fails closed
   // exactly like the old authorizeViewerById did. Authorization then runs through the same
-  // checkAccess the data plane uses — both surfaces enforce the SAME rules. The archive decision
-  // lives THERE (410 for everyone except superadmin), so routing it through checkAccess lets a
-  // superadmin still view an archived site instead of a blanket early 410.
+  // checkAccess the data plane uses — both surfaces enforce the SAME rules, role included: a
+  // superadmin reads this site only if the tiers admit them. The archive decision lives THERE
+  // (410), so it stays one rule rather than a blanket early 410 here.
   if (!facts.user) return c.text('Forbidden', 403)
   const access = checkAccess(siteRow, facts.user, facts.isMember, isSharedFromFacts(facts))
   if (!access.ok) {

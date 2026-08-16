@@ -106,10 +106,10 @@ function canComment(_site: ResolvedSite, access: { ok: boolean }): boolean {
   return access.ok
 }
 
-// Site owner or superadmin may resolve/reopen any thread. Deleting a comment is AUTHOR-ONLY —
-// deliberately not a moderation power (nobody, superadmin included, deletes someone else's words).
-const canModerate = (site: ResolvedSite, user: SessionUser): boolean =>
-  site.ownerId === user.id || user.role === 'superadmin'
+// The site OWNER may resolve/reopen any thread on it — nobody else. Deleting a comment is
+// AUTHOR-ONLY, deliberately not a moderation power (nobody deletes someone else's words), and the
+// superadmin role grants neither: an admin's custody over a site it can't read stops at delete.
+const canModerate = (site: ResolvedSite, user: SessionUser): boolean => site.ownerId === user.id
 
 /** PURE post-batch gate on assembled access facts: missing site → 404, then `checkAccess` (the
  *  live session user from requireAuth is the subject, exactly as before) with `canComment` as
@@ -729,7 +729,7 @@ async function replyVoiceComment(c: Context<AppEnv>, site: ResolvedSite, thread:
   return c.json({ id: added.id }, 201)
 }
 
-// PATCH — resolve / reopen a thread (owner or superadmin only). S9c fused pre-write batch; the
+// PATCH — resolve / reopen a thread (site owner only). S9c fused pre-write batch; the
 // role 403 still comes BEFORE the thread 404 (the batched thread row goes unused on a 403 —
 // accepted design, same as the GET list's denial).
 comments.patch('/:space/:site/comments/:threadId', async (c) => {

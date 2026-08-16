@@ -293,8 +293,8 @@ export type UserLite = { id: string; name: string | null; email: string }
  *
  * Deliberate deviations from `checkAccess` (both fail-closed / safe):
  *   - archived → nobody is mentionable (matches checkAccess's 410-for-all), enforced here directly.
- *   - the superadmin universal-access bypass is NOT expanded here — an admin is mentionable only via
- *     the normal owner/member/share paths (don't spam every admin on every private site).
+ *   - role is not consulted (same as `checkAccess`) — an admin is mentionable only via the normal
+ *     owner/member/share paths (don't spam every admin on every private site).
  * `team` returns the whole user table on the assumption of a single allowed login domain (domain
  * gating happens at auth, not in this row set).
  */

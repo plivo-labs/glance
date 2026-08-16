@@ -14,10 +14,15 @@ const ALLOW: AccessResult = { ok: true }
  *   members → space member (or owner)
  *   team    → any authenticated user in the allowed domain
  *   shared  → any user/group explicitly granted access (additive, any tier)
- *   archived→ 410 for everyone except superadmin
- *   superadmin → bypasses all visibility + archive rules
+ *   archived→ 410 for everyone
  *
  * There is no public/anonymous tier: every tier requires an authenticated user.
+ *
+ * ROLE IS DELIBERATELY NOT CONSULTED. A superadmin reads a site only by the same tiers as
+ * anyone else: their custodial powers (see every site's metadata, archive/restore, delete) are
+ * the admin routes, and STOP at the content. Do not reintroduce a role bypass here — every read
+ * surface (content worker, search, stars, spaces, comment feed, notifications) funnels through
+ * this function, so one bypass line hands back the whole corpus.
  */
 export function checkAccess(
   site: Pick<Site, 'visibility' | 'status' | 'ownerId'>,
@@ -25,7 +30,6 @@ export function checkAccess(
   isMember: boolean,
   isShared = false,
 ): AccessResult {
-  if (user?.role === 'superadmin') return ALLOW
   if (site.status === 'archived') return { ok: false, status: 410 }
   // Explicit per-user / per-group grant — additive on top of the visibility tier.
   if (isShared && user) return ALLOW
@@ -46,15 +50,19 @@ export function checkAccess(
 
 /**
  * Whether a user may CONTENT-REPLACE (redeploy) a site — a strictly narrower capability than
- * `checkAccess` (which is read/view). Owner or superadmin always; a direct EDITOR share otherwise
- * (a plain viewer / group share / tier-only reacher may NOT). `shareRole` is the caller's DIRECT
+ * `checkAccess` (which is read/view). Owner always; a direct EDITOR share otherwise (a plain
+ * viewer / group share / tier-only reacher may NOT). `shareRole` is the caller's DIRECT
  * share role (`resolveShareRole`), null when they have none. Single source of truth for the upload
  * gate, `/exists` canReplace, and the meta-route manifest gate — do NOT re-inline the predicate.
+ *
+ * Role is not consulted (same rule as `checkAccess`): the manifest this gates lists the site's
+ * files, and replace lets the actor plant content the owner will open — neither is a custodial
+ * power, so a superadmin gets them only by owning the site or holding an editor share.
  */
 export function canReplace(
-  user: Pick<SessionUser, 'id' | 'role'>,
+  user: Pick<SessionUser, 'id'>,
   site: Pick<Site, 'ownerId'>,
   shareRole: 'viewer' | 'editor' | null,
 ): boolean {
-  return user.role === 'superadmin' || site.ownerId === user.id || shareRole === 'editor'
+  return site.ownerId === user.id || shareRole === 'editor'
 }

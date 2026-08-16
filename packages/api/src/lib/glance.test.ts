@@ -25,18 +25,24 @@ describe('checkAccess', () => {
     expect(checkAccess(site('members'), other, true).ok).toBe(true)
     expect(checkAccess(site('members'), other, false)).toEqual({ ok: false, status: 403 })
   })
-  test('archived: 410 for all except superadmin', () => {
+  test('archived: 410 for everyone, superadmin included', () => {
     expect(checkAccess(site('team', 'archived'), owner, false)).toEqual({ ok: false, status: 410 })
-    expect(checkAccess(site('private', 'archived'), admin, false).ok).toBe(true)
+    expect(checkAccess(site('private', 'archived'), admin, false)).toEqual({ ok: false, status: 410 })
   })
-  test('superadmin bypasses private + archive', () => {
-    expect(checkAccess(site('private'), admin, false).ok).toBe(true)
+  // The read side of "a superadmin may delete a private site but never open it": role buys nothing
+  // here, so an admin is judged by the same tiers as any other non-owner.
+  test('superadmin gets NO bypass — judged by tier like any member', () => {
+    expect(checkAccess(site('private'), admin, false)).toEqual({ ok: false, status: 403 })
+    expect(checkAccess(site('members'), admin, false)).toEqual({ ok: false, status: 403 })
+    expect(checkAccess(site('team'), admin, false).ok).toBe(true)
+    expect(checkAccess(site('members'), admin, true).ok).toBe(true)
+    expect(checkAccess(site('private'), admin, false, true).ok).toBe(true)
   })
   test('explicit share grants access on any tier', () => {
     expect(checkAccess(site('private'), other, false, true).ok).toBe(true)
     expect(checkAccess(site('members'), other, false, true).ok).toBe(true)
   })
-  test('explicit share is still blocked when archived (non-admin)', () => {
+  test('explicit share is still blocked when archived', () => {
     expect(checkAccess(site('private', 'archived'), other, false, true)).toEqual({ ok: false, status: 410 })
   })
 })

@@ -62,14 +62,17 @@ function postUpload(
 
 const html = (s: string, name: string) => new File([s], name, { type: 'text/html' })
 
-describe('upload — superadmin moderation', () => {
+// A superadmin is not a content author on someone else's site: replace would let it plant bytes
+// the owner then opens, and create would let it publish into a space it doesn't belong to. Its
+// custody is delete, in the admin panel.
+describe('upload — a superadmin is not an editor', () => {
   async function postAs(app: Hono<AppEnv>, env: AppEnv['Bindings'], token: string, slug: string, query = '') {
     const fd = new FormData()
     fd.append('files', html('<html>2</html>', 'index.html'))
     return app.request(`/api/upload/acme/${slug}${query}`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd }, env)
   }
 
-  test('superadmin-can-replace-another-owners-site: bypasses membership + ownership', async () => {
+  test('superadmin-cannot-replace-another-owners-site: 403, and cannot create in the space either', async () => {
     const { app, env, db } = await setup()
     await postUpload(app, env, 'modme', [html('<html>1</html>', 'index.html')]) // owner creates
     const admin = await seedUser(db, { id: 'admin', email: 'admin@example.com', role: 'superadmin' })
@@ -78,7 +81,8 @@ describe('upload — superadmin moderation', () => {
       'cli:admintok',
       JSON.stringify({ id: admin, email: 'admin@example.com', name: null, role: 'superadmin' }),
     )
-    expect((await postAs(app, env, 'admintok', 'modme', '?replace=true')).status).toBe(200)
+    expect((await postAs(app, env, 'admintok', 'modme', '?replace=true')).status).toBe(403)
+    expect((await postAs(app, env, 'admintok', 'fresh')).status).toBe(403)
   })
 
   test('non-member-cannot-replace: a plain member outside the space is still 403', async () => {

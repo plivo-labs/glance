@@ -627,6 +627,8 @@ describe('assembleCommentFeed', () => {
       memberSpaceIds: new Set(['space-member']),
       sharedSiteRoles: new Map([...groupRoles, ...directRoles]),
     })
+    // Same rows, a superadmin caller, no membership and no share: the oracle consults tiers only,
+    // so the role folds away to nothing — a comment on a site they cannot open never reaches them.
     const superadminResult = assembleCommentFeed({
       authored: [
         authoredRow({
@@ -643,9 +645,9 @@ describe('assembleCommentFeed', () => {
       memberSpaceIds: new Set(),
       sharedSiteRoles: new Map(),
     })
+    expect(superadminResult).toEqual([])
 
-    expect([...plainUserResult, ...superadminResult].map((row) => row.id).sort()).toEqual([
-      'archived-superadmin',
+    expect(plainUserResult.map((row) => row.id).sort()).toEqual([
       'members-member',
       'private-direct',
       'private-group',

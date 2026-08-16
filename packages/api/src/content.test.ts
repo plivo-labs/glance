@@ -389,19 +389,22 @@ describe('gated file serving: cache-control, conditional 304, archive-through-ch
     expect(await res.text()).toBe('<h1>hi</h1>')
   })
 
-  test('superadmin views an ARCHIVED site (archive routed through checkAccess, not a blanket early 410)', async () => {
-    const { app, db, r2, env } = setup()
-    const { token } = await seedServable(db, r2, { role: 'superadmin', status: 'archived', text: '<h1>archived</h1>' })
-    const res = await app.request(`/_t/${token}/sam/site/`, {}, env)
-    expect(res.status).toBe(200)
-    expect(await res.text()).toBe('<h1>archived</h1>')
-  })
+  // Archive is one rule for everyone — the role carries no exemption, so even a superadmin who
+  // OWNS the site gets the same 410 a plain member does (restore it via the admin panel first).
+  test('archived site → 410 for a member owner AND for a superadmin owner', async () => {
+    const member = setup()
+    const asMember = await seedServable(member.db, member.r2, { role: 'member', status: 'archived' })
+    expect((await member.app.request(`/_t/${asMember.token}/sam/site/`, {}, member.env)).status).toBe(410)
 
-  test('non-superadmin gets 410 on an archived site (single-source-of-truth archive rule holds)', async () => {
-    const { app, db, r2, env } = setup()
-    const { token } = await seedServable(db, r2, { role: 'member', status: 'archived' })
-    const res = await app.request(`/_t/${token}/sam/site/`, {}, env)
+    const admin = setup()
+    const asAdmin = await seedServable(admin.db, admin.r2, {
+      role: 'superadmin',
+      status: 'archived',
+      text: '<h1>archived</h1>',
+    })
+    const res = await admin.app.request(`/_t/${asAdmin.token}/sam/site/`, {}, admin.env)
     expect(res.status).toBe(410)
+    expect(await res.text()).not.toContain('archived</h1>')
   })
 })
 
