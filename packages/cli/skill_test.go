@@ -7,17 +7,7 @@ import (
 	"testing"
 )
 
-// The embedded SKILL.md is a committed copy of the canonical glance-cli/SKILL.md (embedded so
-// `glance skill install` ships it INSIDE the binary - no Node/npx). This pins the
-// "edited the source but forgot to re-copy" seam, exactly like the TS skill-content.test.ts.
-func TestSkillEmbedInSync(t *testing.T) {
-	canonical, err := os.ReadFile(filepath.Join("..", "..", "glance-cli", "SKILL.md"))
-	if err != nil {
-		t.Fatalf("read canonical SKILL.md: %v", err)
-	}
-	if skillMD != string(canonical) {
-		t.Error("embedded SKILL.md is stale — re-run `go generate ./...` (or the build:skill step) and commit SKILL.md")
-	}
+func TestSkillEmbed(t *testing.T) {
 	if skillName != "glance-cli" {
 		t.Errorf("skillName = %q", skillName)
 	}

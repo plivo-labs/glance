@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { eq } from 'drizzle-orm'
 import { sites } from '../db/schema'
 import { makeDb, makeR2, seedFile, seedSite, seedSpace, seedUser } from '../test/harness'
-import { pureAudioSql } from './site-audio'
+import { pureAudioSql } from './site-feed'
 
 // The pure-audio predicate as the routes consume it: a correlated scalar selected off the sites
 // table (1 = at least one file AND every file audio). Truth table pinned here once; the chunked

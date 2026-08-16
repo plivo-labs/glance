@@ -6,6 +6,7 @@ import {
   foldMemberSpaceIds,
   foldSharedSiteRoles,
   isSpaceMember,
+  isUniqueConstraintError,
   listSiteShares,
   memberSpaceIdsStmt,
   replaceSiteShares,
@@ -51,15 +52,8 @@ function escapeLike(s: string): string {
 }
 
 // createdAt is ISO-8601, so a plain string compare orders chronologically. Newest first.
-function byCreatedAtDesc(a: { createdAt: string }, b: { createdAt: string }): number {
-  return a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0
-}
-
-// SQLite/D1 UNIQUE-constraint violation (both bun:sqlite and D1's wrapped D1_ERROR carry the text).
-function isUniqueConstraintError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err)
-  return /unique constraint failed/i.test(msg)
-}
+const byCreatedAtDesc = (a: { createdAt: string }, b: { createdAt: string }): number =>
+  b.createdAt.localeCompare(a.createdAt)
 
 export type SearchRow = {
   id: string

@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
-	"strings"
 	"time"
 )
 
@@ -85,22 +84,6 @@ func bodySlice(resp *http.Response) string {
 		r = r[:200]
 	}
 	return string(r)
-}
-
-// encodeURIComponent mirrors JS's function of the same name (unreserved set A-Za-z0-9 -_.!~*'(),
-// space -> %20, UTF-8 bytes percent-encoded uppercase) - NOT url.QueryEscape (which uses '+').
-func encodeURIComponent(s string) string {
-	const keep = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.!~*'()"
-	var b strings.Builder
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		if strings.IndexByte(keep, ch) >= 0 {
-			b.WriteByte(ch)
-		} else {
-			fmt.Fprintf(&b, "%%%02X", ch)
-		}
-	}
-	return b.String()
 }
 
 func isTTY(r io.Reader) bool {

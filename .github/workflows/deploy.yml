@@ -48,23 +48,15 @@ jobs:
       # placeholders (real binding IDs are kept out of this public template, via skip-worktree). Wire
       # the real, non-secret identifiers in from repo Actions Variables BEFORE build:web (so the
       # _headers CSP copied into dist has the real content origin) and before any wrangler call (else
-      # the deploy 7003s on /accounts/YOUR_ACCOUNT_ID/... ).
+      # the deploy 7003s on /accounts/YOUR_ACCOUNT_ID/... ). Plain worker vars (APP_URL, CONTENT_URL,
+      # ALLOWED_HD, SUPERADMIN_EMAIL) ride in as `wrangler deploy --var` flags instead; this step also
+      # exports the resolved public URLs for those deploy steps.
       - name: Wire Cloudflare binding IDs into config
         env:
           CF_ACCOUNT_ID: ${{ vars.CF_ACCOUNT_ID }}
           CF_D1_DATABASE_ID: ${{ vars.CF_D1_DATABASE_ID }}
           CF_KV_NAMESPACE_ID: ${{ vars.CF_KV_NAMESPACE_ID }}
           CF_WORKERS_SUBDOMAIN: ${{ vars.CF_WORKERS_SUBDOMAIN }}
-          # Allowed Google Workspace domain (e.g. plivo.com). Non-secret config — the OAuth callback
-          # re-verifies the signed hd claim, so the value is safe to substitute in plaintext here.
-          CF_ALLOWED_HD: ${{ vars.CF_ALLOWED_HD }}
-          # First-run superadmin email (e.g. you@plivo.com). REQUIRED repo Actions Variable. Kept
-          # SEPARATE from CF_ALLOWED_HD: the committed sentinel `you@yourcompany.com` shares the
-          # `yourcompany.com` substring with the ALLOWED_HD sentinel, so the domain substitution must
-          # NOT be allowed to mangle the email into `you@<hd>` (see the ordered sed below). Not a
-          # secret (an email address isn't sensitive), and wrangler replaces worker vars wholesale
-          # each deploy — so this value must be correct here or the first admin is locked out.
-          CF_SUPERADMIN_EMAIL: ${{ vars.CF_SUPERADMIN_EMAIL }}
           # Optional custom-domain public URLs (served via CloudFront in front of the *.workers.dev
           # origins). When set, the user-facing URLs (APP_URL / CONTENT_URL / SPA frame-src) are
           # repointed off *.workers.dev to these; the workers KEEP their *.workers.dev endpoints
@@ -80,40 +72,27 @@ jobs:
           : "${CF_D1_DATABASE_ID:?set repo Actions variable CF_D1_DATABASE_ID}"
           : "${CF_KV_NAMESPACE_ID:?set repo Actions variable CF_KV_NAMESPACE_ID}"
           : "${CF_WORKERS_SUBDOMAIN:?set repo Actions variable CF_WORKERS_SUBDOMAIN}"
-          : "${CF_ALLOWED_HD:?set repo Actions variable CF_ALLOWED_HD}"
-          : "${CF_SUPERADMIN_EMAIL:?set repo Actions variable CF_SUPERADMIN_EMAIL}"
           for f in packages/api/wrangler.jsonc packages/api/wrangler.content.jsonc packages/web/public/_headers; do
-            # ORDER MATTERS: substitute the full `you@yourcompany.com` email sentinel BEFORE the bare
-            # `yourcompany.com` domain sentinel. Reversed, the domain sub fires first and rewrites the
-            # email's domain too (you@yourcompany.com -> you@<hd>), shipping a bogus superadmin.
             sed -i \
               -e "s/YOUR_ACCOUNT_ID/${CF_ACCOUNT_ID}/g" \
               -e "s/YOUR_D1_DATABASE_ID/${CF_D1_DATABASE_ID}/g" \
               -e "s/YOUR_KV_NAMESPACE_ID/${CF_KV_NAMESPACE_ID}/g" \
               -e "s/YOUR-SUBDOMAIN/${CF_WORKERS_SUBDOMAIN}/g" \
-              -e "s/you@yourcompany.com/${CF_SUPERADMIN_EMAIL}/g" \
-              -e "s/yourcompany.com/${CF_ALLOWED_HD}/g" \
               "$f"
           done
-          # Fail loud if the superadmin sentinel survived: a leftover `you@` in SUPERADMIN_EMAIL would
-          # lock the intended first admin out of their own instance.
-          if grep -q 'you@' packages/api/wrangler.jsonc; then
-            echo "SUPERADMIN_EMAIL still carries the 'you@' sentinel after substitution — aborting." >&2
-            exit 1
-          fi
-          # Repoint public URLs to the custom domains, if configured (CloudFront cutover). Runs
-          # AFTER the subdomain substitution above (so glance[-content].$CF_WORKERS_SUBDOMAIN.workers.dev
-          # exist to match) and BEFORE build:web (so dist/_headers carries the real content origin).
+          # Repoint the SPA's CSP to the custom domains, if configured (CloudFront cutover). Runs
+          # AFTER the subdomain substitution above (so the workers.dev URLs exist to match) and
+          # BEFORE build:web (so dist/_headers carries the real content origin).
           if [ -n "${CF_APP_URL}${CF_CONTENT_URL}" ]; then
             : "${CF_APP_URL:?set CF_APP_URL when CF_CONTENT_URL is set (custom domain)}"
             : "${CF_CONTENT_URL:?set CF_CONTENT_URL when CF_APP_URL is set (custom domain)}"
-            for f in packages/api/wrangler.jsonc packages/api/wrangler.content.jsonc packages/web/public/_headers; do
-              sed -i \
-                -e "s#https://glance-content.${CF_WORKERS_SUBDOMAIN}.workers.dev#${CF_CONTENT_URL}#g" \
-                -e "s#https://glance.${CF_WORKERS_SUBDOMAIN}.workers.dev#${CF_APP_URL}#g" \
-                "$f"
-            done
+            sed -i \
+              -e "s#https://glance-content.${CF_WORKERS_SUBDOMAIN}.workers.dev#${CF_CONTENT_URL}#g" \
+              -e "s#https://glance.${CF_WORKERS_SUBDOMAIN}.workers.dev#${CF_APP_URL}#g" \
+              packages/web/public/_headers
           fi
+          echo "APP_URL=${CF_APP_URL:-https://glance.${CF_WORKERS_SUBDOMAIN}.workers.dev}" >> "$GITHUB_ENV"
+          echo "CONTENT_URL=${CF_CONTENT_URL:-https://glance-content.${CF_WORKERS_SUBDOMAIN}.workers.dev}" >> "$GITHUB_ENV"
           # Inject the Cloudflare Web Analytics beacon into the SPA shell, if configured. Runs
           # BEFORE build:web (vite passes the tag through). The committed index.html stays clean —
           # dev and beaconless self-hosts never load it. _headers already allowlists the beacon
@@ -165,14 +144,28 @@ jobs:
             -d '{"read_replication": {"mode": "auto"}}')"
           echo "$out" | grep -q '"success": *true' || { echo "$out" >&2; exit 1; }
 
+      # Plain worker vars go in as --var flags (merged over the committed vars block, which keeps
+      # its sentinel values). ALLOWED_HD is the allowed Google Workspace domain (e.g. plivo.com) —
+      # non-secret, the OAuth callback re-verifies the signed hd claim. SUPERADMIN_EMAIL is the
+      # first-run superadmin (e.g. you@plivo.com) — wrangler replaces worker vars wholesale each
+      # deploy, so this value must be correct here or the first admin is locked out.
       - name: Deploy main worker
         working-directory: packages/api
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: bunx wrangler deploy
+          CF_ALLOWED_HD: ${{ vars.CF_ALLOWED_HD }}
+          CF_SUPERADMIN_EMAIL: ${{ vars.CF_SUPERADMIN_EMAIL }}
+        run: |
+          : "${CF_ALLOWED_HD:?set repo Actions variable CF_ALLOWED_HD}"
+          : "${CF_SUPERADMIN_EMAIL:?set repo Actions variable CF_SUPERADMIN_EMAIL}"
+          bunx wrangler deploy \
+            --var "APP_URL:${APP_URL}" \
+            --var "CONTENT_URL:${CONTENT_URL}" \
+            --var "ALLOWED_HD:${CF_ALLOWED_HD}" \
+            --var "SUPERADMIN_EMAIL:${CF_SUPERADMIN_EMAIL}"
 
       - name: Deploy content worker
         working-directory: packages/api
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: bunx wrangler deploy --config wrangler.content.jsonc
+        run: bunx wrangler deploy --config wrangler.content.jsonc --var "APP_URL:${APP_URL}"

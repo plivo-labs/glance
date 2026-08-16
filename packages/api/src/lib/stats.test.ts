@@ -17,11 +17,11 @@ import {
   STATS_TOTALS_CACHE_KEY,
   STATS_TOTALS_CACHE_SECONDS,
   cachedStats,
-  computeStats,
 } from './stats'
 
 // A fixed "now" so window math is deterministic. Days are UTC.
 const NOW = new Date('2026-07-03T12:00:00.000Z')
+const defer = (p: Promise<unknown>) => p.then(() => undefined)
 const daysAgo = (n: number) => new Date(NOW.getTime() - n * 24 * 60 * 60 * 1000).toISOString()
 
 async function fixture() {
@@ -34,7 +34,7 @@ async function fixture() {
   return { db, u1, u2, sp, siteA, siteB }
 }
 
-describe('computeStats totals', () => {
+describe('stats totals', () => {
   test('counts users, sites, files, storage bytes, live comments', async () => {
     const { db, siteA } = await fixture()
     await seedFile(db, null, siteA, { path: 'a.html', text: 'hello' }) // size 5
@@ -43,7 +43,7 @@ describe('computeStats totals', () => {
     await seedComment(db, { threadId: th, body: 'live' })
     await seedComment(db, { threadId: th, body: 'gone', deletedAt: daysAgo(1) }) // soft-deleted → excluded
 
-    const s = await computeStats(db, NOW)
+    const s = await cachedStats(null, db, defer, NOW)
     expect(s.totals.users).toBe(2)
     expect(s.totals.sites).toBe(2)
     expect(s.totals.files).toBe(2)
@@ -59,7 +59,7 @@ describe('computeStats totals', () => {
     // A cli row is still WRITTEN (auth's hasUsedCli probe reads one) — it must not be counted here.
     await seedEvent(db, { type: 'cli', action: 'upload', userId: u1, cliVersion: '1.0.0' })
 
-    const s = await computeStats(db, NOW)
+    const s = await cachedStats(null, db, defer, NOW)
     expect(s.totals.views).toBe(3)
     expect(s.totals.uniqueViewers).toBe(2) // u1 counted once
     // The CLI rollups were dropped: they cost 40% of the dashboard's D1 rows for two unused figures.
@@ -67,13 +67,13 @@ describe('computeStats totals', () => {
   })
 })
 
-describe('computeStats window + series', () => {
+describe('stats window + series', () => {
   test('activeViewers30d excludes viewers outside the window', async () => {
     const { db, u1, u2, siteA } = await fixture()
     await seedEvent(db, { type: 'view', userId: u1, siteId: siteA, createdAt: daysAgo(2) }) // in window
     await seedEvent(db, { type: 'view', userId: u2, siteId: siteA, createdAt: daysAgo(40) }) // out of window
 
-    const s = await computeStats(db, NOW)
+    const s = await cachedStats(null, db, defer, NOW)
     expect(s.activeViewers30d).toBe(1)
   })
 
@@ -83,7 +83,7 @@ describe('computeStats window + series', () => {
     await seedEvent(db, { type: 'view', userId: u1, siteId: siteA, createdAt: daysAgo(0) })
     await seedEvent(db, { type: 'cli', action: 'upload', userId: u1, createdAt: daysAgo(5) })
 
-    const s = await computeStats(db, NOW)
+    const s = await cachedStats(null, db, defer, NOW)
     expect(s.series).toHaveLength(30)
     expect(s.series[0].date < s.series[29].date).toBe(true) // oldest → newest
     expect(s.series[29].date).toBe('2026-07-03') // today
@@ -94,20 +94,19 @@ describe('computeStats window + series', () => {
   })
 })
 
-describe('computeStats topSites', () => {
+describe('stats topSites', () => {
   test('ranks sites by view count within the window', async () => {
     const { db, u1, siteA, siteB } = await fixture()
     for (let i = 0; i < 3; i++) await seedEvent(db, { type: 'view', userId: u1, siteId: siteB, siteLabel: 'acme/b' })
     await seedEvent(db, { type: 'view', userId: u1, siteId: siteA, siteLabel: 'acme/a' })
 
-    const s = await computeStats(db, NOW)
+    const s = await cachedStats(null, db, defer, NOW)
     expect(s.topSites[0]).toMatchObject({ siteId: siteB, siteLabel: 'acme/b', views: 3 })
     expect(s.topSites[1]).toMatchObject({ siteId: siteA, siteLabel: 'acme/a', views: 1 })
   })
 })
 
 describe('cachedStats', () => {
-  const defer = (p: Promise<unknown>) => p.then(() => undefined)
   /** `now` shifted by whole seconds — the knob every staleness test turns. */
   const plus = (seconds: number) => new Date(NOW.getTime() + seconds * 1000)
   const stampOf = (kv: { store: Map<string, string> }, key: string) =>

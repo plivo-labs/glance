@@ -4,7 +4,7 @@ import { files, siteSummaries, sites, spaces, type SiteSummary } from '../db/sch
 import { extractText, isSupportedEntry, pickEntry } from '../lib/extract'
 import type { ResolvedSite } from '../lib/site-access'
 import { fetchAccessFacts, siteAccessFromFacts } from '../lib/site-access'
-import { PROMPT_VERSION, resolveProvider, summarizeDeps, summarizeSite } from '../lib/summarize'
+import { PROMPT_VERSION, summarizeDeps, summarizeSite } from '../lib/summarize'
 import { requireAuth } from '../middleware/auth'
 import type { AppEnv } from '../types'
 
@@ -96,7 +96,7 @@ summary.get('/:space/:site/summary', async (c) => {
   if (row) return c.json(readyBody(row, site.contentVersion))
 
   const deps = summarizeDeps(c.env)
-  return c.json(notReadyBody(resolveProvider(deps) ? 'none' : 'unavailable', false, site.contentVersion))
+  return c.json(notReadyBody(deps.ai ? 'none' : 'unavailable', false, site.contentVersion))
 })
 
 summary.post('/:space/:site/summary', async (c) => {
@@ -110,8 +110,7 @@ summary.post('/:space/:site/summary', async (c) => {
   if (fresh && !force) return c.json(readyBody(existing, site.contentVersion))
 
   const deps = summarizeDeps(c.env)
-  const provider = resolveProvider(deps)
-  if (!provider) {
+  if (!deps.ai) {
     return c.json(notReadyBody('unavailable', existing ? isStale(existing, site.contentVersion) : false, site.contentVersion))
   }
   if (c.env.SUMMARY_LIMITER) {

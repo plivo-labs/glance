@@ -28,7 +28,23 @@ export function AudioScrubber({
     const el = audioRef.current
     if (!el) return
     const onTime = () => setCurrent(el.currentTime)
-    const onMeta = () => setDuration(Number.isFinite(el.duration) ? el.duration : 0)
+    // MediaRecorder webm/opus blobs report duration=Infinity until the browser is forced to scan
+    // to the end — which leaves the scrubber with no max and the readout blank. Nudge currentTime
+    // past the end once on metadata load; the browser resolves the real duration, then we snap
+    // back to 0. No-op for finite-duration sources (mp3/wav), so it's safe to always attach.
+    let nudged = false
+    const onSeeked = () => {
+      el.currentTime = 0
+      el.removeEventListener('seeked', onSeeked)
+    }
+    const onMeta = () => {
+      if (el.duration === Number.POSITIVE_INFINITY && !nudged) {
+        nudged = true
+        el.addEventListener('seeked', onSeeked)
+        el.currentTime = 1e7 // large but finite: the browser clamps to the real end and reports duration
+      }
+      setDuration(Number.isFinite(el.duration) ? el.duration : 0)
+    }
     const onPlay = () => setPlaying(true)
     const onPause = () => setPlaying(false)
     el.addEventListener('timeupdate', onTime)
@@ -47,6 +63,7 @@ export function AudioScrubber({
       el.removeEventListener('play', onPlay)
       el.removeEventListener('pause', onPause)
       el.removeEventListener('ended', onPause)
+      el.removeEventListener('seeked', onSeeked)
     }
   }, [audioRef])
 

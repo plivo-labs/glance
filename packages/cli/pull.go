@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,7 +48,7 @@ func writePullMarker(dir string, m pullMarker) error {
 func encodePath(file string) string {
 	segs := strings.Split(strings.TrimLeft(file, "/"), "/")
 	for i, s := range segs {
-		segs[i] = encodeURIComponent(s)
+		segs[i] = url.PathEscape(s)
 	}
 	return strings.Join(segs, "/")
 }

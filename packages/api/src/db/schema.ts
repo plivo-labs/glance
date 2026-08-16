@@ -404,14 +404,9 @@ export type User = typeof users.$inferSelect
 export type NewUser = typeof users.$inferInsert
 export type Space = typeof spaces.$inferSelect
 export type NewSpace = typeof spaces.$inferInsert
-export type SpaceMember = typeof spaceMembers.$inferSelect
 export type Site = typeof sites.$inferSelect
 export type NewSite = typeof sites.$inferInsert
-export type FileRow = typeof files.$inferSelect
 export type NewFileRow = typeof files.$inferInsert
-export type SiteUserShare = typeof siteUserShares.$inferSelect
-export type SiteGroupShare = typeof siteGroupShares.$inferSelect
-export type SiteStar = typeof siteStars.$inferSelect
 /** Row type. The WIRE shape the API returns is the aggregated `CommentReaction` in db/comments.ts. */
 export type CommentReactionRow = typeof commentReactions.$inferSelect
 
@@ -420,7 +415,6 @@ export type NewCommentThread = typeof commentThreads.$inferInsert
 export type Comment = typeof comments.$inferSelect
 export type NewComment = typeof comments.$inferInsert
 export type DocumentRow = typeof documents.$inferSelect
-export type NewDocumentRow = typeof documents.$inferInsert
 export type ChangeLogRow = typeof changeLog.$inferSelect
 export type ChangeType = ChangeLogRow['type']
 export type Event = typeof events.$inferSelect
@@ -430,7 +424,6 @@ export type Notification = typeof notifications.$inferSelect
 export type NewNotification = typeof notifications.$inferInsert
 export type NotificationType = Notification['type']
 export type SiteSummary = typeof siteSummaries.$inferSelect
-export type ApiKey = typeof apiKeys.$inferSelect
 export type NewApiKey = typeof apiKeys.$inferInsert
 
 export type Visibility = Site['visibility']

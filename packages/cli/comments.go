@@ -3,10 +3,11 @@ package main
 import (
 	"fmt"
 	"io"
+	"net/url"
 )
 
 func (c *client) comments(argv []string) error {
-	positional, flags := parseArgs(argv, boolSet("open", "json"))
+	positional, flags := parseArgs(argv, map[string]bool{"open": true, "json": true})
 	target := ""
 	if len(positional) > 0 {
 		target = positional[0]
@@ -21,7 +22,7 @@ func (c *client) comments(argv []string) error {
 
 	query := ""
 	if file, isStr := flags["file"].(string); isStr && file != "" {
-		query = "?filePath=" + encodeURIComponent(file)
+		query = "?filePath=" + url.PathEscape(file)
 	}
 	resp, err := c.authed("GET", "/api/sites/"+space+"/"+name+"/comments"+query, nil, nil)
 	if err != nil {

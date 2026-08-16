@@ -120,9 +120,9 @@ function Viewer() {
   // (lib/prefetchArbiter) owns every ordering rule — generations (newer loads invalidate all older
   // in-flight results), provisional HTML prefetches (held until a matching glance:ready), stale
   // readys after a splat nav. The component only executes its decisions.
-  const arbiter = useRef<ArbiterState<Thread[]>>(initialArbiter(entryPath))
+  const arbiter = useRef<ArbiterState>(initialArbiter(entryPath))
 
-  const applyDecision = useCallback((decision: Decision<Thread[]>) => {
+  const applyDecision = useCallback((decision: Decision) => {
     if (decision.kind === 'apply') setThreads(decision.data)
     else if (decision.kind === 'error')
       toast.error(decision.error instanceof ApiError ? decision.error.message : 'Failed to load comments')
@@ -131,7 +131,7 @@ function Viewer() {
   }, [])
 
   const dispatch = useCallback(
-    (event: ArbiterEvent<Thread[]>) => {
+    (event: ArbiterEvent) => {
       const step = stepArbiter(arbiter.current, event)
       arbiter.current = step.state
       setResolvedFilePath(step.state.readyPath)

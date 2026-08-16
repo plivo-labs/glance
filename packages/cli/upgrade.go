@@ -11,10 +11,8 @@ const checkIntervalMS = int64(24 * 60 * 60 * 1000)
 
 // UpdateState persists across runs in ~/.glance/update.json.
 type UpdateState struct {
-	LastCheckedAt     int64  `json:"lastCheckedAt,omitempty"`
-	UpdatedTo         string `json:"updatedTo,omitempty"`         // a background swap landed; notice pending
-	Available         string `json:"available,omitempty"`         // newer release exists but install dir isn't writable
-	NotifiedAvailable string `json:"notifiedAvailable,omitempty"` // version already nagged about (once per version)
+	LastCheckedAt int64  `json:"lastCheckedAt,omitempty"`
+	UpdatedTo     string `json:"updatedTo,omitempty"` // a background swap landed; notice pending
 }
 
 // Numeric dotted-part compare (release tags are plain vX.Y.Z). Non-numeric parts count as 0, so a
@@ -92,19 +90,6 @@ func planAnnouncement(state UpdateState, current string) (message string, next U
 		next = state
 		next.UpdatedTo = ""
 		return message, next, true
-	}
-	if state.Available != "" {
-		if compareVersions(state.Available, current) <= 0 {
-			next = state
-			next.Available = ""
-			next.NotifiedAvailable = ""
-			return "", next, true
-		}
-		if state.NotifiedAvailable != state.Available {
-			next = state
-			next.NotifiedAvailable = state.Available
-			return "glance " + state.Available + " is available — run `glance upgrade`", next, true
-		}
 	}
 	return "", state, false
 }

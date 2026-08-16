@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 )
 
@@ -36,7 +37,7 @@ func (c *client) reply(argv []string) error {
 		return err
 	}
 	payload, _ := json.Marshal(map[string]string{"body": body})
-	path := "/api/sites/" + parsed.space + "/" + parsed.site + "/comments/" + encodeURIComponent(parsed.threadID) + "/replies"
+	path := "/api/sites/" + parsed.space + "/" + parsed.site + "/comments/" + url.PathEscape(parsed.threadID) + "/replies"
 	resp, err := c.authed("POST", path, strings.NewReader(string(payload)), map[string]string{"Content-Type": "application/json"})
 	if err != nil {
 		return err
@@ -84,39 +85,17 @@ type replyArgs struct {
 	noTag    bool
 }
 
-// A reply carries a free-form message that the generic flag parser can't handle safely
-// (dash-leading text, `--tag`/`--no-tag`), so it gets its own parser. Positionals are pinned:
-// [0]=space/slug, [1]=threadId, [2]=message. A `--` sentinel stops flag parsing so a
-// dash-leading or literal message survives. PURE - no I/O.
+// Positionals are pinned: [0]=space/slug, [1]=threadId, [2]=message. A `--` sentinel stops
+// flag parsing so a dash-leading or literal message survives. PURE - no I/O.
 func parseReplyArgs(argv []string) (*replyArgs, error) {
-	var positional []string
-	var tag string
-	sawTag, noTag, literal := false, false, false
-	for i := 0; i < len(argv); i++ {
-		a := argv[i]
-		switch {
-		case !literal && a == "--":
-			literal = true // everything after `--` is a literal positional
-		case !literal && strings.HasPrefix(a, "--"):
-			key := a[2:]
-			switch key {
-			case "no-tag":
-				noTag = true
-			case "tag":
-				sawTag = true
-				if i+1 < len(argv) {
-					i++
-					tag = argv[i]
-				} else {
-					tag = "" // trailing `--tag` -> "" -> rejected below (needs a label)
-				}
-			default:
-				return nil, errors.New("Unknown flag: " + a + "\n" + replyUsage)
-			}
-		default:
-			positional = append(positional, a)
+	positional, flags := parseArgs(argv, map[string]bool{"no-tag": true})
+	for k := range flags {
+		if k != "tag" && k != "no-tag" {
+			return nil, errors.New("Unknown flag: --" + k + "\n" + replyUsage)
 		}
 	}
+	tag, sawTag := flags["tag"].(string)
+	noTag := flags["no-tag"] == true
 	if sawTag && noTag {
 		return nil, errors.New("Use either --tag or --no-tag, not both.\n" + replyUsage)
 	}
@@ -124,20 +103,19 @@ func parseReplyArgs(argv []string) (*replyArgs, error) {
 		return nil, errors.New("--tag needs a label, e.g. --tag claude.\n" + replyUsage)
 	}
 
-	// Exactly two non-empty segments - never a loose "contains a slash" check, which would let
-	// `acme/` or `/doc` through.
-	var segs []string
+	target := ""
 	if len(positional) > 0 {
-		segs = strings.Split(positional[0], "/")
+		target = positional[0]
 	}
-	if len(segs) != 2 || segs[0] == "" || segs[1] == "" {
+	space, site, err := splitSpaceSlug(target)
+	if err != nil {
 		return nil, errors.New("Expected <space/slug>.\n" + replyUsage)
 	}
 	if len(positional) < 2 || positional[1] == "" {
 		return nil, errors.New("Missing <threadId> (see `glance comments`).\n" + replyUsage)
 	}
 
-	out := &replyArgs{space: segs[0], site: segs[1], threadID: positional[1], noTag: noTag}
+	out := &replyArgs{space: space, site: site, threadID: positional[1], noTag: noTag}
 	if len(positional) >= 3 {
 		out.message = &positional[2]
 	}

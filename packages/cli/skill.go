@@ -7,11 +7,9 @@ import (
 	"path/filepath"
 )
 
-// SKILL.md is a committed copy of the canonical glance-cli/SKILL.md, embedded so `skill install`
-// ships it INSIDE the binary (the binary audience usually has neither Node nor npx). Keep it in
-// sync via `go generate` (see below); TestSkillEmbedInSync guards the "forgot to re-copy" seam.
+// SKILL.md is the canonical skill source (glance-cli/SKILL.md symlinks here), embedded so
+// `skill install` ships it INSIDE the binary (the binary audience usually has neither Node nor npx).
 //
-//go:generate sh -c "cp ../../glance-cli/SKILL.md SKILL.md"
 //go:embed SKILL.md
 var skillMD string
 
