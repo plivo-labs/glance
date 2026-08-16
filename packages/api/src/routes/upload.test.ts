@@ -167,6 +167,27 @@ describe('upload — DoS caps (before any R2 write)', () => {
     expect(r2.store.size).toBe(0)
   })
 
+  test('total-size-cap: a Content-Length over 100MB → 413 before the body is ever parsed', async () => {
+    const { app, env, db, r2 } = await setup()
+    // The body itself is tiny — the forged header alone must trip the guard, because by the time
+    // any per-file check runs the whole multipart body has already been buffered in worker memory.
+    const fd = new FormData()
+    fd.append('files', html('<html></html>', 'index.html'))
+    const res = await app.request(
+      '/api/upload/acme/toobig',
+      {
+        method: 'POST',
+        headers: { Authorization: 'Bearer tok', 'content-length': String(101 * 1024 * 1024) },
+        body: fd,
+      },
+      env,
+    )
+    expect(res.status).toBe(413)
+    expect((await res.json()).error).toBe('upload exceeds 100MB total')
+    expect(await db.select().from(files)).toHaveLength(0)
+    expect(r2.store.size).toBe(0)
+  })
+
   test('oversized-key-cap: a storage key over 1024 bytes → 400, nothing written', async () => {
     const { app, env, db, r2 } = await setup()
     // prefix (36-byte uuid + '/') + this path blows past R2's 1024-byte key limit.
