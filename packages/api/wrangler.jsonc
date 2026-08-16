@@ -53,6 +53,9 @@
   // 10 upload requests / 60s per client IP. period must be 10 or 60.
   "ratelimits": [
     { "name": "UPLOAD_LIMITER", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } },
-    { "name": "SUMMARY_LIMITER", "namespace_id": "1002", "simple": { "limit": 5, "period": 60 } }
+    { "name": "SUMMARY_LIMITER", "namespace_id": "1002", "simple": { "limit": 5, "period": 60 } },
+    // Ask is interactive Q&A — its own bucket, not SUMMARY_LIMITER's: 5/min tuned for rare summary
+    // regenerations would 429 a conversation, and a few asks would block summary regeneration.
+    { "name": "ASK_LIMITER", "namespace_id": "1003", "simple": { "limit": 20, "period": 60 } }
   ]
 }

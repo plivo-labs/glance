@@ -11,6 +11,7 @@ export interface Bindings {
   ASSETS: Fetcher
   UPLOAD_LIMITER?: RateLimit
   SUMMARY_LIMITER?: RateLimit
+  ASK_LIMITER?: RateLimit
   // Workers AI, used to transcribe voice comments server-side. Declared unconditionally in
   // wrangler.jsonc so production always has it bound; typed optional purely so tests and any
   // binding-less deploy degrade gracefully — voice comments still post with a transcript

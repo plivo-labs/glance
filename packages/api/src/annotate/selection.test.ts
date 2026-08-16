@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { Window } from 'happy-dom'
 import { findRange } from './locator'
 import {
+  type AskKeyMessage,
   type ClearMessage,
   type ClickAwayMessage,
   type CommentKeyMessage,
@@ -29,7 +30,7 @@ function setup(html = HTML) {
   const window = new Window()
   window.document.body.innerHTML = html
   const doc = window.document as unknown as Document
-  const emitted: (SelectMessage | ClearMessage | ClickAwayMessage | EscapeMessage | CommentKeyMessage)[] = []
+  const emitted: (SelectMessage | ClearMessage | ClickAwayMessage | EscapeMessage | CommentKeyMessage | AskKeyMessage)[] = []
   let selection: Selection | null = doc.getSelection()
 
   const dispose = installSelectionCapture({
@@ -95,6 +96,39 @@ describe('installSelectionCapture — only a COMMITTED selection emits a chip in
     expect(msg.context.suffix).toBe(' trailing words.')
     // happy-dom stubs Range.getBoundingClientRect to an all-zero DOMRect: shape, not values.
     expect(Object.keys(msg.rect).sort()).toEqual(['height', 'left', 'top', 'width'])
+  })
+
+  test('commit captures blockText from the enclosing block element, whitespace-collapsed', () => {
+    const { emitted, select, doc, window } = setup('<div><p>Alpha lead in.\n   Revenue   is up. trailing words.</p></div>')
+    select('Revenue is up.')
+    doc.dispatchEvent(new window.Event('pointerup') as unknown as Event)
+
+    const msg = emitted[0] as SelectMessage
+    // The whole enclosing <p>, not the page's <div> wrapper — and every whitespace run collapsed.
+    expect(msg.blockText).toBe('Alpha lead in. Revenue is up. trailing words.')
+  })
+
+  test('blockText excludes script/style text inside the block', () => {
+    // The realistic glance shape: a single-file page whose wrapper DIV carries inline JS/CSS. Raw
+    // textContent would ship that source as the AI's "passage"; the visible-text walk must not.
+    const { emitted, select, doc, window } = setup(
+      '<div><span>Revenue is up.</span><script>const leaked = "js source"</script><style>.leaked{color:red}</style><span>More prose.</span></div>',
+    )
+    select('Revenue is up.')
+    doc.dispatchEvent(new window.Event('pointerup') as unknown as Event)
+
+    const msg = emitted[0] as SelectMessage
+    expect(msg.blockText).toBe('Revenue is up.More prose.')
+  })
+
+  test('blockText is capped at 2000 chars', () => {
+    const long = 'x'.repeat(2500)
+    const { emitted, select, doc, window } = setup(`<p>${long}</p>`)
+    select('xxxxxxxxxx')
+    doc.dispatchEvent(new window.Event('pointerup') as unknown as Event)
+
+    const msg = emitted[0] as SelectMessage
+    expect(msg.blockText).toBe('x'.repeat(2000))
   })
 
   test('a keyup on a selection-moving key commits too (shift+arrow never fires pointerup)', () => {
@@ -236,6 +270,43 @@ describe('installSelectionCapture — C on a live selection (#117)', () => {
     withSelection(s)
     s.fireAt('div', 'keydown', { key: 'c' })
     expect(s.emitted).toEqual([])
+  })
+})
+
+describe('installSelectionCapture — A on a live selection (ask AI)', () => {
+  /** Get to the one state the binding exists in: a committed selection the parent has been told about. */
+  const withSelection = (s: ReturnType<typeof setup>) => {
+    s.select('Revenue is up.')
+    s.doc.dispatchEvent(new s.window.Event('pointerup') as unknown as Event)
+    s.emitted.length = 0
+    return s
+  }
+
+  test('a emits an ask-key intent', () => {
+    const { emitted, fire } = withSelection(setup())
+    fire('keydown', { key: 'a' })
+    expect(emitted).toEqual([{ type: 'glance:ask-key' }])
+  })
+
+  test('with no selection outstanding, a emits nothing', () => {
+    const { emitted, fire } = setup()
+    fire('keydown', { key: 'a' })
+    expect(emitted).toEqual([])
+  })
+
+  test('a typed into a contenteditable is a character, not a command', () => {
+    const s = setup('<div contenteditable="true">Alpha lead in. Revenue is up. trailing words.</div>')
+    withSelection(s)
+    s.fireAt('div', 'keydown', { key: 'a' })
+    expect(s.emitted).toEqual([])
+  })
+
+  test('⌘A / ^A stay select-all — the same gate as ⌘C / ^C', () => {
+    const { emitted, fire } = withSelection(setup())
+    fire('keydown', { key: 'a', metaKey: true })
+    fire('keydown', { key: 'a', ctrlKey: true })
+    fire('keydown', { key: 'a', altKey: true })
+    expect(emitted).toEqual([])
   })
 })
 
