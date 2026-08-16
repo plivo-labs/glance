@@ -164,7 +164,8 @@ export async function resolveCommentAudience(
 
   return candidates
     .filter((id) => {
-      // Recipient role is deliberately not consulted — superadmins need normal tier/share access to be notified.
+      // Recipient role is deliberately not consulted — and `checkAccess` no longer looks at it
+      // either, so a superadmin is notified only where a plain member would be.
       const recipient = { id, role: 'member' as const }
       return checkAccess(site, recipient, memberIds.has(id), directShares.has(id) || groupSharedIds.has(id)).ok
     })

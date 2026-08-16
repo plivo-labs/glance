@@ -140,13 +140,23 @@ describe('T1.3 denial matrix — no R2/cache work on any denial (pin)', () => {
     expectNoByteWork(s)
   })
 
-  test('archived site, superadmin → 200 (archive exemption lives in checkAccess)', async () => {
+  // The whole point of the policy: an admin's custody over someone else's site stops at delete,
+  // so the content plane serves them nothing — not the archived site, not the live private one.
+  test('superadmin on a private site → 403 (archived: 410), never the bytes, zero R2/cache', async () => {
     const s = setup()
     await privateSite(s, { status: 'archived' })
     const admin = await seedUser(s.db, { role: 'superadmin' })
-    const res = await s.app.request(`/_t/${await token(admin, 'sp/site')}/sp/site/`, {}, s.env)
-    expect(res.status).toBe(200)
-    expect(await res.text()).toBe('<p>secret</p>')
+    const archived = await s.app.request(`/_t/${await token(admin, 'sp/site')}/sp/site/`, {}, s.env)
+    expect(archived.status).toBe(410)
+    expectNoByteWork(s)
+
+    const live = setup()
+    await privateSite(live)
+    const admin2 = await seedUser(live.db, { role: 'superadmin' })
+    const res = await live.app.request(`/_t/${await token(admin2, 'sp/site')}/sp/site/`, {}, live.env)
+    expect(res.status).toBe(403)
+    expect(await res.text()).not.toContain('secret')
+    expectNoByteWork(live)
   })
 
   test('untokened request → 403 (no anonymous tier), zero R2/cache', async () => {

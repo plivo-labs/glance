@@ -7,7 +7,7 @@ import { type DataClaims, hasCap } from './data-token'
 //
 //   default        → your own rows (createdBy = token viewerId)
 //   `shared-*`     → opt-in by naming convention: readable by EVERY authorized site viewer
-//   `read_all` cap → owner/superadmin sees every row regardless of creator
+//   `read_all` cap → the site owner sees every row regardless of creator
 //
 // Writes are unaffected: put/delete stay creator-scoped (see `scoped()` in routes/data.ts).
 const SHARED_PREFIX = 'shared-'

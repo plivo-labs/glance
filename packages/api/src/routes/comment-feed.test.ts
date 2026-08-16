@@ -336,8 +336,19 @@ describe('comment feed route — C4.3 live access transitions', () => {
     await db.update(sites).set({ status: 'archived' }).where(eq(sites.id, siteId))
     expect(await feedIds()).toEqual([])
 
+    // Promotion to superadmin adds NOTHING: the feed is filtered by the same tier oracle, so the
+    // archived site stays invisible, an un-archived one reaches the admin only via the share it
+    // still holds, and revoking that share empties the feed even though the role remains.
     await db.update(users).set({ role: 'superadmin' }).where(eq(users.id, userId))
+    expect(await feedIds()).toEqual([])
+
+    await db.update(sites).set({ status: 'active' }).where(eq(sites.id, siteId))
     expect(await feedIds()).toEqual(bothArms)
+
+    await db
+      .delete(siteUserShares)
+      .where(and(eq(siteUserShares.siteId, siteId), eq(siteUserShares.userId, userId)))
+    expect(await feedIds()).toEqual([])
   })
 })
 

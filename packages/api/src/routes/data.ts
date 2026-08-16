@@ -263,7 +263,7 @@ dataApi.post('/:collection', async (c) => {
 })
 
 // Read one document. Default: the caller's own rows; site-wide when the collection is
-// `shared-*` or the token carries `read_all` (owner/superadmin).
+// `shared-*` or the token carries `read_all` (site owner).
 dataApi.get('/:collection/:docId', async (c) => {
   const claims = c.get('claims')
   const collection = c.req.param('collection')
@@ -281,7 +281,7 @@ dataApi.get('/:collection/:docId', async (c) => {
 })
 
 // List documents in a collection, newest first. Default: ONLY the caller's own rows; the whole
-// site's rows for `shared-*` collections (any viewer) or a `read_all` token (owner/superadmin).
+// site's rows for `shared-*` collections (any viewer) or a `read_all` token (site owner).
 dataApi.get('/:collection', async (c) => {
   const claims = c.get('claims')
   const collection = c.req.param('collection')
@@ -381,7 +381,7 @@ dataApi.put('/:collection/:docId', async (c) => {
   return c.json({ id: docId, data: parsed.value, createdAt: now, updatedAt: now }, 201)
 })
 
-// Delete a document. Creator-scoped by default; a `read_all` token (owner/superadmin — always
+// Delete a document. Creator-scoped by default; a `read_all` token (site owner — always
 // paired with `write` at mint) deletes ANY document in the site: that is the moderation story
 // for viewer-submitted content (spam in a feedback form, a hostile poll entry).
 dataApi.delete('/:collection/:docId', async (c) => {
@@ -479,10 +479,13 @@ function toDoc(row: DocumentRow) {
 
 // The single source of truth for capability bundles. Every authorized viewer may READ (their
 // own rows + shared-* collections) and CREATE (attributed submissions — this is what makes
-// forms/polls possible). Only the site owner or a superadmin gets WRITE (update/delete) and
-// READ_ALL (see + moderate every row). "Can view" still never implies "can modify": a viewer
-// cannot touch any existing document, not even their own. Pure + exported so the invariant is
-// unit-tested directly, independent of the request/session plumbing.
+// forms/polls possible). Only the site OWNER gets WRITE (update/delete) and READ_ALL (see +
+// moderate every row). "Can view" still never implies "can modify": a viewer cannot touch any
+// existing document, not even their own. Pure + exported so the invariant is unit-tested
+// directly, independent of the request/session plumbing.
+//
+// Role is not consulted: READ_ALL is a read of the site's data, the same content a superadmin is
+// denied on the page itself — minting it by role would reopen that door through the data plane.
 //
 // SECURITY — editor-share confused-deputy (ACCEPTED residual risk, S9): caps key ONLY on ownerId,
 // so a content EDITOR of this site is indistinguishable from any other non-owner and gets read+create
@@ -492,10 +495,8 @@ function toDoc(row: DocumentRow) {
 // owner's glance.db docs. Signed off as accepted (editor = semi-trusted, git-collaborator model);
 // if that changes, gate on sites.lastReplacedBy (downgrade to viewer until the owner re-deploys).
 // `dataCaps.editor.pin` in data.test.ts locks this.
-export function dataCapsFor(user: Pick<SessionUser, 'id' | 'role'>, site: Pick<Site, 'ownerId'>): DataCapability[] {
-  return user.role === 'superadmin' || site.ownerId === user.id
-    ? ['read', 'create', 'write', 'read_all']
-    : ['read', 'create']
+export function dataCapsFor(user: Pick<SessionUser, 'id'>, site: Pick<Site, 'ownerId'>): DataCapability[] {
+  return site.ownerId === user.id ? ['read', 'create', 'write', 'read_all'] : ['read', 'create']
 }
 
 // Intersect a caller's own caps ceiling (`base`, from dataCapsFor) against an API key's data-plane
@@ -511,7 +512,7 @@ export const dataToken = new Hono<AppEnv>()
 dataToken.use('*', requireAuth)
 
 // Exchange a site (by space/site slug) for a short-lived data token. WRITE is granted ONLY to
-// the site owner (or superadmin); any other authorized viewer — including any authenticated
+// the site owner; any other authorized viewer — including any authenticated
 // user on a `team` site — receives READ-only. This is where "can view" is prevented from
 // implying "can write": the untrusted content page can only ever act with the caps minted here.
 //

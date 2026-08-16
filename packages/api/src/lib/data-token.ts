@@ -14,7 +14,7 @@ import { b64urlDecode, b64urlEncode, hmacSign, hmacVerify } from './hmac'
 // create   — add new documents, always attributed to you (every authorized viewer gets this)
 // write    — update/delete documents (scoped to your own; owner-only)
 // read_all — read every document in the site regardless of creator; with write, also delete
-//            any document (owner/superadmin moderation)
+//            any document (site-owner moderation)
 export type DataCapability = 'read' | 'create' | 'write' | 'read_all'
 
 export interface DataClaims {
