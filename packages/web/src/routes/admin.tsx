@@ -186,22 +186,22 @@ function RestoreButton({ siteId }: { siteId: string }) {
 }
 
 // ── Overview (usage analytics) tab ──────────────────────────────────────────
-function formatCount(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, '')}k`
-  return String(n)
-}
+const formatCount = new Intl.NumberFormat(undefined, { notation: 'compact' }).format
+
+// One narrow-unit formatter per binary magnitude ("512B", "3.4MB"). Not compact notation:
+// its suffixes are decimal and render gigabytes as "BB" (billion bytes).
+const byteFormats = (['byte', 'kilobyte', 'megabyte', 'gigabyte', 'terabyte'] as const).map(
+  (unit) => new Intl.NumberFormat(undefined, { style: 'unit', unit, unitDisplay: 'narrow', maximumFractionDigits: 1 }),
+)
 
 function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  const units = ['KB', 'MB', 'GB', 'TB']
-  let value = bytes / 1024
+  let value = bytes
   let i = 0
-  while (value >= 1024 && i < units.length - 1) {
+  while (value >= 1024 && i < byteFormats.length - 1) {
     value /= 1024
     i++
   }
-  return `${value.toFixed(value >= 100 || value === Math.floor(value) ? 0 : 1)} ${units[i]}`
+  return byteFormats[i].format(value)
 }
 
 function StatCard({ icon: Icon, label, value, sub }: { icon: typeof Eye; label: string; value: string; sub?: string }) {

@@ -3,7 +3,6 @@ import { type LoaderFunctionArgs, redirect, useLoaderData, useSearchParams } fro
 import { api, ApiError } from '../lib/api'
 import { safeNext } from '../lib/nav'
 import type { Me, PublicConfig } from '../lib/types'
-import { BlueprintField } from '@/components/BlueprintField'
 import { CopyButton } from '@/components/CopyButton'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -92,8 +91,21 @@ export function Component() {
 
   return (
     <div className="dark relative min-h-screen w-full overflow-hidden bg-[#070b16] font-sans text-foreground antialiased">
-      {/* centerpiece animated background */}
-      <BlueprintField className="z-0" />
+      {/* blueprint drafting grid: hairlines every 28px, brighter major lines every 4th cell,
+          over a faint overhead-light gradient — pure CSS, no canvas */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 z-0"
+        style={{
+          background: [
+            'repeating-linear-gradient(0deg, rgba(96,150,220,0.13) 0 1px, transparent 1px 112px)',
+            'repeating-linear-gradient(90deg, rgba(96,150,220,0.13) 0 1px, transparent 1px 112px)',
+            'repeating-linear-gradient(0deg, rgba(86,130,196,0.06) 0 1px, transparent 1px 28px)',
+            'repeating-linear-gradient(90deg, rgba(86,130,196,0.06) 0 1px, transparent 1px 28px)',
+            'linear-gradient(#0b1224, #070b16)',
+          ].join(', '),
+        }}
+      />
       {/* vignette: top light + bottom shade to seat the grid and lift the content */}
       <div
         aria-hidden

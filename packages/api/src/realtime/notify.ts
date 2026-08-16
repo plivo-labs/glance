@@ -12,13 +12,13 @@ import type { CommentEvent } from './comment-events'
 /** The DO is named by `siteId` — the value inside the verified data token — NOT by a space/slug
  *  pair, which the token does not carry and a rename would change. Same key on the write side and
  *  the subscribe side, or one site silently splits across two rooms. */
-export async function notifySiteRoom(env: Bindings, e: ChangeEvent): Promise<void> {
+async function post(env: Bindings, path: string, e: ChangeEvent | CommentEvent): Promise<void> {
   const ns = env.SITE_ROOM
   // Optional binding: a deploy that never enabled realtime keeps writing the change_log (so a
   // later deploy can replay it) and simply never pushes.
   if (!ns) return
   const stub = ns.get(ns.idFromName(e.siteId))
-  await stub.fetch('https://site-room/broadcast', {
+  await stub.fetch(`https://site-room/${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(e),
@@ -33,29 +33,16 @@ export async function notifyChange<E extends Env & { Bindings: Bindings }>(
   e: ChangeEvent | undefined,
 ): Promise<void> {
   if (!e) return
-  await fireAndForget(c, notifySiteRoom(c.env, e).catch(() => {}))
+  await fireAndForget(c, post(c.env, 'broadcast', e).catch(() => {}))
 }
 
-/** The comments-channel analog of `notifySiteRoom` — same DO, same siteId key, different route:
- *  `/broadcast-comment` instead of `/broadcast`, since a comment event carries no `collection`
- *  for SiteRoom to dispatch on. */
-export async function notifyCommentRoom(env: Bindings, e: CommentEvent): Promise<void> {
-  const ns = env.SITE_ROOM
-  if (!ns) return
-  const stub = ns.get(ns.idFromName(e.siteId))
-  await stub.fetch('https://site-room/broadcast-comment', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(e),
-  })
-}
-
-/** Hand one comment event to the fan-out, off the response's critical path — the comment-channel
- *  analog of `notifyChange`. `undefined` means the caller has nothing to push. */
+/** Hand one comment event to the fan-out — the comment-channel analog of `notifyChange`. Same DO,
+ *  same siteId key, different route, since a comment event carries no `collection` for SiteRoom
+ *  to dispatch on. `undefined` means the caller has nothing to push. */
 export async function notifyCommentEvent<E extends Env & { Bindings: Bindings }>(
   c: Context<E>,
   e: CommentEvent | undefined,
 ): Promise<void> {
   if (!e) return
-  await fireAndForget(c, notifyCommentRoom(c.env, e).catch(() => {}))
+  await fireAndForget(c, post(c.env, 'broadcast-comment', e).catch(() => {}))
 }

@@ -36,8 +36,8 @@ export function chunk<T>(xs: T[], size: number): T[][] {
  *  TWO RULES bind every statement placed in a batch (here or via raw `db.batch`):
  *  1. Result column names must be UNIQUE and expression columns must carry `.as(...)` — real
  *     D1 maps BATCH rows by column name (loose queries are positional), so a duplicate name
- *     collapses and silently shifts every later field. The test harness throws on violations
- *     (see assertBatchSelectMapsByName in test/harness.ts).
+ *     collapses and silently shifts every later field. The test harness throws on name
+ *     collisions (batch result-name guard in test/harness.ts makeDb).
  *  2. A statement batched alongside access-facts must be a NON-FAILING SELECT (absent rows →
  *     empty result, never a throw) — one rejected inner statement rejects the whole batch and
  *     destroys the caller's 404/403/410 precedence. */

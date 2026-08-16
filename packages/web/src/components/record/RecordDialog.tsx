@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { Pause, Play, RotateCcw } from 'lucide-react'
 import { toast } from 'sonner'
-import { RichAudioPlayer } from '@/components/audio/RichAudioPlayer'
+import { AudioPlayer } from '@/components/audio/AudioPlayer'
 import { LiveWaveform } from '@/components/record/LiveWaveform'
 import { VoiceButton } from '@/components/record/VoiceButton'
 import { Spinner } from '@/components/states'
@@ -140,7 +140,7 @@ export function RecordDialog({
           <div className="space-y-4">
             {previewUrl && (
               <div className="rounded-md border bg-muted/40 px-3 py-2.5">
-                <RichAudioPlayer src={previewUrl} />
+                <AudioPlayer src={previewUrl} />
               </div>
             )}
             <div className="space-y-1.5">

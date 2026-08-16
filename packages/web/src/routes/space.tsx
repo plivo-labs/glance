@@ -19,7 +19,6 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog'
 import { MountSensor } from '@/components/ui/mount-sensor'
-import { Separator } from '@/components/ui/separator'
 import { api, ApiError } from '@/lib/api'
 import { toLogin } from '@/lib/nav'
 import type { SiteSummary, SpaceDetail, UserLite } from '@/lib/types'
@@ -148,7 +147,7 @@ function DangerZone({ space }: { space: SpaceDetail }) {
   const navigate = useNavigate()
   return (
     <div className="space-y-3">
-      <Separator />
+      <hr className="border-border" />
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3">
         <div className="min-w-0">
           <p className="text-sm font-medium text-destructive">Danger zone</p>

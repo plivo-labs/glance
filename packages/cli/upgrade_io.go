@@ -207,9 +207,7 @@ func (c *client) upgradeCmd(argv []string) error {
 	dir := filepath.Dir(exe)
 	if !dirWritable(dir) {
 		if background {
-			st := readState()
-			st.Available = latest
-			saveState(st)
+			fmt.Fprintln(c.errOut, "glance "+latest+" is available — run `glance upgrade`")
 			return nil
 		}
 		return fmt.Errorf("cannot write to %s — re-run the installer, or: sudo glance upgrade", dir)
@@ -224,8 +222,6 @@ func (c *client) upgradeCmd(argv []string) error {
 	if background {
 		st := readState()
 		st.UpdatedTo = latest
-		st.Available = ""
-		st.NotifiedAvailable = ""
 		saveState(st)
 	} else {
 		fmt.Fprintf(c.out, "✓ Updated glance %s → %s\n", version, latest)
@@ -254,14 +250,14 @@ func maybeAutoUpdate() {
 		return
 	}
 	cmd := exec.Command(exe, "upgrade", "--quiet")
+	cmd.Stderr = os.Stderr                                // the "newer release, can't write" notice surfaces on the user's terminal
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // detach from this process group
 	if err := cmd.Start(); err == nil && cmd.Process != nil {
 		_ = cmd.Process.Release()
 	}
 }
 
-// One line on stderr - never stdout, which gets piped - the first run after a background swap, or
-// once per version when an update exists but the install dir is read-only.
+// One line on stderr - never stdout, which gets piped - the first run after a background swap.
 func (c *client) announceUpdate() {
 	st := readState()
 	msg, next, changed := planAnnouncement(st, version)

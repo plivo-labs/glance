@@ -47,11 +47,6 @@ function RootError() {
   )
 }
 
-// Re-export for child loaders that want to enforce auth.
-export function requireUser(user: Me | null): Me {
-  if (!user) throw redirect('/login')
-  return user
-}
 export { rootLoader as _rootLoader }
 export type { LoaderFunctionArgs }
 

@@ -6,7 +6,7 @@ import { type FakeWebSocket, installWorkerSocketGlobals, makeDurableObjectState,
 import type { ChangeEvent } from './change-log'
 import type { CommentEvent } from './comment-events'
 import { decodeCursor } from './cursor'
-import { notifyCommentEvent, notifyCommentRoom, notifySiteRoom } from './notify'
+import { notifyChange, notifyCommentEvent } from './notify'
 import {
   SiteRoom,
   TOKEN_HEADER,
@@ -637,8 +637,18 @@ describe('SiteRoom — S10: typing, the first inbound message that is not auth',
   })
 })
 
+// No executionCtx in this harness (there is no real Worker request) — the same fallback
+// fireAndForget takes in prod when a caller has none: catch the access, await inline.
+const fakeCtx = (env: unknown) =>
+  ({
+    env,
+    get executionCtx(): never {
+      throw new Error('no executionCtx in test')
+    },
+  }) as never
+
 describe('SiteRoom — deploy wiring', () => {
-  test('contract: the request notifySiteRoom sends is the one SiteRoom.fetch accepts', async () => {
+  test('contract: the request notifyChange sends is the one SiteRoom.fetch accepts', async () => {
     const r = makeRoom('siteA')
     const { ws } = await subscribe(r, { viewerId: 'userA' })
     const names: string[] = []
@@ -652,7 +662,7 @@ describe('SiteRoom — deploy wiring', () => {
         get: () => ({ fetch: (input: string, init?: RequestInit) => r.room.fetch(new Request(input, init)) }),
       },
     }
-    const res = await notifySiteRoom(env as never, event({ seq: 5, createdBy: 'userA' }))
+    const res = await notifyChange(fakeCtx(env), event({ seq: 5, createdBy: 'userA' }))
     // The room is keyed by siteId — the value inside the verified token — on BOTH sides.
     expect(names).toEqual(['siteA'])
     expect(res).toBeUndefined()
@@ -666,17 +676,7 @@ describe('SiteRoom — deploy wiring', () => {
 })
 
 describe('SiteRoom — comment deploy wiring', () => {
-  // No executionCtx in this harness (there is no real Worker request) — the same fallback
-  // fireAndForget takes in prod when a caller has none: catch the access, await inline.
-  const fakeCtx = (env: unknown) =>
-    ({
-      env,
-      get executionCtx(): never {
-        throw new Error('no executionCtx in test')
-      },
-    }) as never
-
-  test('contract: the request notifyCommentRoom sends is the one SiteRoom.fetch\'s broadcast-comment accepts', async () => {
+  test('contract: the request notifyCommentEvent sends is the one SiteRoom.fetch\'s broadcast-comment accepts', async () => {
     const r = makeRoom('siteA')
     const { ws } = await subscribe(r, { viewerId: 'userA', channel: 'comments' })
     const names: string[] = []
@@ -689,18 +689,15 @@ describe('SiteRoom — comment deploy wiring', () => {
         get: () => ({ fetch: (input: string, init?: RequestInit) => r.room.fetch(new Request(input, init)) }),
       },
     }
-    const res = await notifyCommentRoom(env as never, commentEvent())
+    const res = await notifyCommentEvent(fakeCtx(env), commentEvent())
     // Same key as the write side and the subscribe side — siteId — or one site splits across two rooms.
     expect(names).toEqual(['siteA'])
     expect(res).toBeUndefined()
     expect(ws.sent).toHaveLength(1)
   })
 
-  test('SITE_ROOM unbound: notifyCommentRoom resolves without touching `ns.get`, notifyCommentEvent never throws', async () => {
+  test('SITE_ROOM unbound: notifyCommentEvent never throws', async () => {
     const env = { SITE_ROOM: undefined }
-    // Direct call — nothing here swallows a throw, so this is the assertion the `if (!ns) return`
-    // guard actually has to earn. Without it, `ns.get` on undefined throws and this rejects.
-    await expect(notifyCommentRoom(env as never, commentEvent())).resolves.toBeUndefined()
     await expect(notifyCommentEvent(fakeCtx(env), commentEvent())).resolves.toBeUndefined()
   })
 

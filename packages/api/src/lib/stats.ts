@@ -152,17 +152,9 @@ export async function computeWindow(db: DrizzleD1Database, now: Date = new Date(
   }
 }
 
-/** Both halves, uncached. The `cachedStats` path deliberately does NOT call this — it refreshes
- *  the two halves on their own clocks. Kept as the single-shot entry point (and what a deploy with
- *  no KV binding falls back to). */
-export async function computeStats(db: DrizzleD1Database, now: Date = new Date()): Promise<Stats> {
-  const [totals, window] = await Promise.all([computeTotals(db), computeWindow(db, now)])
-  return { totals, ...window }
-}
-
 // --- Cache front for the admin dashboard ----------------------------------------------------
 //
-// `computeStats` is 13 aggregates and most of them are unavoidable FULL SCANS (all-time counts,
+// A full recompute is 13 aggregates and most of them are unavoidable FULL SCANS (all-time counts,
 // `count(distinct userId)`, `sum(files.size)`, the 30-day group-bys) — ~10k D1 rows read per call
 // (measured via `wrangler d1 insights --time-period 30d`, 2026-08-03) against a database whose
 // largest table is ~10k rows. The admin page is a React Router loader, so every navigation, back

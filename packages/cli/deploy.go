@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"mime/multipart"
 	"os"
 	"path/filepath"
@@ -21,33 +22,34 @@ type deployEntry struct {
 // root (e.g. /etc/passwd or ~/.ssh) and leak its target. Unless includeHidden is set it also skips
 // dotfiles/dot-dirs (.env, .npmrc, .netrc, …) so secrets aren't uploaded by accident.
 func walk(dir string, includeHidden bool) ([]string, error) {
-	entries, err := os.ReadDir(dir)
+	var out []string
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == dir {
+			return nil
+		}
+		name := d.Name()
+		// .glance holds the pull.json round-trip marker — internal bookkeeping, never site content.
+		skip := name == ".git" || name == "node_modules" || name == ".DS_Store" || name == pullMarkerDir ||
+			(!includeHidden && strings.HasPrefix(name, "."))
+		if skip {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			return nil // don't follow symlinks (target may escape the deploy root)
+		}
+		if !d.IsDir() {
+			out = append(out, path)
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-	var out []string
-	for _, e := range entries {
-		name := e.Name()
-		// .glance holds the pull.json round-trip marker — internal bookkeeping, never site content.
-		if name == ".git" || name == "node_modules" || name == ".DS_Store" || name == pullMarkerDir {
-			continue
-		}
-		if !includeHidden && strings.HasPrefix(name, ".") {
-			continue
-		}
-		if e.Type()&os.ModeSymlink != 0 {
-			continue // don't follow symlinks (target may escape the deploy root)
-		}
-		abs := filepath.Join(dir, name)
-		if e.IsDir() {
-			sub, err := walk(abs, includeHidden)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, sub...)
-		} else {
-			out = append(out, abs)
-		}
 	}
 	return out, nil
 }
@@ -81,7 +83,7 @@ func (c *client) personalSpace() (string, error) {
 }
 
 func (c *client) deploy(argv []string) error {
-	positional, flags := parseArgs(argv, boolSet("include-hidden"))
+	positional, flags := parseArgs(argv, map[string]bool{"include-hidden": true})
 	path := ""
 	if len(positional) > 0 {
 		path = positional[0]

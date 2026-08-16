@@ -70,7 +70,7 @@ export async function superadminStatus(
 
 /** True for a SQLite/D1 UNIQUE-constraint violation (message carries "UNIQUE constraint failed"
  *  in both the bun:sqlite harness and D1's wrapped `D1_ERROR`). */
-function isUniqueConstraintError(err: unknown): boolean {
+export function isUniqueConstraintError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err)
   return /unique constraint failed/i.test(msg)
 }
@@ -180,29 +180,14 @@ function groupReachStmt(db: DrizzleD1Database, userId: string, siteId?: string) 
     .where(and(eq(spaceMembers.userId, userId), siteId === undefined ? undefined : eq(siteGroupShares.siteId, siteId)))
 }
 
-/**
- * ONE role-aware share resolve for a (site, user): the direct-share role AND group reach in a
- * single db.batch round trip. `isShared` (checkAccess's input) is any reach — a direct share of
- * either role OR a group share; a group-only reacher is viewer-grade for ACCESS purposes only,
- * so `directRole` stays null for them. The edit oracle (`canReplace`) must consume `directRole`,
- * never `isShared` — group shares are never an editor grant.
- */
-export async function resolveShareAccess(
-  db: DrizzleD1Database,
-  siteId: string,
-  userId: string,
-): Promise<{ isShared: boolean; directRole: 'viewer' | 'editor' | null }> {
+/** True if a site is explicitly shared with the user — directly, or via a group they're in.
+ *  Both branch selects travel in a single db.batch round trip. */
+export async function resolveIsShared(db: DrizzleD1Database, siteId: string, userId: string): Promise<boolean> {
   const [direct, viaGroup] = await batchAll(db, [
     directShareStmt(db, userId, siteId).limit(1),
     groupReachStmt(db, userId, siteId).limit(1),
   ])
-  const directRole = direct[0]?.role ?? null
-  return { isShared: directRole !== null || viaGroup.length > 0, directRole }
-}
-
-/** True if a site is explicitly shared with the user — directly, or via a group they're in. */
-export async function resolveIsShared(db: DrizzleD1Database, siteId: string, userId: string): Promise<boolean> {
-  return (await resolveShareAccess(db, siteId, userId)).isShared
+  return direct.length > 0 || viaGroup.length > 0
 }
 
 /**
@@ -220,8 +205,8 @@ export async function resolveShareRole(
   return row[0]?.role ?? null
 }
 
-/** The membership SELECT behind `memberSpaceIds`, exposed (like `sharedSiteRoleStmts`) so a route
- *  can ride it in its OWN db.batch alongside other statements. */
+/** The membership SELECT behind the member-space-ids fold, exposed (like `sharedSiteRoleStmts`) so
+ *  a route can ride it in its OWN db.batch alongside other statements. */
 export function memberSpaceIdsStmt(db: DrizzleD1Database, userId: string) {
   return db
     .select({ spaceId: spaceMembers.spaceId })
@@ -229,14 +214,8 @@ export function memberSpaceIdsStmt(db: DrizzleD1Database, userId: string) {
     .where(eq(spaceMembers.userId, userId))
 }
 
-/** Set of space ids the user is a member of (mirrors `sharedSiteIds` for the search candidate query). */
-export async function memberSpaceIds(db: DrizzleD1Database, userId: string): Promise<Set<string>> {
-  const rows = await memberSpaceIdsStmt(db, userId)
-  return foldMemberSpaceIds(rows)
-}
-
 /**
- * Every site shared with the user (same reach as `sharedSiteIds`: direct OR group via space
+ * Every site shared with the user (direct OR group via space
  * membership) WITH the effective role, in ONE D1 request — both branch selects travel in a single
  * db.batch, and each is a join on userId (no id collection → no bind-cap exposure at any fan-out).
  * Group shares are always 'viewer'; a direct row's role OVERRIDES a group-derived viewer (direct
@@ -269,12 +248,6 @@ export function foldSharedSiteRoles(
 /** Fold the `memberSpaceIdsStmt` batched rows into a Set of space ids. */
 export function foldMemberSpaceIds(rows: { spaceId: string }[]): Set<string> {
   return new Set(rows.map((r) => r.spaceId))
-}
-
-/** Set of site ids explicitly shared with the user (direct + via group membership). Derived from
- *  `sharedSiteRoles` so the two can never drift on reach semantics (roles are simply dropped). */
-export async function sharedSiteIds(db: DrizzleD1Database, userId: string): Promise<Set<string>> {
-  return new Set((await sharedSiteRoles(db, userId)).keys())
 }
 
 /** A user reduced to what an @-mention autocomplete needs. */

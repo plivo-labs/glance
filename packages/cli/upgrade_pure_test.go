@@ -103,36 +103,6 @@ func TestPlanAnnouncement(t *testing.T) {
 		}
 	})
 
-	t.Run("available-nags-once-per-version", func(t *testing.T) {
-		msg, next, _ := planAnnouncement(UpdateState{Available: "0.5.0"}, "0.4.0")
-		if !strings.Contains(msg, "glance upgrade") {
-			t.Fatalf("msg=%q", msg)
-		}
-		if next.NotifiedAvailable != "0.5.0" {
-			t.Fatalf("notified=%q", next.NotifiedAvailable)
-		}
-		// same version -> silent
-		if msg2, _, changed := planAnnouncement(next, "0.4.0"); msg2 != "" || changed {
-			t.Errorf("re-nagged same version: msg=%q changed=%v", msg2, changed)
-		}
-		// newer available -> nags again
-		bumped := next
-		bumped.Available = "0.6.0"
-		if msg3, _, _ := planAnnouncement(bumped, "0.4.0"); !strings.Contains(msg3, "0.6.0") {
-			t.Errorf("did not nag for newer version: %q", msg3)
-		}
-	})
-
-	t.Run("available-cleared-once-caught-up", func(t *testing.T) {
-		msg, next, changed := planAnnouncement(UpdateState{Available: "0.5.0", NotifiedAvailable: "0.5.0"}, "0.5.0")
-		if msg != "" || !changed {
-			t.Fatalf("msg=%q changed=%v", msg, changed)
-		}
-		if next.Available != "" || next.NotifiedAvailable != "" {
-			t.Errorf("not cleared: %+v", next)
-		}
-	})
-
 	t.Run("noop-reports-unchanged", func(t *testing.T) {
 		// callers skip the state write when nothing changed
 		st := UpdateState{LastCheckedAt: 1}

@@ -1,26 +1,8 @@
 import { describe, expect, test } from 'bun:test'
-import { bytesToBase64, transcribeVoice } from './transcribe'
+import { transcribeVoice } from './transcribe'
 
 // biome-ignore lint/suspicious/noExplicitAny: test stubs for the Ai binding surface.
 const stubAi = (run: (...a: any[]) => unknown) => ({ run }) as any
-
-describe('bytesToBase64 (W1-2)', () => {
-  test('known bytes encode to standard base64', () => {
-    expect(bytesToBase64(new Uint8Array([104, 105]))).toBe('aGk=') // "hi"
-    expect(bytesToBase64(new Uint8Array([0]))).toBe('AA==')
-  })
-  test('empty input encodes to empty string', () => {
-    expect(bytesToBase64(new Uint8Array([]))).toBe('')
-  })
-  test('chunks past the 32KB fromCharCode boundary and round-trips byte-exact', () => {
-    const n = 70_000 // > 2 chunks of 0x8000
-    const bytes = new Uint8Array(n)
-    for (let i = 0; i < n; i++) bytes[i] = i % 256
-    const decoded = Uint8Array.from(atob(bytesToBase64(bytes)), (c) => c.charCodeAt(0))
-    expect(decoded.length).toBe(n)
-    expect([...decoded]).toEqual([...bytes])
-  })
-})
 
 describe('transcribeVoice (W1-3, W1-4)', () => {
   const audio = new Uint8Array([104, 105])

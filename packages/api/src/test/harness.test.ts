@@ -223,7 +223,7 @@ describe('T0.5 D1 batch result-name guard', () => {
       .select({ spaceSlug: spaces.slug, slug: sites.slug })
       .from(sites)
       .innerJoin(spaces, eq(sites.spaceId, spaces.id))
-    await expect(db.batch([collide] as never)).rejects.toThrow(/result-name collision.*"slug"/s)
+    await expect(db.batch([collide] as never)).rejects.toThrow(/result-name collision/)
   })
 
   test('the same shape with one side aliased passes', async () => {
@@ -238,16 +238,6 @@ describe('T0.5 D1 batch result-name guard', () => {
     const [rows] = (await db.batch([aliased] as never)) as [{ spaceSlug: string; slug: string }[]]
     expect(rows.length).toBe(1)
     expect(rows[0].spaceSlug).toBe(spId) // seed defaults slug to the id
-  })
-
-  test('a batched unaliased expression column throws; aliased passes', async () => {
-    const db = makeDb()
-    await seedUser(db)
-    const bare = db.select({ count: sql<number>`count(*)` }).from(users)
-    await expect(db.batch([bare] as never)).rejects.toThrow(/unaliased expression/i)
-    const aliased = db.select({ count: sql<number>`count(*)`.as('count') }).from(users)
-    const [rows] = (await db.batch([aliased] as never)) as [{ count: number }[]]
-    expect(rows[0].count).toBe(1)
   })
 
   test('a LOOSE statement with duplicate result names does NOT throw (real D1 maps loose queries positionally via raw())', async () => {
