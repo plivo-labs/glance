@@ -70,11 +70,12 @@ beforeAll(async () => {
 
 afterAll(() => restore())
 
-/** Fire a trusted parent→child command the way the real app origin would. */
-function send(data: unknown): void {
+/** Fire a trusted parent→child command the way the real app origin would (or, with `origin`
+ *  overridden, the way a hostile embedder would). */
+function send(data: unknown, origin = 'https://app.example.com'): void {
   const win = (globalThis as unknown as AnyRecord).window as unknown as Window & AnyRecord
   const MessageEventCtor = (win as AnyRecord).MessageEvent as typeof MessageEvent
-  win.dispatchEvent(new MessageEventCtor('message', { data, origin: 'https://app.example.com' }) as unknown as Event)
+  win.dispatchEvent(new MessageEventCtor('message', { data, origin }) as unknown as Event)
 }
 
 describe('client.ts — a paint IS the highlight: everything sent is lit, an empty paint clears it', () => {
@@ -256,5 +257,26 @@ describe('client.ts — clicking a painted anchor posts glance:anchor-click', ()
       expect(evt.defaultPrevented).toBe(false)
     }
     expect(clicks()).toHaveLength(before)
+  })
+})
+
+// #27 — the boot glance:ready fires exactly once, at import time, so a parent whose listener
+// attaches late (warm-cache load: the iframe finishes before the viewer's effect runs) loses it
+// forever. glance:ping is the parent's "did I miss it?" probe: the client re-announces, and the
+// parent's arbiter already ignores duplicate readys, so a redundant ping costs nothing.
+describe('client.ts — glance:ping re-announces glance:ready (#27)', () => {
+  const readys = () => posted.filter((m) => (m as AnyRecord).type === 'glance:ready') as AnyRecord[]
+
+  test('a ping from the app origin re-posts glance:ready with the mounted filePath', () => {
+    const before = readys().length
+    send({ type: 'glance:ping' })
+    expect(readys()).toHaveLength(before + 1)
+    expect(readys().at(-1)?.filePath).toBe('index.html')
+  })
+
+  test('a ping from any other origin is ignored — same trust rule as paint/focus', () => {
+    const before = readys().length
+    send({ type: 'glance:ping' }, 'https://evil.example.com')
+    expect(readys()).toHaveLength(before)
   })
 })
