@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { and, eq } from 'drizzle-orm'
 import type { CommentFeedItem } from '../db/comment-feed'
 import { comments, sites, siteUserShares, spaceMembers, users } from '../db/schema'
-import realApp from '../index'
+import worker from '../index'
 import type { AppEnv } from '../types'
 import {
   makeKv,
@@ -113,7 +113,7 @@ describe('comment feed route — C4.6 root-app composition', () => {
       GLANCE_SESSIONS: makeKv(),
     } as unknown as AppEnv['Bindings']
 
-    const res = await realApp.request(FEED_URL, {}, env)
+    const res = await worker.fetch(new Request(`${APP_URL}${FEED_URL}`), env)
 
     expect(res.status).toBe(401)
     expect(res.status).not.toBe(404)

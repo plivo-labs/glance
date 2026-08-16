@@ -49,6 +49,10 @@
   // must use `wrangler dev --local` (the `dev` script does), which disables this binding so env.AI
   // is undefined and transcription falls back — no Cloudflare login required just to run the app.
   "ai": { "binding": "AI", "remote": true },
+  // Hourly synthetic stats visitor (src/index.ts `scheduled`): each run refreshes only the stats
+  // KV halves past their soft TTL — window hourly, totals daily — so the admin dashboard always
+  // reads fresh KV and never pays the ~33k-row D1 rollup inline on a request.
+  "triggers": { "crons": ["0 * * * *"] },
   // Free, no Cloudflare zone needed (unlike WAF rules, which don't apply to *.workers.dev).
   // 10 upload requests / 60s per client IP. period must be 10 or 60.
   "ratelimits": [
