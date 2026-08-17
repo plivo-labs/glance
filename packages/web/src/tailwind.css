@@ -185,3 +185,32 @@
   height: 1px;
   background: linear-gradient(to right, var(--border), transparent);
 }
+
+/* Ask panel's pre-first-token wait (AskPanel): the chip's sparkle pulsing beside shimmering
+   "Thinking…". Collapses to static muted text under prefers-reduced-motion. */
+.ask-sparkle {
+  color: var(--primary);
+  transform-origin: center;
+  animation: ask-sparkle 1.6s ease-in-out infinite;
+}
+@keyframes ask-sparkle {
+  0%, 100% { transform: scale(0.85) rotate(0deg); opacity: 0.55; filter: drop-shadow(0 0 0 transparent); }
+  50% { transform: scale(1.12) rotate(20deg); opacity: 1; filter: drop-shadow(0 0 6px color-mix(in oklch, var(--primary) 55%, transparent)); }
+}
+.ask-shimmer {
+  font-weight: 500;
+  background: linear-gradient(90deg, var(--muted-foreground) 30%, var(--foreground) 50%, var(--muted-foreground) 70%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: ask-shimmer 1.8s linear infinite;
+}
+@keyframes ask-shimmer {
+  0% { background-position: 120% 0; }
+  100% { background-position: -80% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ask-sparkle { animation: none; }
+  .ask-shimmer { animation: none; background: none; color: var(--muted-foreground); }
+}

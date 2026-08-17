@@ -10,7 +10,7 @@
 // selection" assertion here would be theatre — real geometry is proven in the browser (B4).
 import { describe, expect, mock, test } from 'bun:test'
 import { useReducer } from 'react'
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { ApiError } from '@/lib/api'
 import { type Anchor, initialPopover, stepPopover } from '@/lib/commentPopover'
 import { CommentPopover } from './CommentPopover'
@@ -232,8 +232,12 @@ describe('the ask panel', () => {
     })
 
     // Streamdown marks semantics with data-streamdown attributes (bold is a styled span).
-    expect(document.querySelector('[data-streamdown="strong"]')?.textContent).toBe('bold')
-    expect(document.querySelector('[data-streamdown="list-item"]')?.textContent?.trim()).toBe('item')
+    // waitFor, not a plain expect: with isAnimating the token fade commits DOM behind animation
+    // frames, so on a slow runner the elements land a tick after the act() above (CI-only flake).
+    await waitFor(() => {
+      expect(document.querySelector('[data-streamdown="strong"]')?.textContent).toBe('bold')
+      expect(document.querySelector('[data-streamdown="list-item"]')?.textContent?.trim()).toBe('item')
+    })
     // The follow-up box locks while streaming — readOnly, not disabled, so the panel keeps focus
     // (and with it the Escape route out).
     expect((screen.getByPlaceholderText('Ask a follow-up…') as HTMLTextAreaElement).readOnly).toBe(true)
