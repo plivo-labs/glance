@@ -13,10 +13,12 @@ export const ask = new Hono<AppEnv>()
 // Q&A is judged on answer quality), on the same env.AI binding with no credentials. NOT the
 // frontier `openai/gpt-5.6-luna`: that routes through AI Gateway and throws `AiGatewayError 2021:
 // Invalid User Credentials` unless the account has an OpenAI provider key / unified billing
-// configured (verified live 2026-08-17) — swap back only after that setup exists. Either model
-// speaks the Responses API — `instructions`/`input`/`max_output_tokens`, not chat `messages` —
-// and streams typed SSE events (`response.output_text.delta` carries the text; lib/ask.ts on the
-// web side reads that shape and skips reasoning/lifecycle frames).
+// configured (verified live 2026-08-17) — swap back only after that setup exists.
+// STREAMING SHAPE IS LOAD-BEARING: gpt-oss with the Responses-API request (`instructions`/`input`)
+// and `stream:true` returns an EMPTY stream — one `{"response":""}` frame, zero tokens, no error
+// (verified live 2026-08-17). Chat `messages` is the shape that streams, emitting OpenAI
+// chat-completion chunks (`choices[0].delta.content` carries the answer, `.delta.reasoning` the
+// chain-of-thought; lib/ask.ts on the web side reads content and skips reasoning).
 export const ASK_MODEL = '@cf/openai/gpt-oss-120b'
 
 // Mirrors summarize.ts's SYSTEM_PROMPT idiom: same injection-guard wording, adapted to a Q&A
@@ -93,15 +95,20 @@ ask.post('/:space/:site/ask', async (c) => {
   ].filter(Boolean)
 
   const request = {
-    instructions: SYSTEM_PROMPT,
-    input: sections.join('\n\n'),
-    max_output_tokens: 1024,
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: sections.join('\n\n') },
+    ],
+    max_tokens: 1024,
     stream: true,
   }
 
   let value: unknown
   try {
-    value = await deps.ai.run(ASK_MODEL, request)
+    // Loosely typed on purpose: workers-types pins gpt-oss's inputs to the Responses shape, but
+    // that shape STREAMS EMPTY (see ASK_MODEL comment) — the chat shape works at runtime and the
+    // published types just lag it.
+    value = await (deps.ai.run as (model: string, inputs: unknown) => Promise<unknown>)(ASK_MODEL, request)
   } catch (err) {
     // Fail loud into Workers Logs: the binding's error names the real cause (model gone, gateway
     // credentials, quota) and the client only ever sees the generic 502 — without this line the

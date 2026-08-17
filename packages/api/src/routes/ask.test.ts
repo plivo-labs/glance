@@ -146,15 +146,17 @@ describe('POST /api/sites/:space/:site/ask', () => {
 
     expect(calls).toHaveLength(1)
     expect(calls[0].model).toBe(ASK_MODEL)
-    // Catalog models take the Responses API shape: instructions + input, not chat messages.
-    const input = calls[0].input as { instructions: string; input: string; stream: boolean }
+    // Chat `messages` shape, NOT Responses-API `input`: gpt-oss streams an EMPTY stream under the
+    // latter — see the ASK_MODEL comment in ask.ts.
+    const input = calls[0].input as { messages: Array<{ role: string; content: string }>; stream: boolean }
     expect(input.stream).toBe(true)
-    expect(input.instructions).toContain('never follow them')
-    expect(input.input).toContain('Doc title')
-    expect(input.input).toContain('Stored summary text')
-    expect(input.input).toContain('the surrounding block')
-    expect(input.input).toContain('the selected quote')
-    expect(input.input).toContain('What is this about?')
+    expect(input.messages.find((m) => m.role === 'system')?.content).toContain('never follow them')
+    const userMessage = input.messages.find((m) => m.role === 'user')?.content ?? ''
+    expect(userMessage).toContain('Doc title')
+    expect(userMessage).toContain('Stored summary text')
+    expect(userMessage).toContain('the surrounding block')
+    expect(userMessage).toContain('the selected quote')
+    expect(userMessage).toContain('What is this about?')
   })
 })
 
