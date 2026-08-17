@@ -46,12 +46,23 @@ export async function askStream(site: AskSite, body: AskBody, onToken: (text: st
       const payload = line.slice('data: '.length)
       if (payload === '[DONE]') return
       try {
-        // Two token shapes, one loop: Workers-AI-native models emit `{response}` frames; catalog
-        // models (the GPT-5.6 Luna the ask route uses) speak the Responses API, whose typed events
-        // carry text only in `response.output_text.delta` frames — every other event type
-        // (response.created, …) is lifecycle noise with no text to show.
-        const parsed = JSON.parse(payload) as { response?: unknown; type?: unknown; delta?: unknown }
+        // Three token shapes, one loop — which one arrives depends on the model the ask route
+        // pins and the request shape it sends (see ASK_MODEL in routes/ask.ts):
+        //   • `{response}` — Workers-AI-native frames (llama and friends)
+        //   • chat-completion chunks — what gpt-oss streams under the chat `messages` shape; the
+        //     answer rides `choices[0].delta.content`, and `.delta.reasoning` (the model's
+        //     chain-of-thought) is deliberately NOT shown
+        //   • `response.output_text.delta` typed events — frontier catalog models via the
+        //     Responses API; other event types (response.created, …) are lifecycle noise
+        const parsed = JSON.parse(payload) as {
+          response?: unknown
+          type?: unknown
+          delta?: unknown
+          choices?: Array<{ delta?: { content?: unknown } }>
+        }
+        const chat = parsed.choices?.[0]?.delta?.content
         if (typeof parsed.response === 'string' && parsed.response) onToken(parsed.response)
+        else if (typeof chat === 'string' && chat) onToken(chat)
         else if (parsed.type === 'response.output_text.delta' && typeof parsed.delta === 'string' && parsed.delta) onToken(parsed.delta)
       } catch {
         // an unparseable frame is noise, not a reason to abort a stream that is otherwise fine

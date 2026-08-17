@@ -57,6 +57,22 @@ describe('askStream', () => {
     expect(tokens).toEqual(['hello ', 'world'])
   })
 
+  test('chat-completion chunks: delta.content emits, delta.reasoning is skipped', async () => {
+    // What gpt-oss streams under the chat `messages` shape (routes/ask.ts's ASK_MODEL): the
+    // answer in delta.content, the chain-of-thought in delta.reasoning — never shown.
+    const res = sseResponse([
+      'data: {"choices":[{"delta":{"content":"","role":"assistant"}}]}\n',
+      'data: {"choices":[{"delta":{"reasoning":"User wants a greeting"}}]}\n',
+      'data: {"choices":[{"delta":{"content":"hello "}}]}\n',
+      'data: {"choices":[{"delta":{"content":"world"}}]}\n',
+      'data: [DONE]\n',
+    ])
+    stubFetch(res)
+    const tokens: string[] = []
+    await askStream(site, body, (t) => tokens.push(t))
+    expect(tokens).toEqual(['hello ', 'world'])
+  })
+
   test('[DONE] terminates the stream — anything after it is ignored', async () => {
     const res = sseResponse(['data: {"response":"a"}\n', 'data: [DONE]\n', 'data: {"response":"b"}\n'])
     stubFetch(res)
