@@ -123,14 +123,14 @@ describe('A2-ui — the selection chip', () => {
     }
   })
 
-  test('the Ask chip sits beside Comment and opens the ask panel on click', () => {
+  test('the Ask chip sits beside Comment and opens the ask panel on click', async () => {
     render(<Harness />)
 
     expect(screen.getByRole('button', ASK_CHIP)).toBeTruthy()
     expect(screen.getByRole('button', ASK_CHIP).querySelector('kbd')?.textContent?.trim()).toBe('A')
-    openAsk()
+    await act(async () => openAsk())
 
-    expect(screen.getByPlaceholderText('Ask about this selection…')).toBeTruthy()
+    expect(screen.getByPlaceholderText('Ask a follow-up…')).toBeTruthy()
     expect(screen.getByText(`“${ANCHOR.quote}”`)).toBeTruthy()
   })
 })
@@ -181,58 +181,69 @@ describe('Escape belongs to the mention menu first', () => {
 })
 
 describe('the ask panel', () => {
-  test('Enter submits and calls onAsk with the typed question and the anchor', async () => {
-    const onAsk = mock(() => Promise.resolve())
+  test('opening auto-asks the default question — zero typing', async () => {
+    const onAsk = mock(async (_q: string, _a: Anchor, onToken: (t: string) => void) => onToken('an answer'))
     render(<Harness onAsk={onAsk} />)
-    openAsk()
+    await act(async () => openAsk())
 
-    const textarea = screen.getByPlaceholderText('Ask about this selection…')
+    expect(onAsk).toHaveBeenCalledTimes(1)
+    expect(onAsk.mock.calls[0][0]).toBe('Explain this')
+    expect(onAsk.mock.calls[0][1]).toEqual(ANCHOR)
+    // The auto-asked question is visible as the turn's label, the answer under it.
+    expect(screen.getByText('Explain this')).toBeTruthy()
+    expect(screen.getByText('an answer')).toBeTruthy()
+  })
+
+  test('a typed follow-up runs as a new turn, keeping the first on screen', async () => {
+    const onAsk = mock(async (q: string, _a: Anchor, onToken: (t: string) => void) => onToken(`answer to ${q}`))
+    render(<Harness onAsk={onAsk} />)
+    await act(async () => openAsk())
+
+    const textarea = screen.getByPlaceholderText('Ask a follow-up…')
     // Shift+Enter is a newline, not a submit.
     fireEvent.change(textarea, { target: { value: 'why is this red?' } })
     fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true })
-    expect(onAsk).not.toHaveBeenCalled()
+    expect(onAsk).toHaveBeenCalledTimes(1)
 
     await act(async () => {
       fireEvent.keyDown(textarea, { key: 'Enter' })
     })
 
-    expect(onAsk).toHaveBeenCalledTimes(1)
-    expect(onAsk.mock.calls[0][0]).toBe('why is this red?')
-    expect(onAsk.mock.calls[0][1]).toEqual(ANCHOR)
+    expect(onAsk).toHaveBeenCalledTimes(2)
+    expect(onAsk.mock.calls[1][0]).toBe('why is this red?')
+    // Both turns visible; the follow-up box cleared for the next question.
+    expect(screen.getByText('answer to Explain this')).toBeTruthy()
+    expect(screen.getByText('answer to why is this red?')).toBeTruthy()
+    expect((textarea as HTMLTextAreaElement).value).toBe('')
   })
 
-  test('streamed tokens render as markdown once the answer settles', async () => {
-    const onAsk = mock(async (_q: string, _a: Anchor, onToken: (t: string) => void) => {
-      onToken('**bold**')
-      onToken('\n\n- item')
+  test('streamed tokens render as markdown WHILE streaming (Streamdown)', async () => {
+    // The stream never settles: onAsk emits tokens then hangs, so this asserts mid-stream state.
+    let emit: ((t: string) => void) | null = null
+    const onAsk = mock((_q: string, _a: Anchor, onToken: (t: string) => void) => {
+      emit = onToken
+      return new Promise<void>(() => {}) // never resolves — the turn stays streaming
     })
     render(<Harness onAsk={onAsk} />)
-    openAsk()
-    const textarea = screen.getByPlaceholderText('Ask about this selection…')
-    fireEvent.change(textarea, { target: { value: 'q' } })
-    await act(async () => {
-      fireEvent.keyDown(textarea, { key: 'Enter' })
+    await act(async () => openAsk())
+    act(() => {
+      emit?.('**bold**')
+      emit?.('\n\n- item')
     })
 
-    expect(document.querySelector('strong')?.textContent).toBe('bold')
-    expect(document.querySelector('li')?.textContent).toBe('item')
-    // The question locks once submitted — readOnly, not disabled, so the panel keeps focus (and
-    // with it the Escape route out).
-    expect((screen.getByPlaceholderText('Ask about this selection…') as HTMLTextAreaElement).readOnly).toBe(true)
+    // Streamdown marks semantics with data-streamdown attributes (bold is a styled span).
+    expect(document.querySelector('[data-streamdown="strong"]')?.textContent).toBe('bold')
+    expect(document.querySelector('[data-streamdown="list-item"]')?.textContent?.trim()).toBe('item')
+    // The follow-up box locks while streaming — readOnly, not disabled, so the panel keeps focus
+    // (and with it the Escape route out).
+    expect((screen.getByPlaceholderText('Ask a follow-up…') as HTMLTextAreaElement).readOnly).toBe(true)
   })
 
   test('the close button dismisses an answered panel', async () => {
-    const onAsk = mock(async (_q: string, _a: Anchor, onToken: (t: string) => void) => {
-      onToken('answer')
-    })
+    const onAsk = mock(async (_q: string, _a: Anchor, onToken: (t: string) => void) => onToken('answer'))
     const onDismiss = mock(() => {})
     render(<Harness onAsk={onAsk} onDismiss={onDismiss} />)
-    openAsk()
-    const textarea = screen.getByPlaceholderText('Ask about this selection…')
-    fireEvent.change(textarea, { target: { value: 'q' } })
-    await act(async () => {
-      fireEvent.keyDown(textarea, { key: 'Enter' })
-    })
+    await act(async () => openAsk())
 
     // Focus-free dismissal: with the answer on screen (dirty), click-away is inert by design and
     // Escape needs focus inside the panel — the X must always work.
@@ -243,57 +254,29 @@ describe('the ask panel', () => {
   test('error path shows the ApiError message with a Retry that re-runs the same question', async () => {
     const onAsk = mock(() => Promise.reject(new ApiError(500, 'model unavailable')))
     render(<Harness onAsk={onAsk} />)
-    openAsk()
-    const textarea = screen.getByPlaceholderText('Ask about this selection…')
-    fireEvent.change(textarea, { target: { value: 'why?' } })
-    await act(async () => {
-      fireEvent.keyDown(textarea, { key: 'Enter' })
-    })
+    await act(async () => openAsk())
 
     expect(screen.getByText('model unavailable')).toBeTruthy()
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     })
 
+    // The retried turn replaces the dead one — same question, and only one turn on screen.
     expect(onAsk).toHaveBeenCalledTimes(2)
-    expect(onAsk.mock.calls[1][0]).toBe('why?')
+    expect(onAsk.mock.calls[1][0]).toBe('Explain this')
+    expect(screen.getAllByText('Explain this')).toHaveLength(1)
   })
 
-  test('"Ask another" resets to an empty, focused textarea', async () => {
-    const onAsk = mock(async (_q: string, _a: Anchor, onToken: (t: string) => void) => onToken('the answer'))
-    render(<Harness onAsk={onAsk} />)
-    openAsk()
-    const textarea = screen.getByPlaceholderText('Ask about this selection…')
-    fireEvent.change(textarea, { target: { value: 'q' } })
-    await act(async () => {
-      fireEvent.keyDown(textarea, { key: 'Enter' })
-    })
-
-    fireEvent.click(screen.getByRole('button', { name: 'Ask another' }))
-    const fresh = screen.getByPlaceholderText('Ask about this selection…') as HTMLTextAreaElement
-    expect(fresh.value).toBe('')
-    expect(fresh.disabled).toBe(false)
-    expect(document.activeElement).toBe(fresh)
-  })
-
-  test('onDirtyChange reports true while typing/streaming/answered, false once reset', async () => {
+  test('onDirtyChange is true for the panel’s whole life, false once dismissed', async () => {
     const onDirtyChange = mock((_dirty: boolean) => {})
     const onAsk = mock(async (_q: string, _a: Anchor, onToken: (t: string) => void) => onToken('the answer'))
     render(<Harness onAsk={onAsk} onDirtyChange={onDirtyChange} />)
-    openAsk()
+    await act(async () => openAsk())
 
-    expect(onDirtyChange.mock.calls.at(-1)).toEqual([false]) // a fresh panel has nothing to lose
-
-    const textarea = screen.getByPlaceholderText('Ask about this selection…')
-    fireEvent.change(textarea, { target: { value: 'q' } })
+    // The auto-asked turn means there is ALWAYS something on screen worth keeping.
     expect(onDirtyChange.mock.calls.at(-1)).toEqual([true])
 
-    await act(async () => {
-      fireEvent.keyDown(textarea, { key: 'Enter' })
-    })
-    expect(onDirtyChange.mock.calls.at(-1)).toEqual([true]) // answer on screen
-
-    fireEvent.click(screen.getByRole('button', { name: 'Ask another' }))
+    fireEvent.click(screen.getByLabelText('Close'))
     expect(onDirtyChange.mock.calls.at(-1)).toEqual([false])
   })
 })

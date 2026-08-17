@@ -1,5 +1,8 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+/* Streamdown (the ask panel's streaming-markdown renderer) styles itself with tailwind classes
+   inside its dist — without this @source they'd be purged and answers render unstyled. */
+@source "../node_modules/streamdown/dist/*.js";
 
 @custom-variant dark (&:is(.dark *));
 
