@@ -368,6 +368,13 @@ function Viewer() {
       }
     }
     window.addEventListener('message', onMsg)
+    // The other half of the #27 handshake: the client posts its one boot glance:ready at load, and
+    // on a warm-cache load the iframe can finish BEFORE this listener exists — the ready is lost,
+    // filePath stays null, and the rail never loads for the initially open page. Pinging after
+    // attach makes the order irrelevant: an already-booted client re-announces, while a ping that
+    // beats the load lands on about:blank and is dropped (the boot ready then arrives normally).
+    // Effect re-runs re-ping, which is harmless — the arbiter ignores duplicate readys.
+    iframeRef.current?.contentWindow?.postMessage({ type: 'glance:ping' }, contentOrigin)
     return () => window.removeEventListener('message', onMsg)
   }, [contentOrigin, me, site.spaceSlug, site.siteSlug, site.title, threads, dispatch, loadThreads, revealThread])
 

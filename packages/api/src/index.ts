@@ -1,7 +1,8 @@
 import { Hono } from 'hono'
 import { secureHeaders } from 'hono/secure-headers'
-import { withDb } from './db/client'
+import { sessionDb, withDb } from './db/client'
 import { superadminExists } from './db/repo'
+import { cachedStats } from './lib/stats'
 import { GLANCE_DB_JS } from './glancedb/bundle'
 import { buildPublicConfig } from './lib/bootstrap'
 import { INSTALL_SH } from './install-script'
@@ -25,7 +26,7 @@ import { spaces } from './routes/spaces'
 import { stars } from './routes/stars'
 import { upload } from './routes/upload'
 import { users } from './routes/users'
-import type { AppEnv } from './types'
+import type { AppEnv, Bindings } from './types'
 
 // Main worker: /api/* (Hono) + the React SPA (static assets, configured in wrangler.jsonc).
 // `run_worker_first: ["/api/*"]` routes API calls here; everything else falls through to
@@ -136,4 +137,15 @@ app.route('/api/slack', slackEvents)
 // or the SITE_ROOM binding (class_name: "SiteRoom") fails to resolve at deploy time.
 export { SiteRoom } from './realtime/site-room'
 
-export default app
+// Hourly synthetic stats visitor (issue #102, Option A). cachedStats already models
+// refresh-only-when-stale, so a cron tick is just a caller on a fixed clock: each run recomputes
+// only the halves past their soft TTL (window hourly, totals daily) and rewrites their KV
+// entries, keeping GET /api/admin/stats on fresh KV with zero inline D1 compute. The defer is an
+// inline await — there is no visitor waiting on this response, so nothing needs to run behind it.
+export default {
+  fetch: app.fetch,
+  async scheduled(_event, env, _ctx) {
+    const db = sessionDb(env.GLANCE_DB, 'first-unconstrained')
+    await cachedStats(env.GLANCE_SESSIONS, db, (p) => p.then(() => {}))
+  },
+} satisfies ExportedHandler<Bindings>

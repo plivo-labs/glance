@@ -112,7 +112,8 @@ function armIframe(container: HTMLElement) {
     window.dispatchEvent(new MessageEvent('message', { data, origin: CONTENT_ORIGIN, source: iframe.contentWindow as unknown as Window }))
   const paints = () => posted.filter((m) => (m as { type?: string }).type === 'glance:paint') as { anchors: { id: string }[] }[]
   const lastPaintIds = () => (paints().at(-1)?.anchors ?? []).map((a) => a.id).sort()
-  return { iframe, send, paints, lastPaintIds }
+  const pings = () => posted.filter((m) => (m as { type?: string }).type === 'glance:ping')
+  return { iframe, send, paints, lastPaintIds, pings }
 }
 
 // The iframe only boots its message listener on load; viewer.tsx gates paint on the same `loaded`
@@ -195,6 +196,23 @@ describe('viewer wiring — the paint is gated on railOpen (the on-page highligh
 
     fireEvent.click(screen.getByRole('button', { name: /Comments/ }))
     await waitFor(() => expect(lastPaintIds()).toEqual([]))
+  })
+
+  // #27, the inverse race of the ?review=1 one below: on a warm-cache load the IFRAME can finish
+  // first, so its one boot glance:ready is posted before the viewer's listener exists — silently
+  // lost, filePath stays null, and the rail never loads for the initially open page. The listener
+  // effect therefore pings the frame right after attaching; an already-booted client re-announces.
+  // The fake contentWindow is armed after mount, so the ping observed here is the one from the
+  // effect's re-run — same unconditional post as the attach-time one.
+  test('the listener effect pings the frame, so a client that loaded first re-announces ready (#27)', async () => {
+    const { container } = renderViewer('/sp/site')
+    await waitFor(() => expect(container.querySelector('iframe')).not.toBeNull())
+    const { iframe, send, pings } = armIframe(container)
+    loadIframe(iframe)
+
+    act(() => send({ type: 'glance:ready', filePath: 'index.html' })) // re-runs the listener effect via `threads`
+
+    await waitFor(() => expect(pings().length).toBeGreaterThan(0))
   })
 
   // `?review=1` (a notification link) opens the rail before the frame has loaded and before threads
