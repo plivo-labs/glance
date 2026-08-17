@@ -7,7 +7,8 @@ import { isAudioFile } from '@/lib/audio'
 import { type CommentStream, type CommentStreamEvent, createCommentStream } from '@/lib/commentStream'
 import { attachDbBroker } from '@/lib/dbBroker'
 import { comments, paintAnchors, type PendingAnchor, pendingToInput, type Thread } from '@/lib/comments'
-import { initialPopover, stepPopover } from '@/lib/commentPopover'
+import { type Anchor, initialPopover, stepPopover } from '@/lib/commentPopover'
+import { askStream } from '@/lib/ask'
 import { type Intent, parseIntent } from '@/lib/parseIntent'
 import { encodePathSegments } from '@/lib/paths'
 import { type ArbiterEvent, type ArbiterState, type Decision, initialArbiter, stepArbiter } from '@/lib/prefetchArbiter'
@@ -143,6 +144,14 @@ function Viewer() {
 
   // Stable site ref for fetches: slugs never change within a mount (Component keys on them).
   const siteRef = useMemo(() => ({ spaceSlug: site.spaceSlug, siteSlug: site.siteSlug }), [site.spaceSlug, site.siteSlug])
+
+  // The ask panel's one streaming call. Stable on siteRef alone — the question/anchor/token-sink/
+  // signal all come from the caller, so this never needs to change identity within a mount.
+  const onAsk = useCallback(
+    (question: string, anchor: Anchor, onToken: (text: string) => void, signal: AbortSignal) =>
+      askStream(siteRef, { question, quote: anchor.quote, blockText: anchor.blockText }, onToken, signal),
+    [siteRef],
+  )
 
   // Start a comments load through the arbiter. `prefetch` adopts the loader's in-flight promise
   // (it never rejects — failures arrive as PREFETCH_FAILED); ad-hoc loads fetch here, and only a
@@ -333,7 +342,12 @@ function Viewer() {
           // A rect is what the chip is pinned to. parseIntent leaves it optional (our own annotate
           // client always sends one), so a message without one still gets a chip — at the frame's
           // top-left, clickable — rather than silently losing the selection.
-          anchor: { quote: intent.quote, context: intent.context, rect: intent.rect ?? { top: 0, left: 0, width: 0, height: 0 } },
+          anchor: {
+            quote: intent.quote,
+            context: intent.context,
+            rect: intent.rect ?? { top: 0, left: 0, width: 0, height: 0 },
+            blockText: intent.blockText,
+          },
           dirty: dirtyRef.current,
         })
       else if (intent.type === 'clear') dispatchPopover({ type: 'clear' })
@@ -343,6 +357,8 @@ function Viewer() {
       // Nor is a keystroke inside the frame — the reason ⌘K doesn't work there either. The reducer
       // is the authority on whether this opens anything (#117).
       else if (intent.type === 'commentKey') dispatchPopover({ type: 'commentKey' })
+      // Same contract as commentKey, for the ask panel's own shortcut.
+      else if (intent.type === 'askKey') dispatchPopover({ type: 'askKey' })
       // A click on a painted highlight — the page→rail direction. The id is looked up in OUR
       // threads (a forged one matches nothing and reveals nothing), and the rail is necessarily
       // already open, since nothing is painted while it's closed.
@@ -645,10 +661,13 @@ function Viewer() {
               <CommentPopover
                 chip={popover.chip}
                 composer={popover.composer}
+                ask={popover.ask}
                 onActivate={() => dispatchPopover({ type: 'activate' })}
+                onAskActivate={() => dispatchPopover({ type: 'askActivate' })}
                 onDismiss={() => dispatchPopover({ type: 'dismiss' })}
                 onSubmit={createPopoverThread}
                 onSubmitVoice={createPopoverVoiceThread}
+                onAsk={onAsk}
                 loadMentions={() => comments.mentionable(site)}
                 onDirtyChange={onDirtyChange}
               />

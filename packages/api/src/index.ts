@@ -11,6 +11,7 @@ import { trackCliUsage } from './middleware/analytics'
 import { requireSameOrigin } from './middleware/auth'
 import { admin } from './routes/admin'
 import { apiKeys } from './routes/api-keys'
+import { ask } from './routes/ask'
 import { auth } from './routes/auth'
 import { avatars } from './routes/avatars'
 import { commentFeed } from './routes/comment-feed'
@@ -112,6 +113,8 @@ app.route('/api/sites', stars)
 app.route('/api/sites', comments)
 // Summaries share the same three-segment isolation as comments and cannot shadow site routes.
 app.route('/api/sites', summary)
+// Ask shares the same three-segment isolation as comments/summary and cannot shadow site routes.
+app.route('/api/sites', ask)
 app.route('/api/comments', commentFeed)
 app.route('/api/upload', upload)
 // Session-authenticated mint for shared-backend data tokens (owner → read+write, viewer → read).

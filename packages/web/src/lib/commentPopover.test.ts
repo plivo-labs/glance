@@ -131,6 +131,108 @@ describe('C opens the composer in exactly one state (#117)', () => {
   })
 })
 
+describe('askActivate / askKey — the ask panel (mirrors activate / commentKey)', () => {
+  test('askActivate with no chip is inert', () => {
+    expect(run([{ type: 'askActivate' }])).toEqual(initialPopover())
+  })
+
+  test('askActivate opens ask on the chip anchor and mints a fresh seq', () => {
+    const state = run([{ type: 'select', anchor: A, dirty: false }, { type: 'askActivate' }])
+    expect(state.ask).toEqual({ id: 1, anchor: A })
+    expect(state.seq).toBe(1)
+  })
+
+  test('askActivate closes an open composer, even a dirty one', () => {
+    const dirty = run([
+      { type: 'select', anchor: A, dirty: false },
+      { type: 'activate' },
+      { type: 'select', anchor: B, dirty: true },
+    ])
+    expect(dirty.composer).not.toBeNull()
+    const state = stepPopover(dirty, { type: 'askActivate' })
+    expect(state.composer).toBeNull()
+    expect(state.ask?.anchor).toEqual(B) // askActivate anchors on the CURRENT chip
+  })
+
+  test('activate closes an open ask panel (mutual exclusion)', () => {
+    const asked = run([{ type: 'select', anchor: A, dirty: false }, { type: 'askActivate' }])
+    expect(asked.ask).not.toBeNull()
+    const state = stepPopover(asked, { type: 'activate' })
+    expect(state.ask).toBeNull()
+    expect(state.composer?.anchor).toEqual(A)
+  })
+
+  test('askKey opens ask in exactly one state: chip showing, no composer, no ask', () => {
+    const clicked = run([{ type: 'select', anchor: A, dirty: false }, { type: 'askActivate' }])
+    const keyed = run([{ type: 'select', anchor: A, dirty: false }, { type: 'askKey' }])
+    expect(keyed).toEqual(clicked)
+  })
+
+  test('askKey is inert with no chip', () => {
+    expect(run([{ type: 'askKey' }])).toEqual(initialPopover())
+  })
+
+  test('askKey is inert while a composer is open', () => {
+    const composing = run([{ type: 'select', anchor: A, dirty: false }, { type: 'activate' }])
+    expect(stepPopover(composing, { type: 'askKey' })).toBe(composing)
+  })
+
+  test('askKey is inert while ask is already open', () => {
+    const asked = run([{ type: 'select', anchor: A, dirty: false }, { type: 'askKey' }])
+    expect(stepPopover(asked, { type: 'askKey' })).toBe(asked)
+  })
+
+  test('commentKey is inert while ask is open (symmetry with its composer gate)', () => {
+    const asked = run([{ type: 'select', anchor: A, dirty: false }, { type: 'askActivate' }])
+    expect(stepPopover(asked, { type: 'commentKey' })).toBe(asked)
+  })
+
+  test('commentKey closes an open ask panel when it fires', () => {
+    // Reach commentKey-fires state (chip, no composer, no ask) via dismiss first.
+    const dismissedAsk = run([
+      { type: 'select', anchor: A, dirty: false },
+      { type: 'askActivate' },
+      { type: 'dismiss' },
+      { type: 'select', anchor: A, dirty: false },
+    ])
+    expect(dismissedAsk.ask).toBeNull()
+    const state = stepPopover(dismissedAsk, { type: 'commentKey' })
+    expect(state.ask).toBeNull()
+    expect(state.composer?.anchor).toEqual(A)
+  })
+
+  test("select does NOT re-anchor or close an open ask panel — the answer stays put while reading", () => {
+    const asked = run([{ type: 'select', anchor: A, dirty: false }, { type: 'askActivate' }])
+    const state = stepPopover(asked, { type: 'select', anchor: B, dirty: false })
+    expect(state.ask).toEqual(asked.ask) // untouched: same id, same anchor (still A)
+    expect(state.chip).toEqual(B) // the chip still tracks the live selection
+  })
+
+  test('clear (chip-only) does not close ask', () => {
+    const asked = run([{ type: 'select', anchor: A, dirty: false }, { type: 'askActivate' }, { type: 'clear' }])
+    expect(asked.ask).not.toBeNull()
+    expect(asked.chip).toBeNull()
+  })
+
+  test('clickAway with dirty:true leaves ask open (nothing to lose, but nothing forces it shut either)', () => {
+    const asked = run([{ type: 'select', anchor: A, dirty: false }, { type: 'askActivate' }])
+    const state = stepPopover(asked, { type: 'clickAway', dirty: true })
+    expect(state.ask).toEqual(asked.ask)
+  })
+
+  test('clickAway with dirty:false closes ask', () => {
+    const asked = run([{ type: 'select', anchor: A, dirty: false }, { type: 'askActivate' }])
+    const state = stepPopover(asked, { type: 'clickAway', dirty: false })
+    expect(state.ask).toBeNull()
+  })
+
+  test('dismiss closes ask', () => {
+    const asked = run([{ type: 'select', anchor: A, dirty: false }, { type: 'askActivate' }])
+    const state = stepPopover(asked, { type: 'dismiss' })
+    expect(state.ask).toBeNull()
+  })
+})
+
 describe('saving(A) -> select(B) -> saveSettled(ok,A) leaves B live', () => {
   test('a settle whose id no longer matches the open composer clears saving and NOTHING else', () => {
     const savingA = run([{ type: 'select', anchor: A, dirty: false }, { type: 'activate' }, { type: 'submit' }])

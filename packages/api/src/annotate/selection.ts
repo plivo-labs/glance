@@ -18,10 +18,19 @@
 // collapses the old one — so the parent can retire a stale chip. It can never open a composer.
 
 import type { TextContext } from '../lib/anchor'
-import { selectionContext } from './locator'
+import { NON_RENDERED_TAGS, selectionContext } from './locator'
 
 export type Rect = { top: number; left: number; width: number; height: number }
-export type SelectMessage = { type: 'glance:select'; quote: string; context: TextContext; rect: Rect }
+export type SelectMessage = {
+  type: 'glance:select'
+  quote: string
+  context: TextContext
+  rect: Rect
+  /** The visible text of the selection's enclosing block element — the "context" an AI answer about
+   *  the selection gets. Always the whole block, never the whole page: a paragraph is enough to
+   *  disambiguate the quote, and the page could be arbitrarily large. Omitted when empty. */
+  blockText?: string
+}
 export type ClearMessage = { type: 'glance:select-clear' }
 /** The user touched the page — the parent should consider closing whatever popover it has open. The
  *  parent CANNOT see this for itself: clicks inside a cross-origin iframe are invisible to it. */
@@ -34,11 +43,17 @@ export type EscapeMessage = { type: 'glance:escape' }
  *  the selection survived here), so the parent's reducer is the authority on whether it means
  *  anything. See commentPopover.ts's 'commentKey'. */
 export type CommentKeyMessage = { type: 'glance:comment-key' }
+/** `A` pressed while a selection is live: "ask AI about this", the same keyboard route as the
+ *  comment key. Payload-free INTENT, fired under the identical gate — this realm can't see whether
+ *  the parent still has UI open for the selection, so the parent's reducer is the authority. */
+export type AskKeyMessage = { type: 'glance:ask-key' }
 
 export type SelectionDeps = {
   doc: Document
   getSelection: () => Selection | null
-  emit: (msg: SelectMessage | ClearMessage | ClickAwayMessage | EscapeMessage | CommentKeyMessage) => void
+  emit: (
+    msg: SelectMessage | ClearMessage | ClickAwayMessage | EscapeMessage | CommentKeyMessage | AskKeyMessage,
+  ) => void
 }
 
 /** Keys a keyup commits on. A BARE keyup is too wide: it would re-walk the whole document text index
@@ -53,9 +68,74 @@ function isSelectionKey(e: KeyboardEvent): boolean {
   return SELECTION_KEYS.has(e.key) || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a')
 }
 
-/** Bare `c` only: ⌘C/^C is copy, and stealing it would break the most common thing anyone does with
- *  a selection. Shift is allowed through — capital `C` is the same key press. */
-const isCommentKey = (e: KeyboardEvent): boolean => e.key.toLowerCase() === 'c' && !e.ctrlKey && !e.metaKey && !e.altKey
+/** A bare letter key, no modifiers: ⌘/^/⌥ are reserved for the browser (copy, select-all, ...) and
+ *  stealing one of those chords would break the most common thing anyone does with a selection.
+ *  Shift is allowed through — capital is the same key press. Shared by every single-letter intent
+ *  below so the modifier check lives in exactly one place. */
+const bareKey = (e: KeyboardEvent, key: string): boolean =>
+  e.key.toLowerCase() === key && !e.ctrlKey && !e.metaKey && !e.altKey
+
+// Block-level tags a selection's context is bounded to — see nearestBlockText.
+const BLOCK_TAGS = new Set([
+  'P',
+  'LI',
+  'TD',
+  'TH',
+  'DD',
+  'DT',
+  'BLOCKQUOTE',
+  'PRE',
+  'FIGCAPTION',
+  'H1',
+  'H2',
+  'H3',
+  'H4',
+  'H5',
+  'H6',
+  'SECTION',
+  'ARTICLE',
+  'DIV',
+])
+const BLOCK_TEXT_LIMIT = 2000
+
+/** The enclosing block's text for a committed range: walk up from the range's common ancestor (a
+ *  text node's parent, since a text node itself is never a block) to the nearest block-level
+ *  element, falling back to the whole body if none is found. This is deliberately the WHOLE element,
+ *  not a snippet around the quote — it's the context an AI answer about the selection gets, and an
+ *  answer needs the paragraph, not a truncated fragment of it. */
+function nearestBlockText(range: Range, doc: Document): string | undefined {
+  // 3 === Node.TEXT_NODE, as a literal: happy-dom (the unit-test DOM) doesn't register the `Node`
+  // global, same reasoning as the NodeFilter constants in locator.ts.
+  const start = range.commonAncestorContainer
+  let el: Element | null = start.nodeType === 3 ? start.parentElement : (start as Element)
+  while (el && el !== doc.body && !BLOCK_TAGS.has(el.tagName)) el = el.parentElement
+  const collapsed = visibleText(el ?? doc.body)
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, BLOCK_TEXT_LIMIT)
+  return collapsed || undefined
+}
+
+/** textContent minus locator.ts's NON_RENDERED_TAGS: glance pages are single-file HTML with inline
+ *  <script>/<style> in the body, and a wrapper DIV (or the doc.body fallback) reached above would
+ *  otherwise ship JS/CSS source as the AI's "passage" — crowding the real paragraph out of the
+ *  2000-char cap. Collection stops early once enough raw text is in hand: whitespace collapsing
+ *  only ever shrinks, so 2× the cap of raw chars always covers the post-collapse limit. */
+function visibleText(root: Element): string {
+  let out = ''
+  const walk = (node: Node): boolean => {
+    if (out.length >= BLOCK_TEXT_LIMIT * 2) return false
+    if (node.nodeType === 3) {
+      out += node.nodeValue ?? ''
+      return true
+    }
+    if (NON_RENDERED_TAGS.has((node as Element).tagName)) return true
+    for (let child = node.firstChild; child; child = child.nextSibling) if (!walk(child)) return false
+    return true
+  }
+  walk(root)
+  return out
+}
 
 /** Is the keystroke going INTO a field on the hosted page? The chip gate below is normally enough
  *  (focusing a field collapses the page selection, which retires the chip) — but a contenteditable
@@ -101,6 +181,7 @@ export function installSelectionCapture({ doc, getSelection, emit }: SelectionDe
       quote,
       context: selectionContext(range, doc),
       rect: { top: box.top, left: box.left, width: box.width, height: box.height },
+      blockText: nearestBlockText(range, doc),
     })
   }
 
@@ -117,12 +198,13 @@ export function installSelectionCapture({ doc, getSelection, emit }: SelectionDe
   // keydown, not keyup: Escape must reach the parent BEFORE the page's own handlers act on it. No
   // drag-commit concern here, so nothing is gained by waiting for the key to come back up.
   //
-  // `c` rides the same handler, gated on `hadSelection` — the parent was told there is something to
-  // comment on and has not been told otherwise. That gate is what keeps this from being a key
-  // grabber: with no selection outstanding, `c` is just a letter on someone else's page.
+  // `c` and `a` ride the same handler, gated on `hadSelection` — the parent was told there is
+  // something to act on and has not been told otherwise. That gate is what keeps this from being a
+  // key grabber: with no selection outstanding, `c`/`a` are just letters on someone else's page.
   const onKeyDown = (e: KeyboardEvent): void => {
     if (e.key === 'Escape') emit({ type: 'glance:escape' })
-    else if (hadSelection && isCommentKey(e) && !isEditableTarget(e.target)) emit({ type: 'glance:comment-key' })
+    else if (hadSelection && bareKey(e, 'c') && !isEditableTarget(e.target)) emit({ type: 'glance:comment-key' })
+    else if (hadSelection && bareKey(e, 'a') && !isEditableTarget(e.target)) emit({ type: 'glance:ask-key' })
   }
 
   doc.addEventListener('pointerup', commit)

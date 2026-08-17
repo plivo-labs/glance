@@ -36,7 +36,7 @@ const FILTER_REJECT = 2
 
 // Text inside these never renders (or isn't laid-out content), so a quote whose words happen to also
 // appear there — most often an inline chart-data <script> — must not anchor to it.
-const NON_RENDERED_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA', 'TEMPLATE'])
+export const NON_RENDERED_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA', 'TEMPLATE'])
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

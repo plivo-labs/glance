@@ -8,7 +8,15 @@
 
 import type { TextContext } from '@/lib/comments'
 
-export type SelectIntent = { type: 'select'; quote: string; context?: TextContext; rect?: DOMRectLike }
+export type SelectIntent = {
+  type: 'select'
+  quote: string
+  context?: TextContext
+  rect?: DOMRectLike
+  /** The selection's enclosing element's text — extra context sent to the AI on "Ask" (Step 12+).
+   *  Clamped like the quote, never rejected: it is a nice-to-have, not the anchor. */
+  blockText?: string
+}
 export type ReadyIntent = { type: 'ready'; filePath: string }
 export type ClearIntent = { type: 'clear' }
 /** Dismissal signals forwarded from inside the iframe: the parent cannot observe a click or a
@@ -25,6 +33,10 @@ export type CommentKeyIntent = { type: 'commentKey' }
  *  here: `id` is a thread id the parent looks up in its OWN loaded threads, so a forged one that
  *  matches nothing simply reveals nothing. */
 export type AnchorClickIntent = { type: 'anchorClick'; id: string }
+/** `⌘/Ctrl+K`-style "ask" shortcut pressed on a live selection inside the frame. Fired liberally
+ *  by the annotate client, which cannot see the parent's popover state; the reducer decides
+ *  whether there is anything to open — same contract as `CommentKeyIntent`. */
+export type AskKeyIntent = { type: 'askKey' }
 export type Intent =
   | SelectIntent
   | ReadyIntent
@@ -33,6 +45,7 @@ export type Intent =
   | EscapeIntent
   | CommentKeyIntent
   | AnchorClickIntent
+  | AskKeyIntent
 
 export type DOMRectLike = { top: number; left: number; width: number; height: number }
 
@@ -84,10 +97,11 @@ export function parseIntent(event: MessageEvent, expected: ExpectedSource): Inte
 
   switch ((data as { type?: unknown }).type) {
     case 'glance:select': {
-      const d = data as { quote?: unknown; context?: unknown; rect?: unknown }
+      const d = data as { quote?: unknown; context?: unknown; rect?: unknown; blockText?: unknown }
       const quote = clamp(d.quote)
       if (!quote) return null
-      return { type: 'select', quote, context: context(d.context), rect: rect(d.rect) }
+      const blockText = clamp(d.blockText) || undefined
+      return { type: 'select', quote, context: context(d.context), rect: rect(d.rect), blockText }
     }
     // Element ("pinpoint") comment creation is dropped (slice C2a) — this parent no longer sends
     // glance:pending/composes on it. A STALE cached bundle (an old client.ts still running in
@@ -101,6 +115,8 @@ export function parseIntent(event: MessageEvent, expected: ExpectedSource): Inte
       return { type: 'escape' }
     case 'glance:comment-key':
       return { type: 'commentKey' }
+    case 'glance:ask-key':
+      return { type: 'askKey' }
     case 'glance:anchor-click': {
       const id = str((data as { id?: unknown }).id)
       return id ? { type: 'anchorClick', id } : null
