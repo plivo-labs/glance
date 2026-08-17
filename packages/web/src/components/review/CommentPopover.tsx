@@ -310,10 +310,19 @@ function AskPanel({
               </div>
             ) : turn.answer ? (
               <Suspense fallback={<p className="whitespace-pre-wrap text-sm">{turn.answer}</p>}>
-                <Streamdown className="text-sm">{turn.answer}</Streamdown>
+                {/* isAnimating = Streamdown's built-in token fade-in while chunks arrive. */}
+                <Streamdown className="text-sm" isAnimating={turn.status === 'streaming'}>
+                  {turn.answer}
+                </Streamdown>
               </Suspense>
             ) : (
-              <p className="text-muted-foreground text-xs">Thinking…</p>
+              /* The pre-first-token wait: the chip's own sparkle pulsing beside shimmering text.
+                 Classes live in tailwind.css (ask-sparkle / ask-shimmer) with a reduced-motion
+                 collapse to static text. */
+              <span className="inline-flex items-center gap-1.5">
+                <Sparkles className="ask-sparkle size-3.5" aria-hidden />
+                <span className="ask-shimmer text-xs">Thinking…</span>
+              </span>
             )}
           </div>
         ))}
