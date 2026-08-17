@@ -1,12 +1,16 @@
 import { MessageSquarePlus, Sparkles, X } from 'lucide-react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Anchor, PopoverState } from '@/lib/commentPopover'
 import type { DOMRectLike } from '@/lib/parseIntent'
 import type { MentionUser } from '@/lib/mentions'
 import { ApiError } from '@/lib/api'
-import { renderMarkdown } from '@/lib/markdown'
 import { Composer } from '@/components/review/Composer'
 import { Button } from '@/components/ui/button'
+
+// Streamdown is ~135KB gz — lazy, so the viewer route stays lean and only opening the ask panel
+// pays for it. Suspense falls back to the raw markdown text, so tokens are never invisible while
+// the chunk loads.
+const Streamdown = lazy(() => import('streamdown').then((m) => ({ default: m.Streamdown })))
 
 // In-page comment affordance: a chip pinned to the selection, and the popover its click opens.
 // Pure rendering of the A1 reducer's state (lib/commentPopover) — every transition is the parent's.
@@ -128,12 +132,18 @@ export function CommentPopover({
   )
 }
 
-// Shared by the streaming (plain text) and settled (markdown) renderings of the answer box below,
-// so the swap between them is invisible: same border, same prose styles, same scroll box.
-const ANSWER_CLASS =
-  'mt-2 overflow-y-auto rounded-md border bg-muted/30 px-3 py-2 text-sm [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-xs [&_li]:my-0.5 [&_p]:my-1.5 [&_strong]:font-semibold [&_ul]:my-1.5 [&_ul]:list-disc [&_ul]:pl-5'
+// Opening the panel asks this immediately — the user reached for "Ask" wanting the selection
+// explained, so the first answer starts streaming with zero typing. Follow-ups are typed.
+const DEFAULT_QUESTION = 'Explain this'
 
-// The "Ask AI about the selection" panel: a local idle → streaming → done | error state machine.
+// One question→answer exchange. Each is an independent API call — the server holds no
+// conversation; the selection (quote + blockText) is the context every turn re-sends.
+type Turn = { q: string; answer: string; status: 'streaming' | 'done' | 'error'; error?: string }
+
+// The "Ask AI about the selection" panel: auto-asks DEFAULT_QUESTION on open, then takes typed
+// follow-ups, keeping every turn on screen. Answers render through Streamdown WHILE streaming —
+// it parses incomplete markdown per chunk (an unclosed ** or ``` renders sensibly mid-stream) and
+// sanitizes by default, which is why the marked-based parse-once path could go.
 // Not reused anywhere else, so it stays private to this file rather than becoming its own module.
 function AskPanel({
   ask,
@@ -153,8 +163,6 @@ function AskPanel({
   // Re-armed whenever the user scrolls back to the bottom — disarmed the moment they scroll up, so
   // reading an earlier part of a growing answer isn't yanked back down on the next token.
   const stickToBottom = useRef(true)
-  // Gates the refocus effect below to POST-submit resets only: the initial mount already autofocuses.
-  const submittedOnce = useRef(false)
 
   // Which side of the anchor the panel sits on, decided ONCE at open — never mid-stream, or a
   // growing answer would flip the panel out from under the user's cursor. Starts 'below' (today's
@@ -175,68 +183,76 @@ function AskPanel({
   }, [])
 
   const [question, setQuestion] = useState('')
-  const [status, setStatus] = useState<'idle' | 'streaming' | 'done' | 'error'>('idle')
-  const [answer, setAnswer] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  const [turns, setTurns] = useState<Turn[]>([])
+  const lastTurn = turns[turns.length - 1]
+  const streaming = lastTurn?.status === 'streaming'
 
-  // Dirty per the reducer's contract: text typed, a stream in flight, or an answer on screen —
-  // false the instant the panel resets to idle or unmounts.
-  const dirty = question.trim().length > 0 || status === 'streaming' || status === 'done'
+  // Dirty from mount to unmount: the auto-asked first turn means there is ALWAYS an answer (or a
+  // stream) on screen, so per the reducer's contract click-away never closes this panel — only the
+  // ✕, Escape, or opening the comment composer do.
   useEffect(() => {
-    onDirtyChange?.(dirty)
+    onDirtyChange?.(true)
     return () => onDirtyChange?.(false)
-  }, [dirty, onDirtyChange])
+  }, [onDirtyChange])
 
-  // Abort an in-flight stream on unmount: dismiss (Escape/click-away) unmounts this panel, and a
-  // stream nobody is listening to anymore should stop being fetched, not just stop being rendered.
+  // Abort an in-flight stream on unmount: dismiss (Escape/✕) unmounts this panel, and a stream
+  // nobody is listening to anymore should stop being fetched, not just stop being rendered.
   useEffect(() => () => abortRef.current?.abort(), [])
 
-  useEffect(() => {
-    if (submittedOnce.current && status === 'idle') textareaRef.current?.focus()
-  }, [status])
-
-  // `answer` is read only via the DOM (scrollHeight), never in the body below — but it's what
-  // must re-run this on every token, so it stays in the deps despite that.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `answer` drives re-runs, not the body.
-  useEffect(() => {
-    if (status !== 'streaming' || !stickToBottom.current) return
-    const el = answerRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [answer, status])
+  const patchLast = (patch: Partial<Turn>) =>
+    setTurns((ts) => ts.map((t, i) => (i === ts.length - 1 ? { ...t, ...patch } : t)))
 
   async function run(q: string) {
-    setStatus('streaming')
-    setAnswer('')
-    setError(null)
+    setTurns((ts) => [...ts, { q, answer: '', status: 'streaming' }])
     stickToBottom.current = true
     const controller = new AbortController()
     abortRef.current = controller
     try {
-      await onAsk(q, ask.anchor, (t) => setAnswer((a) => a + t), controller.signal)
-      setStatus('done')
+      await onAsk(
+        q,
+        ask.anchor,
+        (t) =>
+          setTurns((ts) => ts.map((turn, i) => (i === ts.length - 1 ? { ...turn, answer: turn.answer + t } : turn))),
+        controller.signal,
+      )
+      patchLast({ status: 'done' })
+      textareaRef.current?.focus() // the follow-up box is the natural next stop
     } catch (err) {
       if (controller.signal.aborted) return // torn down on unmount — nothing left to show
-      setError(err instanceof ApiError ? err.message : 'Something went wrong')
-      setStatus('error')
+      patchLast({ status: 'error', error: err instanceof ApiError ? err.message : 'Something went wrong' })
     } finally {
       abortRef.current = null
     }
   }
 
+  // The zero-typing open: asking IS the intent behind pressing Ask, so the default question fires
+  // immediately. Mount-only — a new selection mints a new ask id, which remounts this panel.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fires once, on mount.
+  useEffect(() => {
+    void run(DEFAULT_QUESTION)
+  }, [])
+
+  // Stick the turn list to its bottom while an answer streams (see stickToBottom above).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `turns` drives re-runs, not the body.
+  useEffect(() => {
+    if (!streaming || !stickToBottom.current) return
+    const el = answerRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [turns, streaming])
+
   function submit() {
     const q = question.trim()
-    // idle only: the textarea stays focusable after submit (readOnly, see below), so Enter still
-    // reaches this — on 'done' it must not silently re-run the same question.
-    if (!q || status !== 'idle') return
-    submittedOnce.current = true
+    if (!q || streaming) return
+    setQuestion('')
     void run(q)
   }
 
-  function askAnother() {
-    setQuestion('')
-    setAnswer('')
-    setError(null)
-    setStatus('idle')
+  /** Re-run the errored turn's question, replacing it — a dead turn is not history worth keeping. */
+  function retry() {
+    const q = lastTurn?.q
+    if (!q || streaming) return
+    setTurns((ts) => ts.slice(0, -1))
+    void run(q)
   }
 
   const style =
@@ -270,15 +286,49 @@ function AskPanel({
           <X className="size-3.5" />
         </button>
       </div>
+      {/* Every turn stays on screen — a follow-up reads against the answer it follows. One shared
+          scroll box so the whole exchange caps at the panel max, not each answer separately. */}
+      <div
+        ref={answerRef}
+        onScroll={(e) => {
+          const el = e.currentTarget
+          stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 4
+        }}
+        style={{ maxHeight: 'min(45vh, 320px)' }}
+        className="overflow-y-auto rounded-md border bg-muted/30 px-3 py-2"
+      >
+        {turns.map((turn, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: turns are append-only (an errored one is replaced in place); index identity is exactly their identity.
+          <div key={i} className={i > 0 ? 'mt-2 border-border/60 border-t pt-2' : undefined}>
+            <p className="mb-1 font-medium text-[11px] text-muted-foreground">{turn.q}</p>
+            {turn.status === 'error' ? (
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-destructive text-xs">{turn.error}</span>
+                <Button type="button" size="sm" variant="outline" onClick={retry}>
+                  Retry
+                </Button>
+              </div>
+            ) : turn.answer ? (
+              <Suspense fallback={<p className="whitespace-pre-wrap text-sm">{turn.answer}</p>}>
+                <Streamdown className="text-sm">{turn.answer}</Streamdown>
+              </Suspense>
+            ) : (
+              <p className="text-muted-foreground text-xs">Thinking…</p>
+            )}
+          </div>
+        ))}
+      </div>
+
       <textarea
         ref={textareaRef}
-        // biome-ignore lint/a11y/noAutofocus: panel is opened by an explicit user action.
+        // The panel is opened by an explicit user action, and the first question is auto-asked —
+        // the follow-up box is where the keyboard belongs next.
+        // biome-ignore lint/a11y/noAutofocus: opened by explicit user action
         autoFocus
         value={question}
-        // readOnly, NOT disabled: a disabled textarea drops focus, and with focus outside the panel
-        // its Escape handler below never fires — the answered panel became undismissable from the
-        // keyboard. readOnly locks the text the same way but keeps focus (and Escape) alive.
-        readOnly={status !== 'idle'}
+        // readOnly, NOT disabled, while streaming: a disabled textarea drops focus, and with focus
+        // outside the panel its Escape handler above never fires.
+        readOnly={streaming}
         onChange={(e) => setQuestion(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && !e.shiftKey) {
@@ -286,60 +336,11 @@ function AskPanel({
             submit()
           }
         }}
-        placeholder="Ask about this selection…"
-        rows={2}
-        className="w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none placeholder:text-muted-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 read-only:opacity-70"
+        placeholder="Ask a follow-up…"
+        rows={1}
+        className="mt-2 w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none placeholder:text-muted-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 read-only:opacity-70"
       />
-
-      {/* Markdown is parsed ONCE, when the answer settles: re-running Marked over the whole buffer
-          per token is O(n²) across a long answer, and half-open constructs mid-stream (an unclosed
-          ``` fence) render as flickering malformed HTML. While streaming, the raw text pre-wraps —
-          also the graceful shape if the model buffers the entire completion into one delta. */}
-      {status === 'streaming' && (
-        <div
-          ref={answerRef}
-          onScroll={(e) => {
-            const el = e.currentTarget
-            stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 4
-          }}
-          style={{ maxHeight: 'min(45vh, 320px)' }}
-          className={`${ANSWER_CLASS} whitespace-pre-wrap`}
-        >
-          {answer}
-        </div>
-      )}
-      {status === 'done' && (
-        <div
-          style={{ maxHeight: 'min(45vh, 320px)' }}
-          className={ANSWER_CLASS}
-          // biome-ignore lint/security/noDangerouslySetInnerHtml: html is escaped by the client-side twin of the api's hardened Marked config (lib/markdown.ts), not passed through
-          dangerouslySetInnerHTML={{ __html: renderMarkdown(answer) }}
-        />
-      )}
-
-      {status === 'error' ? (
-        <div className="mt-2 flex items-center justify-between gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2">
-          <span className="text-destructive text-xs">{error}</span>
-          <Button type="button" size="sm" variant="outline" onClick={() => void run(question.trim())}>
-            Retry
-          </Button>
-        </div>
-      ) : (
-        <div className="mt-2 flex items-center justify-between gap-2">
-          <span className="text-[11px] text-muted-foreground">
-            {status === 'done' ? 'AI · not saved' : 'not saved'}
-          </span>
-          {status === 'done' ? (
-            <Button type="button" size="sm" variant="outline" onClick={askAnother}>
-              Ask another
-            </Button>
-          ) : (
-            <Button type="button" size="sm" disabled={!question.trim() || status === 'streaming'} onClick={submit}>
-              Ask
-            </Button>
-          )}
-        </div>
-      )}
+      <p className="mt-1 text-right text-[10px] text-muted-foreground">AI · not saved</p>
     </div>
   )
 }
