@@ -49,10 +49,14 @@
   // must use `wrangler dev --local` (the `dev` script does), which disables this binding so env.AI
   // is undefined and transcription falls back — no Cloudflare login required just to run the app.
   "ai": { "binding": "AI", "remote": true },
-  // Hourly synthetic stats visitor (src/index.ts `scheduled`): each run refreshes only the stats
-  // KV halves past their soft TTL — window hourly, totals daily — so the admin dashboard always
-  // reads fresh KV and never pays the ~33k-row D1 rollup inline on a request.
-  "triggers": { "crons": ["0 * * * *"] },
+  // Two cron ticks into the same `scheduled` handler (src/index.ts), branched by `event.cron`:
+  //   "0 * * * *"  — hourly synthetic stats visitor: refreshes only the stats KV halves past
+  //                  their soft TTL (window hourly, totals daily), so the admin dashboard always
+  //                  reads fresh KV and never pays the ~33k-row D1 rollup inline on a request.
+  //   "0 3 * * *"  — daily retention purge (lib/retention.ts, issue #82): deletes events older
+  //                  than 90 days and read notifications older than 30 days. Daily, not hourly —
+  //                  nothing here needs to run more often than once a day.
+  "triggers": { "crons": ["0 * * * *", "0 3 * * *"] },
   // Free, no Cloudflare zone needed (unlike WAF rules, which don't apply to *.workers.dev).
   // 10 upload requests / 60s per client IP. period must be 10 or 60.
   "ratelimits": [

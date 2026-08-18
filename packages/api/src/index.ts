@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { secureHeaders } from 'hono/secure-headers'
 import { sessionDb, withDb } from './db/client'
 import { superadminExists } from './db/repo'
+import { purgeRetention } from './lib/retention'
 import { cachedStats } from './lib/stats'
 import { GLANCE_DB_JS } from './glancedb/bundle'
 import { buildPublicConfig } from './lib/bootstrap'
@@ -137,15 +138,26 @@ app.route('/api/slack', slackEvents)
 // or the SITE_ROOM binding (class_name: "SiteRoom") fails to resolve at deploy time.
 export { SiteRoom } from './realtime/site-room'
 
+// Two cron ticks land on the same handler (wrangler.jsonc `triggers.crons`); branch on the cron
+// expression rather than running both jobs on every tick.
+const DAILY_PURGE_CRON = '0 3 * * *'
+
 // Hourly synthetic stats visitor (issue #102, Option A). cachedStats already models
 // refresh-only-when-stale, so a cron tick is just a caller on a fixed clock: each run recomputes
 // only the halves past their soft TTL (window hourly, totals daily) and rewrites their KV
 // entries, keeping GET /api/admin/stats on fresh KV with zero inline D1 compute. The defer is an
 // inline await — there is no visitor waiting on this response, so nothing needs to run behind it.
+//
+// Daily retention purge (issue #82): trims `events` (90d) and read `notifications` (30d) — see
+// lib/retention.ts for the delete shapes and how it preserves stats.ts's all-time totals.
 export default {
   fetch: app.fetch,
-  async scheduled(_event, env, _ctx) {
+  async scheduled(event, env, _ctx) {
     const db = sessionDb(env.GLANCE_DB, 'first-unconstrained')
+    if (event.cron === DAILY_PURGE_CRON) {
+      await purgeRetention(db)
+      return
+    }
     await cachedStats(env.GLANCE_SESSIONS, db, (p) => p.then(() => {}))
   },
 } satisfies ExportedHandler<Bindings>
