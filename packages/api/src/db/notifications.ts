@@ -25,7 +25,7 @@ const now = () => new Date().toISOString()
 const NOTIFICATION_INSERT_COLUMN_COUNT = 11
 const NOTIFICATION_ROWS_PER_INSERT = Math.floor(D1_MAX_BOUND_PARAMETERS / NOTIFICATION_INSERT_COLUMN_COUNT)
 
-/** One row to raise. `type` is required ('mention' | 'comment'); id + createdAt are generated.
+/** One row to raise. `type` is required ('mention' | 'comment' | 'share'); id + createdAt are generated.
  *  All targets are optional so a row survives (via denormalized `siteLabel`) after the site/thread/
  *  comment it points at is gone — see the SET NULL FKs in schema. */
 export type NotificationInput = {
@@ -78,10 +78,11 @@ export async function createNotifications(db: DrizzleD1Database, rows: Notificat
 
 /** Why a comment recipient is in the audience — drives the Slack verb (the in-app D1 row stays
  *  `type='comment'`, no migration). Precedence owner > participant > share. Derived from SlackReason
- *  minus 'mention' so the "SlackReason ⊇ CommentAudienceReason" invariant (relied on by the audience
- *  spread in comments.ts) is compiler-guaranteed, not comment-synced. Type-only import — erased at
- *  runtime, and db→lib is the existing dependency direction (cf. lib/access). */
-export type CommentAudienceReason = Exclude<SlackReason, 'mention'>
+ *  minus 'mention' (mentions win upstream) and 'shared' (the non-comment share event) so the
+ *  "SlackReason ⊇ CommentAudienceReason" invariant (relied on by the audience spread in comments.ts)
+ *  is compiler-guaranteed, not comment-synced. Type-only import — erased at runtime, and db→lib is
+ *  the existing dependency direction (cf. lib/access). */
+export type CommentAudienceReason = Exclude<SlackReason, 'mention' | 'shared'>
 export type CommentRecipient = { id: string; reason: CommentAudienceReason }
 
 /** Resolve the normal comment audience from targeted facts, excluding the actor and any mention

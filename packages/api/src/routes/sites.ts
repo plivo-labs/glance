@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
-import { Hono } from 'hono'
+import { type Context, Hono } from 'hono'
+import { createNotifications, usersEmailsByIds } from '../db/notifications'
 import {
   type ShareUser,
   foldMemberSpaceIds,
@@ -18,10 +19,12 @@ import type { Visibility } from '../db/schema'
 import { files as filesTable, siteStars, sites as sitesTable, spaces, users } from '../db/schema'
 import { canReplace, checkAccess } from '../lib/access'
 import { batchAll, chunk, D1_MAX_IN, FEED_ID_CHUNK } from '../lib/d1'
+import { fireAndForget } from '../lib/events'
 import { resolveIndexPath } from '../lib/extract'
 import { siteFeedColumns, toFeedRow } from '../lib/site-feed'
 import { readSessionOrBearer } from '../lib/session'
 import { fetchAccessFacts, isSharedFromFacts, resolveSite, resolveSiteForAccess } from '../lib/site-access'
+import { deliverSlack, type SlackRecipient, slackDepsFromEnv, slackEnabled } from '../lib/slack'
 import { isValidSlug } from '../lib/slug'
 import { copyObjects, deleteKeys, deleteSiteObjects } from '../lib/storage'
 import { signToken } from '../lib/token'
@@ -430,6 +433,49 @@ export function parseShareGrants(body: unknown): { users: ShareUser[]; groupIds:
   return { users: [...roles].map(([userId, role]) => ({ userId, role })), groupIds }
 }
 
+/** Raise `type='share'` notifications (+ the Slack DM mirror) for users NEWLY granted a direct
+ *  share — never group grants, never re-grants, never the actor. Mirrors notifyForComment: the
+ *  whole body rides fireAndForget with a catch-all, so a notification fault never blocks or fails
+ *  the share that already committed. */
+async function notifyForShare(c: Context<AppEnv>, siteId: string, recipientIds: string[]): Promise<void> {
+  if (recipientIds.length === 0) return
+  const actor = c.get('user')
+  const db = c.get('db')
+  const { spaceSlug, siteSlug } = c.req.param()
+  const siteLabel = `${spaceSlug}/${siteSlug}`
+  await fireAndForget(
+    c,
+    (async () => {
+      try {
+        await createNotifications(
+          db,
+          recipientIds.map((recipientId) => ({
+            recipientId,
+            type: 'share' as const,
+            actorId: actor.id,
+            siteId,
+            siteLabel,
+          })),
+        )
+        if (!slackEnabled(c.env.SLACK_BOT_TOKEN)) return
+        const emails = await usersEmailsByIds(db, recipientIds)
+        const recipients: SlackRecipient[] = recipientIds.map((id) => ({
+          id,
+          email: emails.get(id) ?? null,
+          reason: 'shared' as const,
+        }))
+        await deliverSlack(
+          slackDepsFromEnv(c.env),
+          { actorName: actor.name, actorEmail: actor.email, siteLabel, filePath: null, threadId: null, snippet: null },
+          recipients,
+        )
+      } catch {
+        // Notifications are best-effort — never surface to the caller (mirrors notifyForComment).
+      }
+    })(),
+  )
+}
+
 // GET /api/sites/:spaceSlug/:siteSlug/shares — owner-only: current explicit share lists.
 sites.get('/:spaceSlug/:siteSlug/shares', requireAuth, async (c) => {
   const user = c.get('user')
@@ -477,7 +523,15 @@ sites.put('/:spaceSlug/:siteSlug/shares', requireAuth, requireControlGrant, asyn
       ).map((r) => r.id)
     : []
 
+  // Diff BEFORE the replace so only newly granted users are notified (a re-PUT of the same set,
+  // a role change, or a group grant raises nothing).
+  const prior = new Set((await listSiteShares(db, site.id)).userIds)
   await replaceSiteShares(db, site.id, validUsers, validGroups)
+  await notifyForShare(
+    c,
+    site.id,
+    validUsers.map((u) => u.userId).filter((id) => !prior.has(id) && id !== user.id),
+  )
   return c.json({
     ok: true,
     userIds: validUsers.map((u) => u.userId),
