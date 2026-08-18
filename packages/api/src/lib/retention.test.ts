@@ -10,19 +10,19 @@ const defer = (p: Promise<unknown>) => p.then(() => undefined)
 const daysAgo = (n: number) => new Date(NOW.getTime() - n * 24 * 60 * 60 * 1000).toISOString()
 
 describe('purgeRetention', () => {
-  test('deletes events older than the retention window, keeps young ones', async () => {
+  test('deletes old view events, keeps young ones and ALL cli events', async () => {
     const db = makeDb()
     const old = await seedEvent(db, { type: 'view', createdAt: daysAgo(EVENTS_RETENTION_DAYS + 1) })
     const young = await seedEvent(db, { type: 'view', createdAt: daysAgo(EVENTS_RETENTION_DAYS - 1) })
+    // cli rows survive any age: /me's hasUsedCli EXISTS probe reads them (purge unblocks with #85).
     const oldCli = await seedEvent(db, { type: 'cli', action: 'upload', createdAt: daysAgo(EVENTS_RETENTION_DAYS + 1) })
 
     await purgeRetention(db, NOW)
 
     const remaining = await db.select({ id: events.id }).from(events)
     const ids = remaining.map((r) => r.id).sort()
-    expect(ids).toEqual([young].sort())
+    expect(ids).toEqual([young, oldCli].sort())
     expect(ids).not.toContain(old)
-    expect(ids).not.toContain(oldCli)
   })
 
   test('deletes READ notifications older than 30 days, keeps young reads and ALL unread', async () => {

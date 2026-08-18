@@ -13,14 +13,16 @@ const DAY_MS = 24 * 60 * 60 * 1000
 const cutoff = (now: Date, days: number) => new Date(now.getTime() - days * DAY_MS).toISOString()
 
 /**
- * Deletes events older than EVENTS_RETENTION_DAYS and READ notifications (readAt IS NOT NULL)
+ * Deletes VIEW events older than EVENTS_RETENTION_DAYS and READ notifications (readAt IS NOT NULL)
  * older than READ_NOTIFICATIONS_RETENTION_DAYS. Unread notifications are kept forever — both
  * tables are safe to hard-delete per their FK design (SET NULL on siteId/userId/etc, with
  * denormalized siteLabel), so nothing else needs to change on delete.
  *
- * Split into two typed deletes (`type = 'view'` / `type = 'cli'`) rather than one bare
- * `createdAt < cutoff` scan: `events_type_created (type, createdAt)` already indexes exactly that
- * shape (see db/schema.ts), so no new index is needed for events.
+ * 'cli' events are deliberately NOT purged: /api/auth/me derives `hasUsedCli` from an EXISTS probe
+ * over them (routes/auth.ts), so deleting old rows would flip long-time CLI users back to "never
+ * used CLI" and resurface the install banner. Purge them once #85 denormalizes the flag onto
+ * `users`. The typed `type = 'view'` predicate rides the existing `events_type_created
+ * (type, createdAt)` index (see db/schema.ts), so no new index is needed for events.
  */
 export async function purgeRetention(db: DrizzleD1Database, now: Date = new Date()): Promise<void> {
   const eventsCutoff = cutoff(now, EVENTS_RETENTION_DAYS)
@@ -46,7 +48,6 @@ export async function purgeRetention(db: DrizzleD1Database, now: Date = new Date
   }
 
   await db.delete(events).where(and(eq(events.type, 'view'), lt(events.createdAt, eventsCutoff)))
-  await db.delete(events).where(and(eq(events.type, 'cli'), lt(events.createdAt, eventsCutoff)))
 
   await db
     .delete(notifications)
