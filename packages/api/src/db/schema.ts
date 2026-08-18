@@ -348,8 +348,12 @@ export const notifications = sqliteTable(
     createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
   },
   (t) => [
-    // Unread count + list for one recipient in a single index scan, newest-first.
+    // Unread count for one recipient in a single index scan.
     index('notifications_recipient_read_created').on(t.recipientId, t.readAt, t.createdAt),
+    // The list query orders by createdAt only (readAt isn't a predicate there), so it needs
+    // recipientId+createdAt leading — readAt in the middle of the index above can't serve that
+    // ordering and forces a full recipient scan + temp sort.
+    index('notifications_recipient_created').on(t.recipientId, t.createdAt),
     // Supports comment FK maintenance when a comment is hard-deleted through a site/thread cascade.
     index('notifications_comment').on(t.commentId),
   ],
