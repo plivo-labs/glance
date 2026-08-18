@@ -50,3 +50,27 @@ describe('scheduled — hourly synthetic stats visitor (issue #102, Option A)', 
     expect(kv.store.has(STATS_TOTALS_CACHE_KEY)).toBe(true)
   })
 })
+
+describe('scheduled — daily retention purge (issue #82)', () => {
+  test('the daily cron runs the purge, not the stats visitor', async () => {
+    const statement = {
+      bind: () => statement,
+      all: async () => ({ results: [], success: true, meta: {} }),
+      run: async () => ({ results: [], success: true, meta: {} }),
+      raw: async () => [],
+    }
+    const kv = makeKv()
+    const env = {
+      GLANCE_DB: { withSession: () => ({ prepare: () => statement, getBookmark: () => null }) },
+      GLANCE_SESSIONS: kv,
+    } as never
+
+    await worker.scheduled({ cron: '0 3 * * *', scheduledTime: Date.now() } as never, env, {
+      waitUntil: () => {},
+    } as never)
+
+    // The purge branch returns before ever touching the stats KV.
+    expect(kv.store.has(STATS_CACHE_KEY)).toBe(false)
+    expect(kv.store.has(STATS_TOTALS_CACHE_KEY)).toBe(false)
+  })
+})

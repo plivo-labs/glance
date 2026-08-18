@@ -355,6 +355,16 @@ export const notifications = sqliteTable(
   ],
 )
 
+// Durable counter for `events` rows the retention purge (lib/retention.ts) has deleted, keyed by
+// `type` so it mirrors the same column the all-time totals group by. Only 'view' is ever written —
+// stats.ts's totals.views is the one all-time aggregate a purge would otherwise silently shrink;
+// 'cli' events feed no total (see stats.ts) so purging them needs no counter. Folded back into
+// computeTotals so "all-time views" stays true after old rows are gone (issue #102).
+export const purgedEventCounts = sqliteTable('purged_event_counts', {
+  type: text('type', { enum: ['view', 'cli'] }).primaryKey(),
+  count: integer('count').notNull().default(0),
+})
+
 // One row per site (`siteId` unique): site deletion cascades, while `generatedBy` is SET NULL so
 // summaries survive author deletion. Server-computed `contentVersion` + `promptVersion` together
 // determine staleness.
@@ -421,6 +431,7 @@ export type ChangeType = ChangeLogRow['type']
 export type Event = typeof events.$inferSelect
 export type NewEvent = typeof events.$inferInsert
 export type EventType = Event['type']
+export type PurgedEventCount = typeof purgedEventCounts.$inferSelect
 export type Notification = typeof notifications.$inferSelect
 export type NewNotification = typeof notifications.$inferInsert
 export type NotificationType = Notification['type']

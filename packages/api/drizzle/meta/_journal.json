@@ -190,6 +190,13 @@
       "when": 1786100000000,
       "tag": "0026_api_key_display_suffix",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "6",
+      "when": 1786300000000,
+      "tag": "0028_retention_purge",
+      "breakpoints": true
     }
   ]
 }

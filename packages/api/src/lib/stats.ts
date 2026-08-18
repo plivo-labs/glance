@@ -1,6 +1,6 @@
 import { and, count, desc, eq, gte, isNull, sql } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
-import { comments, events, files, sites, users } from '../db/schema'
+import { comments, events, files, purgedEventCounts, sites, users } from '../db/schema'
 
 // Usage-analytics rollups for the admin dashboard. Everything is derived from existing state
 // (users/sites/files/comments) plus the append-only `events` stream, so counts are exact and
@@ -70,7 +70,7 @@ async function scalarCount(query: Promise<{ n: number }[]>): Promise<number> {
  * gives it its own long-lived key. Nothing here moves fast enough to be worth a live scan.
  */
 export async function computeTotals(db: DrizzleD1Database): Promise<StatsTotals> {
-  const [u, s, f, storage, cm, vw, uv] = await Promise.all([
+  const [u, s, f, storage, cm, vw, uv, purgedVw] = await Promise.all([
     scalarCount(db.select({ n: count() }).from(users)),
     scalarCount(db.select({ n: count() }).from(sites)),
     scalarCount(db.select({ n: count() }).from(files)),
@@ -80,13 +80,24 @@ export async function computeTotals(db: DrizzleD1Database): Promise<StatsTotals>
       .then((r) => Number(r[0]?.n ?? 0)),
     scalarCount(db.select({ n: count() }).from(comments).where(isNull(comments.deletedAt))),
     scalarCount(db.select({ n: count() }).from(events).where(eq(events.type, 'view'))),
+    // NOT all-time after the retention purge (lib/retention.ts) lands: rows older than
+    // EVENTS_RETENTION_DAYS are gone, so this is "distinct viewers within the retention window",
+    // not distinct-ever. Unlike `views` (a plain count(*), see purgedEventCounts below), a
+    // count(distinct) can't be reconstructed from a running total once the underlying rows are
+    // deleted, so it is left as-is rather than faked.
     db
       .select({ n: sql<number>`count(distinct ${events.userId})` })
       .from(events)
       .where(eq(events.type, 'view'))
       .then((r) => Number(r[0]?.n ?? 0)),
+    // Rows the purge already deleted, folded back in so `views` stays a true all-time count.
+    db
+      .select({ n: purgedEventCounts.count })
+      .from(purgedEventCounts)
+      .where(eq(purgedEventCounts.type, 'view'))
+      .then((r) => Number(r[0]?.n ?? 0)),
   ])
-  return { users: u, sites: s, files: f, storageBytes: storage, comments: cm, views: vw, uniqueViewers: uv }
+  return { users: u, sites: s, files: f, storageBytes: storage, comments: cm, views: vw + purgedVw, uniqueViewers: uv }
 }
 
 /**
