@@ -132,11 +132,11 @@ func TestDeployCommand(t *testing.T) {
 		// --theme <slug> → the field travels verbatim.
 		srv2, st2 := newDeployServer(t)
 		c2, _ := newTestClient(srv2.URL, "tok")
-		if err := c2.deploy([]string{file, "--theme", "matrix"}); err != nil {
+		if err := c2.deploy([]string{file, "--theme", "broadsheet"}); err != nil {
 			t.Fatalf("deploy --theme: %v", err)
 		}
-		if !st2.themeSent || st2.theme != "matrix" {
-			t.Errorf("theme = %q (sent=%v), want matrix", st2.theme, st2.themeSent)
+		if !st2.themeSent || st2.theme != "broadsheet" {
+			t.Errorf("theme = %q (sent=%v), want broadsheet", st2.theme, st2.themeSent)
 		}
 
 		// --theme none → sent as the explicit clear sentinel the server maps to null.

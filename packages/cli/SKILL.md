@@ -215,26 +215,15 @@ You can update that site's content even though you don't own it and aren't in it
 
 ## Design themes
 
-A site can carry a **theme** — a server-injected stylesheet that skins its HTML at serve time (the stored files are never modified; `read --pull` stays byte-identical). Discover what's available on this instance:
+A site can carry a **theme** — a server-injected classless stylesheet (element selectors only) that skins its HTML at serve time. Stored files are never modified (`read --pull` stays byte-identical); author classes/inline styles always win, so semantic HTML transforms fully while heavily self-styled pages barely change. `--theme default` resets to the page's own design.
 
 ```bash
-curl -s $GLANCE_API_URL/api/themes                          # catalog: slug + name + description
-curl -s $GLANCE_API_URL/api/themes/plivo/DESIGN.md          # a theme's full design brief
+curl -s $GLANCE_API_URL/api/themes                  # catalog: slug + name + description
+curl -s $GLANCE_API_URL/api/themes/plivo/DESIGN.md  # a theme's full design brief
+glance deploy report.html --theme plivo             # works on .md too
 ```
 
-Two ways to use a theme — pick by intent:
-
-1. **Building a page in a theme's style** (the high-fidelity path): fetch the theme's `DESIGN.md` FIRST and follow it while writing the HTML — it carries the tokens (colors, type, spacing), component recipes, and do/don'ts. Then deploy with `--theme <slug>` so the injected stylesheet reinforces the same system. A brief beats injection: injection can only restyle semantic HTML, while you can build the layout, texture, and voice the brief asks for.
-2. **Re-skinning existing/plain HTML** (the quick path): just deploy with `--theme <slug>`. The injected stylesheet is classless (element selectors only), so it restyles semantic HTML — headings, text, links, tables, code, forms. Pages with heavy inline/class styling keep most of their own look; plain documents transform completely.
-
-```bash
-glance deploy report.html --theme plivo      # brand-styled report
-glance deploy postmortem/ --theme matrix     # green phosphor, scanlines
-glance deploy paper.md --theme academic      # LaTeX-paper look (works on rendered markdown too)
-glance deploy dashboard/ --theme default     # reset: serve the page's own design untouched
-```
-
-The theme is a site property, not a file: the owner can switch it later from the viewer's theme chip or the dashboard row menu without a redeploy — **Default** always means the page's own design, exactly as uploaded. Semantic HTML (`<h1>`, `<p>`, `<table>`, `<code>`, …) gets the most from a theme — a page that is one big `<div>` soup with inline styles will barely change.
+Building a page in a theme's style? Fetch its `DESIGN.md` first and follow it while writing the HTML (tokens, component recipes, do/don'ts), then deploy with `--theme <slug>`. The theme is a site property, not a file — the owner can switch it later in the UI without a redeploy.
 
 ## Saving data from your pages — `glance.db` (experimental)
 

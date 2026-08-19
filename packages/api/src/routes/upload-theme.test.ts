@@ -78,15 +78,15 @@ describe('upload theme field', () => {
 
   test('replace without the field keeps the current theme; with it, switches; none clears', async () => {
     const { app, env, db } = await setup()
-    await post(app, env, 'site', { theme: 'matrix' })
+    await post(app, env, 'site', { theme: 'broadsheet' })
 
     // Plain redeploy (the agent loop): theme untouched.
     expect((await post(app, env, 'site', { replace: true })).status).toBe(200)
-    expect(await themeOf(db, 'site')).toBe('matrix')
+    expect(await themeOf(db, 'site')).toBe('broadsheet')
 
     // Explicit switch on replace.
-    expect((await post(app, env, 'site', { replace: true, theme: 'kapow' })).status).toBe(200)
-    expect(await themeOf(db, 'site')).toBe('kapow')
+    expect((await post(app, env, 'site', { replace: true, theme: 'plivo' })).status).toBe(200)
+    expect(await themeOf(db, 'site')).toBe('plivo')
 
     // Explicit clear.
     expect((await post(app, env, 'site', { replace: true, theme: 'none' })).status).toBe(200)
@@ -99,7 +99,7 @@ describe('upload theme field', () => {
     expect((await post(app, env, 'site', { replace: true, theme: '' })).status).toBe(200)
     expect(await themeOf(db, 'site')).toBeNull()
 
-    await post(app, env, 'site', { replace: true, theme: 'flatpack' })
+    await post(app, env, 'site', { replace: true, theme: 'broadsheet' })
     expect((await post(app, env, 'site', { replace: true, theme: 'default' })).status).toBe(200)
     expect(await themeOf(db, 'site')).toBeNull()
   })

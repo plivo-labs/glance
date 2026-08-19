@@ -10,21 +10,6 @@ export const THEME_INFO = [
     "slug": "broadsheet",
     "name": "Broadsheet",
     "description": "Newspaper front page: cream paper, Georgia serif, masthead headline between double rules, drop cap, column-rule tables. Read all about it."
-  },
-  {
-    "slug": "flatpack",
-    "name": "Flat-Pack",
-    "description": "Assembly-manual deadpan: instructional blue, giant step numbers, safety-yellow warnings, hairline diagram frames. Some assembly required."
-  },
-  {
-    "slug": "kapow",
-    "name": "Kapow",
-    "description": "A comic book page: halftone newsprint, Bangers action headings, speech-bubble quotes, yellow caption boxes, hard-inked panels. THWACK."
-  },
-  {
-    "slug": "matrix",
-    "name": "Matrix",
-    "description": "Phosphor-green code-rain terminal: #00ff41 on black, glow text, scanlines, monospace everything. Follow the white rabbit."
   }
 ] as const
 

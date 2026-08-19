@@ -34,7 +34,7 @@ async function setup(failures: number) {
   const r2 = makeR2()
   const uid = await seedUser(db, { id: 'u1' })
   const sp = await seedSpace(db, { createdBy: uid, slug: 'sam' })
-  const siteId = await seedSite(db, { spaceId: sp, ownerId: uid, slug: 'site', visibility: 'team', theme: 'matrix' })
+  const siteId = await seedSite(db, { spaceId: sp, ownerId: uid, slug: 'site', visibility: 'team', theme: 'broadsheet' })
   await seedFile(db, r2, siteId, { path: 'index.html', text: '<html><head></head><body>hi</body></html>' })
   const token = await signToken(tokenKey, uid, 'sam/site', 300)
 
@@ -58,7 +58,7 @@ describe('serve() retries transient access-batch failures', () => {
     const { app, env, token } = await setup(2)
     const res = await app.request(`/_t/${token}/sam/site/`, {}, env)
     expect(res.status).toBe(200)
-    expect(await res.text()).toContain('/_glance/theme/matrix.css')
+    expect(await res.text()).toContain('/_glance/theme/broadsheet.css')
   })
 
   test('three consecutive failures → the error propagates (real outage, not a flake)', async () => {

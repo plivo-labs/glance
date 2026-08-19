@@ -32,8 +32,8 @@ describe('PATCH /api/sites theme', () => {
     expect((await patch({ theme: 'plivo' })).status).toBe(200)
     expect(await themeOf()).toBe('plivo')
 
-    expect((await patch({ theme: 'matrix' })).status).toBe(200)
-    expect(await themeOf()).toBe('matrix')
+    expect((await patch({ theme: 'broadsheet' })).status).toBe(200)
+    expect(await themeOf()).toBe('broadsheet')
 
     expect((await patch({ theme: null })).status).toBe(200)
     expect(await themeOf()).toBeNull()

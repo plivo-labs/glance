@@ -35,7 +35,7 @@ async function themedSite(
   db: ReturnType<typeof makeDb>,
   r2: ReturnType<typeof makeR2>,
   file: { path: string; text: string; mimeType?: string },
-  theme: string | null = 'matrix',
+  theme: string | null = 'broadsheet',
 ) {
   const uid = await seedUser(db, { id: 'u1' })
   const sp = await seedSpace(db, { createdBy: uid, slug: 'sam' })
@@ -49,7 +49,7 @@ const themeLink = (slug: string) => `<link rel="stylesheet" href="/_glance/theme
 
 describe('themeHrefFor', () => {
   test('registry slug → versioned href; null/unknown → null', () => {
-    expect(themeHrefFor('matrix')).toBe(`/_glance/theme/matrix.css?v=${THEMES_VERSION}`)
+    expect(themeHrefFor('broadsheet')).toBe(`/_glance/theme/broadsheet.css?v=${THEMES_VERSION}`)
     expect(themeHrefFor(null)).toBeNull()
     // A slug retired from the registry may still sit on an old row — fail OPEN to unthemed.
     expect(themeHrefFor('retired-theme')).toBeNull()
@@ -77,7 +77,7 @@ describe('theme injection into served HTML', () => {
     const { token } = await themedSite(db, r2, { path: 'index.html', text: html })
 
     const body = await (await app.request(`/_t/${token}/sam/site/`, {}, env)).text()
-    const link = themeLink('matrix')
+    const link = themeLink('broadsheet')
     expect(body).toContain(link)
     expect(body.split(link).length - 1).toBe(1)
     // Cascade-order contract: the injected link comes AFTER the page's own <style>.
@@ -110,7 +110,7 @@ describe('theme injection into served HTML', () => {
 
     const body = await (await app.request(`/_t/${token}/sam/site/`, {}, env)).text()
     expect(body.startsWith('<p>no head here</p>')).toBe(true)
-    expect(body).toContain(themeLink('matrix'))
+    expect(body).toContain(themeLink('broadsheet'))
   })
 
   test('annotate mode: theme link AND annotate client both present', async () => {
@@ -119,7 +119,7 @@ describe('theme injection into served HTML', () => {
     const { token } = await themedSite(db, r2, { path: 'index.html', text: html })
 
     const body = await (await app.request(`/_t/${token}/sam/site/?glance_annotate=1`, {}, env)).text()
-    expect(body).toContain(themeLink('matrix'))
+    expect(body).toContain(themeLink('broadsheet'))
     expect(body).toContain('<script src="/_glance/annotate.js')
   })
 
@@ -147,7 +147,7 @@ describe('theme injection into served HTML', () => {
 
     const res = await app.request(`/_t/${token}/sam/site/doc.md`, {}, env)
     const body = await res.text()
-    expect(body).toContain(themeLink('matrix'))
+    expect(body).toContain(themeLink('broadsheet'))
     const csp = res.headers.get('content-security-policy') ?? ''
     expect(csp).toContain("style-src 'self' 'unsafe-inline' https://fonts.googleapis.com")
     expect(csp).toContain("font-src 'self' https://fonts.gstatic.com")
@@ -173,7 +173,7 @@ describe('themed HTML etag', () => {
 
     const first = await app.request(`/_t/${token}/sam/site/`, {}, env)
     const themedEtag = first.headers.get('etag') ?? ''
-    expect(themedEtag).toContain('matrix')
+    expect(themedEtag).toContain('broadsheet')
 
     // Revalidation with the themed etag → 304 while the theme is unchanged.
     const revalidate = await app.request(`/_t/${token}/sam/site/`, { headers: { 'if-none-match': themedEtag } }, env)
@@ -197,6 +197,6 @@ describe('themed HTML etag', () => {
     const { token } = await themedSite(db, r2, { path: 'app.css', text: 'body{}', mimeType: 'text/css' })
 
     const res = await app.request(`/_t/${token}/sam/site/app.css`, {}, env)
-    expect(res.headers.get('etag') ?? '').not.toContain('matrix')
+    expect(res.headers.get('etag') ?? '').not.toContain('broadsheet')
   })
 })
