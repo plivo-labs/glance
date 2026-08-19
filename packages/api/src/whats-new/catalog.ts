@@ -4,6 +4,14 @@ import type { Release } from './bake'
 
 export const RELEASES: Release[] = [
   {
+    "slug": "design-themes",
+    "title": "Design themes",
+    "image": "design-themes.png",
+    "date": "2026-08-19T12:00:00.000Z",
+    "featured": true,
+    "bodyHtml": "<p>Give any page a designed look without touching its HTML. Pick a <strong>theme</strong> when you deploy, or switch it live from the viewer — Glance injects the stylesheet at serve time, so your stored files never change and <strong>Default</strong> always means your page&#39;s own design.</p>\n<ul>\n<li><strong>Four themes to start</strong> — Plivo (the brand), Broadsheet (newspaper editorial), Kapow (comic book), Matrix (green phosphor terminal)</li>\n<li><strong>Switch without a redeploy</strong> — owners get a theme chip in the viewer top bar and a Theme menu on each dashboard row</li>\n<li><strong>From the CLI</strong>: <code>glance deploy report.html --theme plivo</code> — and agents can browse <code>/api/themes</code> for each theme&#39;s full design brief before generating a page</li>\n<li>Plain, semantic HTML transforms completely; pages that carry their own styling keep their look</li>\n</ul>\n"
+  },
+  {
     "slug": "api-keys",
     "title": "API keys for scripts and CI",
     "image": "api-keys.png",
@@ -101,4 +109,4 @@ export const RELEASES: Release[] = [
   }
 ]
 
-export const NEWEST_RELEASE_DATE: string | null = "2026-08-01T12:00:00.000Z"
+export const NEWEST_RELEASE_DATE: string | null = "2026-08-19T12:00:00.000Z"
