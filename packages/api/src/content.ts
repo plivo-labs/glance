@@ -13,7 +13,6 @@ import { type CacheLike, IMMUTABLE, readFullObject } from './lib/object-read'
 import { verifyOgSig } from './lib/og-image'
 import { renderOgPng } from './lib/og-render'
 import { decideRange } from './lib/range'
-import { retryTransientRead } from './lib/d1'
 import { fetchAccessFacts, isSharedFromFacts, resolveSite } from './lib/site-access'
 import { THEME_CSS, THEMES_VERSION } from './themes/css'
 import { verifyToken } from './lib/token'
@@ -137,37 +136,27 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
   // file row, fused into a single batch. The file statement joins by BOTH slugs too (the site id
   // is unknown before the batch runs), and every statement returns empty rows rather than
   // throwing, so the 404/403/410 precedence below is decided AFTER the batch in today's order.
-  // Statements are built fresh PER ATTEMPT (drizzle builders own their SQL chunks) — see the
-  // retry below.
-  const fileStmt = () =>
-    db
-      .select(cols)
-      .from(files)
-      .innerJoin(sites, eq(files.siteId, sites.id))
-      .innerJoin(spaces, eq(sites.spaceId, spaces.id))
-      .where(and(eq(spaces.slug, spaceSlug), eq(sites.slug, siteSlug), eq(files.path, reqPath)))
-      .limit(1)
+  const fileStmt = db
+    .select(cols)
+    .from(files)
+    .innerJoin(sites, eq(files.siteId, sites.id))
+    .innerJoin(spaces, eq(sites.spaceId, spaces.id))
+    .where(and(eq(spaces.slug, spaceSlug), eq(sites.slug, siteSlug), eq(files.path, reqPath)))
+    .limit(1)
   // Index-ish request (`…/` or explicit index.html): the single-file/dir-listing fallback's
   // all-files read rides the SAME batch — a single-file site's every page view otherwise pays a
   // serial follow-up round trip. Bounded by the 200-file upload cap; non-index assets (css/js/
   // img — the traffic bulk) keep the lean batch.
   const isIndexReq = reqPath === 'index.html' || reqPath.endsWith('/index.html')
-  const allFilesStmt = () =>
-    db
-      .select(cols)
-      .from(files)
-      .innerJoin(sites, eq(files.siteId, sites.id))
-      .innerJoin(spaces, eq(sites.spaceId, spaces.id))
-      .where(and(eq(spaces.slug, spaceSlug), eq(sites.slug, siteSlug)))
-  // async so the two fetchAccessFacts arities collapse into one Promise-of-union type (a bare
-  // ternary yields a union of two Promises, which defeats retryTransientRead's inference).
-  const readFacts = async () =>
-    isIndexReq
-      ? fetchAccessFacts(db, spaceSlug, siteSlug, userId, fileStmt(), allFilesStmt())
-      : fetchAccessFacts(db, spaceSlug, siteSlug, userId, fileStmt())
-  // The batch is read-only and idempotent, so a transient D1 internal error is retried instead
-  // of 500ing the page view (see retryTransientRead for the policy and why local dev hits it).
-  const { facts, extras } = await retryTransientRead(readFacts)
+  const allFilesStmt = db
+    .select(cols)
+    .from(files)
+    .innerJoin(sites, eq(files.siteId, sites.id))
+    .innerJoin(spaces, eq(sites.spaceId, spaces.id))
+    .where(and(eq(spaces.slug, spaceSlug), eq(sites.slug, siteSlug)))
+  const { facts, extras } = isIndexReq
+    ? await fetchAccessFacts(db, spaceSlug, siteSlug, userId, fileStmt, allFilesStmt)
+    : await fetchAccessFacts(db, spaceSlug, siteSlug, userId, fileStmt)
   const [fileRows, allFileRows] = extras as [(typeof extras)[0], (typeof extras)[0]?]
 
   const siteRow = facts.site
