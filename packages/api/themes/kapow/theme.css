@@ -3,7 +3,28 @@
  * mark = sound-effect chip, hr = panel gutter, tables/images = inked panels.
  * Light ground → dark text, inherently safe on author-painted surfaces.
  * Classless: element selectors only. */
-@import url('https://fonts.googleapis.com/css2?family=Bangers&family=Comic+Neue:wght@400;700&display=swap');
+/* Fonts are VENDORED and served first-party (/_glance/theme/fonts/*, issue #155). */
+@font-face {
+  font-family: 'Bangers';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/_glance/theme/fonts/bangers-400.woff2?v=__THEMES_VERSION__') format('woff2');
+}
+@font-face {
+  font-family: 'Comic Neue';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/_glance/theme/fonts/comic-neue-400.woff2?v=__THEMES_VERSION__') format('woff2');
+}
+@font-face {
+  font-family: 'Comic Neue';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/_glance/theme/fonts/comic-neue-700.woff2?v=__THEMES_VERSION__') format('woff2');
+}
 
 :root {
   --glance-paper: #f6eee3;

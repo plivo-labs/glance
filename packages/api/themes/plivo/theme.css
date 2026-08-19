@@ -7,7 +7,65 @@
  * The INJECTED skin is light-only: an auto-dark variant would drop near-white text onto cards
  * an author painted white (unreadable). Agents building natively from the DESIGN.md brief still
  * get the full first-class dark mode — this file is only the re-skin for existing HTML. */
-@import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap');
+/* Fonts are VENDORED and served first-party (/_glance/theme/fonts/*, issue #155) — a
+ * themed page must never call out to Google: no IP/referer leak, no loss of typography on
+ * egress-filtered networks, and markdownCsp stays 'self'-only. */
+@font-face {
+  font-family: 'Sora';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/_glance/theme/fonts/sora-400.woff2?v=__THEMES_VERSION__') format('woff2');
+}
+@font-face {
+  font-family: 'Sora';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/_glance/theme/fonts/sora-600.woff2?v=__THEMES_VERSION__') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/_glance/theme/fonts/inter-400.woff2?v=__THEMES_VERSION__') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/_glance/theme/fonts/inter-500.woff2?v=__THEMES_VERSION__') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/_glance/theme/fonts/inter-600.woff2?v=__THEMES_VERSION__') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/_glance/theme/fonts/jetbrains-mono-400.woff2?v=__THEMES_VERSION__') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/_glance/theme/fonts/jetbrains-mono-500.woff2?v=__THEMES_VERSION__') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/_glance/theme/fonts/jetbrains-mono-600.woff2?v=__THEMES_VERSION__') format('woff2');
+}
 
 :root {
   --glance-bg: #ffffff;
