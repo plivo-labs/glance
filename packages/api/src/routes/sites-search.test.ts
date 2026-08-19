@@ -93,7 +93,9 @@ describe('searchSites (cmdk site search)', () => {
     expect(res.has(archived)).toBe(false)
   })
 
-  test('search-superadmin-sees-all-active: every active site, not archived', async () => {
+  // Search is an OPENABLE-sites index, so it must never surface a site the admin would be 403'd
+  // on — otherwise the title/slug of every private page leaks through the command palette.
+  test('search-superadmin-no-reach: only the tiers a plain member would get', async () => {
     const db = makeDb()
     await seedUser(db, { id: 'admin', role: 'superadmin' })
     const owner = await seedUser(db)
@@ -103,8 +105,8 @@ describe('searchSites (cmdk site search)', () => {
     const team = await seedSite(db, { spaceId: sp, ownerId: owner, slug: 't-doc', visibility: 'team' })
     const archived = await seedSite(db, { spaceId: sp, ownerId: owner, slug: 'a-doc', visibility: 'team', status: 'archived' })
     const res = ids(await searchSites(db, superadmin('admin'), 'doc'))
-    expect(res.has(priv)).toBe(true)
-    expect(res.has(group)).toBe(true)
+    expect(res.has(priv)).toBe(false)
+    expect(res.has(group)).toBe(false)
     expect(res.has(team)).toBe(true)
     expect(res.has(archived)).toBe(false)
   })

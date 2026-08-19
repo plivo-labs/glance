@@ -9,7 +9,7 @@ import (
 )
 
 type notificationItem struct {
-	Type      string  `json:"type"` // "mention" | "comment"
+	Type      string  `json:"type"` // "mention" | "comment" | "share"
 	ActorName *string `json:"actorName"`
 	SiteLabel *string `json:"siteLabel"`
 	FilePath  *string `json:"filePath"`
@@ -24,7 +24,7 @@ type notificationsResponse struct {
 }
 
 func (c *client) notifications(args []string) error {
-	_, flags := parseArgs(args, boolSet("json", "read"))
+	_, flags := parseArgs(args, map[string]bool{"json": true, "read": true})
 	if flags["read"] == true && flags["json"] == true {
 		return fmt.Errorf("--read and --json cannot be combined")
 	}
@@ -92,8 +92,11 @@ func renderNotification(item notificationItem, now time.Time) string {
 		marker = "●"
 	}
 	verb := "commented on"
-	if item.Type == "mention" {
+	switch item.Type {
+	case "mention":
 		verb = "mentioned you on"
+	case "share":
+		verb = "shared"
 	}
 	paren := timeAgo(item.CreatedAt, now)
 	if fp := strOr(item.FilePath, ""); fp != "" {

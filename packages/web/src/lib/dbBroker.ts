@@ -32,7 +32,15 @@ const MAX_DATA_CHARS = 110_000
 const TOKEN_SLACK_MS = 30_000
 const WS_PROTOCOL = 'glance.db.v1'
 const RECONNECT_MS = 3000
+const RECONNECT_MAX_MS = 60_000
 const PING_MS = 30_000
+
+/** Exponential backoff with half-range jitter. The jitter matters: a deploy restarts every
+ *  Durable Object at once, so without it every open tab redials in lockstep. */
+export function reconnectDelay(attempt: number, base = RECONNECT_MS): number {
+  const full = Math.min(base * 2 ** Math.min(attempt, 30), RECONNECT_MAX_MS)
+  return full / 2 + Math.random() * (full / 2)
+}
 
 export type BrokerSite = { spaceSlug: string; siteSlug: string }
 /** Only what the relay uses — so a test can stand in for a real socket. */
@@ -50,7 +58,11 @@ export type DbBroker = { onWindowMessage: (e: MessageEvent) => void; dispose: ()
 
 export function createDbBroker(
   opts: { site: BrokerSite; contentOrigin: string; appOrigin: string; getSource: () => Window | null | undefined },
-  deps: { fetchFn: typeof fetch; newSocket: (url: string, protocols: string[]) => BrokerSocket } = {
+  deps: {
+    fetchFn: typeof fetch
+    newSocket: (url: string, protocols: string[]) => BrokerSocket
+    reconnectBaseMs?: number
+  } = {
     fetchFn: (...args) => fetch(...args),
     newSocket: (url, protocols) => new WebSocket(url, protocols) as unknown as BrokerSocket,
   },
@@ -122,22 +134,34 @@ export function createDbBroker(
   // is what stops the redial loop.
   let live: Promise<void> | null = null
   let markLive: (() => void) | null = null
+  // Rejecting `live` is how a terminal dial failure reaches the page instead of hanging it.
+  let failLive: ((err: unknown) => void) | null = null
   let dials = 0
+  let attempts = 0
   let cursor: string | null = null
   let reauth: ReturnType<typeof setTimeout> | null = null
   let ping: ReturnType<typeof setInterval> | null = null
+  let resume: (() => void) | null = null
   let disposed = false
 
   /** Catch up over HTTP, but only once the socket is LIVE: read the log first and any change
    *  committed between the read and the upgrade is lost by both paths. */
   async function subscribe(req: BrokerRequest): Promise<{ ok: boolean; status: number; body: unknown }> {
     if (!live) {
-      live = new Promise<void>((resolve) => {
+      live = new Promise<void>((resolve, reject) => {
         markLive = resolve
+        failLive = reject
       })
+      // A terminal failure with no subscribe in flight must not surface as an unhandled rejection.
+      live.catch(() => {})
       dial()
     }
-    await live
+    try {
+      await live
+    } catch (err) {
+      const e = err as { status?: number; message?: string } | null
+      return { ok: false, status: e?.status ?? 0, body: { error: e?.message ?? 'stream unavailable' } }
+    }
     // The page's own cursor wins; ours is the fallback that survives an in-site navigation.
     const from = req.cursor ?? cursor
     const q = from ? `?cursor=${encodeURIComponent(from)}` : ''
@@ -159,6 +183,7 @@ export function createDbBroker(
       scheduleReauth()
       ping = setInterval(() => socket === ws && ws.send('ping'), PING_MS)
       ws.onopen = () => {
+        attempts = 0
         markLive?.()
         // Any dial past the first means the page missed a window: tell it to replay. The first
         // one needs no nudge — the subscribe that started it is still awaiting this moment.
@@ -178,13 +203,39 @@ export function createDbBroker(
     }, redial)
   }
 
-  function redial(): void {
+  function redial(err?: unknown): void {
     if (ping) clearInterval(ping)
     ping = null
     if (disposed || !live) return
-    setTimeout(() => {
-      if (!disposed && live) dial()
-    }, RECONNECT_MS)
+    const status = (err as { status?: number } | null)?.status
+    if (status === 401 || status === 403) {
+      // The session is gone or access was revoked — no amount of redialing mints past that, and a
+      // forgotten tab retrying every 3s costs ~29k requests/day (the 2026-08-11 near-cap day).
+      // Fail the stream and stop; only a fresh subscribe (re-login, navigation) dials again.
+      const fail = failLive
+      closeStream()
+      fail?.(err)
+      return
+    }
+    setTimeout(
+      () => {
+        if (disposed || !live) return
+        if (typeof document !== 'undefined' && document.hidden) {
+          // A hidden tab has no reader — park until it is visible instead of dialing blind.
+          const onVisible = () => {
+            if (document.hidden) return
+            document.removeEventListener('visibilitychange', onVisible)
+            resume = null
+            if (!disposed && live) dial()
+          }
+          resume = onVisible
+          document.addEventListener('visibilitychange', onVisible)
+          return
+        }
+        dial()
+      },
+      reconnectDelay(attempts++, deps.reconnectBaseMs),
+    )
   }
 
   /** A listen-only page issues no ops, so nothing else would ever re-mint and the room would drop
@@ -207,10 +258,15 @@ export function createDbBroker(
   function closeStream(): void {
     live = null
     markLive = null
+    failLive = null
     if (reauth) clearTimeout(reauth)
     if (ping) clearInterval(ping)
     reauth = null
     ping = null
+    if (resume) {
+      document.removeEventListener('visibilitychange', resume)
+      resume = null
+    }
     const ws = socket
     socket = null
     ws?.close()

@@ -70,11 +70,12 @@ beforeAll(async () => {
 
 afterAll(() => restore())
 
-/** Fire a trusted parent→child command the way the real app origin would. */
-function send(data: unknown): void {
+/** Fire a trusted parent→child command the way the real app origin would (or, with `origin`
+ *  overridden, the way a hostile embedder would). */
+function send(data: unknown, origin = 'https://app.example.com'): void {
   const win = (globalThis as unknown as AnyRecord).window as unknown as Window & AnyRecord
   const MessageEventCtor = (win as AnyRecord).MessageEvent as typeof MessageEvent
-  win.dispatchEvent(new MessageEventCtor('message', { data, origin: 'https://app.example.com' }) as unknown as Event)
+  win.dispatchEvent(new MessageEventCtor('message', { data, origin }) as unknown as Event)
 }
 
 describe('client.ts — a paint IS the highlight: everything sent is lit, an empty paint clears it', () => {
@@ -259,6 +260,27 @@ describe('client.ts — clicking a painted anchor posts glance:anchor-click', ()
   })
 })
 
+// #27 — the boot glance:ready fires exactly once, at import time, so a parent whose listener
+// attaches late (warm-cache load: the iframe finishes before the viewer's effect runs) loses it
+// forever. glance:ping is the parent's "did I miss it?" probe: the client re-announces, and the
+// parent's arbiter already ignores duplicate readys, so a redundant ping costs nothing.
+describe('client.ts — glance:ping re-announces glance:ready (#27)', () => {
+  const readys = () => posted.filter((m) => (m as AnyRecord).type === 'glance:ready') as AnyRecord[]
+
+  test('a ping from the app origin re-posts glance:ready with the mounted filePath', () => {
+    const before = readys().length
+    send({ type: 'glance:ping' })
+    expect(readys()).toHaveLength(before + 1)
+    expect(readys().at(-1)?.filePath).toBe('index.html')
+  })
+
+  test('a ping from any other origin is ignored — same trust rule as paint/focus', () => {
+    const before = readys().length
+    send({ type: 'glance:ping' }, 'https://evil.example.com')
+    expect(readys()).toHaveLength(before)
+  })
+})
+
 describe('client.ts — glance:print prints in the frame realm (the parent cannot call print cross-origin)', () => {
   test('a trusted glance:print calls window.print exactly once; a foreign origin never does', () => {
     const win = (globalThis as unknown as AnyRecord).window as unknown as Window & AnyRecord
@@ -269,10 +291,7 @@ describe('client.ts — glance:print prints in the frame realm (the parent canno
     expect(printed).toBe(1)
 
     // Same payload from a hostile origin is ignored — commands are trusted ONLY from the app origin.
-    const MessageEventCtor = (win as AnyRecord).MessageEvent as typeof MessageEvent
-    win.dispatchEvent(
-      new MessageEventCtor('message', { data: { type: 'glance:print' }, origin: 'https://evil.example.com' }) as unknown as Event,
-    )
+    send({ type: 'glance:print' }, 'https://evil.example.com')
     expect(printed).toBe(1)
   })
 })

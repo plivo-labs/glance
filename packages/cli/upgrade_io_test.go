@@ -150,6 +150,13 @@ func TestUpdateStateRoundTrip(t *testing.T) {
 	if got.LastCheckedAt != 42 || got.UpdatedTo != "1.2.3" {
 		t.Fatalf("roundtrip = %+v", got)
 	}
+	// state files written by older CLIs carry the retired available/notifiedAvailable keys
+	if err := os.WriteFile(statePath(), []byte(`{"lastCheckedAt":7,"available":"9.9.9","notifiedAvailable":"9.9.9"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := readState(); got.LastCheckedAt != 7 {
+		t.Fatalf("legacy state = %+v", got)
+	}
 }
 
 func TestUpgradeDevGuard(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 func TestParseArgs(t *testing.T) {
 	// boolean flags are valueless and must NOT eat the next token
 	t.Run("boolean-flag-not-eat-token", func(t *testing.T) {
-		pos, flags := parseArgs([]string{"x/y", "--open", "--json"}, boolSet("open", "json"))
+		pos, flags := parseArgs([]string{"x/y", "--open", "--json"}, map[string]bool{"open": true, "json": true})
 		if flags["open"] != true || flags["json"] != true {
 			t.Fatalf("bool flags = %v", flags)
 		}
@@ -30,7 +30,7 @@ func TestParseArgs(t *testing.T) {
 
 	// a positional after a boolean flag survives
 	t.Run("boolean-then-positional", func(t *testing.T) {
-		pos, flags := parseArgs([]string{"--open", "x/y"}, boolSet("open", "json"))
+		pos, flags := parseArgs([]string{"--open", "x/y"}, map[string]bool{"open": true, "json": true})
 		if !reflect.DeepEqual(pos, []string{"x/y"}) {
 			t.Fatalf("positional = %v", pos)
 		}
@@ -44,6 +44,17 @@ func TestParseArgs(t *testing.T) {
 		_, flags := parseArgs([]string{"--file"}, nil)
 		if flags["file"] != "" {
 			t.Fatalf("file = %v, want empty string", flags["file"])
+		}
+	})
+
+	// everything after a bare `--` is positional, even dash-leading tokens
+	t.Run("dash-dash-stops-flag-parsing", func(t *testing.T) {
+		pos, flags := parseArgs([]string{"x/y", "--open", "--", "--not-a-flag", "--tag"}, map[string]bool{"open": true})
+		if !reflect.DeepEqual(pos, []string{"x/y", "--not-a-flag", "--tag"}) {
+			t.Fatalf("positional = %v", pos)
+		}
+		if flags["open"] != true || len(flags) != 1 {
+			t.Fatalf("flags = %v", flags)
 		}
 	})
 }

@@ -326,8 +326,9 @@ export const events = sqliteTable(
   ],
 )
 
-// Homepage notifications. Notifications carry type 'mention' (@-tag) or 'comment' (activity on your
-// sites / threads you participate in); `commentId` identifies the triggering comment for feed
+// Homepage notifications. Notifications carry type 'mention' (@-tag), 'comment' (activity on your
+// sites / threads you participate in), or 'share' (a site was directly shared with you — user
+// shares only, never group grants); `commentId` identifies the triggering comment for feed
 // dedupe. FK durability mirrors `events`/`comments`: the RECIPIENT cascades (a deleted user's
 // notifications are meaningless), but actor/site/thread/comment are SET NULL so the row survives the
 // deletion of what it points at — `siteLabel` denormalizes "space/slug" (captured from route params
@@ -339,7 +340,7 @@ export const notifications = sqliteTable(
   {
     id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
     recipientId: text('recipientId').notNull().references(() => users.id, { onDelete: 'cascade' }),
-    type: text('type', { enum: ['mention', 'comment'] }).notNull(),
+    type: text('type', { enum: ['mention', 'comment', 'share'] }).notNull(),
     actorId: text('actorId').references(() => users.id, { onDelete: 'set null' }),
     siteId: text('siteId').references(() => sites.id, { onDelete: 'set null' }),
     // Denormalized "space/slug" from the route params at insert — survives a site delete.
@@ -353,12 +354,26 @@ export const notifications = sqliteTable(
     createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
   },
   (t) => [
-    // Unread count + list for one recipient in a single index scan, newest-first.
+    // Unread count for one recipient in a single index scan.
     index('notifications_recipient_read_created').on(t.recipientId, t.readAt, t.createdAt),
+    // The list query orders by createdAt only (readAt isn't a predicate there), so it needs
+    // recipientId+createdAt leading — readAt in the middle of the index above can't serve that
+    // ordering and forces a full recipient scan + temp sort.
+    index('notifications_recipient_created').on(t.recipientId, t.createdAt),
     // Supports comment FK maintenance when a comment is hard-deleted through a site/thread cascade.
     index('notifications_comment').on(t.commentId),
   ],
 )
+
+// Durable counter for `events` rows the retention purge (lib/retention.ts) has deleted, keyed by
+// `type` so it mirrors the same column the all-time totals group by. Only 'view' is ever written —
+// stats.ts's totals.views is the one all-time aggregate a purge would otherwise silently shrink;
+// 'cli' events feed no total (see stats.ts) so purging them needs no counter. Folded back into
+// computeTotals so "all-time views" stays true after old rows are gone (issue #102).
+export const purgedEventCounts = sqliteTable('purged_event_counts', {
+  type: text('type', { enum: ['view', 'cli'] }).primaryKey(),
+  count: integer('count').notNull().default(0),
+})
 
 // One row per site (`siteId` unique): site deletion cascades, while `generatedBy` is SET NULL so
 // summaries survive author deletion. Server-computed `contentVersion` + `promptVersion` together
@@ -410,14 +425,9 @@ export type User = typeof users.$inferSelect
 export type NewUser = typeof users.$inferInsert
 export type Space = typeof spaces.$inferSelect
 export type NewSpace = typeof spaces.$inferInsert
-export type SpaceMember = typeof spaceMembers.$inferSelect
 export type Site = typeof sites.$inferSelect
 export type NewSite = typeof sites.$inferInsert
-export type FileRow = typeof files.$inferSelect
 export type NewFileRow = typeof files.$inferInsert
-export type SiteUserShare = typeof siteUserShares.$inferSelect
-export type SiteGroupShare = typeof siteGroupShares.$inferSelect
-export type SiteStar = typeof siteStars.$inferSelect
 /** Row type. The WIRE shape the API returns is the aggregated `CommentReaction` in db/comments.ts. */
 export type CommentReactionRow = typeof commentReactions.$inferSelect
 
@@ -426,17 +436,16 @@ export type NewCommentThread = typeof commentThreads.$inferInsert
 export type Comment = typeof comments.$inferSelect
 export type NewComment = typeof comments.$inferInsert
 export type DocumentRow = typeof documents.$inferSelect
-export type NewDocumentRow = typeof documents.$inferInsert
 export type ChangeLogRow = typeof changeLog.$inferSelect
 export type ChangeType = ChangeLogRow['type']
 export type Event = typeof events.$inferSelect
 export type NewEvent = typeof events.$inferInsert
 export type EventType = Event['type']
+export type PurgedEventCount = typeof purgedEventCounts.$inferSelect
 export type Notification = typeof notifications.$inferSelect
 export type NewNotification = typeof notifications.$inferInsert
 export type NotificationType = Notification['type']
 export type SiteSummary = typeof siteSummaries.$inferSelect
-export type ApiKey = typeof apiKeys.$inferSelect
 export type NewApiKey = typeof apiKeys.$inferInsert
 
 export type Visibility = Site['visibility']

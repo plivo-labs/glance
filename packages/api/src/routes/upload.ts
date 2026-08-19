@@ -24,6 +24,7 @@ const enc = new TextEncoder()
 // there. R2 also rejects object keys over 1024 bytes; catch that up front too, else the reject
 // lands only after sibling objects are already committed and orphaned.
 const MAX_FILE_COUNT = 200 // one put per file; sized well under the subrequest budget (D1 + deletes need headroom)
+const MAX_TOTAL_BYTES = 100 * 1024 * 1024 // headroom under the 128MB isolate; multipart overhead pushes Content-Length slightly past file bytes, fine for a reject-over threshold
 const MAX_STORAGE_KEY_BYTES = 1024 // R2's hard object-key limit
 const UPLOAD_CONCURRENCY = 10 // bounded parallelism for the R2 put loop
 
@@ -41,6 +42,14 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
   const user = c.get('user')
   const db = c.get('db')
   const { spaceSlug, siteSlug } = c.req.param()
+
+  // Total-size cap, checked from the header BEFORE formData() — which buffers the ENTIRE multipart
+  // body in worker memory. The per-file cap below runs only after that buffering, so 200×20MB could
+  // otherwise materialize ~4GB against the 128MB isolate. This header check is the real memory guard.
+  const contentLength = Number(c.req.header('content-length'))
+  if (Number.isFinite(contentLength) && contentLength > MAX_TOTAL_BYTES) {
+    return c.json({ error: 'upload exceeds 100MB total' }, 413)
+  }
 
   const form = await c.req.formData()
   const rawVisibility = form.get('visibility')
@@ -61,7 +70,7 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
   // Optional display title. CREATE: an explicit form title wins; absent one, the entry HTML's
   // <title> is derived below. REPLACE never renames a titled site — a re-upload/record must not
   // silently rename it — but a still-null title may be filled from the new content
-  // (owner/superadmin only). Trimmed + capped; empty → null.
+  // (owner only). Trimmed + capped; empty → null.
   const rawTitle = form.get('title')
   const title = typeof rawTitle === 'string' ? capTitle(rawTitle.trim()) || null : null
   // Optimistic-concurrency token for a REPLACE: the contentVersion the caller last pulled. REQUIRED
@@ -83,6 +92,12 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
     items.push({ path, file })
   }
   if (items.length === 0) return c.json({ error: 'no files' }, 400)
+  // Backstop for a chunked/absent Content-Length: by this point formData() already buffered the
+  // body, so the header check above is the real memory guard — this only keeps the R2/D1 write
+  // path bounded when the header never came.
+  if (items.reduce((sum, { file }) => sum + file.size, 0) > MAX_TOTAL_BYTES) {
+    return c.json({ error: 'upload exceeds 100MB total' }, 413)
+  }
   // Cap the file COUNT before any R2 write — the mid-loop cleanup can't recover from subrequest
   // exhaustion, so this bound is what actually prevents that orphan case.
   if (items.length > MAX_FILE_COUNT) return c.json({ error: 'too many files', max: MAX_FILE_COUNT }, 400)
@@ -104,10 +119,9 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
   const [spaceRows, existingRows, memberRows, shareRoleRows, existingFileRows] = await batchAll(db, [
     db.select({ id: spaces.id }).from(spaces).where(eq(spaces.slug, spaceSlug)).limit(1),
     // The existing site (if any) is resolved BEFORE authorizing — CREATE and REPLACE have
-    // DIFFERENT gates: creating needs space membership; replacing is open to the owner, a
-    // superadmin, or a direct EDITOR grantee (who is typically NOT a space member, so the old
-    // membership-first gate 403'd them). contentVersion + status feed the editor CAS + archived
-    // guard.
+    // DIFFERENT gates: creating needs space membership; replacing is open to the owner or a
+    // direct EDITOR grantee (who is typically NOT a space member, so the old membership-first
+    // gate 403'd them). contentVersion + status feed the editor CAS + archived guard.
     db
       .select({
         id: sites.id,
@@ -142,30 +156,30 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
 
   const space = spaceRows[0]
   if (!space) return c.json({ error: 'space not found' }, 404)
-  const isAdmin = user.role === 'superadmin'
   const existing = existingRows[0]
 
   const replace = c.req.query('replace') === 'true'
   const isCreate = !existing
   let siteId: string
   let oldKeys: string[] = []
-  // True when the actor is exercising an EDITOR grant (not the owner, not a superadmin). Editors are
-  // content-only: no visibility change, no archived-site edit, and every replace is version-CAS'd.
+  // True when the actor is exercising an EDITOR grant (not the owner). Editors are content-only:
+  // no visibility change, no archived-site edit, and every replace is version-CAS'd.
   let actingAsEditor = false
 
   if (!existing) {
-    // CREATE: space member or superadmin only. An editor grant confers no create right.
-    if (!isAdmin && memberRows.length === 0) return c.json({ error: 'forbidden' }, 403)
+    // CREATE: space members only — neither an editor grant nor the superadmin role confers a
+    // create right (an admin publishing into someone else's space isn't a custodial power).
+    if (memberRows.length === 0) return c.json({ error: 'forbidden' }, 403)
     if (!isValidSlug(siteSlug)) return c.json({ error: 'invalid siteSlug' }, 400)
     siteId = crypto.randomUUID()
   } else {
-    // REPLACE: owner, superadmin, or a direct editor share (canReplace — the single capability
-    // predicate shared with /exists + the manifest gate). An editor grant is only consulted for a
-    // non-owner non-admin, so passing the gate while neither ⇒ acting as the editor.
+    // REPLACE: owner or a direct editor share (canReplace — the single capability predicate shared
+    // with /exists + the manifest gate). An editor grant is only consulted for a non-owner, so
+    // passing the gate while not the owner ⇒ acting as the editor.
     const isOwner = existing.ownerId === user.id
-    const shareRole = isOwner || isAdmin ? null : (shareRoleRows[0]?.role ?? null)
+    const shareRole = isOwner ? null : (shareRoleRows[0]?.role ?? null)
     if (!canReplace(user, existing, shareRole)) return c.json({ error: 'forbidden' }, 403)
-    actingAsEditor = !isOwner && !isAdmin
+    actingAsEditor = !isOwner
 
     if (actingAsEditor) {
       if (existing.status === 'archived') return c.json({ error: 'site archived' }, 403)
@@ -250,7 +264,7 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
   const insertRows = newRows.map((r) => db.insert(files).values(r))
   const newKeys = newRows.map((r) => r.storageKey)
   // The revision this upload publishes: CREATE starts at 0; every REPLACE bumps by one (advisory for
-  // owner/superadmin, CAS-enforced for an editor).
+  // the owner, CAS-enforced for an editor).
   const newVersion = existing ? existing.contentVersion + 1 : 0
 
   try {

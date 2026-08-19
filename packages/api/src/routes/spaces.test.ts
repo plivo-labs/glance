@@ -161,9 +161,12 @@ describe('GET /api/spaces/:slug/sites — visibility pins (S6 T6.1)', () => {
     expect(ids.has('m1')).toBe(false) // group share is not space membership
   })
 
-  test('pin: superadmin sees every site including archived', async () => {
+  // The role grants no listing reach: an admin who is neither owner nor member of `acme` sees the
+  // team-tier site and nothing more — same as any outsider. Enumerating every site is the admin
+  // panel's job (GET /api/admin/sites, metadata only), not this space listing.
+  test('pin: superadmin sees exactly what a non-member sees — team tier only', async () => {
     const { app, env } = await seedVisibilityFixture()
-    expect(await listedIds(app, env, 'admin')).toEqual(new Set(['t1', 'm1', 'p1', 'p-shared', 'g1', 'gone']))
+    expect(await listedIds(app, env, 'admin')).toEqual(new Set(['t1']))
   })
 
   test('pin: missing space → 404 even when sibling statements return empty (garbage slug)', async () => {

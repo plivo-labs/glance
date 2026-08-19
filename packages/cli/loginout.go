@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 )
@@ -47,7 +48,7 @@ func (c *client) login() error {
 		}
 		c.sleep(time.Duration(wait) * time.Second)
 		fmt.Fprint(c.out, ".")
-		poll, err := c.http.Get(api + "/api/auth/cli/poll?device_code=" + encodeURIComponent(start.DeviceCode))
+		poll, err := c.http.Get(api + "/api/auth/cli/poll?device_code=" + url.PathEscape(start.DeviceCode))
 		if err != nil {
 			return err
 		}

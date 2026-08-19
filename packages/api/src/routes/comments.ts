@@ -89,38 +89,28 @@ const tooLong = (v: unknown, max: number): boolean => typeof v === 'string' && v
  *  comment text and harmless to a terminal); everything else in the range is dropped at this
  *  untrusted-input boundary. Written without control-char source literals. */
 function stripControlChars(s: string): string {
-  let out = ''
-  for (const ch of s) {
-    const code = ch.charCodeAt(0)
-    if (code === 9 || code === 10 || (code > 31 && code !== 127)) out += ch
-  }
-  return out
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: matching control chars is the point; escapes only, no literals
+  return s.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '')
 }
 
 export const comments = new Hono<AppEnv>()
 
-// Pure gate: comments are allowed wherever the viewer has access. Every tier is now authed (the
-// public/anonymous tier was removed), so access-ok is the whole gate. Reached only after
-// requireAuth, so `user` is guaranteed.
-function canComment(_site: ResolvedSite, access: { ok: boolean }): boolean {
-  return access.ok
-}
-
-// Site owner or superadmin may resolve/reopen any thread. Deleting a comment is AUTHOR-ONLY —
-// deliberately not a moderation power (nobody, superadmin included, deletes someone else's words).
-const canModerate = (site: ResolvedSite, user: SessionUser): boolean =>
-  site.ownerId === user.id || user.role === 'superadmin'
+// The site OWNER may resolve/reopen any thread on it — nobody else. Deleting a comment is
+// AUTHOR-ONLY, deliberately not a moderation power (nobody deletes someone else's words), and the
+// superadmin role grants neither: an admin's custody over a site it can't read stops at delete.
+const canModerate = (site: ResolvedSite, user: SessionUser): boolean => site.ownerId === user.id
 
 /** PURE post-batch gate on assembled access facts: missing site → 404, then `checkAccess` (the
- *  live session user from requireAuth is the subject, exactly as before) with `canComment` as
- *  the gate. Surfaces checkAccess's real status so an archived site returns 410 (gone), not a
- *  flat 403 (access.ok ⇒ a non-access refusal would still be 403). Evaluated AFTER the facts
+ *  live session user from requireAuth is the subject, exactly as before) with access-ok as
+ *  the gate (comments are allowed wherever the viewer has access — every tier is authed).
+ *  Surfaces checkAccess's real status so an archived site returns 410 (gone), not a
+ *  flat 403. Evaluated AFTER the facts
  *  batch resolves — a route that fuses extra statements into that batch (S9b) must return this
  *  denial WITHOUT touching their rows. Returns the site or a Response to return as-is. */
 function siteFromFacts(c: Context<AppEnv>, facts: AccessFacts): ResolvedSite | Response {
   const { site, access } = siteAccessFromFacts(facts, c.get('user'))
   if (!site) return c.json({ error: 'not found' }, 404)
-  if (!canComment(site, access)) return c.json({ error: 'forbidden' }, access.ok ? 403 : access.status)
+  if (!access.ok) return c.json({ error: 'forbidden' }, access.status)
   return site
 }
 
@@ -302,46 +292,6 @@ async function deliverSlackForComment(
   } catch {
     // Slack delivery is best-effort and isolated — a fault here never fails the comment.
   }
-}
-
-function notifyThreadCreated(
-  c: Context<AppEnv>,
-  site: ResolvedSite,
-  opts: {
-    out: Pick<Awaited<ReturnType<typeof createThread>>, 'threadId' | 'openingCommentId'>
-    filePath: string
-    snippet: string
-    rawMentions?: unknown
-  },
-): Promise<void> {
-  return notifyForComment(c, site, {
-    rawMentions: opts.rawMentions,
-    threadId: opts.out.threadId,
-    commentId: opts.out.openingCommentId,
-    filePath: opts.filePath,
-    snippet: opts.snippet,
-    isReply: false,
-  })
-}
-
-function notifyReply(
-  c: Context<AppEnv>,
-  site: ResolvedSite,
-  opts: {
-    thread: Pick<CommentThread, 'id' | 'filePath'>
-    commentId: string
-    snippet: string
-    rawMentions?: unknown
-  },
-): Promise<void> {
-  return notifyForComment(c, site, {
-    rawMentions: opts.rawMentions,
-    threadId: opts.thread.id,
-    commentId: opts.commentId,
-    filePath: opts.thread.filePath,
-    snippet: opts.snippet,
-    isReply: true,
-  })
 }
 
 /** Push a just-created thread over the comments channel — the SAME ThreadView the list route
@@ -633,7 +583,14 @@ comments.post('/:space/:site/comments', async (c) => {
     context: fields.context,
   })
   await pushThreadCreated(c, site, fields.filePath, out.thread, out.comment)
-  await notifyThreadCreated(c, site, { out, filePath: fields.filePath, snippet: body, rawMentions: raw?.mentions })
+  await notifyForComment(c, site, {
+    rawMentions: raw?.mentions,
+    threadId: out.threadId,
+    commentId: out.openingCommentId,
+    filePath: fields.filePath,
+    snippet: body,
+    isReply: false,
+  })
   return c.json({ threadId: out.threadId, openingCommentId: out.openingCommentId }, 201)
 })
 
@@ -687,7 +644,14 @@ async function createVoiceThread(c: Context<AppEnv>, site: ResolvedSite): Promis
     throw e
   }
   await pushThreadCreated(c, site, fields.filePath, out.thread, out.comment)
-  await notifyThreadCreated(c, site, { out, filePath: fields.filePath, snippet: body })
+  await notifyForComment(c, site, {
+    rawMentions: undefined,
+    threadId: out.threadId,
+    commentId: out.openingCommentId,
+    filePath: fields.filePath,
+    snippet: body,
+    isReply: false,
+  })
   return c.json({ threadId: out.threadId, openingCommentId: out.openingCommentId }, 201)
 }
 
@@ -705,7 +669,14 @@ comments.post('/:space/:site/comments/:threadId/replies', async (c) => {
   if (!body) return c.json({ error: 'invalid body' }, 400)
   const added = await addComment(c.get('db'), { threadId: thread.id, authorId: c.get('user').id, body })
   await pushCommentCreated(c, site, thread, added)
-  await notifyReply(c, site, { thread, commentId: added.id, snippet: body, rawMentions: raw?.mentions })
+  await notifyForComment(c, site, {
+    rawMentions: raw?.mentions,
+    threadId: thread.id,
+    commentId: added.id,
+    filePath: thread.filePath,
+    snippet: body,
+    isReply: true,
+  })
   return c.json({ id: added.id }, 201)
 })
 
@@ -725,11 +696,18 @@ async function replyVoiceComment(c: Context<AppEnv>, site: ResolvedSite, thread:
     throw e
   }
   await pushCommentCreated(c, site, thread, added)
-  await notifyReply(c, site, { thread, commentId: added.id, snippet: body })
+  await notifyForComment(c, site, {
+    rawMentions: undefined,
+    threadId: thread.id,
+    commentId: added.id,
+    filePath: thread.filePath,
+    snippet: body,
+    isReply: true,
+  })
   return c.json({ id: added.id }, 201)
 }
 
-// PATCH — resolve / reopen a thread (owner or superadmin only). S9c fused pre-write batch; the
+// PATCH — resolve / reopen a thread (site owner only). S9c fused pre-write batch; the
 // role 403 still comes BEFORE the thread 404 (the batched thread row goes unused on a 403 —
 // accepted design, same as the GET list's denial).
 comments.patch('/:space/:site/comments/:threadId', async (c) => {

@@ -118,19 +118,16 @@ describe('glance.db data plane — happy path', () => {
 })
 
 describe('P0-4/P0-3: modify authority is distinct from view authority', () => {
-  test('dataCapsFor: owner + superadmin get write/read_all; a viewer gets read+create only', () => {
+  // The role is NOT a cap: read_all is a read of the site's data — the same content a superadmin
+  // is denied on the page — so minting it by role would reopen that door through the data plane.
+  test('dataCapsFor: only the owner gets write/read_all; a viewer AND a superadmin get read+create', () => {
     expect(dataCapsFor({ id: 'userA', role: 'member' }, { ownerId: 'userA' })).toEqual([
       'read',
       'create',
       'write',
       'read_all',
     ])
-    expect(dataCapsFor({ id: 'root', role: 'superadmin' }, { ownerId: 'userA' })).toEqual([
-      'read',
-      'create',
-      'write',
-      'read_all',
-    ])
+    expect(dataCapsFor({ id: 'root', role: 'superadmin' }, { ownerId: 'userA' })).toEqual(['read', 'create'])
     expect(dataCapsFor({ id: 'userB', role: 'member' }, { ownerId: 'userA' })).toEqual(['read', 'create'])
   })
 

@@ -181,6 +181,18 @@ func TestNotificationsCommand(t *testing.T) {
 	})
 }
 
+func TestRenderNotificationShare(t *testing.T) {
+	name := "Ada"
+	site := "team/doc"
+	got := renderNotification(notificationItem{
+		Type: "share", ActorName: &name, SiteLabel: &site, CreatedAt: "2026-07-16T12:00:00Z",
+	}, time.Date(2026, 7, 16, 12, 5, 0, 0, time.UTC))
+	want := "● Ada shared team/doc (5m ago)\n"
+	if got != want {
+		t.Fatalf("renderNotification share = %q, want %q", got, want)
+	}
+}
+
 func TestTimeAgo(t *testing.T) {
 	now := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
 	cases := []struct {

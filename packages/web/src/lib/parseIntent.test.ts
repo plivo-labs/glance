@@ -71,8 +71,29 @@ describe('parseIntent', () => {
     expect(parseIntent(ev({ data: { type: 'glance:comment-key' } }), expected)).toEqual({ type: 'commentKey' })
   })
 
+  test('parses the ask-key intent — payload-free, mirrors comment-key', () => {
+    expect(parseIntent(ev({ data: { type: 'glance:ask-key' } }), expected)).toEqual({ type: 'askKey' })
+  })
+
+  test('parseintent-carries-block-text', () => {
+    const res = parseIntent(ev({ data: { ...validSelect, blockText: 'surrounding paragraph' } }), expected)
+    expect(res).toMatchObject({ type: 'select', blockText: 'surrounding paragraph' })
+  })
+
+  test('parseintent-clamps-oversize-block-text', () => {
+    const res = parseIntent(ev({ data: { ...validSelect, blockText: 'z'.repeat(9000) } }), expected)
+    expect((res as { blockText?: string }).blockText).toBe('z'.repeat(2000))
+  })
+
+  test('parseintent-omits-unusable-block-text', () => {
+    for (const blockText of [undefined, '', 7, null, {}]) {
+      const res = parseIntent(ev({ data: { ...validSelect, blockText } }), expected)
+      expect((res as { blockText?: string }).blockText).toBeUndefined()
+    }
+  })
+
   test('dismissal intents are rejected on a wrong origin or wrong source, like every other intent', () => {
-    for (const type of ['glance:click-away', 'glance:escape', 'glance:comment-key']) {
+    for (const type of ['glance:click-away', 'glance:escape', 'glance:comment-key', 'glance:ask-key']) {
       expect(parseIntent(ev({ origin: 'https://evil.com', data: { type } }), expected)).toBeNull()
       expect(parseIntent(ev({ source: otherWin, data: { type } }), expected)).toBeNull()
     }

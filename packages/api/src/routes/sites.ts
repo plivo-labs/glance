@@ -1,11 +1,13 @@
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
-import { Hono } from 'hono'
+import { type Context, Hono } from 'hono'
+import { createNotifications, usersEmailsByIds } from '../db/notifications'
 import {
   type ShareUser,
   foldMemberSpaceIds,
   foldSharedSiteRoles,
   isSpaceMember,
+  isUniqueConstraintError,
   listSiteShares,
   memberSpaceIdsStmt,
   replaceSiteShares,
@@ -18,10 +20,12 @@ import { files as filesTable, siteStars, sites as sitesTable, spaces, users } fr
 import { canReplace, checkAccess } from '../lib/access'
 import { isTheme } from '../themes/registry'
 import { batchAll, chunk, D1_MAX_IN, FEED_ID_CHUNK } from '../lib/d1'
+import { fireAndForget } from '../lib/events'
 import { resolveIndexPath } from '../lib/extract'
 import { siteFeedColumns, toFeedRow } from '../lib/site-feed'
 import { readSessionOrBearer } from '../lib/session'
 import { fetchAccessFacts, isSharedFromFacts, resolveSite, resolveSiteForAccess } from '../lib/site-access'
+import { deliverSlack, type SlackRecipient, slackDepsFromEnv, slackEnabled } from '../lib/slack'
 import { isValidSlug } from '../lib/slug'
 import { copyObjects, deleteKeys, deleteSiteObjects } from '../lib/storage'
 import { signToken } from '../lib/token'
@@ -52,15 +56,8 @@ function escapeLike(s: string): string {
 }
 
 // createdAt is ISO-8601, so a plain string compare orders chronologically. Newest first.
-function byCreatedAtDesc(a: { createdAt: string }, b: { createdAt: string }): number {
-  return a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0
-}
-
-// SQLite/D1 UNIQUE-constraint violation (both bun:sqlite and D1's wrapped D1_ERROR carry the text).
-function isUniqueConstraintError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err)
-  return /unique constraint failed/i.test(msg)
-}
+const byCreatedAtDesc = (a: { createdAt: string }, b: { createdAt: string }): number =>
+  b.createdAt.localeCompare(a.createdAt)
 
 export type SearchRow = {
   id: string
@@ -76,7 +73,7 @@ export type SearchRow = {
 
 /**
  * cmdk site search. Bounded candidate queries over *active* sites the caller might open
- * (owner / member-space / team / explicitly-shared; superadmin ⇒ all active) — chunked + unioned
+ * (owner / member-space / team / explicitly-shared) — chunked + unioned
  * to stay under D1's bound-parameter cap — then a final in-memory checkAccess pass (the single
  * source of truth) using precomputed membership/share sets so it stays O(rows), not N+1.
  * "Openable" semantics: the result is exactly what checkAccess admits. q matches site title/slug
@@ -91,26 +88,25 @@ export async function searchSites(
   const term = `%${escapeLike(q.trim().toLowerCase())}%`
   const qMatch = sql`(lower(${sitesTable.title}) like ${term} escape '\\' or lower(${sitesTable.slug}) like ${term} escape '\\' or lower(${spaces.slug}) like ${term} escape '\\' or lower(${spaces.name}) like ${term} escape '\\')`
 
-  const isSuper = user.role === 'superadmin'
   // Per-keystroke endpoint: both reach-set reads ride ONE db.batch (comment-feed.ts fuses the
   // same statements the same way).
-  const [memberRows, direct, viaGroup] = isSuper
-    ? [[], [], []]
-    : await batchAll(db, [memberSpaceIdsStmt(db, user.id), ...sharedSiteRoleStmts(db, user.id)])
+  const [memberRows, direct, viaGroup] = await batchAll(db, [
+    memberSpaceIdsStmt(db, user.id),
+    ...sharedSiteRoleStmts(db, user.id),
+  ])
   const memberSpaces = foldMemberSpaceIds(memberRows)
   const shared = new Set(foldSharedSiteRoles(direct, viaGroup).keys())
 
   // Candidate reach as a set of bounded WHERE clauses, unioned in memory: `X AND (A OR B OR C)`
   // ≡ union of `X AND A`, `X AND B`, `X AND C`. Member-space / shared id lists are chunked under
-  // D1's bind cap (see lib/d1.ts). superadmin ⇒ every active match (undefined reach, which `and` drops).
+  // D1's bind cap (see lib/d1.ts). A superadmin searches as a plain member — the all-sites view is
+  // the admin panel (metadata only), never this openable-sites search.
   const active = eq(sitesTable.status, 'active')
-  const reaches = isSuper
-    ? [undefined]
-    : [
-        or(eq(sitesTable.ownerId, user.id), eq(sitesTable.visibility, 'team')),
-        ...chunk([...memberSpaces], D1_MAX_IN).map((ids) => inArray(sitesTable.spaceId, ids)),
-        ...chunk([...shared], D1_MAX_IN).map((ids) => inArray(sitesTable.id, ids)),
-      ]
+  const reaches = [
+    or(eq(sitesTable.ownerId, user.id), eq(sitesTable.visibility, 'team')),
+    ...chunk([...memberSpaces], D1_MAX_IN).map((ids) => inArray(sitesTable.spaceId, ids)),
+    ...chunk([...shared], D1_MAX_IN).map((ids) => inArray(sitesTable.id, ids)),
+  ]
 
   const cols = {
     id: sitesTable.id,
@@ -325,12 +321,12 @@ sites.get('/:spaceSlug/:siteSlug/exists', requireAuth, async (c) => {
   const site = await resolveSite(db, spaceSlug, siteSlug)
   if (!site) return c.json({ exists: false })
   // Existence is disclosed only to someone who could legitimately act on it — the site's space
-  // members (slug availability is per-space), its owner, a superadmin, OR a direct editor grantee
-  // (typically NOT a space member — without this a non-member editor gets exists:false, the CLI
-  // then tries CREATE and 403s). Anyone else gets the same not-found shape so an unauthorized caller
-  // can't probe cross-space for a site's existence.
+  // members (slug availability is per-space), its owner, OR a direct editor grantee (typically NOT
+  // a space member — without this a non-member editor gets exists:false, the CLI then tries CREATE
+  // and 403s). Anyone else — a superadmin included — gets the same not-found shape so an
+  // unauthorized caller can't probe cross-space for a site's existence.
   const isOwner = site.ownerId === user.id
-  const role = isOwner || user.role === 'superadmin' ? null : await resolveShareRole(db, site.id, user.id)
+  const role = isOwner ? null : await resolveShareRole(db, site.id, user.id)
   const replaceable = canReplace(user, site, role)
   const authorized = replaceable || (await isSpaceMember(db, site.spaceId, user.id))
   if (!authorized) return c.json({ exists: false })
@@ -393,7 +389,7 @@ sites.get('/:spaceSlug/:siteSlug', async (c) => {
     CONTENT_TOKEN_TTL,
   )}/${spaceSlug}/${siteSlug}/`
 
-  // Manifest gate: only someone who can REPLACE the content (owner / superadmin / editor) gets the
+  // Manifest gate: only someone who can REPLACE the content (owner / editor) gets the
   // file list + contentVersion — the pull-and-redeploy payload. A plain viewer sees their canReplace:
   // false and no manifest, so they can't enumerate the site's files.
   const replaceable = canReplace(user, site, role)
@@ -439,6 +435,49 @@ export function parseShareGrants(body: unknown): { users: ShareUser[]; groupIds:
   return { users: [...roles].map(([userId, role]) => ({ userId, role })), groupIds }
 }
 
+/** Raise `type='share'` notifications (+ the Slack DM mirror) for users NEWLY granted a direct
+ *  share — never group grants, never re-grants, never the actor. Mirrors notifyForComment: the
+ *  whole body rides fireAndForget with a catch-all, so a notification fault never blocks or fails
+ *  the share that already committed. */
+async function notifyForShare(c: Context<AppEnv>, siteId: string, recipientIds: string[]): Promise<void> {
+  if (recipientIds.length === 0) return
+  const actor = c.get('user')
+  const db = c.get('db')
+  const { spaceSlug, siteSlug } = c.req.param()
+  const siteLabel = `${spaceSlug}/${siteSlug}`
+  await fireAndForget(
+    c,
+    (async () => {
+      try {
+        await createNotifications(
+          db,
+          recipientIds.map((recipientId) => ({
+            recipientId,
+            type: 'share' as const,
+            actorId: actor.id,
+            siteId,
+            siteLabel,
+          })),
+        )
+        if (!slackEnabled(c.env.SLACK_BOT_TOKEN)) return
+        const emails = await usersEmailsByIds(db, recipientIds)
+        const recipients: SlackRecipient[] = recipientIds.map((id) => ({
+          id,
+          email: emails.get(id) ?? null,
+          reason: 'shared' as const,
+        }))
+        await deliverSlack(
+          slackDepsFromEnv(c.env),
+          { actorName: actor.name, actorEmail: actor.email, siteLabel, filePath: null, threadId: null, snippet: null },
+          recipients,
+        )
+      } catch {
+        // Notifications are best-effort — never surface to the caller (mirrors notifyForComment).
+      }
+    })(),
+  )
+}
+
 // GET /api/sites/:spaceSlug/:siteSlug/shares — owner-only: current explicit share lists.
 sites.get('/:spaceSlug/:siteSlug/shares', requireAuth, async (c) => {
   const user = c.get('user')
@@ -446,7 +485,7 @@ sites.get('/:spaceSlug/:siteSlug/shares', requireAuth, async (c) => {
   const { spaceSlug, siteSlug } = c.req.param()
   const site = await resolveSite(db, spaceSlug, siteSlug)
   if (!site) return c.json({ error: 'not found' }, 404)
-  if (site.ownerId !== user.id && user.role !== 'superadmin') return c.json({ error: 'forbidden' }, 403)
+  if (site.ownerId !== user.id) return c.json({ error: 'forbidden' }, 403)
   const shares = await listSiteShares(db, site.id)
   // Boundary shape: expose users as {id, role} (mirrors the PUT input); keep flat userIds/groupIds
   // for the legacy web dialog.
@@ -457,14 +496,15 @@ sites.get('/:spaceSlug/:siteSlug/shares', requireAuth, async (c) => {
   })
 })
 
-// PUT /api/sites/:spaceSlug/:siteSlug/shares — owner-only: replace the whole share set.
+// PUT /api/sites/:spaceSlug/:siteSlug/shares — owner-only: replace the whole share set. Strictly
+// the owner: a superadmin here could grant ITSELF a share and read a site checkAccess denies it.
 sites.put('/:spaceSlug/:siteSlug/shares', requireAuth, requireControlGrant, async (c) => {
   const user = c.get('user')
   const db = c.get('db')
   const { spaceSlug, siteSlug } = c.req.param()
   const site = await resolveSite(db, spaceSlug, siteSlug)
   if (!site) return c.json({ error: 'not found' }, 404)
-  if (site.ownerId !== user.id && user.role !== 'superadmin') return c.json({ error: 'forbidden' }, 403)
+  if (site.ownerId !== user.id) return c.json({ error: 'forbidden' }, 403)
 
   const grants = parseShareGrants(await c.req.json().catch(() => null))
   if ('error' in grants) return c.json({ error: grants.error }, 400)
@@ -485,7 +525,15 @@ sites.put('/:spaceSlug/:siteSlug/shares', requireAuth, requireControlGrant, asyn
       ).map((r) => r.id)
     : []
 
+  // Diff BEFORE the replace so only newly granted users are notified (a re-PUT of the same set,
+  // a role change, or a group grant raises nothing).
+  const prior = new Set((await listSiteShares(db, site.id)).userIds)
   await replaceSiteShares(db, site.id, validUsers, validGroups)
+  await notifyForShare(
+    c,
+    site.id,
+    validUsers.map((u) => u.userId).filter((id) => !prior.has(id) && id !== user.id),
+  )
   return c.json({
     ok: true,
     userIds: validUsers.map((u) => u.userId),
@@ -494,14 +542,15 @@ sites.put('/:spaceSlug/:siteSlug/shares', requireAuth, requireControlGrant, asyn
   })
 })
 
-// PATCH /api/sites/:spaceSlug/:siteSlug — owner-only update of visibility/title.
+// PATCH /api/sites/:spaceSlug/:siteSlug — owner-only update of visibility/title. Strictly the
+// owner: a superadmin here could downgrade `private` → `team` and then read the site legitimately.
 sites.patch('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c) => {
   const user = c.get('user')
   const db = c.get('db')
   const { spaceSlug, siteSlug } = c.req.param()
   const site = await resolveSite(db, spaceSlug, siteSlug)
   if (!site) return c.json({ error: 'not found' }, 404)
-  if (site.ownerId !== user.id && user.role !== 'superadmin') return c.json({ error: 'forbidden' }, 403)
+  if (site.ownerId !== user.id) return c.json({ error: 'forbidden' }, 403)
 
   const body = await c.req.json().catch(() => null)
   if (!body || typeof body !== 'object') return c.json({ error: 'invalid body' }, 400)
@@ -532,16 +581,17 @@ sites.patch('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
   return c.json({ ok: true })
 })
 
-// POST /api/sites/:spaceSlug/:siteSlug/move — owner (or superadmin) moves a site to another
-// space they belong to. Storage keys are space-agnostic (uuid-prefixed), so only `spaceId`
-// changes; shares/comments key off `siteId` and survive. The site's URL becomes /<dest>/<slug>.
+// POST /api/sites/:spaceSlug/:siteSlug/move — the owner moves a site to another space they belong
+// to. Storage keys are space-agnostic (uuid-prefixed), so only `spaceId` changes; shares/comments
+// key off `siteId` and survive. The site's URL becomes /<dest>/<slug>. Owner-only: a superadmin
+// here could move a `members` site into a space it belongs to and read it as a member.
 sites.post('/:spaceSlug/:siteSlug/move', requireAuth, requireControlGrant, async (c) => {
   const user = c.get('user')
   const db = c.get('db')
   const { spaceSlug, siteSlug } = c.req.param()
   const site = await resolveSite(db, spaceSlug, siteSlug)
   if (!site) return c.json({ error: 'not found' }, 404)
-  if (site.ownerId !== user.id && user.role !== 'superadmin') {
+  if (site.ownerId !== user.id) {
     return c.json({ error: 'forbidden' }, 403)
   }
 
@@ -554,8 +604,8 @@ sites.post('/:spaceSlug/:siteSlug/move', requireAuth, requireControlGrant, async
   )[0]
   if (!dest) return c.json({ error: 'space not found' }, 404)
   if (dest.id === site.spaceId) return c.json({ error: 'site is already in that space' }, 400)
-  // Can't dump a site into a space you're not in (superadmin may move anywhere).
-  if (user.role !== 'superadmin' && !(await isSpaceMember(db, dest.id, user.id))) {
+  // Can't dump a site into a space you're not in.
+  if (!(await isSpaceMember(db, dest.id, user.id))) {
     return c.json({ error: 'forbidden' }, 403)
   }
   // The (spaceId, slug) unique index would otherwise throw — check first for a clean 409.
@@ -641,7 +691,7 @@ sites.post('/:spaceSlug/:siteSlug/fork', requireAuth, requireControlGrant, async
       : c.json({ error: 'no personal space — name a destination space' }, 400)
   }
   // Same rule as `move`: you can't drop a site into a space you're not in.
-  if (user.role !== 'superadmin' && !(await isSpaceMember(db, dest.id, user.id))) {
+  if (!(await isSpaceMember(db, dest.id, user.id))) {
     return c.json({ error: 'forbidden' }, 403)
   }
 
@@ -703,6 +753,9 @@ sites.post('/:spaceSlug/:siteSlug/fork', requireAuth, requireControlGrant, async
 })
 
 // DELETE /api/sites/:spaceSlug/:siteSlug — hard delete (owner or superadmin). Purges R2 first.
+// The superadmin arm is the ONE power an admin holds over a site it cannot read: it may remove
+// someone else's page (and archive/restore it via the admin panel) but never open, replace, retier,
+// share, move, or moderate it. Every one of those is owner-only — see lib/access.ts.
 sites.delete('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c) => {
   const user = c.get('user')
   const db = c.get('db')

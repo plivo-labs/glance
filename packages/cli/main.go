@@ -35,6 +35,18 @@ func main() {
 	}
 }
 
+var authedCmds = map[string]func(*client, []string) error{
+	"deploy":        (*client).deploy,
+	"list":          func(c *client, _ []string) error { return c.list() },
+	"delete":        (*client).del,
+	"move":          (*client).move,
+	"fork":          (*client).fork,
+	"comments":      (*client).comments,
+	"read":          (*client).read,
+	"reply":         (*client).reply,
+	"notifications": (*client).notifications,
+}
+
 func dispatch(cmd string, rest []string) error {
 	switch cmd {
 	case "login":
@@ -58,7 +70,8 @@ func dispatch(cmd string, rest []string) error {
 			base, token = cfg.ApiUrl, cfg.Token
 		}
 		return newClient(base, token, os.Stdout).logout()
-	case "deploy", "list", "delete", "move", "fork", "comments", "read", "reply", "notifications":
+	}
+	if run, found := authedCmds[cmd]; found {
 		// Both halves of the credential come from the same precedence: env override, then stored
 		// config. Resolving the token from the env but the URL from disk only would half-wire it —
 		// a CI container with GLANCE_TOKEN and GLANCE_API_URL exported but no ~/.glance/config.json
@@ -66,27 +79,7 @@ func dispatch(cmd string, rest []string) error {
 		// then fail every request with `unsupported protocol scheme ""`. apiBase()'s local-dev
 		// fallback keeps the clean "Not logged in" path intact when neither is set: the base is
 		// non-empty, the token is not, and requireAuth() catches it.
-		c := newClient(apiBase(), apiToken(), os.Stdout)
-		switch cmd {
-		case "deploy":
-			return c.deploy(rest)
-		case "list":
-			return c.list()
-		case "delete":
-			return c.del(rest)
-		case "move":
-			return c.move(rest)
-		case "fork":
-			return c.fork(rest)
-		case "comments":
-			return c.comments(rest)
-		case "read":
-			return c.read(rest)
-		case "reply":
-			return c.reply(rest)
-		case "notifications":
-			return c.notifications(rest)
-		}
+		return run(newClient(apiBase(), apiToken(), os.Stdout), rest)
 	}
 	printHelp()
 	if cmd != "" {

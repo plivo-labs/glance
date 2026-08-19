@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { and, eq } from 'drizzle-orm'
 import type { CommentFeedItem } from '../db/comment-feed'
 import { comments, sites, siteUserShares, spaceMembers, users } from '../db/schema'
-import realApp from '../index'
+import worker from '../index'
 import type { AppEnv } from '../types'
 import {
   makeKv,
@@ -113,7 +113,7 @@ describe('comment feed route — C4.6 root-app composition', () => {
       GLANCE_SESSIONS: makeKv(),
     } as unknown as AppEnv['Bindings']
 
-    const res = await realApp.request(FEED_URL, {}, env)
+    const res = await worker.fetch(new Request(`${APP_URL}${FEED_URL}`), env)
 
     expect(res.status).toBe(401)
     expect(res.status).not.toBe(404)
@@ -336,8 +336,19 @@ describe('comment feed route — C4.3 live access transitions', () => {
     await db.update(sites).set({ status: 'archived' }).where(eq(sites.id, siteId))
     expect(await feedIds()).toEqual([])
 
+    // Promotion to superadmin adds NOTHING: the feed is filtered by the same tier oracle, so the
+    // archived site stays invisible, an un-archived one reaches the admin only via the share it
+    // still holds, and revoking that share empties the feed even though the role remains.
     await db.update(users).set({ role: 'superadmin' }).where(eq(users.id, userId))
+    expect(await feedIds()).toEqual([])
+
+    await db.update(sites).set({ status: 'active' }).where(eq(sites.id, siteId))
     expect(await feedIds()).toEqual(bothArms)
+
+    await db
+      .delete(siteUserShares)
+      .where(and(eq(siteUserShares.siteId, siteId), eq(siteUserShares.userId, userId)))
+    expect(await feedIds()).toEqual([])
   })
 })
 

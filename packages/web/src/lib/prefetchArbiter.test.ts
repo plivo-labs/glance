@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import type { Thread } from './comments'
 import { type ArbiterEvent, type ArbiterState, initialArbiter, type StepResult, stepArbiter } from './prefetchArbiter'
 
 // T11.2–T11.4 — the viewer's comments-load ordering rules, all pinned at the reducer. NOTE: a
@@ -6,14 +7,15 @@ import { type ArbiterEvent, type ArbiterState, initialArbiter, type StepResult, 
 // effects) — the G4 real-browser smoke is the net for that; these tests pin the decisions the
 // component executes.
 
-type Data = string[]
-const THREADS: Data = ['t1', 't2']
-const NEWER: Data = ['t3']
+// Threads are opaque to the reducer, so plain strings stand in for real Thread objects.
+const t = (s: string) => s as unknown as Thread
+const THREADS = [t('t1'), t('t2')]
+const NEWER = [t('t3')]
 
 // Drive a sequence of events, returning the final state + every decision in order.
-function run(expected: string | null, events: ArbiterEvent<Data>[]): { state: ArbiterState<Data>; decisions: StepResult<Data>['decision'][] } {
-  let state = initialArbiter<Data>(expected)
-  const decisions: StepResult<Data>['decision'][] = []
+function run(expected: string | null, events: ArbiterEvent[]): { state: ArbiterState; decisions: StepResult['decision'][] } {
+  let state = initialArbiter(expected)
+  const decisions: StepResult['decision'][] = []
   for (const e of events) {
     const step = stepArbiter(state, e)
     state = step.state
@@ -143,12 +145,12 @@ describe('provisional prefetch rules (T11.3)', () => {
 
 describe('splat-navigation reset (T11.4)', () => {
   test('navReset clears per-file state but keeps the generation clock monotonic', () => {
-    let state = initialArbiter<Data>('a.html')
+    let state = initialArbiter('a.html')
     for (const e of [
       { type: 'start', path: 'a.html', provisional: true },
       { type: 'settled', gen: 1, ok: true, data: THREADS },
       { type: 'ready', path: 'a.html' },
-    ] as ArbiterEvent<Data>[]) {
+    ] as ArbiterEvent[]) {
       state = stepArbiter(state, e).state
     }
     const reset = stepArbiter(state, { type: 'navReset', expected: 'b.html' }).state
@@ -205,7 +207,7 @@ describe('splat-navigation reset (T11.4)', () => {
 // survives the settle instead of being silently overwritten by it. The fold is a FUNCTION so the
 // reducer stays generic and knows nothing about comments; the viewer passes applyCommentEvent.
 describe('pushed events vs an in-flight list (C13)', () => {
-  const push = (tag: string): ArbiterEvent<Data> => ({ type: 'push', apply: (d) => [...d, tag] })
+  const push = (tag: string): ArbiterEvent => ({ type: 'push', apply: (d) => [...d, t(tag)] })
 
   test('with no load in flight the push is LIVE — the component applies it to what is on screen', () => {
     const { state, decisions } = run('index.html', [{ type: 'ready', path: 'index.html' }, push('p1')])

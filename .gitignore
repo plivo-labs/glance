@@ -44,3 +44,6 @@ CLAUDE.md
 *PLAN.md
 *PROGRESS.md
 *PROGRESS.html
+
+# local CLI build (releases build from source)
+packages/cli/glance

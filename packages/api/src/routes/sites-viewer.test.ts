@@ -79,7 +79,7 @@ describe('GET /api/sites/:space/:site (viewer metadata)', () => {
 })
 
 // The slug-availability probe discloses existence ONLY to someone who could legitimately act on it
-// (owner / space member / superadmin). Everyone else gets the identical not-found shape, so an
+// (owner / space member / direct editor). Everyone else gets the identical not-found shape, so an
 // unauthorized caller can't distinguish a real site from a missing one (fix #14).
 describe('GET /api/sites/:space/:site/exists (slug-availability probe)', () => {
   async function seedProbe() {
@@ -105,10 +105,12 @@ describe('GET /api/sites/:space/:site/exists (slug-availability probe)', () => {
     expect(await (await exists(app, env, 'docs', 'report', 'mate')).json()).toEqual({ exists: true, owned: false, canReplace: false, contentVersion: 0 })
   })
 
-  test('superadmin (non-member) sees it exists', async () => {
+  // The role is not a probe credential: an admin who is neither owner nor member gets the same
+  // not-found shape as any stranger, so the admin panel stays the only place it enumerates sites.
+  test('superadmin (non-member) cannot distinguish it from a missing site', async () => {
     const { db, kv, app, env } = await seedProbe()
     await mintUser(db, kv, 'admin', 'superadmin')
-    expect(await (await exists(app, env, 'docs', 'report', 'admin')).json()).toMatchObject({ exists: true })
+    expect(await (await exists(app, env, 'docs', 'report', 'admin')).json()).toEqual({ exists: false })
   })
 
   test('an unrelated authed user cannot distinguish a real site from a missing one', async () => {
@@ -160,7 +162,7 @@ describe('GET /api/sites/:space/:site — indexPath (root-file resolution)', () 
 describe('GET /api/sites/:space/:site — share-reach role resolution (S7 pins)', () => {
   type MetaBody = { role?: string; canReplace?: boolean; files?: string[]; contentVersion?: number }
 
-  // Private site: only an explicit share (or owner/superadmin) reaches it — no tier fallback.
+  // Private site: only an explicit share (or the owner) reaches it — no tier fallback.
   async function seedPrivate() {
     const { db, kv, app, env } = await setup()
     await mintUser(db, kv, 'owner')
@@ -239,16 +241,17 @@ describe('GET /api/sites/:space/:site — share-reach role resolution (S7 pins)'
     expect(db.counters.batchStmts).toBe(7)
   })
 
-  test('meta.superadmin: 200 with canReplace:true, manifest present, NO role field (no direct share)', async () => {
+  // No content URL, no manifest, no version — the meta route is a read surface, and the admin's
+  // custody (delete / archive) never runs through it.
+  test('meta.superadmin: 403 on a private site they do not own — no contentUrl, no manifest', async () => {
     const { db, kv, app, env } = await seedPrivate()
     await mintUser(db, kv, 'admin', 'superadmin')
 
     const res = await view(app, env, 'docs', 'report', { Authorization: 'Bearer tok-admin' })
-    expect(res.status).toBe(200)
-    const body = (await res.json()) as MetaBody
-    expect('role' in body).toBe(false)
-    expect(body.canReplace).toBe(true)
-    expect(body.files).toEqual(['index.html'])
+    expect(res.status).toBe(403)
+    const body = (await res.json()) as Partial<MetaBody>
+    expect(body.files).toBeUndefined()
+    expect(body.contentUrl).toBeUndefined()
   })
 })
 

@@ -62,14 +62,17 @@ function postUpload(
 
 const html = (s: string, name: string) => new File([s], name, { type: 'text/html' })
 
-describe('upload — superadmin moderation', () => {
+// A superadmin is not a content author on someone else's site: replace would let it plant bytes
+// the owner then opens, and create would let it publish into a space it doesn't belong to. Its
+// custody is delete, in the admin panel.
+describe('upload — a superadmin is not an editor', () => {
   async function postAs(app: Hono<AppEnv>, env: AppEnv['Bindings'], token: string, slug: string, query = '') {
     const fd = new FormData()
     fd.append('files', html('<html>2</html>', 'index.html'))
     return app.request(`/api/upload/acme/${slug}${query}`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd }, env)
   }
 
-  test('superadmin-can-replace-another-owners-site: bypasses membership + ownership', async () => {
+  test('superadmin-cannot-replace-another-owners-site: 403, and cannot create in the space either', async () => {
     const { app, env, db } = await setup()
     await postUpload(app, env, 'modme', [html('<html>1</html>', 'index.html')]) // owner creates
     const admin = await seedUser(db, { id: 'admin', email: 'admin@example.com', role: 'superadmin' })
@@ -78,7 +81,8 @@ describe('upload — superadmin moderation', () => {
       'cli:admintok',
       JSON.stringify({ id: admin, email: 'admin@example.com', name: null, role: 'superadmin' }),
     )
-    expect((await postAs(app, env, 'admintok', 'modme', '?replace=true')).status).toBe(200)
+    expect((await postAs(app, env, 'admintok', 'modme', '?replace=true')).status).toBe(403)
+    expect((await postAs(app, env, 'admintok', 'fresh')).status).toBe(403)
   })
 
   test('non-member-cannot-replace: a plain member outside the space is still 403', async () => {
@@ -159,6 +163,27 @@ describe('upload — DoS caps (before any R2 write)', () => {
     const res = await postFiles(app, env, 'toomany', parts)
     expect(res.status).toBe(400)
     expect((await res.json()).error).toBe('too many files')
+    expect(await db.select().from(files)).toHaveLength(0)
+    expect(r2.store.size).toBe(0)
+  })
+
+  test('total-size-cap: a Content-Length over 100MB → 413 before the body is ever parsed', async () => {
+    const { app, env, db, r2 } = await setup()
+    // The body itself is tiny — the forged header alone must trip the guard, because by the time
+    // any per-file check runs the whole multipart body has already been buffered in worker memory.
+    const fd = new FormData()
+    fd.append('files', html('<html></html>', 'index.html'))
+    const res = await app.request(
+      '/api/upload/acme/toobig',
+      {
+        method: 'POST',
+        headers: { Authorization: 'Bearer tok', 'content-length': String(101 * 1024 * 1024) },
+        body: fd,
+      },
+      env,
+    )
+    expect(res.status).toBe(413)
+    expect((await res.json()).error).toBe('upload exceeds 100MB total')
     expect(await db.select().from(files)).toHaveLength(0)
     expect(r2.store.size).toBe(0)
   })

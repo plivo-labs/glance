@@ -251,14 +251,6 @@ describe('site summary routes', () => {
           return { app, env, user }
         },
       },
-      {
-        name: 'superadmin archived bypass',
-        setup: async () => {
-          const { app, env, db, kv } = await seedApp('super-owner', { visibility: 'private', status: 'archived' })
-          const user = await mintUser(db, kv, 'root', { role: 'superadmin' })
-          return { app, env, user }
-        },
-      },
     ]
 
     for (const allowed of allowedSetups) {
@@ -284,6 +276,18 @@ describe('site summary routes', () => {
           const route = await seedApp('private-owner', { visibility: 'private' })
           const outsider = await mintUser(route.db, route.kv, 'private-outsider')
           return { route, headers: auth(outsider) }
+        },
+      },
+      {
+        // No role bypass: the summary reads the site's CONTENT to build it, so a superadmin is
+        // gated exactly like any other outsider (403 live, 410 archived).
+        name: 'superadmin outsider',
+        expectedStatus: 403,
+        expectedBody: { error: 'forbidden' },
+        setup: async () => {
+          const route = await seedApp('super-owner', { visibility: 'private' })
+          const admin = await mintUser(route.db, route.kv, 'root', { role: 'superadmin' })
+          return { route, headers: auth(admin) }
         },
       },
       {

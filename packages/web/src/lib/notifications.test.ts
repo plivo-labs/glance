@@ -16,6 +16,13 @@ describe('W1 — notificationLabel: actor + verb for mention/comment', () => {
     })
   })
 
+  test('share → actor name and "shared a site with you"', () => {
+    expect(notificationLabel({ type: 'share', actorName: 'Priya N' })).toEqual({
+      actor: 'Priya N',
+      verb: 'shared a site with you',
+    })
+  })
+
   test('null actorName → "Someone" for both types', () => {
     expect(notificationLabel({ type: 'mention', actorName: null }).actor).toBe('Someone')
     expect(notificationLabel({ type: 'comment', actorName: null }).actor).toBe('Someone')
