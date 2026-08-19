@@ -11,7 +11,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { ForkDialog } from '@/components/ForkDialog'
 import { ShareDialog } from '@/components/ShareDialog'
 import { SummarySheet } from '@/components/SummarySheet'
-import { ThemeMenu, themeLabel, useThemes } from '@/components/theme-select'
+import { ThemeMenu, patchTheme } from '@/components/theme-select'
 import { VISIBILITY_META, VisibilityBadge, VisibilityMenu } from '@/components/visibility'
 import { BrandMark } from '@/components/states'
 
@@ -203,23 +203,18 @@ function ViewerVisibility({ site }: { site: ViewerSite }) {
 
 // Owner-only theme switcher. The theme is injected into the served HTML by the content worker, so
 // after a successful PATCH the page reloads — the iframe's annotate response is no-store and the
-// themed etag never matches across a switch, so the reload always shows the new skin.
+// themed etag never matches across a switch, so the reload always shows the new skin. (No local
+// state: the reload repaints everything, and on failure the chip should keep showing the truth.)
 function ViewerTheme({ site }: { site: ViewerSite }) {
-  const [theme, setTheme] = useState(site.theme)
-  const themes = useThemes()
-
-  async function change(t: string | null) {
-    const prev = theme
-    setTheme(t)
-    try {
-      await api.patch(`/api/sites/${site.spaceSlug}/${site.siteSlug}`, { theme: t })
-      toast.success('Theme updated', { description: themeLabel(themes, t) })
-      window.location.reload()
-    } catch (err) {
-      setTheme(prev)
-      toast.error('Could not update theme', { description: err instanceof Error ? err.message : undefined })
-    }
-  }
-
-  return <ThemeMenu trigger="chip" value={theme} onChange={change} />
+  return (
+    <ThemeMenu
+      trigger="chip"
+      value={site.theme}
+      onChange={(t) =>
+        void patchTheme(site.spaceSlug, site.siteSlug, t).then((ok) => {
+          if (ok) window.location.reload()
+        })
+      }
+    />
+  )
 }

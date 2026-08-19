@@ -1,5 +1,6 @@
 import { ChevronDown, Palette } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import type { ThemeInfo } from '@/lib/types'
 import { Button } from '@/components/ui/button'
@@ -61,6 +62,19 @@ export function useThemes(): ThemeInfo[] {
 export function themeLabel(themes: ThemeInfo[], slug: string | null): string {
   if (!slug) return 'Default'
   return themes.find((t) => t.slug === slug)?.name ?? slug
+}
+
+/** PATCH a site's theme with the standard success/error toasts. Returns whether it stuck, so the
+ *  caller decides its own refresh (feed revalidate vs full viewer reload). */
+export async function patchTheme(spaceSlug: string, siteSlug: string, theme: string | null): Promise<boolean> {
+  try {
+    await api.patch(`/api/sites/${spaceSlug}/${siteSlug}`, { theme })
+    toast.success('Theme updated', { description: themeLabel(catalog ?? [], theme) })
+    return true
+  } catch (err) {
+    toast.error('Could not update theme', { description: err instanceof Error ? err.message : undefined })
+    return false
+  }
 }
 
 function ThemeRadioItems({

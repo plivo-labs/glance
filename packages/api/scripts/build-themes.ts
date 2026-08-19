@@ -66,6 +66,14 @@ const SLUGS = new Set<string>(THEME_INFO.map((t) => t.slug))
 export function isTheme(v: unknown): v is ThemeSlug {
   return typeof v === 'string' && SLUGS.has(v)
 }
+
+/** Map a raw wire value (form field / JSON) to a stored theme value: ''/'none'/'default' — and
+ *  any non-string — clear to null (default = the page's own design). Pair with isTheme at the
+ *  route boundary so an unknown slug 400s instead of silently serving unthemed (the
+ *  normalizeVisibility + isVisibility idiom). */
+export function normalizeTheme(raw: unknown): string | null {
+  return typeof raw === 'string' && raw !== '' && raw !== 'none' && raw !== 'default' ? raw : null
+}
 `,
 )
 writeFileSync(

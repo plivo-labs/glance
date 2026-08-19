@@ -10,8 +10,8 @@ import { makeDb, makeR2, seedFile, seedSite, seedSpace, seedUser } from './test/
 
 const tokenKey = 'test-secret'
 
-/** Wrap the harness db so its next `failures` batch() calls reject like a transient D1 error. */
-function flakyDb(db: ReturnType<typeof makeDb>, failures: number) {
+/** Wrap the harness db so its next `failures` batch() calls reject with `message`. */
+function flakyDb(db: ReturnType<typeof makeDb>, failures: number, message = 'D1_ERROR: internal error') {
   let remaining = failures
   return new Proxy(db as object, {
     get(target, prop, receiver) {
@@ -19,7 +19,7 @@ function flakyDb(db: ReturnType<typeof makeDb>, failures: number) {
         return (...args: unknown[]) => {
           if (remaining > 0) {
             remaining--
-            return Promise.reject(new Error('D1_ERROR: internal error'))
+            return Promise.reject(new Error(message))
           }
           return (target as { batch: (...a: unknown[]) => unknown }).batch(...args)
         }
@@ -29,7 +29,7 @@ function flakyDb(db: ReturnType<typeof makeDb>, failures: number) {
   }) as ReturnType<typeof makeDb>
 }
 
-async function setup(failures: number) {
+async function setup(failures: number, message?: string) {
   const db = makeDb()
   const r2 = makeR2()
   const uid = await seedUser(db, { id: 'u1' })
@@ -44,7 +44,7 @@ async function setup(failures: number) {
     GLANCE_FILES: r2,
   } as unknown as Parameters<typeof contentApp.request>[2]
   const app = new Hono()
-  const wrapped = flakyDb(db, failures)
+  const wrapped = flakyDb(db, failures, message)
   app.use('*', async (c, next) => {
     c.set('db', wrapped)
     await next()
@@ -63,6 +63,12 @@ describe('serve() retries transient access-batch failures', () => {
 
   test('three consecutive failures → the error propagates (real outage, not a flake)', async () => {
     const { app, env, token } = await setup(3)
+    const res = await app.request(`/_t/${token}/sam/site/`, {}, env)
+    expect(res.status).toBe(500)
+  })
+
+  test('a NON-transient error propagates immediately — no retry masks a real query bug', async () => {
+    const { app, env, token } = await setup(1, 'D1_ERROR: no such column: theme')
     const res = await app.request(`/_t/${token}/sam/site/`, {}, env)
     expect(res.status).toBe(500)
   })

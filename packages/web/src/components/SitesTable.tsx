@@ -18,7 +18,7 @@ import {
 import { SortableTable, type Column } from '@/components/SortableTable'
 import { SpaceSelect } from '@/components/SpaceSelect'
 import { Spinner } from '@/components/states'
-import { ThemeSubMenu, themeLabel, useThemes } from '@/components/theme-select'
+import { ThemeSubMenu, patchTheme } from '@/components/theme-select'
 import { VisibilityMenu } from '@/components/visibility'
 import { Button } from '@/components/ui/button'
 import {
@@ -99,19 +99,8 @@ type RowDialog = 'rename' | 'move' | 'share' | 'summary' | 'fork' | 'delete' | n
 function OwnerActions({ site }: { site: SiteSummary }) {
   const revalidator = useRevalidator()
   const [dialog, setDialog] = useState<RowDialog>(null)
-  const themes = useThemes()
   const refresh = () => revalidator.revalidate()
   const close = () => setDialog(null)
-
-  async function changeTheme(t: string | null) {
-    try {
-      await api.patch(`/api/sites/${site.spaceSlug}/${site.siteSlug}`, { theme: t })
-      toast.success('Theme updated', { description: themeLabel(themes, t) })
-      refresh()
-    } catch (err) {
-      toast.error('Could not update theme', { description: err instanceof Error ? err.message : undefined })
-    }
-  }
 
   async function copyLink() {
     try {
@@ -156,7 +145,14 @@ function OwnerActions({ site }: { site: SiteSummary }) {
             <GitFork />
             Fork
           </DropdownMenuItem>
-          <ThemeSubMenu value={site.theme ?? null} onChange={(t) => void changeTheme(t)} />
+          <ThemeSubMenu
+            value={site.theme ?? null}
+            onChange={(t) =>
+              void patchTheme(site.spaceSlug, site.siteSlug, t).then((ok) => {
+                if (ok) refresh()
+              })
+            }
+          />
           <DropdownMenuSeparator />
           <DropdownMenuItem variant="destructive" onSelect={() => setDialog('delete')}>
             <Trash2 />

@@ -48,3 +48,22 @@ export async function batchAll<T extends readonly BatchItem<'sqlite'>[]>(
   if (stmts.length === 0) return [] as unknown as BatchResponse<T>
   return db.batch(stmts as unknown as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]) as Promise<BatchResponse<T>>
 }
+
+/** Run a READ-ONLY, idempotent D1 round trip, retrying TRANSIENT failures with a short backoff.
+ *  D1 occasionally surfaces a transient internal error (and local dev makes them easy to hit:
+ *  two `wrangler dev` processes share one --persist-to sqlite, so a concurrent control-plane
+ *  write can fail a read with SQLITE_BUSY). Only messages that look transient are retried — a
+ *  real query error (bad SQL, missing column) propagates immediately, and a third consecutive
+ *  transient failure is an outage, not a flake. Unhappy-path latency ≤300ms. Callers must pass
+ *  a thunk that builds statements FRESH per attempt (drizzle builders own their SQL chunks). */
+export async function retryTransientRead<T>(fn: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn()
+    } catch (err) {
+      const transient = err instanceof Error && /internal error|SQLITE_BUSY/i.test(err.message)
+      if (!transient || attempt >= 2) throw err
+      await new Promise((r) => setTimeout(r, [60, 240][attempt]))
+    }
+  }
+}

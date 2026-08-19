@@ -13,6 +13,7 @@ import { type CacheLike, IMMUTABLE, readFullObject } from './lib/object-read'
 import { verifyOgSig } from './lib/og-image'
 import { renderOgPng } from './lib/og-render'
 import { decideRange } from './lib/range'
+import { retryTransientRead } from './lib/d1'
 import { fetchAccessFacts, isSharedFromFacts, resolveSite } from './lib/site-access'
 import { THEME_CSS, THEMES_VERSION } from './themes/css'
 import { verifyToken } from './lib/token'
@@ -158,28 +159,15 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
       .innerJoin(sites, eq(files.siteId, sites.id))
       .innerJoin(spaces, eq(sites.spaceId, spaces.id))
       .where(and(eq(spaces.slug, spaceSlug), eq(sites.slug, siteSlug)))
-  const readFacts = () =>
+  // async so the two fetchAccessFacts arities collapse into one Promise-of-union type (a bare
+  // ternary yields a union of two Promises, which defeats retryTransientRead's inference).
+  const readFacts = async () =>
     isIndexReq
       ? fetchAccessFacts(db, spaceSlug, siteSlug, userId, fileStmt(), allFilesStmt())
       : fetchAccessFacts(db, spaceSlug, siteSlug, userId, fileStmt())
-  // D1 occasionally surfaces a TRANSIENT internal error (and local dev makes them easy to hit:
-  // two `wrangler dev` processes share one --persist-to sqlite, so a concurrent control-plane
-  // write — e.g. a theme switch racing the page reload it triggers — can fail this read). The
-  // batch is read-only and idempotent, so retrying is safe and turns a user-visible 500 into a
-  // served page. Two retries with a short backoff (an immediate retry lands inside the same
-  // contention window and fails with it); a third consecutive failure is a real outage and
-  // propagates as before. Total added latency on the unhappy path is ≤240ms.
-  let read: Awaited<ReturnType<typeof readFacts>> | null = null
-  for (let attempt = 0; ; attempt++) {
-    try {
-      read = await readFacts()
-      break
-    } catch (err) {
-      if (attempt >= 2) throw err
-      await new Promise((r) => setTimeout(r, [60, 240][attempt]))
-    }
-  }
-  const { facts, extras } = read
+  // The batch is read-only and idempotent, so a transient D1 internal error is retried instead
+  // of 500ing the page view (see retryTransientRead for the policy and why local dev hits it).
+  const { facts, extras } = await retryTransientRead(readFacts)
   const [fileRows, allFileRows] = extras as [(typeof extras)[0], (typeof extras)[0]?]
 
   const siteRow = facts.site
