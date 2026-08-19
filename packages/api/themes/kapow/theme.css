@@ -1,0 +1,158 @@
+/* Glance theme: Kapow — a four-color comic page on aged newsprint. Every element plays an
+ * in-universe role: blockquote = speech bubble, figcaption/summary = yellow caption box,
+ * mark = sound-effect chip, hr = panel gutter, tables/images = inked panels.
+ * Light ground → dark text, inherently safe on author-painted surfaces.
+ * Classless: element selectors only. */
+@import url('https://fonts.googleapis.com/css2?family=Bangers&family=Comic+Neue:wght@400;700&display=swap');
+
+:root {
+  --glance-paper: #f6eee3;
+  --glance-ink: #14100c;
+  --glance-red: #ed1c24;
+  --glance-yellow: #ffde00;
+  --glance-caption: #fff48c;
+  --glance-cyan: #00aeef;
+  --glance-panel-shadow: 6px 6px 0 #14100c;
+  color-scheme: light;
+}
+html {
+  background: var(--glance-paper);
+}
+body {
+  /* Ben-Day halftone: two offset low-alpha red dot grids over newsprint. */
+  background-color: var(--glance-paper);
+  background-image:
+    radial-gradient(circle at center, rgba(237, 28, 36, 0.12) 1.5px, transparent 0),
+    radial-gradient(circle at center, rgba(237, 28, 36, 0.12) 1.5px, transparent 0);
+  background-size: 9px 9px;
+  background-position: 0 0, 4.5px 4.5px;
+  color: var(--glance-ink);
+  font-family: 'Comic Neue', 'Comic Sans MS', cursive;
+  font-size: 1.05rem;
+  line-height: 1.55;
+}
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Bangers', cursive;
+  font-weight: 400;
+  letter-spacing: 2px;
+  line-height: 1.05;
+  color: var(--glance-ink);
+}
+/* The action word: yellow fill, inked outline, a slight tilt. */
+h1 {
+  font-size: 3.4rem;
+  color: var(--glance-yellow);
+  -webkit-text-stroke: 2px #14100c;
+  text-shadow: 3px 3px 0 var(--glance-red);
+  transform: rotate(-2deg);
+}
+h2 { font-size: 2.2rem; color: var(--glance-red); -webkit-text-stroke: 1px #14100c; }
+h3 { font-size: 1.6rem; }
+small { color: #5c5347; }
+strong, b { font-weight: 700; }
+em, i { color: var(--glance-red); }
+/* Sound-effect chip. */
+mark {
+  background: var(--glance-yellow);
+  border: 2px solid var(--glance-ink);
+  font-family: 'Bangers', cursive;
+  letter-spacing: 1px;
+  padding: 0 0.3em;
+  display: inline-block;
+  transform: skew(-5deg);
+}
+a { color: var(--glance-cyan); font-weight: 700; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; }
+a:hover { color: var(--glance-red); }
+/* Panel gutter. */
+hr { border: 0; border-top: 6px solid var(--glance-ink); }
+/* The speech bubble, tail and all. */
+blockquote {
+  position: relative;
+  margin: 1.5rem 0.5rem 2.2rem;
+  padding: 1rem 1.4rem;
+  background: #ffffff;
+  border: 3px solid var(--glance-ink);
+  border-radius: 30px;
+  font-weight: 700;
+}
+blockquote::after {
+  content: '';
+  position: absolute;
+  bottom: -21px;
+  left: 14%;
+  border: 12px solid transparent;
+  border-top: 20px solid var(--glance-ink);
+  border-bottom: 0;
+}
+blockquote::before {
+  content: '';
+  position: absolute;
+  bottom: -14px;
+  left: calc(14% + 3px);
+  border: 9px solid transparent;
+  border-top: 16px solid #ffffff;
+  border-bottom: 0;
+  z-index: 1;
+}
+code, kbd, samp, pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, 'Courier New', monospace;
+  font-size: 0.85em;
+}
+code, kbd, samp { background: #ffffff; border: 2px solid var(--glance-ink); padding: 0.08em 0.3em; }
+pre {
+  background: #ffffff;
+  border: 3px solid var(--glance-ink);
+  box-shadow: var(--glance-panel-shadow);
+  padding: 1rem;
+  overflow: auto;
+}
+pre code { background: none; border: 0; padding: 0; }
+/* Inked panels. */
+table {
+  border-collapse: collapse;
+  background: #ffffff;
+  border: 3px solid var(--glance-ink);
+  box-shadow: var(--glance-panel-shadow);
+}
+th { background: var(--glance-yellow); font-family: 'Bangers', cursive; font-weight: 400; letter-spacing: 1.5px; font-size: 1.1em; }
+th, td { border: 2px solid var(--glance-ink); padding: 0.45rem 0.9rem; text-align: left; }
+img, figure { background: #ffffff; }
+img { border: 3px solid var(--glance-ink); box-shadow: var(--glance-panel-shadow); }
+/* Yellow narration caption. */
+figcaption, summary {
+  background: var(--glance-caption);
+  border: 2px solid var(--glance-ink);
+  padding: 0.25rem 0.6rem;
+  font-style: italic;
+  font-weight: 700;
+}
+summary { cursor: pointer; }
+button {
+  background: var(--glance-red);
+  color: #ffffff;
+  border: 3px solid var(--glance-ink);
+  border-radius: 0;
+  box-shadow: 4px 4px 0 var(--glance-ink);
+  padding: 0.5rem 1.3rem;
+  font-family: 'Bangers', cursive;
+  font-size: 1.2rem;
+  letter-spacing: 2px;
+  cursor: pointer;
+}
+button:hover { background: var(--glance-cyan); }
+button:active { box-shadow: 1px 1px 0 var(--glance-ink); transform: translate(3px, 3px); }
+input, select, textarea {
+  background: #ffffff;
+  color: var(--glance-ink);
+  border: 2px solid var(--glance-ink);
+  border-radius: 6px;
+  padding: 0.45rem 0.75rem;
+  font-family: inherit;
+}
+input:focus, select:focus, textarea:focus { outline: 3px solid var(--glance-yellow); }
+::selection { background: var(--glance-yellow); }
+fieldset { border: 3px solid var(--glance-ink); background: #ffffff; box-shadow: var(--glance-panel-shadow); padding: 1.25rem; }
+legend { font-family: 'Bangers', cursive; letter-spacing: 1.5px; background: var(--glance-caption); border: 2px solid var(--glance-ink); padding: 0 0.6em; }
+
+/* Reading measure: flowing text caps at ~72ch so a bare full-width document stays readable. */
+p, ul, ol, dl { max-width: 72ch; }
