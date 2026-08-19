@@ -18,6 +18,7 @@ import {
 import { SortableTable, type Column } from '@/components/SortableTable'
 import { SpaceSelect } from '@/components/SpaceSelect'
 import { Spinner } from '@/components/states'
+import { ThemeSubMenu, patchTheme } from '@/components/theme-select'
 import { VisibilityMenu } from '@/components/visibility'
 import { Button } from '@/components/ui/button'
 import {
@@ -144,6 +145,14 @@ function OwnerActions({ site }: { site: SiteSummary }) {
             <GitFork />
             Fork
           </DropdownMenuItem>
+          <ThemeSubMenu
+            value={site.theme ?? null}
+            onChange={(t) =>
+              void patchTheme(site.spaceSlug, site.siteSlug, t).then((ok) => {
+                if (ok) refresh()
+              })
+            }
+          />
           <DropdownMenuSeparator />
           <DropdownMenuItem variant="destructive" onSelect={() => setDialog('delete')}>
             <Trash2 />

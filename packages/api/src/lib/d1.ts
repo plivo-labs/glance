@@ -48,3 +48,4 @@ export async function batchAll<T extends readonly BatchItem<'sqlite'>[]>(
   if (stmts.length === 0) return [] as unknown as BatchResponse<T>
   return db.batch(stmts as unknown as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]) as Promise<BatchResponse<T>>
 }
+

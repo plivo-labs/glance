@@ -9,6 +9,7 @@ import { capTitle, extractHtmlMeta, NO_META, pickEntry } from '../lib/extract'
 import { isValidSlug } from '../lib/slug'
 import { deleteKeys, MAX_FILE_BYTES, sanitizePath } from '../lib/storage'
 import { isVisibility, normalizeVisibility } from '../lib/visibility'
+import { isTheme, normalizeTheme } from '../themes/registry'
 import { requireAuth, requireControlGrant } from '../middleware/auth'
 import type { AppEnv } from '../types'
 
@@ -57,6 +58,15 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
   // tier), so the two cases must stay distinguishable — `|| 'team'` alone can't tell them apart.
   const hasVisibility = typeof rawVisibility === 'string' && rawVisibility !== ''
   const visibility = normalizeVisibility(rawVisibility || 'team')
+  // Optional design theme, mirroring visibility's create/replace split: CREATE applies it (absent →
+  // default); REPLACE only touches sites.theme when the field was explicitly sent, so an agent's
+  // plain redeploy never strips a theme picked in the UI. 'default'/'none'/'' explicitly CLEARS it
+  // (default = the page's own design, exactly as uploaded). Validated against the registry so a
+  // typo 400s here instead of silently serving unthemed.
+  const rawTheme = form.get('theme')
+  const hasTheme = typeof rawTheme === 'string'
+  const theme = normalizeTheme(rawTheme)
+  if (theme !== null && !isTheme(theme)) return c.json({ error: 'unknown theme', theme }, 400)
   // Optional display title. CREATE: an explicit form title wins; absent one, the entry HTML's
   // <title> is derived below. REPLACE never renames a titled site — a re-upload/record must not
   // silently rename it — but a still-null title may be filled from the new content
@@ -268,6 +278,7 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
           title: title ?? derivedTitle,
           description,
           visibility: isVisibility(visibility) ? visibility : 'team',
+          theme,
           ownerId: user.id,
         }),
         ...insertRows,
@@ -317,6 +328,8 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
             lastReplacedBy: user.id,
             updatedAt: new Date().toISOString(),
             ...(hasVisibility && isVisibility(visibility) ? { visibility } : {}),
+            // Explicit-only, like visibility: an owner redeploy without --theme keeps the current one.
+            ...(hasTheme ? { theme } : {}),
             ...(derivedTitle !== null ? { title: sql`coalesce(${sites.title}, ${derivedTitle})` } : {}),
             // Unconditional (not COALESCE'd): a redeploy whose entry dropped its description meta
             // must clear the stale blurb rather than keep unfurling the previous content's.

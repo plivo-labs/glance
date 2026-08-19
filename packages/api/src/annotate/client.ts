@@ -279,6 +279,11 @@ window.addEventListener('message', (e: MessageEvent) => {
   if (d?.type === 'glance:paint' && Array.isArray(d.anchors)) paint(d.anchors)
   else if (d?.type === 'glance:focus') focus({ quote: d.quote, selector: d.selector, context: d.context })
   else if (d?.type === 'glance:pending') setPending(typeof d.selector === 'string' ? d.selector : null)
+  // Print/Save-as-PDF: the viewer iframe is cross-origin, so the parent can't call
+  // iframe.contentWindow.print() itself (SecurityError) — it asks, and the page prints in its own
+  // realm with the browser's native dialog (the user picks "Save as PDF" there). Full fidelity:
+  // the page's own renderer does the layout, including the injected theme stylesheet.
+  else if (d?.type === 'glance:print') window.print()
   // The parent's "did I miss your ready?" probe (#27): the boot glance:ready below fires exactly
   // once, so on a warm-cache load where this frame finishes before the parent's listener attaches
   // it is lost with nothing to re-fire it. Re-announcing on ping closes that race from this side;

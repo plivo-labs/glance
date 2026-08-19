@@ -26,6 +26,9 @@ CONTENT_TOKEN_SECRET=""
 DATA_TOKEN_SECRET=""
 
 # Public base URLs (no trailing slash). Dev defaults shown.
+# NOTE: browsing the SPA via vite (http://localhost:5173, `bun run dev`)? Set APP_URL to
+# http://localhost:5173 — the content worker's frame-ancestors CSP derives from APP_URL,
+# so the viewer iframe is blocked otherwise.
 APP_URL="http://localhost:8787"
 CONTENT_URL="http://localhost:8788"
 

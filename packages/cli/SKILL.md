@@ -61,6 +61,7 @@ A key can deploy, create, fork and move, but **never deletes a site** and never 
 - `--name` defaults to the **file name (sans extension)** or **folder name**, slugified. Pass `--name` to override (required if the derived name isn't a valid slug — lowercase, 3–40 chars).
 - `--space` defaults to your **personal space**. Pass `--space` to target a team/group space.
 - `--visibility` defaults to `team`.
+- `--theme <slug>` applies a **design theme** (server-injected stylesheet — see "Design themes" below). `--theme default` (or `none`) resets to the page's own design. Omitted on a replace → the site keeps its current theme.
 - If the site already exists and you own it, prompts `Replace? (y/N)`. If owned by someone else, it aborts.
 - Prints `✓ Deployed → <url>`.
 
@@ -211,6 +212,18 @@ You can update that site's content even though you don't own it and aren't in it
 `team` (default) · `private` · `members`.
 
 `members` = people in the site's own space only (it was renamed from `group`; the old value is still accepted and mapped to `members`). There is no public/anonymous tier — `public` is still accepted on the wire but mapped to `team` (everyone in your org).
+
+## Design themes
+
+A site can carry a **theme** — a server-injected classless stylesheet (element selectors only) that skins its HTML at serve time. Stored files are never modified (`read --pull` stays byte-identical); author classes/inline styles always win, so semantic HTML transforms fully while heavily self-styled pages barely change. `--theme default` resets to the page's own design.
+
+```bash
+curl -s $GLANCE_API_URL/api/themes                  # catalog: slug + name + description
+curl -s $GLANCE_API_URL/api/themes/plivo/DESIGN.md  # a theme's full design brief
+glance deploy report.html --theme plivo             # works on .md too
+```
+
+Building a page in a theme's style? Fetch its `DESIGN.md` first and follow it while writing the HTML (tokens, component recipes, do/don'ts), then deploy with `--theme <slug>`. The theme is a site property, not a file — the owner can switch it later in the UI without a redeploy.
 
 ## Saving data from your pages — `glance.db` (experimental)
 

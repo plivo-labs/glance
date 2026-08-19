@@ -50,6 +50,7 @@ describe('GET /api/sites/starred', () => {
         title: 'Deck',
         visibility: 'team',
         status: 'active',
+        theme: null,
         audio: false,
         hasSummary: false,
         starred: true,

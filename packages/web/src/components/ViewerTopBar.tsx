@@ -1,4 +1,4 @@
-import { ChevronRight, Command, GitFork, History, Menu, MessageSquare, Share2, Sparkles, Star } from 'lucide-react'
+import { ChevronRight, Command, GitFork, History, Menu, MessageSquare, Printer, Share2, Sparkles, Star } from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { toast } from 'sonner'
@@ -11,6 +11,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { ForkDialog } from '@/components/ForkDialog'
 import { ShareDialog } from '@/components/ShareDialog'
 import { SummarySheet } from '@/components/SummarySheet'
+import { ThemeMenu, patchTheme } from '@/components/theme-select'
 import { VISIBILITY_META, VisibilityBadge, VisibilityMenu } from '@/components/visibility'
 import { BrandMark } from '@/components/states'
 
@@ -34,6 +35,7 @@ export function ViewerTopBar({
   onToggleRail,
   onToggleSidebar,
   onSearch,
+  onPrint,
 }: {
   site: ViewerSite
   sitePath: string
@@ -42,6 +44,9 @@ export function ViewerTopBar({
   onToggleRail: () => void
   onToggleSidebar: () => void
   onSearch: () => void
+  // Posts glance:print into the content iframe (HTML sites only — absent hides the item). The
+  // frame prints itself; the browser's print dialog is where the user picks "Save as PDF".
+  onPrint?: () => void
 }) {
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
@@ -72,6 +77,14 @@ export function ViewerTopBar({
       {/* Right after the name, so "what site is this — private / members / team" is answered
           without opening a dialog. The owner gets the live picker; everyone else a read-only chip. */}
       {site.isOwner ? <ViewerVisibility site={site} /> : <VisibilityBadge value={site.visibility} className="shrink-0" />}
+
+      {/* Design theme: the owner gets a live switcher (hidden on phones — visibility wins the
+          space); a re-skin needs a reload since the theme is injected server-side at serve time. */}
+      {site.isOwner && (
+        <span className="hidden shrink-0 sm:inline-flex">
+          <ViewerTheme site={site} />
+        </span>
+      )}
 
       <div className="ml-auto flex shrink-0 items-center gap-2">
         <Button
@@ -126,6 +139,12 @@ export function ViewerTopBar({
               <Sparkles />
               TL;DR
             </DropdownMenuItem>
+            {onPrint && (
+              <DropdownMenuItem onSelect={onPrint}>
+                <Printer />
+                Print / Save as PDF
+              </DropdownMenuItem>
+            )}
             {site.isOwner && (
               <DropdownMenuItem onSelect={() => setShareOpen(true)}>
                 <Share2 />
@@ -179,5 +198,23 @@ function ViewerVisibility({ site }: { site: ViewerSite }) {
     <span className="shrink-0">
       <VisibilityMenu trigger="chip" value={visibility} onChange={change} />
     </span>
+  )
+}
+
+// Owner-only theme switcher. The theme is injected into the served HTML by the content worker, so
+// after a successful PATCH the page reloads — the iframe's annotate response is no-store and the
+// themed etag never matches across a switch, so the reload always shows the new skin. (No local
+// state: the reload repaints everything, and on failure the chip should keep showing the truth.)
+function ViewerTheme({ site }: { site: ViewerSite }) {
+  return (
+    <ThemeMenu
+      trigger="chip"
+      value={site.theme}
+      onChange={(t) =>
+        void patchTheme(site.spaceSlug, site.siteSlug, t).then((ok) => {
+          if (ok) window.location.reload()
+        })
+      }
+    />
   )
 }

@@ -55,6 +55,7 @@ describe('C31 — site feed characterization before summary badge', () => {
         title: 'Voice note',
         visibility: 'team',
         status: 'active',
+        theme: null,
         audio: true,
         hasSummary: false,
         starred: false,
@@ -74,6 +75,7 @@ describe('C31 — site feed characterization before summary badge', () => {
         title: 'Voice note',
         visibility: 'team',
         status: 'active',
+        theme: null,
         audio: true,
         hasSummary: false,
         starred: false,
@@ -94,6 +96,7 @@ describe('C31 — site feed characterization before summary badge', () => {
         title: 'Voice note',
         visibility: 'team',
         status: 'active',
+        theme: null,
         audio: true,
         hasSummary: false,
         starred: false,
@@ -116,6 +119,7 @@ describe('C31 — site feed characterization before summary badge', () => {
         title: 'Voice note',
         visibility: 'team',
         status: 'active',
+        theme: null,
         isOwner: false,
         audio: true,
         hasSummary: false,
@@ -178,8 +182,8 @@ describe('feeds — audio badge pins (S5b T5.4)', () => {
 
     // Hand-coded: one row PER SITE (30 files must not explode the feed), newest first.
     expect(await getJson(app, env, '/api/sites/mine', 'owner')).toEqual([
-      { id: 'voice', spaceSlug: 'acme', siteSlug: 'voice', title: null, visibility: 'private', status: 'active', audio: true, hasSummary: true, starred: false, url: `${APP_URL}/acme/voice`, createdAt: at(2), updatedAt: at(2) },
-      { id: 'doc', spaceSlug: 'acme', siteSlug: 'doc', title: null, visibility: 'team', status: 'active', audio: false, hasSummary: false, starred: false, url: `${APP_URL}/acme/doc`, createdAt: at(1), updatedAt: at(1) },
+      { id: 'voice', spaceSlug: 'acme', siteSlug: 'voice', title: null, visibility: 'private', status: 'active', theme: null, audio: true, hasSummary: true, starred: false, url: `${APP_URL}/acme/voice`, createdAt: at(2), updatedAt: at(2) },
+      { id: 'doc', spaceSlug: 'acme', siteSlug: 'doc', title: null, visibility: 'team', status: 'active', theme: null, audio: false, hasSummary: false, starred: false, url: `${APP_URL}/acme/doc`, createdAt: at(1), updatedAt: at(1) },
     ])
   })
 
@@ -198,7 +202,7 @@ describe('feeds — audio badge pins (S5b T5.4)', () => {
     expect(rows.map((r) => r.id)).toEqual(Array.from({ length: 50 }, (_, k) => `s${n - k}`))
     // The 30-file site is pure audio; the file-less rest are not. Full payload on the head row.
     expect(rows[0]).toEqual({
-      id: 's51', spaceSlug: 'acme', siteSlug: 's51', title: null, visibility: 'team', status: 'active',
+      id: 's51', spaceSlug: 'acme', siteSlug: 's51', title: null, visibility: 'team', status: 'active', theme: null,
       audio: true, hasSummary: false, starred: false, url: `${APP_URL}/acme/s51`, createdAt: at(51), updatedAt: at(51), uploaderId: 'owner', uploaderName: null, uploaderEmail: 'owner@e.com',
     })
     expect(rows.slice(1).every((r) => r.audio === false)).toBe(true)

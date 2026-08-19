@@ -20,6 +20,8 @@ type deployState struct {
 	uploadPath      string
 	uploadQuery     string
 	visibility      string
+	theme           string            // the theme form field's value, when sent
+	themeSent       bool              // whether a theme field appeared at all (explicit-only contract)
 	expectedVersion string            // the expectedVersion form field, if sent
 	files           map[string]string // rel filename -> contents (unstripped)
 }
@@ -55,6 +57,9 @@ func newDeployServer(t *testing.T) (*httptest.Server, *deployState) {
 					st.files[fn] = string(data)
 				} else if p.FormName() == "visibility" {
 					st.visibility = string(data)
+				} else if p.FormName() == "theme" {
+					st.theme = string(data)
+					st.themeSent = true
 				} else if p.FormName() == "expectedVersion" {
 					st.expectedVersion = string(data)
 				}
@@ -107,6 +112,41 @@ func TestDeployCommand(t *testing.T) {
 		}
 		if !strings.Contains(out.String(), "✓ Deployed → https://g/me/myfolder") {
 			t.Fatalf("out = %q", out.String())
+		}
+	})
+
+	t.Run("theme-flag-is-explicit-only", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), "report.html")
+		writeFile(t, file, "<h1>hi</h1>")
+
+		// Omitted → no theme field on the wire (a redeploy must not strip a stored theme).
+		srv, st := newDeployServer(t)
+		c, _ := newTestClient(srv.URL, "tok")
+		if err := c.deploy([]string{file}); err != nil {
+			t.Fatalf("deploy: %v", err)
+		}
+		if st.themeSent {
+			t.Errorf("theme field sent without --theme (got %q)", st.theme)
+		}
+
+		// --theme <slug> → the field travels verbatim.
+		srv2, st2 := newDeployServer(t)
+		c2, _ := newTestClient(srv2.URL, "tok")
+		if err := c2.deploy([]string{file, "--theme", "broadsheet"}); err != nil {
+			t.Fatalf("deploy --theme: %v", err)
+		}
+		if !st2.themeSent || st2.theme != "broadsheet" {
+			t.Errorf("theme = %q (sent=%v), want broadsheet", st2.theme, st2.themeSent)
+		}
+
+		// --theme none → sent as the explicit clear sentinel the server maps to null.
+		srv3, st3 := newDeployServer(t)
+		c3, _ := newTestClient(srv3.URL, "tok")
+		if err := c3.deploy([]string{file, "--theme", "none"}); err != nil {
+			t.Fatalf("deploy --theme none: %v", err)
+		}
+		if !st3.themeSent || st3.theme != "none" {
+			t.Errorf("theme = %q (sent=%v), want none", st3.theme, st3.themeSent)
 		}
 	})
 

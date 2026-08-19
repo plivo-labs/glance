@@ -280,3 +280,18 @@ describe('client.ts — glance:ping re-announces glance:ready (#27)', () => {
     expect(readys()).toHaveLength(before)
   })
 })
+
+describe('client.ts — glance:print prints in the frame realm (the parent cannot call print cross-origin)', () => {
+  test('a trusted glance:print calls window.print exactly once; a foreign origin never does', () => {
+    const win = (globalThis as unknown as AnyRecord).window as unknown as Window & AnyRecord
+    let printed = 0
+    Object.defineProperty(win, 'print', { value: () => printed++, configurable: true })
+
+    send({ type: 'glance:print' })
+    expect(printed).toBe(1)
+
+    // Same payload from a hostile origin is ignored — commands are trusted ONLY from the app origin.
+    send({ type: 'glance:print' }, 'https://evil.example.com')
+    expect(printed).toBe(1)
+  })
+})

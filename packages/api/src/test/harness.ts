@@ -249,6 +249,8 @@ export async function seedSite(
     // A fresh site's updatedAt == createdAt (no replace yet); default it so createdAt-pinned ordering
     // specs stay deterministic under the updatedAt sort. Override explicitly to simulate a replace.
     ...(o.updatedAt !== undefined ? { updatedAt: o.updatedAt } : o.createdAt !== undefined ? { updatedAt: o.createdAt } : {}),
+    // Design theme (null = unthemed, the schema default) — themed-serve specs opt in explicitly.
+    ...(o.theme !== undefined && { theme: o.theme }),
   })
   return id
 }

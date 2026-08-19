@@ -14,6 +14,7 @@ import { verifyOgSig } from './lib/og-image'
 import { renderOgPng } from './lib/og-render'
 import { decideRange } from './lib/range'
 import { fetchAccessFacts, isSharedFromFacts, resolveSite } from './lib/site-access'
+import { THEME_CSS, THEMES_VERSION } from './themes/css'
 import { verifyToken } from './lib/token'
 import type { Bindings } from './types'
 
@@ -78,6 +79,14 @@ app.get('/_glance/annotate.css', (c) =>
 app.get('/_glance/db.js', (c) =>
   c.body(GLANCE_DB_JS, 200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': IMMUTABLE }),
 )
+// Design-theme stylesheets (scripts/build-themes.ts). Same contract as annotate.css: content-
+// versioned query (?v=THEMES_VERSION) + IMMUTABLE. Served from THIS origin so the injected
+// <link> is same-origin from the framed page's perspective — no CORS, no CSP widening for HTML.
+app.get('/_glance/theme/:file{[a-z0-9-]+\\.css}', (c) => {
+  const css = THEME_CSS[c.req.param('file').replace(/\.css$/, '')]
+  if (!css) return notFound(c)
+  return c.body(css, 200, { 'content-type': 'text/css; charset=utf-8', 'cache-control': IMMUTABLE })
+})
 
 // The Slack unfurl card's PNG (lib/og-image.ts). Slack fetches image_url server-side,
 // unauthenticated, and caches it — a PUBLIC GET whose only gate is the HMAC minted alongside
@@ -194,8 +203,11 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
 
   const frameAncestors = `frame-ancestors 'self' ${c.env.APP_URL}`
   // The content origin this page is served from — the yardstick for "is this link external?".
-  // A link to any OTHER origin is rewritten to open in a new tab (see openExternalLinksInNewTab).
+  // A link to any OTHER origin is rewritten to open in a new tab (see transformServedHtml).
   const selfOrigin = new URL(c.req.url).origin
+  // The site's design theme, resolved to an injectable stylesheet href (null = unthemed). The
+  // theme column rides the access-facts batch, so this costs nothing extra per request.
+  const themeHref = themeHrefFor(siteRow.theme)
   // Usage analytics: count this as a viewer hit only for actual page loads (HTML + rendered
   // markdown), not every CSS/JS/image sub-resource — otherwise one navigation inflates to many.
   // userId is guaranteed non-null here (anonymous requests 403'd above), so every view is
@@ -243,12 +255,12 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
       ? injectAnnotate(renderMarkdownDoc(path, html), { siteId: siteRow.id, filePath: path, appOrigin: c.env.APP_URL }, nonce)
       : renderMarkdownDoc(path, html)
     const res = c.html(doc, 200, {
-      'content-security-policy': markdownCsp(frameAncestors, nonce),
+      'content-security-policy': markdownCsp(frameAncestors, nonce, themeHref !== null),
       'x-content-type-options': 'nosniff',
       'referrer-policy': 'no-referrer',
       ...(nonce ? { 'cache-control': 'no-store' } : {}),
     })
-    return openExternalLinksInNewTab(res, selfOrigin)
+    return transformServedHtml(res, selfOrigin, themeHref)
   }
 
   // Annotate mode: gated HTML + ?glance_annotate=1 → buffer the body and inject the annotate
@@ -272,7 +284,7 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
       'referrer-policy': 'no-referrer',
       'cache-control': 'no-store',
     })
-    return openExternalLinksInNewTab(res, selfOrigin)
+    return transformServedHtml(res, selfOrigin, themeHref)
   }
 
   const headers = new Headers()
@@ -292,7 +304,7 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
   // everything else (audio today; any other binary falls out the same door for free).
   const rangeable = !isHtml
   if (rangeable) headers.set('accept-ranges', 'bytes')
-  return serveStoredObject(c, { storageKey, size, etag: file.etag, headers, rangeable, isHtml, mime, view, selfOrigin })
+  return serveStoredObject(c, { storageKey, size, etag: file.etag, headers, rangeable, isHtml, mime, view, selfOrigin, themeHref })
 }
 
 /** The storage tail of serve(): conditional (If-None-Match) handling, both Range flows (sized
@@ -312,9 +324,19 @@ async function serveStoredObject(
     mime: string
     view: () => Promise<void>
     selfOrigin: string
+    themeHref: string | null
   },
 ): Promise<Response> {
-  const { storageKey, size, etag: rowEtag, headers, rangeable, isHtml, mime, view, selfOrigin } = args
+  const { storageKey, size, etag: rowEtag, headers, rangeable, isHtml, mime, view, selfOrigin, themeHref } = args
+
+  // Themed HTML differs from the stored bytes AND can change without a content replace (a PATCH
+  // theme switch re-skins the same object), so the raw object etag would let a browser 304 its
+  // way into a stale theme. Fold the theme identity (slug + themes version — both live in the
+  // href) into the validator for themed HTML only; every other response keeps the raw etag, and
+  // any theme transition (on/off/switch/CSS bump) changes the comparison → fresh 200.
+  const themeTag = isHtml && themeHref ? themeHref.replace(/[^a-z0-9]+/gi, '') : null
+  const withTheme = (etag: string): string =>
+    themeTag ? (etag.endsWith('"') ? `${etag.slice(0, -1)}+${themeTag}"` : `${etag}+${themeTag}`) : etag
 
   // Honor the conditional request: when the viewer already holds this exact ETag, answer 304 and
   // skip re-streaming the body. This MUST win over Range (RFC 7233 §3.1), so it runs before any
@@ -331,8 +353,8 @@ async function serveStoredObject(
       probedEtag = probe.httpEtag
       current = probe.httpEtag
     }
-    if (inm === current) {
-      headers.set('etag', current)
+    if (inm === withTheme(current)) {
+      headers.set('etag', withTheme(current))
       if (isHtml) await view() // parity with the 200 path: an HTML revalidation is still a page load
       return new Response(null, { status: 304, headers })
     }
@@ -407,12 +429,12 @@ async function serveStoredObject(
   // ran in serve() — the cache is never consulted before the access gate).
   const read = await readStoredObject(c, storageKey, mime)
   if (!read) return notFound(c)
-  headers.set('etag', read.etag)
+  headers.set('etag', withTheme(read.etag))
   if (isHtml) await view()
   const res = new Response(read.body, { headers })
-  // Uploaded HTML gets the external-link → new-tab rewrite (streamed, no buffering). Other file
-  // types (audio, images, CSS/JS, …) stream through verbatim — the rewriter only touches HTML.
-  return isHtml ? openExternalLinksInNewTab(res, selfOrigin) : res
+  // Uploaded HTML gets the streamed rewrite pass (external links → new tab, theme <link>). Other
+  // file types (audio, images, CSS/JS, …) stream through verbatim — the rewriter only touches HTML.
+  return isHtml ? transformServedHtml(res, selfOrigin, themeHref) : res
 }
 
 // Record a page-view event without blocking the response. fireAndForget hands the D1 write to
@@ -505,24 +527,51 @@ export function isExternalHref(href: string, base: string): boolean {
   return u.origin !== new URL(base).origin
 }
 
-/** Rewrite a served HTML document so links to OTHER origins open in a new tab (`target="_blank"` +
- *  `rel="noopener noreferrer"`); same-site/relative links keep in-viewer navigation. Streams via
- *  HTMLRewriter — no full-body buffering. Paired with the viewer iframe's
- *  `allow-popups allow-popups-to-escape-sandbox` sandbox so the new tab actually opens and isn't
- *  itself sandboxed. Only ever applied to HTML the site owns — NOT the directory-listing/markdown
- *  shells, whose `target="_top"` app links must stay as-is. */
-export function openExternalLinksInNewTab(res: Response, base: string): Response {
-  return new HTMLRewriter()
-    .on('a[href]', {
+/** Stylesheet href for a site's stored theme, or null when unthemed. A slug retired from the
+ *  registry may still sit on an old row — fail OPEN to unthemed rather than injecting a 404 link. */
+export function themeHrefFor(theme: string | null): string | null {
+  return theme && THEME_CSS[theme] ? `/_glance/theme/${theme}.css?v=${THEMES_VERSION}` : null
+}
+
+/** The streamed HTMLRewriter pass every served HTML document goes through — no full-body buffering.
+ *  Two rewrites:
+ *  1. Links to OTHER origins open in a new tab (`target="_blank"` + `rel="noopener noreferrer"`);
+ *     same-site/relative links keep in-viewer navigation. Paired with the viewer iframe's
+ *     `allow-popups allow-popups-to-escape-sandbox` sandbox so the new tab actually opens and isn't
+ *     itself sandboxed. Only ever applied to HTML the site owns — NOT the directory-listing shell,
+ *     whose `target="_top"` app links must stay as-is.
+ *  2. When the site carries a theme, its stylesheet <link> is appended at the END of <head>, so it
+ *     wins cascade-order ties against the page's own element rules while class/inline styling still
+ *     takes precedence (classless themes are defaults, not overrides). Stored bytes are NEVER
+ *     mutated — `?raw=1` bypasses this entirely. A headless document gets the link appended at the
+ *     document end instead (CSS applies regardless of position; the doctype stays first). */
+export function transformServedHtml(res: Response, base: string, themeHref: string | null = null): Response {
+  const rewriter = new HTMLRewriter().on('a[href]', {
+    element(el) {
+      const href = el.getAttribute('href')
+      if (href && isExternalHref(href, base)) {
+        el.setAttribute('target', '_blank')
+        el.setAttribute('rel', 'noopener noreferrer')
+      }
+    },
+  })
+  if (themeHref) {
+    // themeHref is registry-derived (slug is [a-z0-9-]+, version is a hex hash) — no escaping needed.
+    const link = `<link rel="stylesheet" href="${themeHref}">`
+    let injected = false
+    rewriter.on('head', {
       element(el) {
-        const href = el.getAttribute('href')
-        if (href && isExternalHref(href, base)) {
-          el.setAttribute('target', '_blank')
-          el.setAttribute('rel', 'noopener noreferrer')
-        }
+        el.append(link, { html: true }) // append = right before </head>
+        injected = true
       },
     })
-    .transform(res)
+    rewriter.onDocument({
+      end(end) {
+        if (!injected) end.append(link, { html: true })
+      },
+    })
+  }
+  return rewriter.transform(res)
 }
 
 export function normalizePath(rest: string): string {
@@ -547,12 +596,17 @@ export { escapeHtml, markdown } from './lib/markdown'
 // In annotate mode a `nonce` is supplied: script-src then admits EXACTLY the two injected tags
 // (never 'unsafe-inline' — an unnonced script in the document still can't run), and style-src
 // additionally allows 'self' so /_glance/annotate.css loads alongside the inlined shell styles.
-function markdownCsp(frameAncestors: string, nonce: string | null = null): string {
+// A THEMED site widens style-src to 'self' (the injected /_glance/theme/*.css link) plus the
+// Google Fonts pair a theme's @import may pull — still a strict allowlist, and scripts stay off.
+function markdownCsp(frameAncestors: string, nonce: string | null = null, themed = false): string {
+  const styleSelf = nonce !== null || themed
   return [
     "default-src 'none'",
     "img-src 'self' data:",
-    nonce ? "style-src 'self' 'unsafe-inline'" : "style-src 'unsafe-inline'",
-    "font-src 'self'",
+    styleSelf
+      ? `style-src 'self' 'unsafe-inline'${themed ? ' https://fonts.googleapis.com' : ''}`
+      : "style-src 'unsafe-inline'",
+    themed ? 'font-src \'self\' https://fonts.gstatic.com' : "font-src 'self'",
     nonce ? `script-src 'nonce-${nonce}'` : "script-src 'none'",
     "object-src 'none'",
     "base-uri 'none'",
