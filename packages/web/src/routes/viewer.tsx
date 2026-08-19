@@ -661,6 +661,11 @@ function Viewer() {
                 // (the annotate client's glance:print handler). Also un-blocks alert()/confirm()
                 // for hosted pages, which matches how interactive artifacts behave elsewhere.
                 sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms allow-top-navigation-by-user-activation allow-modals"
+                // Delegate mic to the cross-origin content frame: without this, getUserMedia is
+                // rejected before the browser prompt can appear. Nothing is granted silently — the
+                // user still approves via the normal permission prompt. Note: the grant keys to the
+                // viewer's top-level origin, so a persistent allow applies to all hosted sites.
+                allow="microphone"
               />
             )}
             {/* Sibling of the iframe ON PURPOSE: this wrapper is the iframe's own box, so the rect
