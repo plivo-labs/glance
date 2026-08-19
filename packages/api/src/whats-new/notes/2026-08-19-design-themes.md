@@ -2,7 +2,7 @@
 title: Design themes
 slug: design-themes
 date: 2026-08-19T12:00:00.000Z
-image: design-themes.png
+image: design-themes.jpg
 featured: true
 ---
 Give any page a designed look without touching its HTML. Pick a **theme** when you deploy, or switch it live from the viewer — Glance injects the stylesheet at serve time, so your stored files never change and **Default** always means your page's own design.
