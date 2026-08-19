@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { THEME_BRIEFS } from '../themes/briefs'
-import { THEME_INFO } from '../themes/registry'
+import { THEME_INFO, THEMES_VERSION } from '../themes/registry'
 
 // Design-theme catalog. Public GETs registered BEFORE the /api/* guards (the /api/install
 // idiom): no DB, no auth — a brief is design documentation, and the agent loop fetches it with
@@ -10,7 +10,7 @@ export const themes = new Hono()
 
 // GET /api/themes — the catalog: slug + display name + one-line description per theme.
 themes.get('/', (c) =>
-  c.json({ themes: THEME_INFO }, 200, {
+  c.json({ themes: THEME_INFO, version: THEMES_VERSION }, 200, {
     // Cacheable but short-lived: the catalog only changes on deploy, and a stale minute is harmless.
     'cache-control': 'public, max-age=60',
   }),

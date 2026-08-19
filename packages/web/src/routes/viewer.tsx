@@ -20,6 +20,7 @@ import { AudioView } from '@/components/AudioView'
 import { Spinner } from '@/components/states'
 import { CommandPalette } from '@/components/CommandPalette'
 import { ViewerTopBar } from '@/components/ViewerTopBar'
+import { viewThemeHref } from '@/components/theme-select'
 import { CommentPopover } from '@/components/review/CommentPopover'
 import { ReviewRail, type TypingPing } from '@/components/review/ReviewRail'
 import { ViewerSidebar } from '@/components/ViewerSidebar'
@@ -100,6 +101,43 @@ function Viewer() {
   const [composing, setComposing] = useState<PendingAnchor | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [cmdOpen, setCmdOpen] = useState(false)
+  // Viewer-LOCAL theme override (non-owners): purely cosmetic and per-browser — persisted in
+  // localStorage per site, applied by posting glance:theme into the frame (the annotate client
+  // swaps the stylesheet link in place; the server is never written). null = the site's default.
+  const viewThemeKey = `glance:viewTheme:${site.spaceSlug}/${site.siteSlug}`
+  const [viewTheme, setViewTheme] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(viewThemeKey)
+    } catch {
+      return null
+    }
+  })
+  const applyViewTheme = useCallback(
+    (slug: string | null) => {
+      void viewThemeHref(slug).then((href) => {
+        iframeRef.current?.contentWindow?.postMessage({ type: 'glance:theme', href }, contentOrigin)
+      })
+    },
+    [contentOrigin],
+  )
+  // Re-apply on every frame load (each navigation serves fresh HTML with the site's own theme).
+  useEffect(() => {
+    if (!loaded || isAudio || viewTheme === null) return
+    applyViewTheme(viewTheme)
+  }, [loaded, isAudio, viewTheme, applyViewTheme])
+  const onViewTheme = useCallback(
+    (slug: string | null) => {
+      setViewTheme(slug)
+      try {
+        if (slug === null) localStorage.removeItem(viewThemeKey)
+        else localStorage.setItem(viewThemeKey, slug)
+      } catch {
+        // private mode etc. — the override still applies for this page view
+      }
+      applyViewTheme(slug) // instant swap, even to null (restores the site default in place)
+    },
+    [viewThemeKey, applyViewTheme],
+  )
 
   // Paint anchors back into the iframe via the trusted parent→child channel. A paint IS the
   // highlight now (client.ts lights everything it's sent), so this is gated on `railOpen`: open the
@@ -618,6 +656,8 @@ function Viewer() {
             ? undefined
             : () => iframeRef.current?.contentWindow?.postMessage({ type: 'glance:print' }, contentOrigin)
         }
+        viewTheme={viewTheme}
+        onViewTheme={isAudio ? undefined : onViewTheme}
       />
 
       <CommandPalette open={cmdOpen} onOpenChange={setCmdOpen} user={me} />

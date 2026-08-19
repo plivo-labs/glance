@@ -295,3 +295,29 @@ describe('client.ts — glance:print prints in the frame realm (the parent canno
     expect(printed).toBe(1)
   })
 })
+
+describe('client.ts — glance:theme swaps the theme stylesheet inside the frame (viewer-local override)', () => {
+  const link = () => document.getElementById('glance-theme') as HTMLLinkElement | null
+
+  test('a trusted href installs the link, a second swaps it in place, null removes it (no boot theme here)', () => {
+    send({ type: 'glance:theme', href: '/_glance/theme/kapow.css?v=abc12345' })
+    expect(link()?.getAttribute('href')).toBe('/_glance/theme/kapow.css?v=abc12345')
+
+    send({ type: 'glance:theme', href: '/_glance/theme/matrix.css?v=abc12345' })
+    expect(link()?.getAttribute('href')).toBe('/_glance/theme/matrix.css?v=abc12345')
+    expect(document.querySelectorAll('#glance-theme')).toHaveLength(1)
+
+    // This page booted with NO server-injected theme, so null = remove entirely.
+    send({ type: 'glance:theme', href: null })
+    expect(link()).toBeNull()
+  })
+
+  test('hrefs outside /_glance/theme/ are rejected; foreign origins are ignored', () => {
+    send({ type: 'glance:theme', href: 'https://evil.example.com/steal.css' })
+    expect(link()).toBeNull()
+    send({ type: 'glance:theme', href: '/_glance/theme/../../etc.css' })
+    expect(link()).toBeNull()
+    send({ type: 'glance:theme', href: '/_glance/theme/kapow.css' }, 'https://evil.example.com')
+    expect(link()).toBeNull()
+  })
+})
