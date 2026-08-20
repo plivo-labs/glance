@@ -42,4 +42,4 @@ export function normalizeTheme(raw: unknown): string | null {
 
 /** Cache-busting version for /_glance/theme/*.css?v= links. Duplicated from css.ts so the MAIN
  *  worker (and the web client via /api/themes) can build hrefs without importing the CSS strings. */
-export const THEMES_VERSION = "774ab379"
+export const THEMES_VERSION = "a32849a5"

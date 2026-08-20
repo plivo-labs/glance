@@ -89,9 +89,10 @@ export function ViewerTopBar({
       <span className="hidden shrink-0 sm:inline-flex">
         {site.isOwner ? (
           <ViewerTheme site={site} />
-        ) : (
+        ) : onViewTheme ? (
           // Non-owners re-skin only their OWN view: the choice never touches the server — the
-          // parent posts glance:theme into the frame and remembers it in localStorage.
+          // parent posts glance:theme into the frame and remembers it in localStorage. Absent
+          // handler (audio sites: no document to theme) → no chip, like onPrint.
           <ThemeMenu
             trigger="chip"
             value={viewTheme ?? null}
@@ -100,7 +101,7 @@ export function ViewerTopBar({
             defaultLabel="Site default"
             defaultHint="as the owner shipped it"
           />
-        )}
+        ) : null}
       </span>
 
       <div className="ml-auto flex shrink-0 items-center gap-2">

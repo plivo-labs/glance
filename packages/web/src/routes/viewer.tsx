@@ -112,6 +112,10 @@ function Viewer() {
       return null
     }
   })
+  // Read by the message-listener effect (stable subscription) — a state read there would go
+  // stale in the closure; the ref always carries the latest override.
+  const viewThemeRef = useRef(viewTheme)
+  viewThemeRef.current = viewTheme
   const applyViewTheme = useCallback(
     (slug: string | null) => {
       void viewThemeHref(slug).then((href) => {
@@ -120,11 +124,6 @@ function Viewer() {
     },
     [contentOrigin],
   )
-  // Re-apply on every frame load (each navigation serves fresh HTML with the site's own theme).
-  useEffect(() => {
-    if (!loaded || isAudio || viewTheme === null) return
-    applyViewTheme(viewTheme)
-  }, [loaded, isAudio, viewTheme, applyViewTheme])
   const onViewTheme = useCallback(
     (slug: string | null) => {
       setViewTheme(slug)
@@ -365,6 +364,11 @@ function Viewer() {
         if (decision.kind === 'ignore') return
         if (state.readyPath !== intent.filePath) return
         lastReadyPathRef.current = intent.filePath
+        // Re-apply the viewer-local theme override to this FRESH document. In-frame navigation
+        // (a link click inside a multi-page site) boots a new document with only the owner's
+        // theme — the parent's `loaded` never toggles for it, so ready is the one signal that
+        // covers first load, parent-driven navs, and in-frame navs alike.
+        if (viewThemeRef.current !== null) applyViewTheme(viewThemeRef.current)
         // Every in-iframe navigation fires 'ready' with the real current file — the only place the
         // SPA learns it, since the URL doesn't change on in-page navigation. Skip until Me resolves
         // (never record to an unknown/shared-machine user); the me-effect below flushes the ref once
