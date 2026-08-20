@@ -418,7 +418,7 @@ function Viewer() {
     // Effect re-runs re-ping, which is harmless — the arbiter ignores duplicate readys.
     iframeRef.current?.contentWindow?.postMessage({ type: 'glance:ping' }, contentOrigin)
     return () => window.removeEventListener('message', onMsg)
-  }, [contentOrigin, me, site.spaceSlug, site.siteSlug, site.title, threads, dispatch, loadThreads, revealThread])
+  }, [contentOrigin, me, site.spaceSlug, site.siteSlug, site.title, threads, dispatch, loadThreads, revealThread, applyViewTheme])
 
   useEffect(() => {
     api
