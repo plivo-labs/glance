@@ -15,6 +15,7 @@ import { renderOgPng } from './lib/og-render'
 import { decideRange } from './lib/range'
 import { fetchAccessFacts, isSharedFromFacts, resolveSite } from './lib/site-access'
 import { THEME_CSS, THEMES_VERSION } from './themes/css'
+import { THEME_FONTS } from './themes/fonts'
 import { verifyToken } from './lib/token'
 import type { Bindings } from './types'
 
@@ -86,6 +87,23 @@ app.get('/_glance/theme/:file{[a-z0-9-]+\\.css}', (c) => {
   const css = THEME_CSS[c.req.param('file').replace(/\.css$/, '')]
   if (!css) return notFound(c)
   return c.body(css, 200, { 'content-type': 'text/css; charset=utf-8', 'cache-control': IMMUTABLE })
+})
+// Vendored theme fonts (issue #155): first-party WOFF2s so a themed page never calls out to
+// Google — no viewer IP/referer leak, works on egress-filtered networks, and markdownCsp stays
+// 'self'-only. Base64 in the bundle (like the OG wasm, content worker only), decoded once per
+// isolate and cached. Same immutable + ?v= contract as the CSS that references them.
+const fontBytes = new Map<string, ArrayBuffer>()
+app.get('/_glance/theme/fonts/:file{[a-z0-9-]+\\.woff2}', (c) => {
+  const file = c.req.param('file')
+  const b64 = THEME_FONTS[file]
+  if (!b64) return notFound(c)
+  let bytes = fontBytes.get(file)
+  if (!bytes) {
+    // Uint8Array.from allocates an exact-size buffer, so handing over .buffer is safe.
+    bytes = Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0)).buffer as ArrayBuffer
+    fontBytes.set(file, bytes)
+  }
+  return c.body(bytes, 200, { 'content-type': 'font/woff2', 'cache-control': IMMUTABLE })
 })
 
 // The Slack unfurl card's PNG (lib/og-image.ts). Slack fetches image_url server-side,
@@ -596,17 +614,15 @@ export { escapeHtml, markdown } from './lib/markdown'
 // In annotate mode a `nonce` is supplied: script-src then admits EXACTLY the two injected tags
 // (never 'unsafe-inline' — an unnonced script in the document still can't run), and style-src
 // additionally allows 'self' so /_glance/annotate.css loads alongside the inlined shell styles.
-// A THEMED site widens style-src to 'self' (the injected /_glance/theme/*.css link) plus the
-// Google Fonts pair a theme's @import may pull — still a strict allowlist, and scripts stay off.
+// A THEMED site widens style-src to 'self' — the injected /_glance/theme/*.css link and its
+// vendored first-party fonts (issue #155) need nothing beyond the page's own origin.
 function markdownCsp(frameAncestors: string, nonce: string | null = null, themed = false): string {
   const styleSelf = nonce !== null || themed
   return [
     "default-src 'none'",
     "img-src 'self' data:",
-    styleSelf
-      ? `style-src 'self' 'unsafe-inline'${themed ? ' https://fonts.googleapis.com' : ''}`
-      : "style-src 'unsafe-inline'",
-    themed ? 'font-src \'self\' https://fonts.gstatic.com' : "font-src 'self'",
+    styleSelf ? "style-src 'self' 'unsafe-inline'" : "style-src 'unsafe-inline'",
+    "font-src 'self'",
     nonce ? `script-src 'nonce-${nonce}'` : "script-src 'none'",
     "object-src 'none'",
     "base-uri 'none'",

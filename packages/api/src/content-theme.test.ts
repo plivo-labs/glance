@@ -6,6 +6,7 @@ import { sites } from './db/schema'
 import { signToken } from './lib/token'
 import { makeDb, makeR2, seedFile, seedSite, seedSpace, seedUser } from './test/harness'
 import { THEME_CSS, THEMES_VERSION } from './themes/css'
+import { THEME_FONTS } from './themes/fonts'
 
 // Design themes at serve time: a themed site's HTML gets ONE injected <link> to
 // /_glance/theme/<slug>.css (end of <head> so it wins cascade-order ties), the stored bytes are
@@ -53,6 +54,35 @@ describe('themeHrefFor', () => {
     expect(themeHrefFor(null)).toBeNull()
     // A slug retired from the registry may still sit on an old row — fail OPEN to unthemed.
     expect(themeHrefFor('retired-theme')).toBeNull()
+  })
+})
+
+describe('/_glance/theme/fonts/:file.woff2 (issue #155 — vendored, first-party)', () => {
+  test('serves every bundled font immutable as font/woff2; unknown files 404', async () => {
+    const { app, env } = setup()
+    const files = Object.keys(THEME_FONTS)
+    expect(files.length).toBeGreaterThan(0)
+    for (const file of files) {
+      const res = await app.request(`/_glance/theme/fonts/${file}`, {}, env)
+      expect(res.status).toBe(200)
+      expect(res.headers.get('content-type')).toBe('font/woff2')
+      expect(res.headers.get('cache-control')).toContain('immutable')
+      // WOFF2 magic bytes: 'wOF2' — proves the base64 round-trip decodes to a real font.
+      const head = new Uint8Array((await res.arrayBuffer()).slice(0, 4))
+      expect(String.fromCharCode(...head)).toBe('wOF2')
+    }
+    expect((await app.request('/_glance/theme/fonts/nope.woff2', {}, env)).status).toBe(404)
+  })
+
+  test('every font URL referenced by theme CSS resolves to a bundled font', () => {
+    for (const [slug, css] of Object.entries(THEME_CSS)) {
+      for (const m of css.matchAll(/\/_glance\/theme\/fonts\/([a-z0-9-]+\.woff2)/g)) {
+        expect(THEME_FONTS[m[1]], `${slug} references missing font ${m[1]}`).toBeDefined()
+      }
+      // And no theme may reach out to Google (the whole point of #155).
+      expect(css).not.toContain('googleapis')
+      expect(css).not.toContain('gstatic')
+    }
   })
 })
 
@@ -141,7 +171,7 @@ describe('theme injection into served HTML', () => {
     expect(await res.text()).toBe(css)
   })
 
-  test('rendered markdown gets the link and a CSP that admits it (style-src self + fonts pair)', async () => {
+  test('rendered markdown gets the link and a CSP that stays first-party (issue #155)', async () => {
     const { app, db, r2, env } = setup()
     const { token } = await themedSite(db, r2, { path: 'doc.md', text: '# hello' })
 
@@ -149,8 +179,11 @@ describe('theme injection into served HTML', () => {
     const body = await res.text()
     expect(body).toContain(themeLink('broadsheet'))
     const csp = res.headers.get('content-security-policy') ?? ''
-    expect(csp).toContain("style-src 'self' 'unsafe-inline' https://fonts.googleapis.com")
-    expect(csp).toContain("font-src 'self' https://fonts.gstatic.com")
+    expect(csp).toContain("style-src 'self' 'unsafe-inline'")
+    expect(csp).toContain("font-src 'self'")
+    // Fonts are vendored (issue #155): NO third-party origin may appear in a themed CSP.
+    expect(csp).not.toContain('googleapis')
+    expect(csp).not.toContain('gstatic')
     expect(csp).toContain("script-src 'none'")
   })
 
