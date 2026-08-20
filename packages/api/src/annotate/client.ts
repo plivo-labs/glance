@@ -275,7 +275,7 @@ function focus(target: { quote?: string; selector?: string; context?: TextContex
 // is ignored.
 window.addEventListener('message', (e: MessageEvent) => {
   if (!boot || e.origin !== boot.appOrigin) return
-  const d = e.data as { type?: string; anchors?: PaintAnchor[]; quote?: string; selector?: string; context?: TextContext }
+  const d = e.data as { type?: string; anchors?: PaintAnchor[]; quote?: string; selector?: string; context?: TextContext; href?: string | null }
   if (d?.type === 'glance:paint' && Array.isArray(d.anchors)) paint(d.anchors)
   else if (d?.type === 'glance:focus') focus({ quote: d.quote, selector: d.selector, context: d.context })
   else if (d?.type === 'glance:pending') setPending(typeof d.selector === 'string' ? d.selector : null)
@@ -284,12 +284,40 @@ window.addEventListener('message', (e: MessageEvent) => {
   // realm with the browser's native dialog (the user picks "Save as PDF" there). Full fidelity:
   // the page's own renderer does the layout, including the injected theme stylesheet.
   else if (d?.type === 'glance:print') window.print()
+  // Viewer-local theme override: swap (or restore) the theme stylesheet INSIDE the frame — the
+  // parent is cross-origin and cannot touch this DOM. Purely cosmetic and per-viewer: no server
+  // write, applies instantly, and the parent persists the choice in ITS localStorage. The href is
+  // pattern-validated so a compromised parent message can at worst load one of our own theme
+  // sheets; null restores the site's server-injected theme (or none).
+  else if (d?.type === 'glance:theme') applyViewTheme(typeof d.href === 'string' ? d.href : null)
   // The parent's "did I miss your ready?" probe (#27): the boot glance:ready below fires exactly
   // once, so on a warm-cache load where this frame finishes before the parent's listener attaches
   // it is lost with nothing to re-fire it. Re-announcing on ping closes that race from this side;
   // the parent's arbiter treats a duplicate ready as a no-op, so answering a redundant ping is free.
   else if (d?.type === 'glance:ping') toParent({ type: 'glance:ready', filePath: boot.filePath })
 })
+
+// The site's server-injected theme href, captured at boot so a viewer override can be undone
+// back to the true default (content.ts stamps the link with id="glance-theme").
+const serverThemeHref = (document.getElementById('glance-theme') as HTMLLinkElement | null)?.getAttribute('href') ?? null
+
+function applyViewTheme(href: string | null): void {
+  const target = href ?? serverThemeHref
+  let link = document.getElementById('glance-theme') as HTMLLinkElement | null
+  if (target === null) {
+    link?.remove()
+    return
+  }
+  // Only our own theme sheets, ever — the href travels through postMessage, so validate shape.
+  if (!/^\/_glance\/theme\/[a-z0-9-]+\.css(\?v=[a-z0-9]+)?$/.test(target)) return
+  if (!link) {
+    link = document.createElement('link')
+    link.id = 'glance-theme'
+    link.rel = 'stylesheet'
+    ;(document.head ?? document.documentElement).appendChild(link)
+  }
+  if (link.getAttribute('href') !== target) link.setAttribute('href', target)
+}
 
 // Boot handshake: tell the parent which file is mounted (intent-only; parent re-validates).
 if (boot) toParent({ type: 'glance:ready', filePath: boot.filePath })

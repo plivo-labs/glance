@@ -46,7 +46,9 @@ async function themedSite(
   return { uid, siteId, token }
 }
 
-const themeLink = (slug: string) => `<link rel="stylesheet" href="/_glance/theme/${slug}.css?v=${THEMES_VERSION}">`
+// id="glance-theme" makes the link addressable by the annotate client's glance:theme
+// handler (viewer-local override) — pinned here so a rename breaks loudly.
+const themeLink = (slug: string) => `<link id="glance-theme" rel="stylesheet" href="/_glance/theme/${slug}.css?v=${THEMES_VERSION}">`
 
 describe('themeHrefFor', () => {
   test('registry slug → versioned href; null/unknown → null', () => {

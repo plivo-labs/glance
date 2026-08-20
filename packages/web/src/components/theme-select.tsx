@@ -25,17 +25,19 @@ import {
 const NONE = 'none'
 
 let catalog: ThemeInfo[] | null = null
+let catalogVersion: string | null = null
 let inflight: Promise<ThemeInfo[]> | null = null
 
 function loadThemes(): Promise<ThemeInfo[]> {
   if (catalog) return Promise.resolve(catalog)
   inflight ??= api
-    .get<{ themes: ThemeInfo[] }>('/api/themes')
+    .get<{ themes: ThemeInfo[]; version?: string }>('/api/themes')
     .then((r) => {
       // Tolerate a malformed payload (or a test double answering something else) — an empty
       // catalog degrades to "No theme" everywhere instead of crashing the viewer.
       const themes = Array.isArray(r?.themes) ? r.themes : []
       if (themes.length > 0) catalog = themes
+      if (typeof r?.version === 'string') catalogVersion = r.version
       return themes
     })
     .catch(() => {
@@ -64,6 +66,15 @@ export function themeLabel(themes: ThemeInfo[], slug: string | null): string {
   return themes.find((t) => t.slug === slug)?.name ?? slug
 }
 
+/** Stylesheet href for a viewer-LOCAL theme override (the glance:theme frame command). Resolves
+ *  after the catalog loads so the href carries the cache-busting version; null clears back to the
+ *  site's own theme. */
+export async function viewThemeHref(slug: string | null): Promise<string | null> {
+  if (!slug) return null
+  await loadThemes()
+  return `/_glance/theme/${slug}.css${catalogVersion ? `?v=${catalogVersion}` : ''}`
+}
+
 /** PATCH a site's theme with the standard success/error toasts. Returns whether it stuck, so the
  *  caller decides its own refresh (feed revalidate vs full viewer reload). */
 export async function patchTheme(spaceSlug: string, siteSlug: string, theme: string | null): Promise<boolean> {
@@ -81,16 +92,20 @@ function ThemeRadioItems({
   value,
   onChange,
   themes,
+  defaultLabel = 'Default',
+  defaultHint = "the page's own design",
 }: {
   value: string | null
   onChange: (v: string | null) => void
   themes: ThemeInfo[]
+  defaultLabel?: string
+  defaultHint?: string
 }) {
   return (
     <DropdownMenuRadioGroup value={value ?? NONE} onValueChange={(v) => onChange(v === NONE ? null : v)}>
       <DropdownMenuRadioItem value={NONE} className="gap-2">
-        <span className="flex-1">Default</span>
-        <span className="text-xs text-muted-foreground">the page's own design</span>
+        <span className="flex-1">{defaultLabel}</span>
+        <span className="text-xs text-muted-foreground">{defaultHint}</span>
       </DropdownMenuRadioItem>
       {themes.map((t) => (
         <DropdownMenuRadioItem key={t.slug} value={t.slug} title={t.description}>
@@ -106,6 +121,9 @@ export function ThemeMenu({
   onChange,
   disabled,
   trigger = 'button',
+  menuLabel = 'Design theme',
+  defaultLabel,
+  defaultHint,
 }: {
   value: string | null
   onChange: (v: string | null) => void
@@ -113,9 +131,15 @@ export function ThemeMenu({
   // 'chip' matches VisibilityMenu's dense-row look (viewer top bar); 'button' is the deploy-card
   // form control.
   trigger?: 'button' | 'chip'
+  // Overridable chrome: the viewer-local (non-owner) chip explains that the choice is personal.
+  menuLabel?: string
+  defaultLabel?: string
+  defaultHint?: string
 }) {
   const themes = useThemes()
-  const label = themeLabel(themes, value)
+  // The collapsed chip mirrors the menu's vocabulary: a custom default label ("Site default")
+  // must show on the trigger too, not only inside the open menu.
+  const label = value ? themeLabel(themes, value) : (defaultLabel ?? themeLabel(themes, null))
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -138,9 +162,9 @@ export function ThemeMenu({
         )}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-64">
-        <DropdownMenuLabel>Design theme</DropdownMenuLabel>
+        <DropdownMenuLabel>{menuLabel}</DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <ThemeRadioItems value={value} onChange={onChange} themes={themes} />
+        <ThemeRadioItems value={value} onChange={onChange} themes={themes} defaultLabel={defaultLabel} defaultHint={defaultHint} />
       </DropdownMenuContent>
     </DropdownMenu>
   )

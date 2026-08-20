@@ -575,7 +575,9 @@ export function transformServedHtml(res: Response, base: string, themeHref: stri
   })
   if (themeHref) {
     // themeHref is registry-derived (slug is [a-z0-9-]+, version is a hex hash) — no escaping needed.
-    const link = `<link rel="stylesheet" href="${themeHref}">`
+    // The id makes the link addressable by the annotate client's glance:theme handler, so a
+    // viewer-local override can swap or restore it without any server round trip.
+    const link = `<link id="glance-theme" rel="stylesheet" href="${themeHref}">`
     let injected = false
     rewriter.on('head', {
       element(el) {

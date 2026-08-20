@@ -36,6 +36,8 @@ export function ViewerTopBar({
   onToggleSidebar,
   onSearch,
   onPrint,
+  viewTheme,
+  onViewTheme,
 }: {
   site: ViewerSite
   sitePath: string
@@ -47,6 +49,10 @@ export function ViewerTopBar({
   // Posts glance:print into the content iframe (HTML sites only — absent hides the item). The
   // frame prints itself; the browser's print dialog is where the user picks "Save as PDF".
   onPrint?: () => void
+  // Viewer-LOCAL theme override (non-owners): current value + setter. Client-side only — the
+  // viewer posts glance:theme into the frame; nothing is written server-side.
+  viewTheme?: string | null
+  onViewTheme?: (slug: string | null) => void
 }) {
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
@@ -80,11 +86,23 @@ export function ViewerTopBar({
 
       {/* Design theme: the owner gets a live switcher (hidden on phones — visibility wins the
           space); a re-skin needs a reload since the theme is injected server-side at serve time. */}
-      {site.isOwner && (
-        <span className="hidden shrink-0 sm:inline-flex">
+      <span className="hidden shrink-0 sm:inline-flex">
+        {site.isOwner ? (
           <ViewerTheme site={site} />
-        </span>
-      )}
+        ) : onViewTheme ? (
+          // Non-owners re-skin only their OWN view: the choice never touches the server — the
+          // parent posts glance:theme into the frame and remembers it in localStorage. Absent
+          // handler (audio sites: no document to theme) → no chip, like onPrint.
+          <ThemeMenu
+            trigger="chip"
+            value={viewTheme ?? null}
+            onChange={(t) => onViewTheme?.(t)}
+            menuLabel="View in theme — just for you"
+            defaultLabel="Site default"
+            defaultHint="as the owner shipped it"
+          />
+        ) : null}
+      </span>
 
       <div className="ml-auto flex shrink-0 items-center gap-2">
         <Button
