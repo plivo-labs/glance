@@ -28,6 +28,7 @@ const HTML = '<p>Alpha lead in. Revenue is up. trailing words.</p>'
 
 function setup(html = HTML) {
   const window = new Window()
+  // safe-html: static test fixture HTML (setup()'s html param defaults/callers pass literals only)
   window.document.body.innerHTML = html
   const doc = window.document as unknown as Document
   const emitted: (SelectMessage | ClearMessage | ClickAwayMessage | EscapeMessage | CommentKeyMessage | AskKeyMessage)[] = []

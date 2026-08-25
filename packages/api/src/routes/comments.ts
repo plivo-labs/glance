@@ -89,7 +89,7 @@ const tooLong = (v: unknown, max: number): boolean => typeof v === 'string' && v
  *  comment text and harmless to a terminal); everything else in the range is dropped at this
  *  untrusted-input boundary. Written without control-char source literals. */
 function stripControlChars(s: string): string {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: matching control chars is the point; escapes only, no literals
+  // oxlint-disable-next-line eslint/no-control-regex -- matching control chars is the point; escapes only, no literals
   return s.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '')
 }
 
