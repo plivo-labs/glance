@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'bun:test'
-import { type Anchor, initialPopover, type PopoverEvent, type PopoverState, stepPopover } from './commentPopover'
+import {
+  type Anchor,
+  initialPopover,
+  placePopover,
+  type PopoverEvent,
+  type PopoverState,
+  stepPopover,
+} from './commentPopover'
 
 // Slice A1 — the select → chip → composer → save lifecycle, pinned at the reducer. A reducer suite
 // cannot prove real-iframe timing (a genuine pointerdown/selectionchange race); it pins the
@@ -122,11 +129,7 @@ describe('C opens the composer in exactly one state (#117)', () => {
   })
 
   test('a saving composer is still a composer: commentKey cannot mint one over an in-flight write', () => {
-    const saving = run([
-      { type: 'select', anchor: A, dirty: false },
-      { type: 'activate' },
-      { type: 'submit' },
-    ])
+    const saving = run([{ type: 'select', anchor: A, dirty: false }, { type: 'activate' }, { type: 'submit' }])
     expect(stepPopover(saving, { type: 'commentKey' })).toBe(saving)
   })
 })
@@ -201,7 +204,7 @@ describe('askActivate / askKey — the ask panel (mirrors activate / commentKey)
     expect(state.composer?.anchor).toEqual(A)
   })
 
-  test("select does NOT re-anchor or close an open ask panel — the answer stays put while reading", () => {
+  test('select does NOT re-anchor or close an open ask panel — the answer stays put while reading', () => {
     const asked = run([{ type: 'select', anchor: A, dirty: false }, { type: 'askActivate' }])
     const state = stepPopover(asked, { type: 'select', anchor: B, dirty: false })
     expect(state.ask).toEqual(asked.ask) // untouched: same id, same anchor (still A)
@@ -422,5 +425,43 @@ describe('dismiss closes; clickAway with dirty:true does NOT close', () => {
     ])
     expect(state.chip).toEqual(B)
     expect(state.composer?.anchor).toEqual(A) // still the dirty draft's anchor
+  })
+})
+
+// placePopover — pure flip/shift geometry. The container is the iframe wrapper (the rect's own
+// coordinate space); measuring real elements is the component's job, so these pin only the math.
+describe('PLACE-POPOVER-STAYS-IN-CONTAINER', () => {
+  const CONTAINER = { width: 800, height: 600 }
+  const SIZE = { width: 320, height: 150 }
+
+  test('fits below: pinned under the rect at its left edge', () => {
+    expect(placePopover({ top: 100, left: 40, width: 200, height: 18 }, SIZE, CONTAINER)).toEqual({
+      top: 100 + 18 + 8,
+      left: 40,
+    })
+  })
+
+  test('near the right edge: shifted left just enough to fit, still below', () => {
+    const p = placePopover({ top: 100, left: 700, width: 80, height: 18 }, SIZE, CONTAINER)
+    expect(p.left).toBe(800 - 320 - 8)
+    expect(p.top).toBe(100 + 18 + 8)
+  })
+
+  test('near the bottom: flipped above, anchored by `bottom` so growth extends upward', () => {
+    const p = placePopover({ top: 550, left: 40, width: 200, height: 18 }, SIZE, CONTAINER)
+    expect(p.top).toBeUndefined()
+    expect(p.bottom).toBe(600 - 550 + 8)
+    expect(p.left).toBe(40)
+  })
+
+  test('fits on neither side: takes the side with more room rather than flipping blindly', () => {
+    // Rect near the top of a short container — below overflows, but above has even less room.
+    const p = placePopover({ top: 20, left: 10, width: 50, height: 12 }, SIZE, { width: 800, height: 300 })
+    expect(p.top).toBe(20 + 12 + 8)
+    expect(p.bottom).toBeUndefined()
+  })
+
+  test('never shifted past the container’s own left inset', () => {
+    expect(placePopover({ top: 100, left: -20, width: 50, height: 12 }, SIZE, CONTAINER).left).toBe(8)
   })
 })
