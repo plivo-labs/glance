@@ -53,16 +53,19 @@ export function RecordDialog({
   // which resets the recorder and clears the blob).
   useEffect(() => {
     if (!rec.blob) {
+      // oxlint-disable-next-line react/set-state-in-effect -- clearing the stale URL is the point; without it a re-record paints the previous, already-revoked blob URL for a frame.
       setPreviewUrl(null)
       return
     }
     const url = URL.createObjectURL(rec.blob)
+    // oxlint-disable-next-line react/set-state-in-effect -- an object URL has to be created in an effect so the cleanup below can revoke it; this is how it reaches render.
     setPreviewUrl(url)
     return () => URL.revokeObjectURL(url)
   }, [rec.blob])
 
   // Seed a default title the moment recording stops (only if the user hasn't typed one).
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- rec.state flips to 'stopped' async, from MediaRecorder's onstop callback inside useMediaRecorder, not a local handler this can move into.
     if (rec.state === 'stopped') setTitle((t) => t || defaultRecordingTitle(new Date()))
   }, [rec.state])
 
