@@ -57,6 +57,34 @@ export function initialPopover(): PopoverState {
   return { chip: null, composer: null, saving: null, ask: null, seq: 0 }
 }
 
+/** Gap between the anchor rect and whatever is pinned to it. */
+export const GAP = 8
+/** Minimum inset from the container's edges when a popover has to shift to stay visible. */
+const PAD = 8
+
+/** Positioning for a popover pinned to `rect`: `top` XOR `bottom`, both relative to the container
+ *  (the wrapper div the rect's coordinates already live in — see CommentPopover's MOUNT POINT
+ *  note). A type alias, not an interface — the implicit index signature is what lets it flow
+ *  straight into React's CSSProperties. */
+export type PopoverPlacement = { top?: number; bottom?: number; left: number }
+
+/** Where a popover of `size` goes so it stays inside `container`: below the rect when it fits (or
+ *  when below has at least as much room as above), otherwise flipped above — anchored by `bottom`
+ *  so later growth extends away from the anchor instead of over it. Horizontally it shifts left
+ *  just enough to fit, never past the container's own left edge. Pure math on the numbers the
+ *  iframe reported; measuring is the caller's job. */
+export function placePopover(
+  rect: DOMRectLike,
+  size: { width: number; height: number },
+  container: { width: number; height: number },
+): PopoverPlacement {
+  const left = Math.max(PAD, Math.min(rect.left, container.width - size.width - PAD))
+  const spaceBelow = container.height - (rect.top + rect.height + GAP)
+  const spaceAbove = rect.top - GAP
+  if (size.height <= spaceBelow || spaceBelow >= spaceAbove) return { top: rect.top + rect.height + GAP, left }
+  return { bottom: container.height - rect.top + GAP, left }
+}
+
 export function stepPopover(state: PopoverState, event: PopoverEvent): PopoverState {
   switch (event.type) {
     case 'select': {

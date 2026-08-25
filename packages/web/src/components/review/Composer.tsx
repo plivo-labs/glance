@@ -21,6 +21,7 @@ const KEYCAP =
 export function Composer({
   placeholder,
   submitLabel,
+  initialBody,
   onSubmit,
   onSubmitVoice,
   onCancel,
@@ -35,6 +36,8 @@ export function Composer({
 }: {
   placeholder: string
   submitLabel: string
+  // Seed the draft (editing an existing comment). Mount-time only — this is an uncontrolled draft.
+  initialBody?: string
   onSubmit: (body: string, mentions: string[]) => void | Promise<void>
   // When set, the composer shows a mic that records a clip and submits it here (voice comment).
   onSubmitVoice?: (blob: Blob) => void | Promise<void>
@@ -63,7 +66,7 @@ export function Composer({
   // sitting on their text, still typing — same rule the draft itself follows.
   onTypingStop?: () => void
 }) {
-  const [body, setBody] = useState('')
+  const [body, setBody] = useState(initialBody ?? '')
   const [busy, setBusy] = useState(false)
   const rec = useMediaRecorder()
   const trimmed = body.trim()
