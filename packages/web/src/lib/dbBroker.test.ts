@@ -116,7 +116,7 @@ describe('request surface', () => {
     expect(reply.body.id).toBe('d1')
     const dataCall = h.calls.find((c) => c.url.includes('/api/_data/'))
     expect(dataCall?.url).toBe('/api/_data/notes')
-    expect((dataCall?.init?.headers as Record<string, string>).Authorization).toBe('Bearer tok-1')
+    expect((dataCall?.init?.headers as Record<string, string> | undefined)?.Authorization).toBe('Bearer tok-1')
     // no reply message ever carries the token
     expect(JSON.stringify(h.received)).not.toContain('tok-1')
   })
