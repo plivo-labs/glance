@@ -32,9 +32,18 @@ license; the most significant are listed below. Run `bun pm ls` for the full res
 | wrangler | MIT OR Apache-2.0 |
 | drizzle-kit | MIT |
 | @biomejs/biome | MIT OR Apache-2.0 |
+| oxlint, @oxlint/plugins | MIT |
 | vite | MIT |
 
 Full license texts are available in each package's directory under `node_modules/`.
+
+## Vendored oxlint plugins (tools/oxlint)
+
+Custom lint rules copied into this repo rather than installed, per each project's
+recommendation. Upstream license texts are kept alongside the sources.
+
+- `tools/oxlint/anti-slop` — dmmulroy/anti-slop, MIT
+- `tools/oxlint/stella` — stella/stella `.oxlint-plugins`, Apache-2.0
 
 ## Vendored fonts (packages/api/themes/*/fonts)
 

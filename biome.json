@@ -27,18 +27,7 @@
     "lineWidth": 120
   },
   "assist": { "actions": { "source": { "organizeImports": "off" } } },
-  "linter": {
-    "enabled": true,
-    "rules": {
-      "preset": "recommended",
-      "style": {
-        "noNonNullAssertion": "off"
-      },
-      "a11y": {
-        "noStaticElementInteractions": "off"
-      }
-    }
-  },
+  "linter": { "enabled": false },
   "javascript": {
     "formatter": {
       "quoteStyle": "single",
