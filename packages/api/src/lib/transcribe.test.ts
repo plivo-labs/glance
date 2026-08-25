@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { transcribeVoice } from './transcribe'
 
-// biome-ignore lint/suspicious/noExplicitAny: test stubs for the Ai binding surface.
 const stubAi = (run: (...a: any[]) => unknown) => ({ run }) as any
 
 describe('transcribeVoice (W1-3, W1-4)', () => {

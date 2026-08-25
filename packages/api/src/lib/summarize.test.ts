@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { summarizeSite, WORKERS_MODEL } from './summarize'
 
-// biome-ignore lint/suspicious/noExplicitAny: test stubs for the Ai binding surface.
 const stubAi = (run: (...a: any[]) => unknown) => ({ run }) as any
 
 describe('site summary generation', () => {
