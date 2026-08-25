@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check, FileText, Mic, RotateCcw, Trash2 } from 'lucide-react'
+import { Check, FileText, Mic, Pencil, RotateCcw, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/lib/api'
 import { comments, type CommentItem, type CommentReaction, type Thread } from '@/lib/comments'
@@ -44,6 +44,9 @@ export function ThreadCard({
   onFocusAnchor: (thread: Thread) => void
 }) {
   const [replying, setReplying] = useState(false)
+  // Comment id under inline edit, or null. One at a time: starting an edit on another message
+  // simply moves the composer there — the abandoned draft was never sent, so nothing is lost.
+  const [editing, setEditing] = useState<string | null>(null)
   // Reaction lists the server has since re-stated, by comment id. The toggle endpoints answer with
   // the comment's FRESH list, so a successful toggle is already the truth — refetching the thread
   // (what onChanged does) would spend a request to learn what the response just said.
@@ -183,6 +186,18 @@ export function ThreadCard({
                     className="size-6 rounded-sm px-0 text-muted-foreground"
                     onPick={(emoji) => toggle(c, emoji, false)()}
                   />
+                  {/* Edit is text-only: a voice comment's body is its transcript, and rewriting a
+                      transcript out from under its recording would make the two disagree. */}
+                  {c.authorId === me?.id && !c.hasAudio && (
+                    <button
+                      type="button"
+                      onClick={() => setEditing(c.id)}
+                      className="flex size-6 items-center justify-center rounded-sm hover:bg-muted"
+                      aria-label="Edit comment"
+                    >
+                      <Pencil className="size-3.5 text-muted-foreground" />
+                    </button>
+                  )}
                   {c.authorId === me?.id && (
                     <button
                       type="button"
@@ -234,9 +249,27 @@ export function ThreadCard({
                       {c.editedAt && !c.deleted && <span>(edited)</span>}
                     </div>
                   )}
-                  <p className={c.deleted ? 'text-muted-foreground italic' : 'whitespace-pre-wrap'}>
-                    {c.deleted ? 'comment deleted' : c.body}
-                  </p>
+                  {editing === c.id && !c.deleted ? (
+                    <div className="mt-1">
+                      <Composer
+                        autoFocus
+                        initialBody={c.body ?? ''}
+                        placeholder="Edit comment…"
+                        submitLabel="Save"
+                        onCancel={() => setEditing(null)}
+                        onSubmit={async (body) => {
+                          // Not pushed (like delete/resolve): the caller's refetch is the only
+                          // thing that will ever show the new body.
+                          await run(() => comments.edit(site, thread.id, c.id, body), false)
+                          setEditing(null)
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <p className={c.deleted ? 'text-muted-foreground italic' : 'whitespace-pre-wrap'}>
+                      {c.deleted ? 'comment deleted' : c.body}
+                    </p>
+                  )}
                   {/* Voice comment: the transcript above stays always-visible; the recording plays
                       from the auth-gated audio route (deleted comments lose hasAudio, so they never
                       reach here). */}

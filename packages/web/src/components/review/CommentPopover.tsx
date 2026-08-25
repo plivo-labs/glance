@@ -1,6 +1,6 @@
 import { MessageSquarePlus, Sparkles, X } from 'lucide-react'
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { Anchor, PopoverState } from '@/lib/commentPopover'
+import { type Anchor, GAP, placePopover, type PopoverState } from '@/lib/commentPopover'
 import type { DOMRectLike } from '@/lib/parseIntent'
 import type { MentionUser } from '@/lib/mentions'
 import { ApiError } from '@/lib/api'
@@ -20,13 +20,48 @@ const Streamdown = lazy(() => import('streamdown').then((m) => ({ default: m.Str
 // rect it reports in ITS viewport coords is already this element's coordinate space — 1:1 px, no
 // scale math, no getBoundingClientRect of the iframe. Mounting anywhere else would reintroduce all
 // three.
-const GAP = 8
 const below = (r: DOMRectLike): React.CSSProperties => ({ top: r.top + r.height + GAP, left: r.left })
 
 // The ask panel's approximate max height (quote + textarea + a full answer scroller) — the flip
-// decision below compares this against the space actually available, not the panel's live height,
-// so a growing answer can never flip the side it already committed to.
+// decision uses this instead of the panel's live height, so a growing answer can never flip the
+// side it already committed to.
 const ASK_PANEL_MAX = 340
+
+// Viewport-aware position for an element pinned to `rect`: first paint at the raw below-the-rect
+// spot, then — synchronously, before that paint — measure the element and its offsetParent (the
+// iframe wrapper, per the MOUNT POINT note above) and let placePopover flip/shift it back into
+// view. `height` overrides the measured height for panels that grow after placement (the ask
+// panel). Unmeasurable container (happy-dom, or a not-yet-laid-out wrapper) keeps the raw spot.
+function usePlacement(rect: DOMRectLike, height?: number) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [style, setStyle] = useState<React.CSSProperties>(() => below(rect))
+  useLayoutEffect(() => {
+    const el = ref.current
+    const container = el?.offsetParent
+    if (!el || !(container instanceof HTMLElement) || container.clientHeight === 0) {
+      setStyle(below(rect))
+      return
+    }
+    setStyle(
+      placePopover(
+        rect,
+        { width: el.offsetWidth, height: height ?? el.offsetHeight },
+        { width: container.clientWidth, height: container.clientHeight },
+      ),
+    )
+  }, [rect, height])
+  return { ref, style }
+}
+
+/** A div pinned to `rect` that flips/shifts to stay inside the iframe wrapper. */
+function Anchored({
+  rect,
+  height,
+  ...props
+}: { rect: DOMRectLike; height?: number } & React.HTMLAttributes<HTMLDivElement>) {
+  const { ref, style } = usePlacement(rect, height)
+  return <div ref={ref} style={style} {...props} />
+}
 
 export function CommentPopover({
   chip,
@@ -63,7 +98,7 @@ export function CommentPopover({
       {chip && (
         // A single positioned wrapper, not two — the two buttons are one toolbar pinned to one
         // rect, and neither owns the coordinate on its own.
-        <div className="absolute z-20 flex items-center gap-1.5" style={below(chip.rect)}>
+        <Anchored rect={chip.rect} className="absolute z-20 flex items-center gap-1.5">
           <button
             type="button"
             aria-label="Comment on selection"
@@ -94,14 +129,14 @@ export function CommentPopover({
               A
             </kbd>
           </button>
-        </div>
+        </Anchored>
       )}
       {composer && (
-        <div
+        <Anchored
           // A new composer id is a new composer: remounting drops the previous draft, which is what
           // the reducer means when a click on the chip mints a fresh one over an open (even dirty) box.
           key={composer.id}
-          style={below(composer.anchor.rect)}
+          rect={composer.anchor.rect}
           className="absolute z-30 w-80 rounded-lg border bg-popover p-3 text-popover-foreground shadow-lg"
           // Escape closes the popover — but ONLY once the Composer hasn't already claimed it for its
           // open mention menu (it preventDefaults there). Menu first, popover on the next press.
@@ -122,7 +157,7 @@ export function CommentPopover({
             onCancel={onDismiss}
             onDirtyChange={onDirtyChange}
           />
-        </div>
+        </Anchored>
       )}
       {ask && (
         // Same remount-on-id contract as the composer above: a fresh ask id is a fresh question.
@@ -156,7 +191,6 @@ function AskPanel({
   onDismiss: () => void
   onDirtyChange?: (dirty: boolean) => void
 }) {
-  const panelRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const answerRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -164,23 +198,11 @@ function AskPanel({
   // reading an earlier part of a growing answer isn't yanked back down on the next token.
   const stickToBottom = useRef(true)
 
-  // Which side of the anchor the panel sits on, decided ONCE at open — never mid-stream, or a
-  // growing answer would flip the panel out from under the user's cursor. Starts 'below' (today's
-  // placement) and the layout effect corrects it, synchronously before paint, if the space below
-  // the anchor can't fit the panel's max height against the wrapper div's height (see the MOUNT
-  // POINT comment above: that wrapper is this panel's offsetParent, and the rect is already in its
-  // coordinate space).
-  const [placement, setPlacement] = useState<{ side: 'below' | 'above'; containerHeight: number }>({
-    side: 'below',
-    containerHeight: 0,
-  })
-  // biome-ignore lint/correctness/useExhaustiveDependencies: decided once, on mount only — ask.anchor.rect is stable for this panel's whole life (a new ask id remounts it, see the `key` at the call site).
-  useLayoutEffect(() => {
-    const container = panelRef.current?.offsetParent
-    const containerHeight = container instanceof HTMLElement ? container.clientHeight : 0
-    const spaceBelow = containerHeight - (ask.anchor.rect.top + ask.anchor.rect.height + GAP)
-    setPlacement({ side: spaceBelow < ASK_PANEL_MAX ? 'above' : 'below', containerHeight })
-  }, [])
+  // Placed against ASK_PANEL_MAX, not the panel's live height, and the rect is stable for this
+  // panel's whole life (a new ask id remounts it, see the `key` at the call site) — so the side is
+  // decided once, at open, and a growing answer can never flip the panel out from under the
+  // user's cursor.
+  const { ref: panelRef, style } = usePlacement(ask.anchor.rect, ASK_PANEL_MAX)
 
   const [question, setQuestion] = useState('')
   const [turns, setTurns] = useState<Turn[]>([])
@@ -254,11 +276,6 @@ function AskPanel({
     setTurns((ts) => ts.slice(0, -1))
     void run(q)
   }
-
-  const style =
-    placement.side === 'below'
-      ? below(ask.anchor.rect)
-      : { bottom: placement.containerHeight - ask.anchor.rect.top + GAP, left: ask.anchor.rect.left }
 
   return (
     <div

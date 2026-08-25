@@ -450,3 +450,54 @@ describe('ThreadCard — a refetched reaction list supersedes the local override
     react.mockRestore()
   })
 })
+
+// Editing rewrites a message in place through comments.edit (author only, text only). Like
+// delete/resolve it is NOT pushed by the room, so onChanged({pushed:false}) is the only thing that
+// will ever show the new body to this viewer.
+describe('ThreadCard — inline edit', () => {
+  const mine = (over: Partial<CommentItem> = {}) =>
+    mkComment({ id: 'c1', authorId: ME.id, author: ME.name, body: 'old text', ...over })
+
+  test('Edit seeds the composer with the body, saves through comments.edit, closes on success', async () => {
+    const edit = spyOn(comments, 'edit').mockImplementation(() => Promise.resolve({ ok: true } as never))
+    const { onChanged } = renderCard({ comments: [mine()] })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit comment' }))
+    const box = screen.getByPlaceholderText('Edit comment…') as HTMLTextAreaElement
+    expect(box.value).toBe('old text')
+
+    fireEvent.change(box, { target: { value: 'new text' } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    })
+
+    expect(edit).toHaveBeenCalledWith(SITE, 't1', 'c1', 'new text')
+    expect(onChanged).toHaveBeenCalledWith({ pushed: false })
+    expect(screen.queryByPlaceholderText('Edit comment…')).toBeNull() // editor closed, body row back
+    edit.mockRestore()
+  })
+
+  test('a rejected edit leaves the editor mounted with the text intact', async () => {
+    const edit = spyOn(comments, 'edit').mockImplementation(() => Promise.reject(new Error('write failed')))
+    const { onChanged } = renderCard({ comments: [mine()] })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit comment' }))
+    const box = screen.getByPlaceholderText('Edit comment…') as HTMLTextAreaElement
+    fireEvent.change(box, { target: { value: 'new text' } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    })
+
+    expect(box.isConnected).toBe(true)
+    expect(box.value).toBe('new text')
+    expect(onChanged).not.toHaveBeenCalled()
+    edit.mockRestore()
+  })
+
+  test("someone else's comment, and voice comments, offer no Edit", () => {
+    renderCard({
+      comments: [mkComment({ id: 'c1' }), mine({ id: 'c2', hasAudio: true })],
+    })
+    expect(screen.queryByRole('button', { name: 'Edit comment' })).toBeNull()
+  })
+})
