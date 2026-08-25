@@ -139,7 +139,7 @@ export function ReviewRail({
   // dropping the scroll. Keying on the primitives makes this effect immune to caller identity
   // churn instead of relying on every current and future caller (e.g. a highlight click) to memoize.
   const revealedNonceRef = useRef<number | null>(null)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the primitive deps ARE the fix (above) — depending on the focusRequest object re-runs this on every caller re-render and cancels the pending rAF scroll.
+  /* oxlint-disable react-hooks/exhaustive-deps -- the primitive deps ARE the fix (above) — depending on the focusRequest object re-runs this on every caller re-render and cancels the pending rAF scroll. */
   useEffect(() => {
     const target = focusRequest ? threads.find((t) => t.id === focusRequest.id) : undefined
     if (!focusRequest || !shouldReveal(focusRequest, revealedNonceRef.current, !!target)) return
@@ -150,6 +150,7 @@ export function ReviewRail({
     )
     return () => cancelAnimationFrame(raf)
   }, [focusRequest?.id, focusRequest?.nonce, threads])
+  /* oxlint-enable react-hooks/exhaustive-deps */
 
   return (
     <aside
@@ -158,8 +159,8 @@ export function ReviewRail({
     >
       {/* Left-edge drag handle (desktop only): straddles the border so it's easy to grab.
           Keyboard: arrow keys nudge the width (WAI-ARIA window-splitter pattern). */}
-      {/* biome-ignore lint/a11y/useSemanticElements: an <hr> can't be an interactive resizer. */}
       <div
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- an <hr> can't be an interactive resizer (tabIndex/onKeyDown/onPointerDown); this is the WAI-ARIA window-splitter pattern, not a static separator.
         role="separator"
         tabIndex={0}
         aria-orientation="vertical"

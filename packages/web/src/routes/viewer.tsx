@@ -75,7 +75,11 @@ function Viewer() {
   // Is the comments rail on screen. It gates the on-page HIGHLIGHTS again (the rail is the panel
   // that explains them, so they live and die with it) but NOT commenting: selecting text still
   // composes in place with the panel closed.
-  const [railOpen, setRailOpen] = useState(false)
+  // `?review=1` (railFromSearch, baked into already-sent notification links) opens the rail
+  // forever — read straight into the initial state rather than a mount effect: it's decided once,
+  // at first paint, so there's no reason to pay for an extra render setting it after the fact.
+  const [searchParams] = useSearchParams()
+  const [railOpen, setRailOpen] = useState(() => railFromSearch(searchParams))
   const [loaded, setLoaded] = useState(false)
   const [me, setMe] = useState<Me | null>(null)
   // The HTML iframe only learns its file path from the annotate client's 'ready' postMessage
@@ -115,7 +119,9 @@ function Viewer() {
   // Read by the message-listener effect (stable subscription) — a state read there would go
   // stale in the closure; the ref always carries the latest override.
   const viewThemeRef = useRef(viewTheme)
-  viewThemeRef.current = viewTheme
+  useEffect(() => {
+    viewThemeRef.current = viewTheme
+  }, [viewTheme])
   const applyViewTheme = useCallback(
     (slug: string | null) => {
       void viewThemeHref(slug).then((href) => {
@@ -506,20 +512,15 @@ function Viewer() {
     [contentOrigin],
   )
 
-  // Deep-link contract (a notification click lands here): `?review=1` opens the rail forever — it's
-  // baked into ALREADY-SENT Slack messages and notification-bell links, so it's a permanent alias
-  // (railFromSearch), not a migration — and `?thread=<id>` focuses that thread — scroll the iframe
-  // to its anchor + its rail card into view, once the frame is loaded and that file's threads are
-  // in. `filePath` in the notification's URL path ensures the right file (and thus the thread) is
-  // what loads. Fires at most once.
-  const [searchParams] = useSearchParams()
-  const wantRailOpen = railFromSearch(searchParams)
+  // Deep-link contract (a notification click lands here): `?review=1` opens the rail forever (it's
+  // read into railOpen's initial state, above) — it's baked into ALREADY-SENT Slack messages and
+  // notification-bell links, so it's a permanent alias (railFromSearch), not a migration — and
+  // `?thread=<id>` focuses that thread — scroll the iframe to its anchor + its rail card into
+  // view, once the frame is loaded and that file's threads are in. `filePath` in the
+  // notification's URL path ensures the right file (and thus the thread) is what loads. Fires at
+  // most once.
   const deepLinkThreadId = searchParams.get('thread')
   const deepLinkFocused = useRef(false)
-
-  useEffect(() => {
-    if (wantRailOpen) setRailOpen(true)
-  }, [wantRailOpen])
 
   useEffect(() => {
     const target = threads.find((t) => t.id === deepLinkThreadId)
