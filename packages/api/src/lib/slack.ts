@@ -99,10 +99,14 @@ async function cachedLookup(
   const outcome = data === null ? 'transient' : read(data)
   if (outcome === 'transient') return null
   if (outcome === 'not-found') {
-    await deps.kv.put(key, NEGATIVE_MARKER, { expirationTtl: NEGATIVE_TTL }).catch(() => {})
+    await deps.kv.put(key, NEGATIVE_MARKER, { expirationTtl: NEGATIVE_TTL }).catch((err) =>
+      console.error('slack: kv put (negative) failed', err instanceof Error ? `${err.name}: ${err.message}` : String(err)),
+    )
     return null
   }
-  await deps.kv.put(key, outcome.value, { expirationTtl: POSITIVE_TTL }).catch(() => {})
+  await deps.kv.put(key, outcome.value, { expirationTtl: POSITIVE_TTL }).catch((err) =>
+    console.error('slack: kv put failed', err instanceof Error ? `${err.name}: ${err.message}` : String(err)),
+  )
   return outcome.value
 }
 

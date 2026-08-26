@@ -272,12 +272,18 @@ async function cachedHalf<T>(
     await defer(
       compute()
         .then(write)
-        .catch(() => {}),
+        .catch((err) =>
+          console.error('stats: refresh failed', err instanceof Error ? `${err.name}: ${err.message}` : String(err)),
+        ),
     )
     return hit.v
   }
   const value = await compute()
-  await defer(write(value).catch(() => {}))
+  await defer(
+    write(value).catch((err) =>
+      console.error('stats: cache write failed', err instanceof Error ? `${err.name}: ${err.message}` : String(err)),
+    ),
+  )
   return value
 }
 

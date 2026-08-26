@@ -85,13 +85,14 @@ export type UnfurlCard = {
 export function buildUnfurlAttachment(card: UnfurlCard, url: string, nowMs: number): SlackAttachment {
   const updated = relativeTime(card.updatedAt, nowMs)
   const meta = [`Glance · ${card.spaceSlug}/${card.siteSlug}`, ...(updated ? [`Updated ${updated}`] : [])]
-  return {
+  const attachment: SlackAttachment = {
     title: escapeSlack(card.title ?? card.siteSlug),
     title_link: url,
-    ...(card.description ? { text: escapeSlack(card.description) } : {}),
-    ...(card.imageUrl ? { image_url: card.imageUrl } : {}),
     footer: meta.join(' · '),
   }
+  if (card.description) attachment.text = escapeSlack(card.description)
+  if (card.imageUrl) attachment.image_url = card.imageUrl
+  return attachment
 }
 
 /** The `link_shared` fields that say WHICH message to attach the unfurl to. `unfurl_id`+`source` is

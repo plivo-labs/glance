@@ -42,7 +42,10 @@ avatars.get('/:userId', async (c) => {
   const upstream = await fetch(sizedAvatarUrl(url), {
     // cacheEverything makes Cloudflare hold the bytes at the edge; a no-op locally and in tests.
     cf: { cacheEverything: true, cacheTtl: 86400 },
-  }).catch(() => null)
+  }).catch((err) => {
+    console.error('avatars: upstream fetch failed', err instanceof Error ? `${err.name}: ${err.message}` : String(err))
+    return null
+  })
   if (!upstream?.ok) return miss(c)
 
   // Only images leave this route, and never as sniffable HTML: an origin-served document would

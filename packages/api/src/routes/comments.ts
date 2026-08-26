@@ -381,13 +381,17 @@ function parseThreadFields(raw: {
  *  because the two JSON fields want OPPOSITE answers to it (see the caller). */
 const INVALID_JSON = Symbol('invalid-json')
 
+/** Any value `JSON.parse` can produce — the field's shape is decided by the caller (element vs.
+ *  context), so this names the wire boundary rather than papering over it with `unknown`. */
+type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
+
 /** A FormData value that should hold JSON: absent or empty → undefined, malformed → INVALID_JSON.
  *  Malformed is reported rather than swallowed so the caller keeps that choice; collapsing the two
  *  cases here would silently turn a malformed field into an absent one. */
-function jsonField(raw: File | string | null): unknown {
+function jsonField(raw: File | string | null): JsonValue | typeof INVALID_JSON | undefined {
   if (typeof raw !== 'string' || !raw) return undefined
   try {
-    return JSON.parse(raw)
+    return JSON.parse(raw) as JsonValue
   } catch {
     return INVALID_JSON
   }

@@ -272,12 +272,13 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
     const doc = nonce
       ? injectAnnotate(renderMarkdownDoc(path, html), { siteId: siteRow.id, filePath: path, appOrigin: c.env.APP_URL }, nonce)
       : renderMarkdownDoc(path, html)
-    const res = c.html(doc, 200, {
+    const headers: Record<string, string> = {
       'content-security-policy': markdownCsp(frameAncestors, nonce, themeHref !== null),
       'x-content-type-options': 'nosniff',
       'referrer-policy': 'no-referrer',
-      ...(nonce ? { 'cache-control': 'no-store' } : {}),
-    })
+    }
+    if (nonce) headers['cache-control'] = 'no-store'
+    const res = c.html(doc, 200, headers)
     return transformServedHtml(res, selfOrigin, themeHref)
   }
 

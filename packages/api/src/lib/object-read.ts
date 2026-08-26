@@ -69,7 +69,11 @@ export async function readFullObject(
     const stored = new Response(cacheBody, {
       headers: { etag: object.httpEtag, 'content-type': contentTypeHeader, 'cache-control': IMMUTABLE },
     })
-    await defer(cache.put(key, stored).catch(() => {}))
+    await defer(
+      cache.put(key, stored).catch((err) =>
+        console.error('object-read: cache put failed', err instanceof Error ? `${err.name}: ${err.message}` : String(err)),
+      ),
+    )
   }
   return { body: clientBody, etag: object.httpEtag }
 }
