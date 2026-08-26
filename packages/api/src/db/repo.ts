@@ -346,14 +346,14 @@ export async function listSiteShares(
 export async function replaceSiteShares(
   db: DrizzleD1Database,
   siteId: string,
-  users: ShareUser[],
+  shareUsers: ShareUser[],
   groupIds: string[],
 ): Promise<void> {
   // D1 runs the batch in a single atomic transaction.
   await batchAll(db, [
     db.delete(siteUserShares).where(eq(siteUserShares.siteId, siteId)),
     db.delete(siteGroupShares).where(eq(siteGroupShares.siteId, siteId)),
-    ...users.map(({ userId, role }) => db.insert(siteUserShares).values({ siteId, userId, role })),
+    ...shareUsers.map(({ userId, role }) => db.insert(siteUserShares).values({ siteId, userId, role })),
     ...groupIds.map((spaceId) => db.insert(siteGroupShares).values({ siteId, spaceId })),
   ])
 }
