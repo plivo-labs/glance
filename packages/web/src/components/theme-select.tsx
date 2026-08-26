@@ -53,6 +53,7 @@ export function useThemes(): ThemeInfo[] {
     let live = true
     void loadThemes().then((t) => {
       if (live && t.length > 0) setThemes(t)
+      return undefined
     })
     return () => {
       live = false

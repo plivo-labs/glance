@@ -93,6 +93,7 @@ export function ShareDialog({
             new Map(shares.users?.map((u) => [u.id, u.role]) ?? shares.userIds.map((id) => [id, 'viewer' as ShareRole])),
           )
           setSelGroups(new Set(shares.groupIds))
+          return undefined
         })
         .catch((err) =>
           toast.error('Could not load sharing', { description: err instanceof Error ? err.message : undefined }),
@@ -183,12 +184,9 @@ export function ShareDialog({
                 users={users}
                 checked={(u) => selUsers.has(u.id)}
                 onToggle={(u) => setSelUsers((s) => toggleUser(s, u.id))}
-                trailing={(u) => {
-                  const role = selUsers.get(u.id)
-                  return role !== undefined ? (
-                    <RolePicker role={role} onChange={(r) => setSelUsers((s) => new Map(s).set(u.id, r))} />
-                  ) : null
-                }}
+                trailing={(u) => (
+                  <ShareRoleTrailing role={selUsers.get(u.id)} onChange={(r) => setSelUsers((s) => new Map(s).set(u.id, r))} />
+                )}
               />
             </div>
           </div>
@@ -295,6 +293,13 @@ export function PickerRow({
       </span>
     </button>
   )
+}
+
+// `PeoplePicker`'s `trailing` slot for the share dialog: a RolePicker once the row is checked,
+// nothing before. Hoisted to a real component so the render prop composes an existing one instead
+// of declaring a component mid-render, which is what no-unstable-nested-components objects to.
+function ShareRoleTrailing({ role, onChange }: { role: ShareRole | undefined; onChange: (r: ShareRole) => void }) {
+  return role !== undefined ? <RolePicker role={role} onChange={onChange} /> : null
 }
 
 // Segmented Viewer|Editor toggle shown beside a selected person. Editor = may redeploy the site's

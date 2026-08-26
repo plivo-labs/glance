@@ -64,7 +64,7 @@ export function CommandPalette({
         api
           .get<SpaceSummary[]>('/api/spaces/mine')
           .then(setSpaces)
-          .catch(() => {})
+          .catch(() => setSpaces([]))
     },
     [user],
   )
@@ -89,6 +89,7 @@ export function CommandPalette({
         .get<SiteSummary[]>(`/api/sites/search?q=${encodeURIComponent(q)}`)
         .then((res) => {
           if (id === reqSeq.current) setSites(res)
+          return undefined
         })
         .catch(() => {
           if (id === reqSeq.current) setSites([])

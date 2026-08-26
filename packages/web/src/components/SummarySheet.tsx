@@ -172,6 +172,7 @@ export function SummarySheet({ spaceSlug, siteSlug, open, onOpenChange, onGenera
         .then((response) => {
           reduceAndDispatch({ type: 'postResolved', requestToken, response })
           onGenerated?.()
+          return undefined
         })
         .catch((error: unknown) => {
           const failedEvent = { type: 'postFailed', requestToken, error } as const

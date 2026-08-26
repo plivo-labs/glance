@@ -25,6 +25,7 @@
   ],
   "rules": {
     "react/react-in-jsx-scope": "off",
+    "react/no-unstable-nested-components": ["warn", { "allowAsProps": true }],
     "eslint/no-await-in-loop": "off",
     "eslint/no-underscore-dangle": "off",
     "unicorn/consistent-function-scoping": "off",

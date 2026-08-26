@@ -1,6 +1,7 @@
 import { Bell } from 'lucide-react'
 import { Suspense, useEffect, useState } from 'react'
 import { Await, useNavigate } from 'react-router'
+import { toast } from 'sonner'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -59,7 +60,7 @@ function BellMenu({ initial }: { initial: NotificationList }) {
   function onOpenChange(open: boolean) {
     if (open && data.unreadCount > 0) {
       setData((d) => ({ items: d.items.map((n) => ({ ...n, read: true })), unreadCount: 0 }))
-      void notifications.markRead().catch(() => {})
+      void notifications.markRead().catch(() => toast.error('Could not mark notifications read'))
     }
   }
 
@@ -69,7 +70,7 @@ function BellMenu({ initial }: { initial: NotificationList }) {
       items: d.items.map((x) => (x.id === n.id ? { ...x, read: true } : x)),
       unreadCount: n.read ? d.unreadCount : Math.max(0, d.unreadCount - 1),
     }))
-    void notifications.markRead([n.id]).catch(() => {})
+    void notifications.markRead([n.id]).catch(() => toast.error('Could not mark notification read'))
     navigate(notificationHref(n))
   }
 

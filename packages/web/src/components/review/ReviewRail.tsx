@@ -11,6 +11,9 @@ import { ThreadCard } from '@/components/review/ThreadCard'
 
 const byUpdatedDesc = (a: Thread, b: Thread) => b.updatedAt.localeCompare(a.updatedAt)
 
+// Stable reference for the `typing` default — a fresh `[]` every render would defeat memoization.
+const NO_TYPING: TypingPing[] = []
+
 /** One "still typing" ping, as the room fans it out (S10): the viewer it came from, the thread it
  *  names, and an ABSOLUTE expiry. No display name — attribution is the rail's job (typistOn), so
  *  nothing a sender could choose is ever rendered. */
@@ -39,7 +42,7 @@ export function ReviewRail({
   onStartComment,
   getCurrentTime,
   focusRequest,
-  typing = [],
+  typing = NO_TYPING,
   onTyping,
   onTypingStop,
 }: {
