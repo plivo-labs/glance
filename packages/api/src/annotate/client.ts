@@ -319,5 +319,40 @@ function applyViewTheme(href: string | null): void {
   if (link.getAttribute('href') !== target) link.setAttribute('href', target)
 }
 
+// --- mermaid lightbox: click a rendered diagram to enlarge it -----------------------------
+// A mermaid diagram lays out at the width of its container — small on a dense page — and mermaid 11
+// ships no zoom or fullscreen of its own. The Fullscreen API is NOT available here: the viewer's
+// content iframe carries `allow="microphone"` only, so `requestFullscreen()` is denied by
+// permissions policy and its promise rejects with nothing visible happening. A native modal
+// <dialog> has no such restriction and brings its own backdrop, Esc-to-close and focus trap.
+// Bubble phase, never preventDefault: a page that wires its own diagram click handling still gets
+// it, and the capture-phase anchor-click handler above (which stops propagation) keeps winning, so
+// clicking a painted comment anchor opens its thread instead of the lightbox.
+let lightbox: HTMLDialogElement | null = null
+
+function openLightbox(svg: Element): void {
+  if (!lightbox?.isConnected) {
+    lightbox = document.createElement('dialog')
+    lightbox.className = 'glance-lb'
+    lightbox.append(document.createElement('div'))
+    lightbox.addEventListener('click', () => lightbox?.close()) // click anywhere (incl. backdrop) closes
+    document.body.append(lightbox)
+  }
+  const panel = lightbox.firstElementChild as HTMLElement
+  // The blown-up copy sits on the page's OWN background: a dark page themes its mermaid light, and
+  // a hardcoded white panel would render that invisible (the same dark-on-dark trap the viewer's
+  // white iframe canvas documents). A transparent body falls back to white, matching that canvas.
+  const bg = window.getComputedStyle(document.body).backgroundColor
+  panel.style.background = !bg || /,\s*0\)$/.test(bg) ? '#fff' : bg
+  panel.replaceChildren(svg.cloneNode(true))
+  lightbox.showModal()
+}
+
+document.addEventListener('click', (e) => {
+  if (e.defaultPrevented || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return
+  const svg = (e.target as Element | null)?.closest?.('.mermaid')?.querySelector('svg')
+  if (svg) openLightbox(svg)
+})
+
 // Boot handshake: tell the parent which file is mounted (intent-only; parent re-validates).
 if (boot) toParent({ type: 'glance:ready', filePath: boot.filePath })
