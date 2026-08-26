@@ -7,3 +7,32 @@
   background-color: rgba(255, 213, 0, 0.4);
   cursor: pointer;
 }
+
+/* Mermaid lightbox: click a rendered diagram to blow it up in a native modal <dialog>.
+   Scoped to .mermaid (mermaid's own container class) so nothing else on the page changes. */
+.mermaid svg {
+  cursor: zoom-in;
+}
+dialog.glance-lb {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  width: 96vw;
+  max-width: 96vw;
+  max-height: 96vh;
+}
+dialog.glance-lb::backdrop {
+  background: rgba(8, 10, 13, 0.93);
+}
+dialog.glance-lb > div {
+  padding: 24px;
+  border-radius: 8px;
+  cursor: zoom-out;
+}
+dialog.glance-lb svg {
+  display: block;
+  width: 100% !important;
+  max-width: none !important;
+  height: auto;
+  max-height: 84vh;
+}

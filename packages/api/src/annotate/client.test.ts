@@ -321,3 +321,27 @@ describe('client.ts — glance:theme swaps the theme stylesheet inside the frame
     expect(link()).toBeNull()
   })
 })
+
+describe('client.ts — clicking a mermaid diagram opens it in a modal <dialog> lightbox', () => {
+  // The Fullscreen API is blocked in the viewer's content iframe (no allow="fullscreen"), so
+  // enlarging goes through a native <dialog>. This is the one runnable check that the wiring —
+  // delegation onto `.mermaid`, the SVG clone, showModal — is actually live in the shipped client.
+  test('the diagram SVG is cloned into an open dialog, and any click closes it again', () => {
+    document.body.insertAdjacentHTML('beforeend', '<pre class="mermaid"><svg id="mermaid-1"><g>node</g></svg></pre>')
+    const diagram = document.querySelector('.mermaid') as Element
+
+    fireDom('click', diagram.querySelector('g') as Element)
+    const dialog = document.querySelector('dialog.glance-lb') as HTMLDialogElement
+    expect(dialog.open).toBe(true)
+    expect(dialog.querySelector('svg')?.id).toBe('mermaid-1')
+    expect(document.querySelectorAll('svg')).toHaveLength(2) // the original is copied, never moved
+
+    fireDom('click', dialog)
+    expect(dialog.open).toBe(false)
+
+    // A click anywhere else on the page is left completely alone.
+    fireDom('click', document.getElementById('chart') as Element)
+    expect(dialog.open).toBe(false)
+    diagram.remove()
+  })
+})
