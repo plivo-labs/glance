@@ -56,13 +56,13 @@ function setup(html = HTML) {
     selection = { isCollapsed: true, rangeCount: 0, toString: () => '' } as unknown as Selection
   }
 
-  const fire = (type: string, init?: Record<string, unknown>): void => {
+  const fire = (type: string, init?: KeyboardEventInit): void => {
     doc.dispatchEvent(new window.KeyboardEvent(type, init as never) as unknown as Event)
   }
 
   /** The same keystroke, but dispatched AT an element so the handler sees a real `target` — the
    *  only way to ask what a key pressed inside a field on the page does. Bubbles to the document. */
-  const fireAt = (selector: string, type: string, init?: Record<string, unknown>): void => {
+  const fireAt = (selector: string, type: string, init?: KeyboardEventInit): void => {
     doc
       .querySelector(selector)!
       .dispatchEvent(new window.KeyboardEvent(type, { bubbles: true, ...init } as never) as unknown as Event)

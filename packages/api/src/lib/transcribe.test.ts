@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 import { transcribeVoice } from './transcribe'
 
-const stubAi = (run: (...a: any[]) => unknown) => ({ run }) as any
+// Only the field transcribeVoice reads off the real whisper-large-v3-turbo response.
+type WhisperResult = { text?: string }
+const stubAi = (run: (...a: any[]) => WhisperResult) => ({ run }) as any
 
 describe('transcribeVoice (W1-3, W1-4)', () => {
   const audio = new Uint8Array([104, 105])

@@ -21,7 +21,7 @@ async function fx() {
   const sp = await seedSpace(db, { id: 'acme', slug: 'acme', createdBy: owner })
   await seedMember(db, sp, owner)
   for (const id of ['owner', 'ed', 'vw', 'st']) {
-    await seedUser(db, { id, email: `${id}@e.com` }).catch(() => {}) // owner already seeded
+    if (id !== 'owner') await seedUser(db, { id, email: `${id}@e.com` })
     await kv.put(`cli:${id}`, JSON.stringify({ id, email: `${id}@e.com`, name: null, role: 'member' }))
   }
   const site = await seedSite(db, { id: 'site', spaceId: 'acme', ownerId: 'owner', slug: 'doc', visibility: 'team' })

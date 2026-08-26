@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import { summarizeSite, WORKERS_MODEL } from './summarize'
 
-const stubAi = (run: (...a: any[]) => unknown) => ({ run }) as any
+// Only the fields summarizeSite reads off a Workers AI chat response (plus `text`, the wrong-shape
+// case it must reject).
+type ChatResult = { response?: string; text?: string }
+const stubAi = (run: (...a: any[]) => ChatResult | Promise<ChatResult>) => ({ run }) as any
 
 describe('site summary generation', () => {
   test('C12: Workers AI uses the pinned chat contract and accepts only response text', async () => {

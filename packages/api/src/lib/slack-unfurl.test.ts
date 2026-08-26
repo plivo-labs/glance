@@ -1,7 +1,23 @@
 import { describe, expect, test } from 'bun:test'
 import { countingKv } from '../test/harness'
-import { buildUnfurlAttachment, parseSiteUrl, postUnfurl, relativeTime, type UnfurlCard } from './slack-unfurl'
+import {
+  buildUnfurlAttachment,
+  parseSiteUrl,
+  postUnfurl,
+  relativeTime,
+  type SlackAttachment,
+  type UnfurlCard,
+} from './slack-unfurl'
 import type { SlackHttpDeps } from './slack'
+
+// The chat.unfurl POST body postUnfurl assembles: a target discriminant plus the per-URL card map.
+type PostedUnfurlBody = {
+  unfurl_id?: string
+  source?: string
+  channel?: string
+  ts?: string
+  unfurls: Record<string, SlackAttachment>
+}
 
 const APP = 'https://glance.example.com'
 
@@ -102,7 +118,7 @@ describe('postUnfurl', () => {
 
   /** Capture the JSON body chat.unfurl was called with (null when it was never called). */
   function capture() {
-    let body: Record<string, unknown> | null = null
+    let body: PostedUnfurlBody | null = null
     const deps = depsWith(async (_url, init) => {
       body = JSON.parse(String((init as RequestInit).body))
       return Response.json({ ok: true })

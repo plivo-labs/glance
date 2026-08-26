@@ -79,7 +79,9 @@ async function seedSiteWithFile(
 const commentsUrl = '/api/sites/acme/doc/comments'
 const mentionableUrl = '/api/sites/acme/doc/mentionable'
 
-const postThread = (id: string, body: Record<string, unknown>) => ({
+// POST .../comments create-thread body (routes/comments.ts reads `body` and `mentions` off the
+// parsed JSON at the boundary — there's no shared server-side type for the raw request to import).
+const postThread = (id: string, body: { body: string; mentions?: string[] }) => ({
   method: 'POST',
   headers: auth(id),
   body: JSON.stringify({ filePath: 'index.html', quote: 'fox', ...body }),
@@ -103,15 +105,16 @@ const voice = (id: string, body: FormData) => ({
 
 function failNotificationInserts(db: ReturnType<typeof makeDb>) {
   const originalInsert = db.insert.bind(db)
-  const seam = db as unknown as { insert: (table: unknown) => unknown }
+  type Insert = typeof originalInsert
+  const seam = db as unknown as { insert: Insert }
   let attempts = 0
-  seam.insert = (table: unknown) => {
+  seam.insert = ((table: Parameters<Insert>[0]) => {
     if (table === notificationsTable) {
       attempts++
       throw new Error('boom')
     }
-    return originalInsert(table as Parameters<typeof originalInsert>[0])
-  }
+    return originalInsert(table)
+  }) as Insert
   return {
     get attempts() {
       return attempts
