@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { createDbBroker } from './dbBroker'
 
+/* oxlint-disable unicorn/require-post-message-target-origin -- every send here is a MessagePort, which has no targetOrigin parameter */
+
 // The broker is the P0-1 boundary: these tests attack the handshake (origin/source spoofing),
 // the request surface (op/param smuggling), and the token lifecycle (401 re-mint). Ports are
 // real MessageChannels; window events are plain event-shaped objects, like parseIntent.test.ts.
@@ -34,10 +36,12 @@ function hello(broker: { onWindowMessage: (e: MessageEvent) => void }, over: { o
   const ch = new MessageChannel()
   const received: unknown[] = []
   let notify: (() => void) | null = null
-  ch.port1.onmessage = (e) => {
+  // addEventListener does not implicitly start the port the way `onmessage =` does — start it.
+  ch.port1.addEventListener('message', (e) => {
     received.push(e.data)
     notify?.()
-  }
+  })
+  ch.port1.start()
   const waitFor = (pred: (msgs: unknown[]) => boolean, ms = 500) =>
     new Promise<void>((resolve, reject) => {
       const t = setTimeout(() => reject(new Error(`timeout waiting; got ${JSON.stringify(received)}`)), ms)
