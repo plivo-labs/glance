@@ -17,7 +17,7 @@ import type { JsonValue } from '../lib/json'
 import { type ChangeEvent, type Frame, type StreamHandlers, type Transport, createSubscriptions } from './subscriptions'
 
 type Boot = { appOrigin?: string; space?: string; site?: string }
-type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }
+type Pending = { resolve: (v: JsonValue) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }
 type BrokerReq = {
   id: number
   op: string
@@ -42,12 +42,12 @@ let seq = 0
 // Set once the page subscribes: the parent owns the socket here and pushes frames down the port.
 let stream: StreamHandlers | null = null
 
-function settle(id: number, fn: 'resolve' | 'reject', v: unknown): void {
+function settle(id: number, fn: 'resolve' | 'reject', v: JsonValue | Error): void {
   const p = pending.get(id)
   if (!p) return
   pending.delete(id)
   clearTimeout(p.timer)
-  if (fn === 'resolve') p.resolve(v)
+  if (fn === 'resolve') p.resolve(v as JsonValue)
   else p.reject(v as Error)
 }
 
@@ -77,7 +77,9 @@ function connect(appOrigin: string): Promise<MessagePort> {
         // The parent's socket (re)connected; replay whatever the dead one missed.
         stream?.onOpen()
       } else if (typeof d?.id === 'number') {
-        if (d.ok) settle(d.id, 'resolve', d.body)
+        // The broker's reply body is untrusted input — this is the boundary the JsonValue
+        // contract is asserted at, not inside brokerCall's own plumbing.
+        if (d.ok) settle(d.id, 'resolve', d.body as JsonValue)
         else settle(d.id, 'reject', new Error((d.body as { error?: string })?.error || `glance: ${d.status}`))
       }
     })
@@ -92,16 +94,12 @@ function connect(appOrigin: string): Promise<MessagePort> {
 async function brokerCall(appOrigin: string, req: Omit<BrokerReq, 'id'>): Promise<JsonValue> {
   const p = await connect(appOrigin)
   const id = ++seq
-  // `resolve` here is only ever handed to `pending` and invoked later by `settle`, which is
-  // generic over every in-flight request — the response body genuinely isn't known until the
-  // reply lands, hence the internal `unknown` plumbing; the JsonValue cast states what every
-  // caller of brokerCall actually gets: JSON, parsed from the broker's reply body right above.
-  return new Promise((resolve, reject) => {
+  return new Promise<JsonValue>((resolve, reject) => {
     const timer = setTimeout(() => settle(id, 'reject', new Error('glance.db: request timed out')), REQUEST_TIMEOUT_MS)
     pending.set(id, { resolve, reject, timer })
     // oxlint-disable-next-line unicorn/require-post-message-target-origin -- MessagePort.postMessage has no targetOrigin parameter; MessagePort is not the window.postMessage this rule targets
     p.postMessage({ id, ...req })
-  }) as Promise<JsonValue>
+  })
 }
 
 // --- same-origin transport (trusted app origin) --------------------------------------------
