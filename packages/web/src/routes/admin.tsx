@@ -155,7 +155,7 @@ function formatDate(iso: string) {
 // trigger re-throws so its own spinner/error toast still works for destructive flows.
 function useMutation() {
   const revalidator = useRevalidator()
-  return async (label: string, fn: () => Promise<unknown>) => {
+  return async <T,>(label: string, fn: () => Promise<T>) => {
     await fn()
     toast.success(label)
     revalidator.revalidate()

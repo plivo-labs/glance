@@ -78,6 +78,13 @@ import type { CommentFeedItem, SiteSummary, SpaceSummary, TeamUpload } from '@/l
 // post-mount effect, so a fast failure (or a revalidation racing an unmount) would otherwise
 // surface as an unhandled rejection. Same rule viewerLoader.ts applies to the comments prefetch.
 function observed<T>(p: Promise<T>): Promise<T> {
+  // This catch is not the rejection's real handler, it only silences the runtime's "unhandled
+  // rejection" log for the gap before useFeedSlot's effect mounts. The function returns the SAME
+  // `p`, unmodified, so the real rejection still reaches useFeedSlot's own .then(onFulfilled,
+  // onRejected) — captured there into slot.status 'rejected' and rendered per-tab (see
+  // lib/feedState.ts). Toasting or logging here too would be a premature, duplicate report ahead
+  // of the real per-tab handling.
+  // oxlint-disable-next-line no-swallowed-rejection/no-swallowed-rejection -- see comment above
   p.catch(() => {})
   return p
 }
@@ -156,9 +163,11 @@ function useFeedSlot<T>(promise: Promise<T>): FeedSlot<T> {
     promise.then(
       (data) => {
         if (!superseded) setSlot({ status: 'resolved', data })
+        return
       },
       (error: unknown) => {
         if (!superseded) setSlot({ status: 'rejected', error })
+        return
       },
     )
     return () => {

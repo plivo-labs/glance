@@ -126,6 +126,7 @@ function Viewer() {
     (slug: string | null) => {
       void viewThemeHref(slug).then((href) => {
         iframeRef.current?.contentWindow?.postMessage({ type: 'glance:theme', href }, contentOrigin)
+        return
       })
     },
     [contentOrigin],
@@ -210,6 +211,7 @@ function Viewer() {
         return opts.prefetch.then((r) => {
           if (r === PREFETCH_FAILED) dispatch({ type: 'settled', gen, ok: false, error: null })
           else dispatch({ type: 'settled', gen, ok: true, data: r })
+          return
         })
       }
       return comments.list(siteRef, path).then(
@@ -439,6 +441,7 @@ function Viewer() {
         if (lastReadyPathRef.current) {
           recordVisit(m.id, { spaceSlug: site.spaceSlug, siteSlug: site.siteSlug, title: site.title, filePath: lastReadyPathRef.current })
         }
+        return
       })
       .catch(() => setMe(null))
   }, [site.spaceSlug, site.siteSlug, site.title])
@@ -554,10 +557,10 @@ function Viewer() {
   // written destroys what the user typed (or recorded). Toast for the human, rethrow for the
   // composer. `onWritten` closes whichever composer started it, before the list refresh it awaits.
   // `filePath` is null until the iframe reports ready.
-  async function submitThread(
+  async function submitThread<T>(
     failMsg: string,
     anchor: PendingAnchor | null,
-    write: (path: string, anchor: PendingAnchor) => Promise<unknown>,
+    write: (path: string, anchor: PendingAnchor) => Promise<T>,
     onWritten: () => void,
   ) {
     if (!filePath || !anchor) {
@@ -705,6 +708,14 @@ function Viewer() {
                 // sandboxed frame without this flag — required by the Print / Save as PDF action
                 // (the annotate client's glance:print handler). Also un-blocks alert()/confirm()
                 // for hosted pages, which matches how interactive artifacts behave elsewhere.
+                // allow-scripts + allow-same-origin together are only a sandbox escape when the
+                // framed document shares an origin with the PARENT — here it never does: `src` is
+                // built from `contentOrigin` (site.contentUrl), an isolated per-content-worker
+                // origin distinct from the app's, so allow-same-origin grants the hosted page only
+                // ITS OWN sandboxed origin (its own storage/cookies), never the app's. Scripted
+                // hosted sites genuinely need both flags to run at all. Do not "fix" this pairing —
+                // it is the deliberate, safe combination for this cross-origin design.
+                // oxlint-disable-next-line react/iframe-missing-sandbox -- see comment above
                 sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms allow-top-navigation-by-user-activation allow-modals"
                 // Delegate mic to the cross-origin content frame: without this, getUserMedia is
                 // rejected before the browser prompt can appear. Nothing is granted silently — the
