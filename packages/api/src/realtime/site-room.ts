@@ -80,7 +80,11 @@ export function isAttachmentExpired(auth: SocketAuth, nowSec: number): boolean {
   return nowSec > auth.exp
 }
 
-export type Attached = { deserializeAttachment(): unknown }
+// Sourced from the real ambient `WebSocket` type (workerd's hibernation API) rather than a
+// hand-copied `{ deserializeAttachment(): unknown }` shape, so this stays a single source of
+// truth instead of a shadow copy that can drift. `decodeAttachment()` right below is the actual
+// parse-at-the-boundary: it turns whatever workerd handed back into `SocketAuth | null`.
+export type Attached = Pick<WebSocket, 'deserializeAttachment'>
 export type Partitioned<T> = { deliver: { ws: T; auth: SocketAuth }[]; close: T[] }
 
 /**
