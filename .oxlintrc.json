@@ -27,6 +27,9 @@
     "react/react-in-jsx-scope": "off",
     "react/no-unstable-nested-components": ["warn", { "allowAsProps": true }],
     "eslint/no-await-in-loop": "off",
+    // Fires on any `.then(cb)` whose callback lacks an explicit return, including terminal
+    // chains where nothing consumes the value. Every hit in this repo was a no-op `return`.
+    "promise/always-return": "off",
     "eslint/no-underscore-dangle": "off",
     "unicorn/consistent-function-scoping": "off",
     "unicorn/no-array-sort": "off",

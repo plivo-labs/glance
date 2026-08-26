@@ -89,7 +89,6 @@ export function CommandPalette({
         .get<SiteSummary[]>(`/api/sites/search?q=${encodeURIComponent(q)}`)
         .then((res) => {
           if (id === reqSeq.current) setSites(res)
-          return undefined
         })
         .catch(() => {
           if (id === reqSeq.current) setSites([])

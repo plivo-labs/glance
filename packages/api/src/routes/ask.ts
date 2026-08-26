@@ -4,6 +4,7 @@ import { siteSummaries, sites, spaces } from '../db/schema'
 import type { ResolvedSite } from '../lib/site-access'
 import { fetchAccessFacts, siteAccessFromFacts } from '../lib/site-access'
 import { summarizeDeps } from '../lib/summarize'
+import { describeError } from '../lib/errors'
 import { requireAuth } from '../middleware/auth'
 import type { AppEnv } from '../types'
 
@@ -117,7 +118,7 @@ ask.post('/:space/:site/ask', async (c) => {
     // Fail loud into Workers Logs: the binding's error names the real cause (model gone, gateway
     // credentials, quota) and the client only ever sees the generic 502 — without this line the
     // only diagnostic path is deploying a probe worker (learned the hard way, 2026-08-17).
-    console.error('ask: AI.run failed', err instanceof Error ? `${err.name}: ${err.message}` : String(err))
+    console.error('ask: AI.run failed', describeError(err))
     return c.json({ error: 'generation failed', retryable: true } as const, 502)
   }
   return new Response(value, { headers: { 'content-type': 'text/event-stream' } })

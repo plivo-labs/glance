@@ -93,7 +93,6 @@ export function ShareDialog({
             new Map(shares.users?.map((u) => [u.id, u.role]) ?? shares.userIds.map((id) => [id, 'viewer' as ShareRole])),
           )
           setSelGroups(new Set(shares.groupIds))
-          return undefined
         })
         .catch((err) =>
           toast.error('Could not load sharing', { description: err instanceof Error ? err.message : undefined }),

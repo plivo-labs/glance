@@ -2,6 +2,8 @@
 // fronted by the Workers edge cache when one is available. Zero Hono coupling — callers hand
 // in the cache, the bucket, and a `defer` hook for off-critical-path work.
 
+import { describeError } from './errors'
+
 // Minimal surface of the Workers Cache API this layer uses — typed to what the harness mock
 // and `caches.default` both satisfy, so we never fight the full workers-types Cache shape.
 export type CacheLike = {
@@ -71,7 +73,7 @@ export async function readFullObject(
     })
     await defer(
       cache.put(key, stored).catch((err) =>
-        console.error('object-read: cache put failed', err instanceof Error ? `${err.name}: ${err.message}` : String(err)),
+        console.error('object-read: cache put failed', describeError(err)),
       ),
     )
   }

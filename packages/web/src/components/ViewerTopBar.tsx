@@ -231,7 +231,6 @@ function ViewerTheme({ site }: { site: ViewerSite }) {
       onChange={(t) =>
         void patchTheme(site.spaceSlug, site.siteSlug, t).then((ok) => {
           if (ok) window.location.reload()
-          return undefined
         })
       }
     />

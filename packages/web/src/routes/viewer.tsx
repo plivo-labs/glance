@@ -126,7 +126,6 @@ function Viewer() {
     (slug: string | null) => {
       void viewThemeHref(slug).then((href) => {
         iframeRef.current?.contentWindow?.postMessage({ type: 'glance:theme', href }, contentOrigin)
-        return
       })
     },
     [contentOrigin],
@@ -211,7 +210,6 @@ function Viewer() {
         return opts.prefetch.then((r) => {
           if (r === PREFETCH_FAILED) dispatch({ type: 'settled', gen, ok: false, error: null })
           else dispatch({ type: 'settled', gen, ok: true, data: r })
-          return
         })
       }
       return comments.list(siteRef, path).then(
@@ -441,7 +439,6 @@ function Viewer() {
         if (lastReadyPathRef.current) {
           recordVisit(m.id, { spaceSlug: site.spaceSlug, siteSlug: site.siteSlug, title: site.title, filePath: lastReadyPathRef.current })
         }
-        return
       })
       .catch(() => setMe(null))
   }, [site.spaceSlug, site.siteSlug, site.title])

@@ -56,6 +56,7 @@ import { notifyCommentEvent } from '../realtime/notify'
 import { TOKEN_HEADER } from '../realtime/protocol'
 import { isUpgrade, reissueUpgrade } from '../realtime/upgrade'
 import type { AppEnv, SessionUser } from '../types'
+import type { JsonValue } from '../lib/json'
 
 // Comments API. Mounted at /api/sites, so paths are /:space/:site/comments… — three segments,
 // so they never collide with the two-segment site routes. CSRF (requireSameOrigin) and withDb
@@ -381,9 +382,6 @@ function parseThreadFields(raw: {
  *  because the two JSON fields want OPPOSITE answers to it (see the caller). */
 const INVALID_JSON = Symbol('invalid-json')
 
-/** Any value `JSON.parse` can produce — the field's shape is decided by the caller (element vs.
- *  context), so this names the wire boundary rather than papering over it with `unknown`. */
-type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
 
 /** A FormData value that should hold JSON: absent or empty → undefined, malformed → INVALID_JSON.
  *  Malformed is reported rather than swallowed so the caller keeps that choice; collapsing the two

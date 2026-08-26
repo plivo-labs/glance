@@ -13,14 +13,11 @@
 // The global is __GLANCE_DB__, not __GLANCE__ — that one belongs to the annotate overlay.
 
 import { WS_PROTOCOL } from '../realtime/protocol'
+import type { JsonValue } from '../lib/json'
 import { type ChangeEvent, type Frame, type StreamHandlers, type Transport, createSubscriptions } from './subscriptions'
 
 type Boot = { appOrigin?: string; space?: string; site?: string }
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }
-// A document's contents are whatever the caller stored — the server only guarantees valid JSON,
-// never a fixed shape. This is the named boundary type for that: honest about "structurally JSON",
-// not a blank `unknown` handed to every caller of create/get/list/put.
-type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
 type BrokerReq = {
   id: number
   op: string
@@ -178,7 +175,6 @@ function directTransport(space: string, site: string): Transport {
               clearInterval(ping)
               if (!stopped) setTimeout(dial, RECONNECT_MS)
             })
-            return
           })
           .catch(() => {
             if (!stopped) setTimeout(dial, RECONNECT_MS)

@@ -163,8 +163,6 @@ export default {
       await purgeRetention(db)
       return
     }
-    await cachedStats(env.GLANCE_SESSIONS, db, async (p) => {
-      await p
-    })
+    await cachedStats(env.GLANCE_SESSIONS, db, (p) => p.then(() => {}))
   },
 } satisfies ExportedHandler<Bindings>

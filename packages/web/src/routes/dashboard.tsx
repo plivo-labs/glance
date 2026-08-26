@@ -163,11 +163,9 @@ function useFeedSlot<T>(promise: Promise<T>): FeedSlot<T> {
     promise.then(
       (data) => {
         if (!superseded) setSlot({ status: 'resolved', data })
-        return
       },
       (error: unknown) => {
         if (!superseded) setSlot({ status: 'rejected', error })
-        return
       },
     )
     return () => {

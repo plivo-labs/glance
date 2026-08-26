@@ -3,6 +3,7 @@ import { fireAndForget } from '../lib/events'
 import type { Bindings } from '../types'
 import type { ChangeEvent } from './change-log'
 import type { CommentEvent } from './comment-events'
+import { describeError } from '../lib/errors'
 
 // Fan-out hop: main worker → the site's SiteRoom Durable Object. D1 stays the source of truth and
 // the change_log row is already committed by the time we get here, so a failed broadcast costs a
@@ -36,7 +37,7 @@ export async function notifyChange<E extends Env & { Bindings: Bindings }>(
   await fireAndForget(
     c,
     post(c.env, 'broadcast', e).catch((err) =>
-      console.error('notify: broadcast failed', err instanceof Error ? `${err.name}: ${err.message}` : String(err)),
+      console.error('notify: broadcast failed', describeError(err)),
     ),
   )
 }
@@ -54,7 +55,7 @@ export async function notifyCommentEvent<E extends Env & { Bindings: Bindings }>
     post(c.env, 'broadcast-comment', e).catch((err) =>
       console.error(
         'notify: broadcast-comment failed',
-        err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+        describeError(err),
       ),
     ),
   )

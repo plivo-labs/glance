@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 import { users as usersTable } from '../db/schema'
 import { sanitizeAvatarUrl, sizedAvatarUrl } from '../lib/avatar'
+import { describeError } from '../lib/errors'
 import { requireAuth } from '../middleware/auth'
 import type { AppEnv } from '../types'
 
@@ -43,7 +44,7 @@ avatars.get('/:userId', async (c) => {
     // cacheEverything makes Cloudflare hold the bytes at the edge; a no-op locally and in tests.
     cf: { cacheEverything: true, cacheTtl: 86400 },
   }).catch((err) => {
-    console.error('avatars: upstream fetch failed', err instanceof Error ? `${err.name}: ${err.message}` : String(err))
+    console.error('avatars: upstream fetch failed', describeError(err))
     return null
   })
   if (!upstream?.ok) return miss(c)

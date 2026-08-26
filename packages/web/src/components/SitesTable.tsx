@@ -150,7 +150,6 @@ function OwnerActions({ site }: { site: SiteSummary }) {
             onChange={(t) =>
               void patchTheme(site.spaceSlug, site.siteSlug, t).then((ok) => {
                 if (ok) refresh()
-                return
               })
             }
           />
