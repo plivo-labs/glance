@@ -100,6 +100,16 @@ export function buildUnfurlAttachment(card: UnfurlCard, url: string, nowMs: numb
  *  event that carries no unfurl_id. */
 export type UnfurlTarget = { unfurl_id?: string; source?: string; channel?: string; message_ts?: string }
 
+/** The chat.unfurl POST body `postUnfurl` assembles: a target discriminant (`unfurl_id`+`source`
+ *  for a link_shared event, `channel`+`ts` for a plain message) plus the per-URL card map. */
+export type PostedUnfurlBody = {
+  unfurl_id?: string
+  source?: string
+  channel?: string
+  ts?: string
+  unfurls: Record<string, SlackAttachment>
+}
+
 /** POST the assembled cards to chat.unfurl. Keys of `unfurls` MUST be the URLs verbatim as they
  *  appeared in the link_shared event; the nested-object form is what Slack's chat.unfurl JSON-body
  *  docs show. No cards → no request at all. */

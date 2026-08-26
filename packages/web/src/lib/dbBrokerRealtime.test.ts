@@ -23,41 +23,7 @@ type Handler = (url: string, init?: RequestInit) => Response | Promise<Response>
 // glance:db-{ready,error,open,event} frame. Tests narrow further per assertion.
 type BrokerMsg = { type?: string; id?: number; ok?: boolean; status?: number; body?: unknown; error?: string; events?: unknown[]; cursor?: string }
 
-/** Enough of a WebSocket for the relay, plus the levers a test needs: when it opened, what the
- *  parent sent over it, and whether it was closed. */
-class FakeSocket {
-  private listeners: { open: ((e: { data: unknown }) => void)[]; message: ((e: { data: unknown }) => void)[]; close: ((e: { data: unknown }) => void)[] } = {
-    open: [],
-    message: [],
-    close: [],
-  }
-  sent: string[] = []
-  closed = false
-  constructor(
-    readonly url: string,
-    readonly protocols: string[],
-  ) {}
-  send(data: string) {
-    this.sent.push(data)
-  }
-  close() {
-    this.closed = true
-  }
-  addEventListener(type: 'open' | 'message' | 'close', fn: (e: { data: unknown }) => void) {
-    this.listeners[type].push(fn)
-  }
-  /** Test-only triggers standing in for the browser dispatching the real event. */
-  onopen() {
-    for (const fn of this.listeners.open) fn({ data: undefined })
-  }
-  onclose() {
-    for (const fn of this.listeners.close) fn({ data: undefined })
-  }
-  /** Server → parent: one pushed frame. */
-  emit(frame: unknown) {
-    for (const fn of this.listeners.message) fn({ data: JSON.stringify(frame) })
-  }
-}
+import { FakeSocket } from '../test/fakeSocket'
 
 const mintOk = () => Response.json({ token: 'tok-1', caps: ['read', 'create'], expiresIn: 300 })
 const frame = (events: unknown[], cursor: string) => Response.json({ events, cursor })

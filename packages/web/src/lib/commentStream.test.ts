@@ -11,47 +11,7 @@ const APP = 'https://glance.example.com'
 const SITE = { spaceSlug: 'sam', siteSlug: 'demo' }
 const WS_URL = 'wss://glance.example.com/api/sites/sam/demo/comments/socket'
 
-/** Enough of a WebSocket for the rail, plus the levers a test needs. */
-class FakeSocket {
-  private listeners: { open: (() => void)[]; message: ((e: { data: unknown }) => void)[]; close: (() => void)[] } = {
-    open: [],
-    message: [],
-    close: [],
-  }
-  closed = false
-  /** Rail → server: every frame this socket was asked to send, in order. */
-  sent: string[] = []
-  constructor(
-    readonly url: string,
-    readonly protocols: string[],
-  ) {}
-  close() {
-    this.closed = true
-  }
-  send(data: string) {
-    this.sent.push(data)
-  }
-  addEventListener(type: 'open' | 'message' | 'close', fn: (e: { data: unknown }) => void) {
-    this.listeners[type].push(fn)
-  }
-  /** Test-only triggers standing in for the browser dispatching the real event. */
-  onopen() {
-    for (const fn of this.listeners.open) fn({ data: undefined })
-  }
-  onclose() {
-    for (const fn of this.listeners.close) fn({ data: undefined })
-  }
-  /** Server → rail: one pushed frame, exactly as given — no auto-encoding. Lets a test prove the
-   *  non-string-payload guard by handing over something that already isn't a string. */
-  emitRaw(data: unknown) {
-    for (const fn of this.listeners.message) fn({ data })
-  }
-  /** Server → rail: one pushed frame, JSON-encoded like the real wire. A plain object is convenience
-   *  sugar for tests; a string (including deliberately malformed JSON) passes through untouched. */
-  emit(data: unknown) {
-    this.emitRaw(typeof data === 'string' ? data : JSON.stringify(data))
-  }
-}
+import { FakeSocket } from '../test/fakeSocket'
 
 function makeStream(o: { onEvent?: (e: unknown) => void; onReconnect?: () => void; reconnectMs?: number } = {}) {
   const sockets: FakeSocket[] = []

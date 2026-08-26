@@ -17,6 +17,7 @@ import { comments, type Thread } from '@/lib/comments'
 import type { CommentStreamEvent } from '@/lib/commentStream'
 import type { ViewerLoaderData } from '@/lib/viewerLoader'
 import type { ViewerSite } from '@/lib/types'
+import { FakeSocket as BaseFakeSocket } from '../test/fakeSocket'
 
 // bun's mock.module swaps a specifier's resolution for the WHOLE process, and it's the module
 // GRAPH LINKING (which runs across every test file before any test body executes) that reads it —
@@ -126,40 +127,10 @@ const loadIframe = (iframe: HTMLIFrameElement) => act(() => void fireEvent.load(
 // above) and would blind commentStream.test.ts's own import of the real thing. The global is
 // restored afterwards so nothing outside this file inherits the fake.
 const sockets: FakeSocket[] = []
-class FakeSocket {
-  private listeners: {
-    open: ((e: { data: unknown }) => void)[]
-    message: ((e: { data: unknown }) => void)[]
-    close: ((e: { data: unknown }) => void)[]
-  } = { open: [], message: [], close: [] }
-  closed = false
-  /** Rail → room: what this viewer actually put on the wire (typing pings, S11). */
-  sent: string[] = []
-  constructor(
-    readonly url: string,
-    readonly protocols: string[],
-  ) {
+class FakeSocket extends BaseFakeSocket {
+  constructor(url: string, protocols: string[]) {
+    super(url, protocols)
     sockets.push(this)
-  }
-  send(data: string) {
-    this.sent.push(data)
-  }
-  close() {
-    this.closed = true
-  }
-  addEventListener(type: 'open' | 'message' | 'close', fn: (e: { data: unknown }) => void) {
-    this.listeners[type].push(fn)
-  }
-  /** Test-only triggers standing in for the browser dispatching the real event. */
-  onopen() {
-    for (const fn of this.listeners.open) fn({ data: undefined })
-  }
-  onclose() {
-    for (const fn of this.listeners.close) fn({ data: undefined })
-  }
-  /** Server → viewer: one comments-channel frame. */
-  onmessage(e: { data: unknown }) {
-    for (const fn of this.listeners.message) fn(e)
   }
 }
 const realWebSocket = globalThis.WebSocket

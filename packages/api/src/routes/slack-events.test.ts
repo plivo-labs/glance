@@ -1,18 +1,9 @@
 import { describe, expect, test } from 'bun:test'
-import type { SlackAttachment } from '../lib/slack-unfurl'
+import type { PostedUnfurlBody } from '../lib/slack-unfurl'
 import { APP_URL, makeRouteApp, signSlack } from '../test/route-fixtures'
 import { seedSite, seedSpace, seedUser } from '../test/harness'
 import type { AppEnv } from '../types'
 
-// The chat.unfurl POST body (lib/slack-unfurl.ts's postUnfurl): a target discriminant plus the
-// per-URL card map.
-type PostedUnfurlBody = {
-  unfurl_id?: string
-  source?: string
-  channel?: string
-  ts?: string
-  unfurls: Record<string, SlackAttachment>
-}
 
 // Route-level Slack unfurl: a signed link_shared event → chat.unfurl, exercised through
 // app.request with an injected SLACK_FETCH (the same env DI seam comments-slack.test.ts uses).

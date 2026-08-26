@@ -41,11 +41,11 @@ async function setup(o: { room?: boolean } = { room: true }) {
   const r2 = makeR2()
   const kv = makeKv()
   const room = recordingRoom()
-  const env = (
-    o.room === false
-      ? { APP_URL, SESSION_SECRET: 's', GLANCE_SESSIONS: kv, GLANCE_FILES: r2 }
-      : { APP_URL, SESSION_SECRET: 's', GLANCE_SESSIONS: kv, GLANCE_FILES: r2, SITE_ROOM: room.ns }
-  ) as unknown as AppEnv['Bindings']
+  // `room: false` drops the SITE_ROOM binding to exercise the no-realtime path; everything else
+  // is identical, so the binding is added rather than the whole env written out twice.
+  const bindings: Partial<AppEnv['Bindings']> = { APP_URL, SESSION_SECRET: 's', GLANCE_SESSIONS: kv, GLANCE_FILES: r2 }
+  if (o.room !== false) bindings.SITE_ROOM = room.ns as AppEnv['Bindings']['SITE_ROOM']
+  const env = bindings as unknown as AppEnv['Bindings']
   const app = new Hono<AppEnv>()
   app.use('/api/*', requireSameOrigin)
   app.use('/api/*', async (c, next) => {

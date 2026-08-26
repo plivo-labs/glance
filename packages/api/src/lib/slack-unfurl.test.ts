@@ -5,19 +5,10 @@ import {
   parseSiteUrl,
   postUnfurl,
   relativeTime,
-  type SlackAttachment,
+  type PostedUnfurlBody,
   type UnfurlCard,
 } from './slack-unfurl'
 import type { SlackHttpDeps } from './slack'
-
-// The chat.unfurl POST body postUnfurl assembles: a target discriminant plus the per-URL card map.
-type PostedUnfurlBody = {
-  unfurl_id?: string
-  source?: string
-  channel?: string
-  ts?: string
-  unfurls: Record<string, SlackAttachment>
-}
 
 const APP = 'https://glance.example.com'
 
