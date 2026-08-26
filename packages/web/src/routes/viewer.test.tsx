@@ -14,6 +14,7 @@ import { afterAll, beforeEach, describe, expect, jest, mock, spyOn, test } from 
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { createMemoryRouter, type LoaderFunctionArgs, RouterProvider } from 'react-router'
 import { comments, type Thread } from '@/lib/comments'
+import type { CommentStreamEvent } from '@/lib/commentStream'
 import type { ViewerLoaderData } from '@/lib/viewerLoader'
 import type { ViewerSite } from '@/lib/types'
 
@@ -126,9 +127,11 @@ const loadIframe = (iframe: HTMLIFrameElement) => act(() => void fireEvent.load(
 // restored afterwards so nothing outside this file inherits the fake.
 const sockets: FakeSocket[] = []
 class FakeSocket {
-  onopen: (() => void) | null = null
-  onmessage: ((e: { data: unknown }) => void) | null = null
-  onclose: (() => void) | null = null
+  private listeners: {
+    open: ((e: { data: unknown }) => void)[]
+    message: ((e: { data: unknown }) => void)[]
+    close: ((e: { data: unknown }) => void)[]
+  } = { open: [], message: [], close: [] }
   closed = false
   /** Rail → room: what this viewer actually put on the wire (typing pings, S11). */
   sent: string[] = []
@@ -143,6 +146,20 @@ class FakeSocket {
   }
   close() {
     this.closed = true
+  }
+  addEventListener(type: 'open' | 'message' | 'close', fn: (e: { data: unknown }) => void) {
+    this.listeners[type].push(fn)
+  }
+  /** Test-only triggers standing in for the browser dispatching the real event. */
+  onopen() {
+    for (const fn of this.listeners.open) fn({ data: undefined })
+  }
+  onclose() {
+    for (const fn of this.listeners.close) fn({ data: undefined })
+  }
+  /** Server → viewer: one comments-channel frame. */
+  onmessage(e: { data: unknown }) {
+    for (const fn of this.listeners.message) fn(e)
   }
 }
 const realWebSocket = globalThis.WebSocket
@@ -162,7 +179,7 @@ const dialledSocket = () =>
     return s
   })
 /** Server → viewer: one comments-channel frame, exactly as the DO fans it out. */
-const pushFrame = (socket: FakeSocket, event: object) =>
+const pushFrame = (socket: FakeSocket, event: CommentStreamEvent) =>
   act(() => void socket.onmessage?.({ data: JSON.stringify({ channel: 'comments', ...event }) }))
 
 /** "no card with this id" — never `expect(node).toBeNull()` for the negative case.
@@ -876,13 +893,16 @@ describe('viewer wiring — pushed comment events (S9)', () => {
     try {
       const { socket } = await mounted(list)
 
-      await pushFrame(socket, {
+      // The server never sends this field (site-room.ts's fanOutTyping frame has no viewerName) —
+      // sent anyway to prove a hostile/stale extra field is ignored, not trusted for the name.
+      const pingWithHostileName: CommentStreamEvent & { viewerName?: string } = {
         type: 'typing',
         viewerId: 'u9',
         threadId: 't1',
         expiresAt: Date.now() + 20_000,
         viewerName: 'Riya',
-      })
+      }
+      await pushFrame(socket, pingWithHostileName)
 
       // Asserted straight after the act(), not through waitFor: the frame renders synchronously, and
       // a waitFor that times out red dumps the whole rendered tree into the failure.

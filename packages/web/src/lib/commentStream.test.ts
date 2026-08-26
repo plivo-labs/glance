@@ -13,9 +13,11 @@ const WS_URL = 'wss://glance.example.com/api/sites/sam/demo/comments/socket'
 
 /** Enough of a WebSocket for the rail, plus the levers a test needs. */
 class FakeSocket {
-  onopen: (() => void) | null = null
-  onmessage: ((e: { data: unknown }) => void) | null = null
-  onclose: (() => void) | null = null
+  private listeners: { open: (() => void)[]; message: ((e: { data: unknown }) => void)[]; close: (() => void)[] } = {
+    open: [],
+    message: [],
+    close: [],
+  }
   closed = false
   /** Rail → server: every frame this socket was asked to send, in order. */
   sent: string[] = []
@@ -29,9 +31,25 @@ class FakeSocket {
   send(data: string) {
     this.sent.push(data)
   }
-  /** Server → rail: one pushed frame. */
+  addEventListener(type: 'open' | 'message' | 'close', fn: (e: { data: unknown }) => void) {
+    this.listeners[type].push(fn)
+  }
+  /** Test-only triggers standing in for the browser dispatching the real event. */
+  onopen() {
+    for (const fn of this.listeners.open) fn({ data: undefined })
+  }
+  onclose() {
+    for (const fn of this.listeners.close) fn({ data: undefined })
+  }
+  /** Server → rail: one pushed frame, exactly as given — no auto-encoding. Lets a test prove the
+   *  non-string-payload guard by handing over something that already isn't a string. */
+  emitRaw(data: unknown) {
+    for (const fn of this.listeners.message) fn({ data })
+  }
+  /** Server → rail: one pushed frame, JSON-encoded like the real wire. A plain object is convenience
+   *  sugar for tests; a string (including deliberately malformed JSON) passes through untouched. */
   emit(data: unknown) {
-    this.onmessage?.({ data: typeof data === 'string' ? data : JSON.stringify(data) })
+    this.emitRaw(typeof data === 'string' ? data : JSON.stringify(data))
   }
 }
 
@@ -87,13 +105,13 @@ describe('createCommentStream', () => {
 
   test('malformed JSON is ignored without throwing', () => {
     const { sockets, events } = makeStream()
-    expect(() => sockets[0].onmessage?.({ data: '{not json' })).not.toThrow()
+    expect(() => sockets[0].emit('{not json')).not.toThrow()
     expect(events).toEqual([])
   })
 
   test('a non-string payload is ignored without throwing', () => {
     const { sockets, events } = makeStream()
-    expect(() => sockets[0].onmessage?.({ data: { channel: 'comments', type: 'x' } })).not.toThrow()
+    expect(() => sockets[0].emitRaw({ channel: 'comments', type: 'x' })).not.toThrow()
     expect(events).toEqual([])
   })
 
