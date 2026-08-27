@@ -10,7 +10,7 @@ const SET: ReadonlySet<string> = new Set(VISIBILITIES)
 // just normalize it. `group` → `members` (renamed; the word collided with space *type* and the
 // share-modal's group picker). `public` → `team`: the public tier was removed (no anonymous access),
 // so old CLI builds / saved scripts that still send `public` fall back to the broadest live tier.
-export function normalizeVisibility(v: unknown): unknown {
+export function normalizeVisibility<T>(v: T): T | 'members' | 'team' {
   if (v === 'group') return 'members'
   if (v === 'public') return 'team'
   return v

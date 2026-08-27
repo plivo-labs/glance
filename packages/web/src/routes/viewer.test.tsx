@@ -14,8 +14,10 @@ import { afterAll, beforeEach, describe, expect, jest, mock, spyOn, test } from 
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { createMemoryRouter, type LoaderFunctionArgs, RouterProvider } from 'react-router'
 import { comments, type Thread } from '@/lib/comments'
+import type { CommentStreamEvent } from '@/lib/commentStream'
 import type { ViewerLoaderData } from '@/lib/viewerLoader'
 import type { ViewerSite } from '@/lib/types'
+import { FakeSocket as BaseFakeSocket } from '../test/fakeSocket'
 
 // bun's mock.module swaps a specifier's resolution for the WHOLE process, and it's the module
 // GRAPH LINKING (which runs across every test file before any test body executes) that reads it —
@@ -125,24 +127,10 @@ const loadIframe = (iframe: HTMLIFrameElement) => act(() => void fireEvent.load(
 // above) and would blind commentStream.test.ts's own import of the real thing. The global is
 // restored afterwards so nothing outside this file inherits the fake.
 const sockets: FakeSocket[] = []
-class FakeSocket {
-  onopen: (() => void) | null = null
-  onmessage: ((e: { data: unknown }) => void) | null = null
-  onclose: (() => void) | null = null
-  closed = false
-  /** Rail → room: what this viewer actually put on the wire (typing pings, S11). */
-  sent: string[] = []
-  constructor(
-    readonly url: string,
-    readonly protocols: string[],
-  ) {
+class FakeSocket extends BaseFakeSocket {
+  constructor(url: string, protocols: string[]) {
+    super(url, protocols)
     sockets.push(this)
-  }
-  send(data: string) {
-    this.sent.push(data)
-  }
-  close() {
-    this.closed = true
   }
 }
 const realWebSocket = globalThis.WebSocket
@@ -162,7 +150,7 @@ const dialledSocket = () =>
     return s
   })
 /** Server → viewer: one comments-channel frame, exactly as the DO fans it out. */
-const pushFrame = (socket: FakeSocket, event: object) =>
+const pushFrame = (socket: FakeSocket, event: CommentStreamEvent) =>
   act(() => void socket.onmessage?.({ data: JSON.stringify({ channel: 'comments', ...event }) }))
 
 /** "no card with this id" — never `expect(node).toBeNull()` for the negative case.
@@ -876,13 +864,16 @@ describe('viewer wiring — pushed comment events (S9)', () => {
     try {
       const { socket } = await mounted(list)
 
-      await pushFrame(socket, {
+      // The server never sends this field (site-room.ts's fanOutTyping frame has no viewerName) —
+      // sent anyway to prove a hostile/stale extra field is ignored, not trusted for the name.
+      const pingWithHostileName: CommentStreamEvent & { viewerName?: string } = {
         type: 'typing',
         viewerId: 'u9',
         threadId: 't1',
         expiresAt: Date.now() + 20_000,
         viewerName: 'Riya',
-      })
+      }
+      await pushFrame(socket, pingWithHostileName)
 
       // Asserted straight after the act(), not through waitFor: the frame renders synchronously, and
       // a waitFor that times out red dumps the whole rendered tree into the failure.

@@ -30,7 +30,7 @@ const seedSummary = (db: RouteApp['db'], siteId: string, overrides: Partial<type
   })
 
 const okLimiter = { limit: async () => ({ success: true }) }
-const bindings = (env: RouteApp['env'], overrides: Record<string, unknown>) =>
+const bindings = (env: RouteApp['env'], overrides: Partial<AppEnv['Bindings']>) =>
   ({ ...env, ...overrides }) as unknown as AppEnv['Bindings']
 
 async function seedApp(userId: string, siteOverrides: Partial<typeof sites.$inferInsert> = {}) {
@@ -343,11 +343,12 @@ describe('site summary routes', () => {
       })
       const r2Before = route.r2.gets()
       route.db.resetCounters()
-      const response = await route.app.request(
-        url,
-        { method: 'POST', ...(headers ? { headers, body: '{}' } : {}) },
-        requestEnv,
-      )
+      const init: RequestInit = { method: 'POST' }
+      if (headers) {
+        init.headers = headers
+        init.body = '{}'
+      }
+      const response = await route.app.request(url, init, requestEnv)
       expect(response.status, denial.name).toBe(denial.expectedStatus)
       expect(await response.json(), denial.name).toEqual(denial.expectedBody)
       expect(aiCalls, denial.name).toBe(0)

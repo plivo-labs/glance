@@ -74,7 +74,7 @@ const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v)
  *  Undefined when neither side carries anything, so "no context" stays a single shape. */
 const context = (v: unknown): TextContext | undefined => {
   if (!v || typeof v !== 'object') return undefined
-  const c = v as Record<string, unknown>
+  const c = v as { prefix?: unknown; suffix?: unknown }
   const prefix = clampTail(c.prefix, MAX_CONTEXT) ?? ''
   const suffix = clamp(c.suffix, MAX_CONTEXT) ?? ''
   return prefix || suffix ? { prefix, suffix } : undefined
@@ -84,7 +84,7 @@ const context = (v: unknown): TextContext | undefined => {
  *  an overlay, never as authority. */
 const rect = (v: unknown): DOMRectLike | undefined => {
   if (!v || typeof v !== 'object') return undefined
-  const r = v as Record<string, unknown>
+  const r = v as { top?: unknown; left?: unknown; width?: unknown; height?: unknown }
   return { top: num(r.top), left: num(r.left), width: num(r.width), height: num(r.height) }
 }
 

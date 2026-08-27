@@ -84,7 +84,9 @@ export function pendingToInput(filePath: string, body: string, pending: PendingA
   if (pending.kind === 'page') return { filePath, body, anchorType: 'page' }
   // `context` is omitted entirely when absent — the server treats an absent key and an unusable one
   // identically, but sending `undefined` would put a null in the JSON body for no reason.
-  return { filePath, body, quote: pending.quote, ...(pending.context ? { context: pending.context } : {}) }
+  const input: NewThreadInput = { filePath, body, quote: pending.quote }
+  if (pending.context) input.context = pending.context
+  return input
 }
 
 /** Attach an explicit mentions list to a JSON payload, but ONLY when there are ids to send — an

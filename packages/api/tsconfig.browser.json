@@ -1,0 +1,19 @@
+{
+  // The browser half of this package: code that ships to a page, not to the worker. It is excluded
+  // from tsconfig.json (which compiles the worker with no DOM lib), so without this file these
+  // sources were linted but NEVER typechecked — a real TS2322 in glancedb/client.ts survived a
+  // full `bun run typecheck` because of it. Keep both configs' file lists in sync.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": [],
+    "noEmit": true
+  },
+  "include": [
+    "src/annotate/client.ts",
+    "src/annotate/locator.ts",
+    "src/annotate/reflow.ts",
+    "src/annotate/selection.ts",
+    "src/glancedb/client.ts"
+  ]
+}

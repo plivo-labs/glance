@@ -64,7 +64,7 @@ export function CommandPalette({
         api
           .get<SpaceSummary[]>('/api/spaces/mine')
           .then(setSpaces)
-          .catch(() => {})
+          .catch(() => setSpaces([]))
     },
     [user],
   )

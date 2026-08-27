@@ -1,0 +1,63 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "react", "jsx-a11y", "import", "promise"],
+  "categories": { "correctness": "error", "suspicious": "warn", "perf": "warn" },
+  "ignorePatterns": [
+    "**/dist",
+    "**/.wrangler",
+    "**/worker-configuration.d.ts",
+    "**/drizzle",
+    "**/annotate/bundle.ts",
+    "**/install-script.ts",
+    "**/whats-new/catalog.ts",
+    "**/skill-content.ts",
+    "**/components/ui",
+    "tools/oxlint/**"
+  ],
+  "jsPlugins": [
+    { "name": "anti-slop", "specifier": "./tools/oxlint/anti-slop/index.ts" },
+    { "name": "no-unsafe-inner-html", "specifier": "./tools/oxlint/stella/no-unsafe-inner-html.ts" },
+    { "name": "no-swallowed-rejection", "specifier": "./tools/oxlint/stella/no-swallowed-rejection.ts" },
+    { "name": "no-document-cookie", "specifier": "./tools/oxlint/stella/no-document-cookie.ts" },
+    { "name": "no-object-url-leak", "specifier": "./tools/oxlint/stella/no-object-url-leak.ts" },
+    { "name": "no-inline-style-colors", "specifier": "./tools/oxlint/stella/no-inline-style-colors.ts" },
+    { "name": "suppression-hygiene", "specifier": "./tools/oxlint/stella/suppression-hygiene.ts" }
+  ],
+  "rules": {
+    "react/react-in-jsx-scope": "off",
+    "react/no-unstable-nested-components": ["warn", { "allowAsProps": true }],
+    "eslint/no-await-in-loop": "off",
+    // Fires on any `.then(cb)` whose callback lacks an explicit return, including terminal
+    // chains where nothing consumes the value. Every hit in this repo was a no-op `return`.
+    "promise/always-return": "off",
+    "eslint/no-underscore-dangle": "off",
+    "unicorn/consistent-function-scoping": "off",
+    "unicorn/no-array-sort": "off",
+    "eslint/no-unused-vars": ["error", { "args": "after-used", "argsIgnorePattern": "^_", "varsIgnorePattern": "^_", "caughtErrorsIgnorePattern": "^_" }],
+    "jsx-a11y/no-autofocus": "off",
+
+    "no-unsafe-inner-html/no-unsafe-inner-html": "error",
+    "no-swallowed-rejection/no-swallowed-rejection": "warn",
+    "no-document-cookie/no-document-cookie": "error",
+    "no-object-url-leak/no-object-url-leak": "warn",
+    "no-inline-style-colors/no-inline-style-colors": "warn",
+    "suppression-hygiene/require-description": "warn",
+    "suppression-hygiene/no-foreign-directive": "warn",
+
+    "anti-slop/no-chained-type-assertions": "off",
+    "anti-slop/no-conditional-empty-object-spread": "warn",
+    "anti-slop/no-known-value-widening": "off",
+    "anti-slop/no-module-mocking": "warn",
+    "anti-slop/no-object-parameters": "warn",
+    "anti-slop/no-reflect-apply": "warn",
+    "anti-slop/no-reflect-get": "warn",
+    "anti-slop/no-runtime-typeof": "off",
+    "anti-slop/no-shape-in-symbol-names": "off",
+    "anti-slop/no-unknown-parameters": "off",
+    "anti-slop/no-unknown-returns": "warn",
+    "anti-slop/no-unknown-type-aliases": "warn",
+    "anti-slop/no-unsafe-dictionary-type": "warn",
+    "anti-slop/no-widen-then-assert": "warn",
+    "anti-slop/require-safety-comment-for-type-assertion": "off"
+  }
+}

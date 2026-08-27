@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 import { users as usersTable } from '../db/schema'
 import { sanitizeAvatarUrl, sizedAvatarUrl } from '../lib/avatar'
+import { describeError } from '../lib/errors'
 import { requireAuth } from '../middleware/auth'
 import type { AppEnv } from '../types'
 
@@ -42,7 +43,10 @@ avatars.get('/:userId', async (c) => {
   const upstream = await fetch(sizedAvatarUrl(url), {
     // cacheEverything makes Cloudflare hold the bytes at the edge; a no-op locally and in tests.
     cf: { cacheEverything: true, cacheTtl: 86400 },
-  }).catch(() => null)
+  }).catch((err) => {
+    console.error('avatars: upstream fetch failed', describeError(err))
+    return null
+  })
   if (!upstream?.ok) return miss(c)
 
   // Only images leave this route, and never as sniffable HTML: an origin-served document would

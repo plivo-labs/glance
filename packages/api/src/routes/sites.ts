@@ -253,10 +253,7 @@ sites.get('/shared', requireAuth, async (c) => {
   const rows = rowChunks.flat().sort(byCreatedAtDesc)
   const visible = rows.filter((r) => r.status === 'active' && r.ownerId !== user.id)
   return c.json(
-    visible.map((r) => ({
-      ...toFeedRow(r, c.env.APP_URL),
-      role: roles.get(r.id) ?? 'viewer',
-    })),
+    visible.map((r) => Object.assign(toFeedRow(r, c.env.APP_URL), { role: roles.get(r.id) ?? 'viewer' })),
   )
 })
 
@@ -281,12 +278,13 @@ sites.get('/team', requireAuth, async (c) => {
     .orderBy(desc(sitesTable.updatedAt))
     .limit(50)
   return c.json(
-    rows.map((r) => ({
-      ...toFeedRow(r, c.env.APP_URL),
-      uploaderId: r.uploaderId, // avatar key for the "Shipped by" column
-      uploaderName: r.uploaderName,
-      uploaderEmail: r.uploaderEmail,
-    })),
+    rows.map((r) =>
+      Object.assign(toFeedRow(r, c.env.APP_URL), {
+        uploaderId: r.uploaderId, // avatar key for the "Shipped by" column
+        uploaderName: r.uploaderName,
+        uploaderEmail: r.uploaderEmail,
+      }),
+    ),
   )
 })
 
@@ -393,7 +391,7 @@ sites.get('/:spaceSlug/:siteSlug', async (c) => {
   // file list + contentVersion — the pull-and-redeploy payload. A plain viewer sees their canReplace:
   // false and no manifest, so they can't enumerate the site's files.
   const replaceable = canReplace(user, site, role)
-  return c.json({
+  const base = {
     id: site.id,
     spaceSlug,
     siteSlug,
@@ -404,11 +402,14 @@ sites.get('/:spaceSlug/:siteSlug', async (c) => {
     isOwner: user.id === site.ownerId,
     canReplace: replaceable,
     starred: starRows.length > 0,
-    ...(role ? { role } : {}),
     contentUrl,
     indexPath: resolveIndexPath(siteFiles.map((f) => f.path)),
-    ...(replaceable ? { files: siteFiles.map((f) => f.path), contentVersion: site.contentVersion } : {}),
-  })
+  }
+  const withRole = role ? { ...base, role } : base
+  const response = replaceable
+    ? { ...withRole, files: siteFiles.map((f) => f.path), contentVersion: site.contentVersion }
+    : withRole
+  return c.json(response)
 })
 
 // Normalize a PUT /shares body into role-aware user grants + view-only group ids. Pure (no DB), so
@@ -416,16 +417,23 @@ sites.get('/:spaceSlug/:siteSlug', async (c) => {
 // shape and the legacy `userIds:[id]` list (defaulted to viewer; `users` wins on a collision). Groups
 // arrive as `groupIds:[id]` or `groups:[{id}]` and are ALWAYS view-only — an editor role on a group is
 // a client error (there is no role column on site_group_shares), surfaced as `{ error }`.
+type ShareGrantsBody = {
+  users?: { id?: unknown; role?: unknown }[]
+  userIds?: unknown
+  groups?: { id?: unknown; role?: unknown }[]
+  groupIds?: unknown
+}
+
 export function parseShareGrants(body: unknown): { users: ShareUser[]; groupIds: string[] } | { error: string } {
-  const b = (body ?? {}) as Record<string, unknown>
+  const b = (body ?? {}) as ShareGrantsBody
   const asIds = (v: unknown) =>
     Array.isArray(v) ? [...new Set(v.filter((x): x is string => typeof x === 'string'))] : []
-  const groupObjs = Array.isArray(b.groups) ? (b.groups as { id?: unknown; role?: unknown }[]) : []
+  const groupObjs = Array.isArray(b.groups) ? b.groups : []
   if (groupObjs.some((g) => g?.role === 'editor')) return { error: 'groups cannot be granted editor' }
 
   const roles = new Map<string, 'viewer' | 'editor'>()
   if (Array.isArray(b.users)) {
-    for (const u of b.users as { id?: unknown; role?: unknown }[]) {
+    for (const u of b.users) {
       if (typeof u?.id === 'string') roles.set(u.id, u.role === 'editor' ? 'editor' : 'viewer')
     }
   }

@@ -28,7 +28,7 @@ bun run cf-typegen
 ```sh
 bun run typecheck   # tsc --noEmit across all packages
 bun test            # bun test across all packages
-bun run lint        # biome check
+bun run lint        # oxlint (rules in .oxlintrc.json; custom plugins in tools/oxlint)
 bun run format      # biome format --write
 ```
 

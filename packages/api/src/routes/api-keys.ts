@@ -114,10 +114,9 @@ apiKeys.get('/', async (c) => {
     .orderBy(desc(apiKeysTable.createdAt))
 
   return c.json({
-    items: rows.map(({ displaySuffix, ...row }) => ({
-      ...row,
-      secretHint: displaySuffix ? `${API_KEY_PREFIX}…${displaySuffix}` : null,
-    })),
+    items: rows.map(({ displaySuffix, ...row }) =>
+      Object.assign(row, { secretHint: displaySuffix ? `${API_KEY_PREFIX}…${displaySuffix}` : null }),
+    ),
   })
 })
 

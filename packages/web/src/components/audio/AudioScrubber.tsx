@@ -1,5 +1,6 @@
 import { Pause, Play } from 'lucide-react'
 import { type RefObject, useEffect, useState } from 'react'
+import { toast } from 'sonner'
 import { formatTimestamp } from '@/lib/audio'
 import { cn } from '@/lib/utils'
 
@@ -70,7 +71,12 @@ export function AudioScrubber({
   function toggle() {
     const el = audioRef.current
     if (!el) return
-    if (el.paused) el.play().catch(() => {})
+    if (el.paused)
+      el.play().catch((err) => {
+        // Toggling again before play() settles rejects with AbortError. That's the user pausing
+        // what they just started, not a failure — everything else is worth surfacing.
+        if (!(err instanceof DOMException && err.name === 'AbortError')) toast.error('Could not play audio')
+      })
     else el.pause()
   }
 

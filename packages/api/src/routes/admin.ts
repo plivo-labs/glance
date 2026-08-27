@@ -106,7 +106,7 @@ admin.get('/spaces', async (c) => {
     .leftJoin(spaceMembers, eq(spaceMembers.spaceId, spacesTable.id))
     .groupBy(spacesTable.id)
     .orderBy(desc(spacesTable.createdAt))
-  return c.json(rows.map((r) => ({ ...r, memberCount: Number(r.memberCount) })))
+  return c.json(rows.map((r) => Object.assign(r, { memberCount: Number(r.memberCount) })))
 })
 
 // GET /api/admin/users — every user.

@@ -56,6 +56,7 @@ import { notifyCommentEvent } from '../realtime/notify'
 import { TOKEN_HEADER } from '../realtime/protocol'
 import { isUpgrade, reissueUpgrade } from '../realtime/upgrade'
 import type { AppEnv, SessionUser } from '../types'
+import type { JsonValue } from '../lib/json'
 
 // Comments API. Mounted at /api/sites, so paths are /:space/:site/comments… — three segments,
 // so they never collide with the two-segment site routes. CSRF (requireSameOrigin) and withDb
@@ -89,7 +90,7 @@ const tooLong = (v: unknown, max: number): boolean => typeof v === 'string' && v
  *  comment text and harmless to a terminal); everything else in the range is dropped at this
  *  untrusted-input boundary. Written without control-char source literals. */
 function stripControlChars(s: string): string {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: matching control chars is the point; escapes only, no literals
+  // oxlint-disable-next-line eslint/no-control-regex -- matching control chars is the point; escapes only, no literals
   return s.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '')
 }
 
@@ -381,13 +382,14 @@ function parseThreadFields(raw: {
  *  because the two JSON fields want OPPOSITE answers to it (see the caller). */
 const INVALID_JSON = Symbol('invalid-json')
 
+
 /** A FormData value that should hold JSON: absent or empty → undefined, malformed → INVALID_JSON.
  *  Malformed is reported rather than swallowed so the caller keeps that choice; collapsing the two
  *  cases here would silently turn a malformed field into an absent one. */
-function jsonField(raw: File | string | null): unknown {
+function jsonField(raw: File | string | null): JsonValue | typeof INVALID_JSON | undefined {
   if (typeof raw !== 'string' || !raw) return undefined
   try {
-    return JSON.parse(raw)
+    return JSON.parse(raw) as JsonValue
   } catch {
     return INVALID_JSON
   }

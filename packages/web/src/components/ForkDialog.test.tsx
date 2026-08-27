@@ -8,12 +8,14 @@ import { ForkDialog } from './ForkDialog'
 
 const SITE = { spaceSlug: 'sp', siteSlug: 'my-site', title: 'My Page', visibility: 'members' as Visibility }
 
-type Call = { url: string; body: Record<string, unknown> }
+// POST /api/sites/:space/:site/fork request body (packages/web/src/hooks/useForkSite.ts).
+type ForkRequestBody = { title: string; visibility: Visibility; slug?: string }
+type Call = { url: string; body: ForkRequestBody }
 
 function stubFetch(status = 200, body: unknown = { spaceSlug: 'me', siteSlug: 'my-page-copy' }) {
   const calls: Call[] = []
   globalThis.fetch = ((url: string, init?: RequestInit) => {
-    calls.push({ url, body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown> })
+    calls.push({ url, body: JSON.parse(String(init?.body ?? '{}')) as ForkRequestBody })
     return Promise.resolve(
       new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } }),
     )
