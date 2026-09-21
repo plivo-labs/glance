@@ -375,10 +375,9 @@ function Viewer() {
         // Me resolves, so a 'ready' that beats the /api/auth/me fetch on a fresh load isn't dropped.
         if (me) recordVisit(me.id, { spaceSlug: site.spaceSlug, siteSlug: site.siteSlug, title: site.title, filePath: intent.filePath })
       }
-      // UNCONDITIONAL (C2b): commenting is on for anyone with access, not just while the rail is
-      // open — a text selection feeds the popover reducer (chip first, composer only on an
-      // explicit click) whether or not the rail panel happens to be visible.
-      else if (intent.type === 'select')
+      // Rail-gated: a plain selection with the rail closed offers no chip (it distracted from
+      // select-to-copy/reading). With no chip, the C/A keys are inert too — the reducer needs one.
+      else if (intent.type === 'select' && railOpen)
         dispatchPopover({
           type: 'select',
           // A rect is what the chip is pinned to. parseIntent leaves it optional (our own annotate
@@ -418,7 +417,7 @@ function Viewer() {
     // Effect re-runs re-ping, which is harmless — the arbiter ignores duplicate readys.
     iframeRef.current?.contentWindow?.postMessage({ type: 'glance:ping' }, contentOrigin)
     return () => window.removeEventListener('message', onMsg)
-  }, [contentOrigin, me, site.spaceSlug, site.siteSlug, site.title, threads, dispatch, loadThreads, revealThread, applyViewTheme])
+  }, [contentOrigin, me, site.spaceSlug, site.siteSlug, site.title, threads, railOpen, dispatch, loadThreads, revealThread, applyViewTheme])
 
   useEffect(() => {
     api
@@ -636,10 +635,12 @@ function Viewer() {
   // touch the popover (dispatchPopover) — that used to be safe because the popover was ALSO gated on
   // review and unmounted the moment review ended; now it's unconditional (C2b), so dismissing it
   // here would destroy an unrelated in-progress draft just because the user closed the rail panel.
-  // The popover has its own explicit teardown (Escape / click-away / save).
+  // The popover has its own explicit teardown (Escape / click-away / save). Only the chip goes
+  // ('clear' leaves any composer/ask alone) — chips are rail-only.
   function closeRail() {
     setRailOpen(false)
     setComposing(null)
+    dispatchPopover({ type: 'clear' })
   }
 
   const toggleRail = () => (railOpen ? closeRail() : setRailOpen(true))
@@ -714,8 +715,7 @@ function Viewer() {
             )}
             {/* Sibling of the iframe ON PURPOSE: this wrapper is the iframe's own box, so the rect
                 the frame reports needs no translation to position the chip/popover over it.
-                The POPOVER is unconditional on railOpen (C2b): anyone who can open the site can
-                comment without opening a panel first. */}
+                The chip only appears while the rail is open (see the 'select' handler). */}
             {!isAudio && (
               <CommentPopover
                 chip={popover.chip}

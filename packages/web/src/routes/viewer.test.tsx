@@ -278,21 +278,20 @@ describe('viewer wiring — a click on a painted anchor reveals its thread', () 
   })
 })
 
-// Adding a comment OPENS the rail — always, and with no toast standing in for it. The old behaviour
-// (leave the panel shut, toast "Comment added" with a "Show comments" action) is what this replaces,
-// so both halves are asserted: the <aside> appears, and no toast does.
-describe('viewer wiring — adding a comment opens the rail', () => {
-  test('a comment written from the in-page popover opens the rail, with no toast', async () => {
+// Adding a comment keeps the rail open, with no toast standing in for it. The old behaviour (toast
+// "Comment added" with a "Show comments" action) is what this replaces. The chip is rail-only, so
+// the rail is open before the selection.
+describe('viewer wiring — adding a comment keeps the rail open', () => {
+  test('a comment written from the in-page popover lands with the rail open, and no toast', async () => {
     const create = spyOn(comments, 'create').mockResolvedValue(mkThread({ id: 't9' }))
     const list = spyOn(comments, 'list').mockResolvedValue(THREADS)
     const mentionable = spyOn(comments, 'mentionable').mockResolvedValue([])
     try {
-      const { container } = renderViewer('/sp/site')
+      const { container } = renderViewer('/sp/site?review=1')
       await waitFor(() => expect(container.querySelector('iframe')).not.toBeNull())
       const { iframe, send } = armIframe(container)
       loadIframe(iframe)
       act(() => send({ type: 'glance:ready', filePath: 'index.html' })) // gives submitThread its filePath
-      expect(container.querySelector('aside')).toBeNull() // rail closed
 
       // Select text in the page → chip → composer, the real in-place comment path.
       act(() => send({ type: 'glance:select', quote: 'the quoted sentence', rect: { top: 10, left: 10, width: 50, height: 12 } }))
@@ -321,7 +320,7 @@ describe('viewer wiring — C on a selection opens the composer (#117)', () => {
     const list = spyOn(comments, 'list').mockResolvedValue(THREADS)
     const mentionable = spyOn(comments, 'mentionable').mockResolvedValue([])
     try {
-      const { container } = renderViewer('/sp/site')
+      const { container } = renderViewer('/sp/site?review=1')
       await waitFor(() => expect(container.querySelector('iframe')).not.toBeNull())
       const { iframe, send } = armIframe(container)
       loadIframe(iframe)
@@ -413,7 +412,7 @@ describe('viewer wiring — rail toggle (C2b: the rail is just a panel, not a re
   // (closing review unmounted it anyway), but now that the popover is unconditional (C2b) that same
   // call tears down an unrelated in-progress draft just because the user closed the rail panel.
   test('closing the rail does NOT dismiss an open selection popover — they are decoupled (C2b)', async () => {
-    const { container } = renderViewer('/sp/site')
+    const { container } = renderViewer('/sp/site?review=1')
     await waitFor(() => expect(container.querySelector('iframe')).not.toBeNull())
     const { send } = armIframe(container)
     act(() => send({ type: 'glance:ready', filePath: 'index.html' }))
@@ -423,15 +422,34 @@ describe('viewer wiring — rail toggle (C2b: the rail is just a panel, not a re
     fireEvent.click(chip) // 'activate' — opens the composer over this quote
     await screen.findByText((t) => t.includes('hello'))
 
-    // Open then close the rail via the Comments toggle — the popover lives in a wholly separate
-    // wrapper and must not react to it at all.
-    const commentsButton = screen.getByRole('button', { name: /Comments/ })
-    fireEvent.click(commentsButton)
-    await waitFor(() => expect(container.querySelector('aside') === null).toBe(false))
-    fireEvent.click(commentsButton)
+    // Close the rail via the Comments toggle — the composer lives in a wholly separate wrapper
+    // and must not react to it at all.
+    fireEvent.click(screen.getByRole('button', { name: /Comments/ }))
     await waitFor(() => expect(container.querySelector('aside') === null).toBe(true))
 
     expect(screen.queryByText((t) => t.includes('hello')) !== null).toBe(true)
+  })
+
+  test('a selection offers the Comment/Ask chip only while the rail is open', async () => {
+    const { container } = renderViewer('/sp/site')
+    await waitFor(() => expect(container.querySelector('iframe')).not.toBeNull())
+    const { send } = armIframe(container)
+    act(() => send({ type: 'glance:ready', filePath: 'index.html' }))
+    const select = () => act(() => send({ type: 'glance:select', quote: 'hello', rect: { top: 5, left: 5, width: 10, height: 10 } }))
+    const chip = () => screen.queryByRole('button', { name: 'Ask AI about selection' })
+
+    select()
+    expect(chip()).toBeNull() // rail closed: nothing
+    act(() => send({ type: 'glance:ask-key' }))
+    expect(screen.queryByRole('textbox')).toBeNull() // and the A shortcut has no chip to open an ask from
+
+    const commentsButton = screen.getByRole('button', { name: /Comments/ })
+    fireEvent.click(commentsButton)
+    select()
+    expect(await screen.findByRole('button', { name: 'Ask AI about selection' })).not.toBeNull()
+
+    fireEvent.click(commentsButton) // closing the rail retires the chip too
+    await waitFor(() => expect(chip()).toBeNull())
   })
 })
 
