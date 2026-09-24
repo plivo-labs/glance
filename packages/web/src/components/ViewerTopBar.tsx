@@ -1,5 +1,5 @@
 import { ChevronRight, Command, GitFork, History, Menu, MessageSquare, Printer, Share2, Sparkles, Star } from 'lucide-react'
-import { useState } from 'react'
+import { Suspense, lazy, useState } from 'react'
 import { Link } from 'react-router'
 import { toast } from 'sonner'
 import { useStar } from '@/hooks/useStar'
@@ -9,11 +9,14 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { ForkDialog } from '@/components/ForkDialog'
-import { ShareDialog } from '@/components/ShareDialog'
-import { SummarySheet } from '@/components/SummarySheet'
 import { ThemeMenu, patchTheme } from '@/components/theme-select'
 import { VISIBILITY_META, VisibilityBadge, VisibilityMenu } from '@/components/visibility'
 import { BrandMark } from '@/components/states'
+
+// Lazy: both open only from the menu. A static import puts their chunks in the viewer route's
+// import graph, so the iframe cannot mount until they download.
+const SummarySheet = lazy(() => import('@/components/SummarySheet').then((m) => ({ default: m.SummarySheet })))
+const ShareDialog = lazy(() => import('@/components/ShareDialog').then((m) => ({ default: m.ShareDialog })))
 
 // The persistent top chrome for the viewer: brand (→ dashboard) + a breadcrumb, then one action
 // row — Star, Comments, hamburger. Replaces the old floating PreviewToolbar dock.
@@ -175,21 +178,23 @@ export function ViewerTopBar({
       {/* All three render through a portal, so they can live inside the header without affecting
           layout. Controlled (no inline trigger) — their menu items drive this state. */}
       <ForkDialog site={site} open={forkOpen} onOpenChange={setForkOpen} />
-      <SummarySheet
-        spaceSlug={site.spaceSlug}
-        siteSlug={site.siteSlug}
-        open={summaryOpen}
-        onOpenChange={setSummaryOpen}
-      />
-      {site.isOwner && (
-        <ShareDialog
+      <Suspense fallback={null}>
+        <SummarySheet
           spaceSlug={site.spaceSlug}
           siteSlug={site.siteSlug}
-          title={site.title}
-          open={shareOpen}
-          onOpenChange={setShareOpen}
+          open={summaryOpen}
+          onOpenChange={setSummaryOpen}
         />
-      )}
+        {site.isOwner && (
+          <ShareDialog
+            spaceSlug={site.spaceSlug}
+            siteSlug={site.siteSlug}
+            title={site.title}
+            open={shareOpen}
+            onOpenChange={setShareOpen}
+          />
+        )}
+      </Suspense>
     </header>
   )
 }
