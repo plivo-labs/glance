@@ -1,129 +1,74 @@
 # Glance
 
-**Artifacts for every agent — open-source and self-hosted.** Your agent builds a self-contained page, dashboard, or app and ships it to a live URL with one command — from Claude Code, Cursor, Codex, Cline, Aider, or any harness that runs a shell command. Then you review it in the browser and drop comments like a Google Doc, and the agent reads your comments and fixes it.
+**Self-hosted artifacts for any coding agent.** Your agent builds a page, dashboard, or app and publishes it to a live URL with one command. You leave comments in the browser, like in a Google Doc. The agent reads them and fixes the page.
 
-An open-source alternative to Claude Artifacts — except you host it, you own it, and any agent can drive it. No more screenshotting your agent's output and pasting it back into the chat.
+Works with Claude Code, Cursor, Codex, Cline, Aider, or anything else that can run a shell command. Runs on Cloudflare's free tier.
 
 <p align="center">
   <img src="https://github.com/plivo-labs/glance/releases/download/assets-readme/glance-demo.gif" alt="Glance demo: an agent deploys a folder to a URL, you leave review comments in the browser, and the agent reads the comments and fixes it" width="900">
 </p>
 
 ```
-  agent builds  →  glance deploy → URL
-       ↑                              ↓
+  agent builds  →  glance deploy  →  URL
+       ↑                               ↓
   reads comments, fixes  ←  you comment in the browser
 ```
 
-Self-hosted on **Cloudflare's free tier** — $0/month, you own the whole loop. Ships with a CLI and an agent skill, so any agent — Claude Code, Cursor, Codex, Cline, Aider — drives deploy → pull comments → reply → redeploy with no human in the copy-paste path.
+## Self-host
 
-Stack: Cloudflare Workers + Hono · React Router v7 · D1 · R2 · KV.
-
-## Deploy
-
-First enable **R2** on your account ([dashboard](https://dash.cloudflare.com) → R2 → accept terms — still free), then:
+You need a Cloudflare account with **R2** turned on ([dashboard](https://dash.cloudflare.com) → R2 → accept the terms; it's still free). Then run:
 
 ```bash
 bun install
 bunx wrangler login
-scripts/setup.sh      # provisions D1/KV/R2, deploys both workers, sets secrets, migrates, prints URL + token
+scripts/setup.sh
 ```
 
-`setup.sh` is idempotent. At the end it prints a **bootstrap token** — open the printed `/login`, paste it into **Complete setup**, and you become the first superadmin. No Google account needed.
+`setup.sh` creates the resources, deploys the app, and prints your URL plus a **bootstrap token**. Open the printed `/login` page and paste the token into **Complete setup** to become the first admin. You can run the script again safely.
 
-> Multiple Cloudflare accounts? `export CLOUDFLARE_ACCOUNT_ID=<id>` first. Manual provisioning, secrets, and optional Google SSO: see [DEPLOY.md](DEPLOY.md).
+Using more than one Cloudflare account? Run `export CLOUDFLARE_ACCOUNT_ID=<id>` first. For manual setup or Google SSO, see [DEPLOY.md](DEPLOY.md).
 
-## The app
-
-Pick a space, drop a folder, and your sites are live behind private/members/team visibility:
-
-<p align="center">
-  <img src="https://github.com/plivo-labs/glance/releases/download/assets-readme/dashboard.png" alt="Glance dashboard — deploy panel and your sites" width="900">
-</p>
-
-Superadmins get usage at a glance — users, sites, storage, page views, comments, and CLI activity.
-
-## Audio & voice comments
-
-Glance is also a home for **audio** — and the review loop works by voice.
-
-- **Serve & play** — audio files (`mp3/wav/m4a/ogg/flac/aac/webm`) serve with the right MIME type and HTTP Range, and render in a dedicated player (not the sandboxed HTML iframe), with page-anchored comments and a `[m:ss]` timestamp-insert shortcut.
-- **Record → URL** — tap the mic on the dashboard, record (live waveform, pause/resume), name it, and it deploys and opens straight in the player. Uploading a file is still one tap away.
-- **Voice comments** — record a voice note right in the review composer (and in replies). It's stored, transcribed best-effort with Workers AI (Whisper), and shown as a voice card: inline player + transcript + badge. The transcript is the comment body, so the CLI/agent loop still reads everything as text.
-
-Audio sites carry a mic badge across the dashboard, and `glance comments` prefixes voice comments with `[voice]` in the digest.
-
-## CLI
+## Use it
 
 ```bash
-curl -fsSL https://glance.your-subdomain.workers.dev/api/install | sh   # installs to ~/.local/bin/glance
-glance login          # device-code flow, opens browser
-glance deploy <path>  # file or folder → publishes to your personal space
+curl -fsSL https://<your-instance>/api/install | sh   # installs the CLI and the agent skill
+glance login
+glance deploy ./my-report                             # file or folder → live URL
+glance comments <space/slug>                          # read review comments
 ```
 
-The installer bakes in your instance URL and installs the agent skill so coding agents can drive the CLI. Any agent that can run a shell command drives Glance by calling the `glance` CLI directly — it's harness-agnostic.
+Run `glance` with no arguments to see every command.
 
-### Any agent, any harness
-
-The bundled skill teaches your agent to drive Glance. Install it into **any** harness — Claude Code, Cursor, Codex, OpenCode, Amp, and more — with the [skills.sh](https://skills.sh) installer:
+The install script also adds the agent skill for Claude Code. For other agents, run:
 
 ```bash
-npx skills add plivo-labs/glance   # installs the glance-cli skill universally (Codex, Cursor, OpenCode, Claude Code …)
+npx skills add plivo-labs/glance
 ```
 
-The `curl … /api/install | sh` line above already installs the skill for Claude Code alongside the binary. The skill only wraps the `glance` CLI, so any shell-capable agent works with or without it.
+**CI:** create an API key at `/settings/keys` and set `GLANCE_TOKEN=glk_...`. For the HTTP API, see [packages/api/API.md](packages/api/API.md).
 
-| command | what it does |
-|---|---|
-| `login` | device-code flow, saves token to `~/.glance/config.json` |
-| `deploy <path> [--space <slug>] [--name <slug>] [--visibility <v>]` | uploads a file or folder (folders recurse, skip `.git`/`node_modules`) |
-| `list` | your sites, with visibility + URL |
-| `comments <space/slug>` | pull a site's review comments (voice comments show as `[voice]`) |
-| `reply <thread>` | reply to a comment thread from the terminal |
-| `delete <space/slug>` | confirms, then deletes |
-| `move <space/slug> <new-space>` | moves a site (keeps files/comments/shares; URL changes) |
-| `upgrade` / `version` / `logout` | self-update · print version · revoke session |
+## Features
 
-Defaults: `--space` = your personal space · `--name` = file/folder name slugified · `--visibility` = `team` (`private` · `members` also available). Point at another instance with `GLANCE_API_URL=https://… glance <cmd>`.
+- **Visibility:** each site is `private`, `members`, or `team`. Every link requires a login; nothing is public.
+- **Audio:** audio files play in a built-in player. You can record audio or leave voice comments in the browser. Voice comments are transcribed, so agents read them as text.
+- **`glance.db`** (experimental, opt-in): a small JSON document store your pages can use directly from the browser. See [SHARED_BACKEND.md](SHARED_BACKEND.md).
 
-The CLI keeps itself current (once-a-day background check, atomic in-place swap). Opt out with `GLANCE_NO_UPDATE=1`.
+## Security
 
-## API keys & HTTP API
+Uploaded HTML and JS are treated as untrusted. They are served from a separate domain, so they can't read your login session. That's why Glance runs two Workers. To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
-`glance login` is interactive, so CI mints an **API key** at `/settings/keys` instead and exports it — `GLANCE_TOKEN` takes precedence over the stored config:
+## Development
 
-```bash
-export GLANCE_TOKEN=glk_...              # shown exactly once at mint
-glance deploy ./dist                     # or call the API directly:
-curl -H "Authorization: Bearer $GLANCE_TOKEN" https://your-instance/api/sites/mine
-```
-
-A key authenticates the control plane as you and can only ever narrow your own access: it may create and deploy sites, never delete one, and never mint or revoke another key. Full endpoint reference, request/response shapes, grant semantics and the data-token exchange: **[packages/api/API.md](packages/api/API.md)**. In-app: `/docs/api-keys`.
-
-## Security model
-
-- **Uploaded HTML/JS is untrusted** — served from a separate content origin (`CONTENT_URL`), so app session cookies never reach it. This is why Glance stands up two Workers, not one.
-- **Gated links** carry short-lived, single-use HMAC tokens. Every tier requires an authenticated user — there is no public/anonymous access.
-- **Markdown** renders with raw HTML neutralized under a strict CSP, so injected `<script>` is inert.
-
-## Shared backend — `glance.db` (experimental, opt-in)
-
-Hosted sites can get browser-callable persistence — no keys, no config. Off by default; an operator enables it per deploy (see [SHARED_BACKEND.md](SHARED_BACKEND.md)).
-
-```js
-// Injected automatically when the site is opened through the Glance app; every request is
-// brokered by the parent frame, so the page never holds a credential.
-const notes = glance.db.collection('notes')
-await notes.create({ text: 'hello' })   // create · list · get · put · delete
-```
-
-Docs are JSON ≤100KB in named collections. Every viewer can create and read their own docs; `shared-*` collections are readable by all viewers; the site owner reads everything and can moderate. Access is re-checked live, so revoking a share cuts data access immediately.
-
-## Layout
+Built with Cloudflare Workers + Hono, React Router v7, D1, R2, and KV. The CLI is written in Go.
 
 ```
-packages/api   Hono Worker — /api/* + file serving, ships the React app as static assets
-packages/web   Vite + React Router v7
-packages/cli   `glance` CLI (Go)
+packages/api   Worker: API + file serving
+packages/web   React app
+packages/cli   glance CLI
 ```
 
-Local dev: `bun install && bun run db:migrate:local && bun run dev` (main :8787 + content :8788 + vite :5173), then open http://localhost:5173. CI auto-deploys both workers on push to `main`.
+For local setup and checks, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+[MIT](LICENSE)
