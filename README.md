@@ -5,7 +5,7 @@
 Works with Claude Code, Cursor, Codex, Cline, Aider, or anything else that can run a shell command. Runs on Cloudflare's free tier.
 
 <p align="center">
-  <img src="https://github.com/plivo-labs/glance/releases/download/assets-readme/glance-demo-v2.gif" alt="Glance demo: an agent runs glance deploy and gets a URL, a reviewer highlights a number on the page and comments, a Slack DM notifies the author, the agent reads the thread with glance comments and redeploys, and the thread is resolved" width="900">
+  <img src="https://github.com/plivo-labs/glance/releases/download/assets-readme/glance-demo-v3.gif" alt="Glance demo: an agent runs glance deploy and gets a URL, a reviewer highlights a number on the page and comments, a Slack DM notifies the author, the agent reads the thread with glance comments and redeploys, and the thread is resolved" width="900">
 </p>
 
 ```
