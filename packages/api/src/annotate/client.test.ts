@@ -344,4 +344,20 @@ describe('client.ts — clicking a mermaid diagram opens it in a modal <dialog> 
     expect(dialog.open).toBe(false)
     diagram.remove()
   })
+
+  test('a click that ends a text selection inside the diagram does not open the lightbox', () => {
+    document.body.insertAdjacentHTML('beforeend', '<pre class="mermaid"><svg><g><text>node label</text></g></svg></pre>')
+    const diagram = document.querySelector('.mermaid') as Element
+    const label = diagram.querySelector('text') as Element
+    window.getSelection()?.selectAllChildren(label)
+
+    fireDom('click', label)
+    expect(document.querySelector('dialog.glance-lb[open]')).toBeNull()
+
+    window.getSelection()?.removeAllRanges()
+    fireDom('click', label)
+    expect(document.querySelector('dialog.glance-lb[open]')).not.toBeNull()
+    ;(document.querySelector('dialog.glance-lb') as HTMLDialogElement).close()
+    diagram.remove()
+  })
 })

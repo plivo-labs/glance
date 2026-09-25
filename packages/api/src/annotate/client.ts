@@ -350,6 +350,8 @@ function openLightbox(svg: Element): void {
 
 document.addEventListener('click', (e) => {
   if (e.defaultPrevented || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return
+  // A drag-select still ends in a click; leave the selection alone so it can be commented on.
+  if (window.getSelection()?.isCollapsed === false) return
   const svg = (e.target as Element | null)?.closest?.('.mermaid')?.querySelector('svg')
   if (svg) openLightbox(svg)
 })
