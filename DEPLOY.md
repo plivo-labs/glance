@@ -76,6 +76,13 @@ echo "$(openssl rand -hex 32)" | wrangler secret put BOOTSTRAP_TOKEN
   your-site / participant / share), the snippet, and a deep link back to the review thread. Slack DMs
   are capped at **15 per comment event, mentions first** (bounds blast radius); the in-app bell fan-out
   is uncapped, so an audience over 15 gets in-app notifications for everyone but Slack DMs for the top 15.
+- `SLACK_SIGNING_SECRET` (optional, main worker only) — Slack app signing secret that turns on **link
+  previews**: a Glance site URL pasted in Slack unfurls as a card. Needs `SLACK_BOT_TOKEN` too; while
+  either is unset, `/api/slack/events` returns 404. Set with: `wrangler secret put SLACK_SIGNING_SECRET`.
+  In the Slack app, add bot scopes **`links:read` · `links:write`**, enable Event Subscriptions with
+  request URL `https://<your-app-url>/api/slack/events`, subscribe to the `link_shared` bot event, and
+  add your app domain under App unfurl domains. A card is only posted if the person who pasted the
+  link can view the site in Glance (matched by Slack email).
 
 ## 3. Ship
 
