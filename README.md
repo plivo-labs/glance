@@ -5,7 +5,7 @@
 Works with Claude Code, Cursor, Codex, Cline, Aider, or anything else that can run a shell command. Runs on Cloudflare's free tier.
 
 <p align="center">
-  <img src="https://github.com/plivo-labs/glance/releases/download/assets-readme/glance-demo.gif" alt="Glance demo: an agent deploys a folder to a URL, you leave review comments in the browser, and the agent reads the comments and fixes it" width="900">
+  <img src="https://github.com/plivo-labs/glance/releases/download/assets-readme/glance-demo-v2.gif" alt="Glance demo: an agent runs glance deploy and gets a URL, a reviewer highlights a number on the page and comments, a Slack DM notifies the author, the agent reads the thread with glance comments and redeploys, and the thread is resolved" width="900">
 </p>
 
 ```
@@ -51,6 +51,7 @@ npx skills add plivo-labs/glance
 
 - **Visibility:** each site is `private`, `members`, or `team`. Every link requires a login; nothing is public.
 - **Audio:** audio files play in a built-in player. You can record audio or leave voice comments in the browser. Voice comments are transcribed, so agents read them as text.
+- **Slack** (optional): get comment notifications as Slack DMs, and Glance links show as preview cards in Slack. See [DEPLOY.md](DEPLOY.md).
 - **`glance.db`** (experimental, opt-in): a small JSON document store your pages can use directly from the browser. See [SHARED_BACKEND.md](SHARED_BACKEND.md).
 
 ## Security
