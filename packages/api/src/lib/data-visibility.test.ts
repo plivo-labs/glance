@@ -92,10 +92,10 @@ async function matrix() {
     app: mount(db),
     docs,
     principals: await Promise.all(
-      principals.map(async (p) => ({
-        ...p,
-        token: await signDataToken(HMAC, { siteId: 'siteA', viewerId: p.claims.viewerId, caps: p.claims.caps }),
-      })),
+      principals.map(async (p) => {
+        const token = await signDataToken(HMAC, { siteId: 'siteA', viewerId: p.claims.viewerId, caps: p.claims.caps })
+        return { name: p.name, claims: p.claims, token }
+      }),
     ),
   }
 }

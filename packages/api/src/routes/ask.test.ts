@@ -160,6 +160,6 @@ describe('POST /api/sites/:space/:site/ask', () => {
   })
 })
 
-function bindings(env: AppEnv['Bindings'], overrides: Record<string, unknown>) {
+function bindings(env: AppEnv['Bindings'], overrides: Partial<AppEnv['Bindings']>) {
   return { ...env, ...overrides } as unknown as AppEnv['Bindings']
 }

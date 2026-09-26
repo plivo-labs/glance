@@ -4,6 +4,7 @@
 
 import type { Bindings } from '../types'
 import { notificationLink } from './notification-link'
+import { describeError } from './errors'
 
 /** Why a recipient is being notified — drives the message verb. Precedence (owner > participant >
  *  share) is resolved upstream in resolveCommentAudience; here each recipient carries one reason.
@@ -99,10 +100,14 @@ async function cachedLookup(
   const outcome = data === null ? 'transient' : read(data)
   if (outcome === 'transient') return null
   if (outcome === 'not-found') {
-    await deps.kv.put(key, NEGATIVE_MARKER, { expirationTtl: NEGATIVE_TTL }).catch(() => {})
+    await deps.kv.put(key, NEGATIVE_MARKER, { expirationTtl: NEGATIVE_TTL }).catch((err) =>
+      console.error('slack: kv put (negative) failed', describeError(err)),
+    )
     return null
   }
-  await deps.kv.put(key, outcome.value, { expirationTtl: POSITIVE_TTL }).catch(() => {})
+  await deps.kv.put(key, outcome.value, { expirationTtl: POSITIVE_TTL }).catch((err) =>
+    console.error('slack: kv put failed', describeError(err)),
+  )
   return outcome.value
 }
 

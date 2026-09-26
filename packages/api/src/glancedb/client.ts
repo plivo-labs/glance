@@ -13,10 +13,11 @@
 // The global is __GLANCE_DB__, not __GLANCE__ — that one belongs to the annotate overlay.
 
 import { WS_PROTOCOL } from '../realtime/protocol'
+import type { JsonValue } from '../lib/json'
 import { type ChangeEvent, type Frame, type StreamHandlers, type Transport, createSubscriptions } from './subscriptions'
 
 type Boot = { appOrigin?: string; space?: string; site?: string }
-type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }
+type Pending = { resolve: (v: JsonValue) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }
 type BrokerReq = {
   id: number
   op: string
@@ -41,12 +42,12 @@ let seq = 0
 // Set once the page subscribes: the parent owns the socket here and pushes frames down the port.
 let stream: StreamHandlers | null = null
 
-function settle(id: number, fn: 'resolve' | 'reject', v: unknown): void {
+function settle(id: number, fn: 'resolve' | 'reject', v: JsonValue | Error): void {
   const p = pending.get(id)
   if (!p) return
   pending.delete(id)
   clearTimeout(p.timer)
-  if (fn === 'resolve') p.resolve(v)
+  if (fn === 'resolve') p.resolve(v as JsonValue)
   else p.reject(v as Error)
 }
 
@@ -59,7 +60,7 @@ function connect(appOrigin: string): Promise<MessagePort> {
       connecting = null
       reject(new Error('glance.db: no broker answered — open this site through the Glance app'))
     }, HELLO_TIMEOUT_MS)
-    ch.port1.onmessage = (e: MessageEvent) => {
+    ch.port1.addEventListener('message', (e: MessageEvent) => {
       const d = e.data as { type?: string; error?: string; id?: number; ok?: boolean; status?: number; body?: unknown }
       if (d?.type === 'glance:db-ready') {
         clearTimeout(timer)
@@ -76,21 +77,27 @@ function connect(appOrigin: string): Promise<MessagePort> {
         // The parent's socket (re)connected; replay whatever the dead one missed.
         stream?.onOpen()
       } else if (typeof d?.id === 'number') {
-        if (d.ok) settle(d.id, 'resolve', d.body)
+        // The broker's reply body is untrusted input — this is the boundary the JsonValue
+        // contract is asserted at, not inside brokerCall's own plumbing.
+        if (d.ok) settle(d.id, 'resolve', d.body as JsonValue)
         else settle(d.id, 'reject', new Error((d.body as { error?: string })?.error || `glance: ${d.status}`))
       }
-    }
+    })
+    // addEventListener does NOT implicitly start a MessagePort the way `onmessage =` does — start
+    // it explicitly, before the hello goes out, so no reply can arrive before we're listening.
+    ch.port1.start()
     window.parent.postMessage({ type: 'glance:db-hello' }, appOrigin, [ch.port2])
   })
   return connecting
 }
 
-async function brokerCall(appOrigin: string, req: Omit<BrokerReq, 'id'>): Promise<unknown> {
+async function brokerCall(appOrigin: string, req: Omit<BrokerReq, 'id'>): Promise<JsonValue> {
   const p = await connect(appOrigin)
   const id = ++seq
-  return new Promise((resolve, reject) => {
+  return new Promise<JsonValue>((resolve, reject) => {
     const timer = setTimeout(() => settle(id, 'reject', new Error('glance.db: request timed out')), REQUEST_TIMEOUT_MS)
     pending.set(id, { resolve, reject, timer })
+    // oxlint-disable-next-line unicorn/require-post-message-target-origin -- MessagePort.postMessage has no targetOrigin parameter; MessagePort is not the window.postMessage this rule targets
     p.postMessage({ id, ...req })
   })
 }
@@ -109,7 +116,7 @@ async function mint(space: string, site: string): Promise<string> {
   return token
 }
 
-async function directCall(space: string, site: string, method: string, path: string, body?: unknown, retried?: boolean): Promise<unknown> {
+async function directCall(space: string, site: string, method: string, path: string, body?: unknown, retried?: boolean): Promise<JsonValue> {
   const t = token && Date.now() < expiresAt ? token : await mint(space, site)
   const res = await fetch(`/api/_data${path}`, {
     method,
@@ -153,19 +160,19 @@ function directTransport(space: string, site: string): Transport {
             socket = ws
             // Answered by the runtime's auto-response, so a keepalive never wakes the room.
             const ping = setInterval(() => ws.readyState === 1 && ws.send('ping'), PING_MS)
-            ws.onopen = () => h.onOpen()
-            ws.onmessage = (e: MessageEvent) => {
+            ws.addEventListener('open', () => h.onOpen())
+            ws.addEventListener('message', (e: MessageEvent) => {
               try {
                 const f = JSON.parse(e.data as string) as Frame
                 if (Array.isArray(f?.events)) h.onFrame(f)
               } catch {
                 // 'pong' and anything else unparseable: not a frame.
               }
-            }
-            ws.onclose = () => {
+            })
+            ws.addEventListener('close', () => {
               clearInterval(ping)
               if (!stopped) setTimeout(dial, RECONNECT_MS)
-            }
+            })
           })
           .catch(() => {
             if (!stopped) setTimeout(dial, RECONNECT_MS)
@@ -203,8 +210,12 @@ function brokerTransport(appOrigin: string): Transport {
     close() {
       stream = null
       // The parent owns the socket, so only it can drop one — this is the op `dbBroker.closeStream`
-      // has always implemented and nothing ever sent.
-      void brokerCall(appOrigin, { op: 'unsubscribe' }).catch(() => {})
+      // has always implemented and nothing ever sent. Best-effort teardown (the page is already
+      // gone by the time this could fail), but a failure is still information — surface it instead
+      // of discarding it silently.
+      void brokerCall(appOrigin, { op: 'unsubscribe' }).catch((err: unknown) => {
+        console.error('glance.db: unsubscribe failed', err)
+      })
     },
     catchUp: (cursor) => brokerCall(appOrigin, { op: 'subscribe', cursor: cursor ?? undefined }) as Promise<Frame>,
   }
@@ -224,14 +235,14 @@ function subscriptions() {
 
 // --- public surface -------------------------------------------------------------------------
 
-function call(op: string, collection: string, docId?: string, data?: unknown): Promise<unknown> {
+function call(op: string, coll: string, docId?: string, data?: unknown): Promise<JsonValue> {
   if (boot?.space && boot?.site) {
-    const seg = docId !== undefined ? `/${collection}/${encodeURIComponent(docId)}` : `/${collection}`
+    const seg = docId !== undefined ? `/${coll}/${encodeURIComponent(docId)}` : `/${coll}`
     const method = op === 'create' ? 'POST' : op === 'put' ? 'PUT' : op === 'delete' ? 'DELETE' : 'GET'
     return directCall(boot.space, boot.site, method, seg, data)
   }
   if (boot?.appOrigin && window.parent !== window) {
-    return brokerCall(boot.appOrigin, { op, collection, docId, data })
+    return brokerCall(boot.appOrigin, { op, collection: coll, docId, data })
   }
   return Promise.reject(
     new Error('glance.db: not connected — open this site through the Glance app, or set window.__GLANCE_DB__'),

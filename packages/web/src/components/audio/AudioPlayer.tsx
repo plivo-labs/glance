@@ -25,7 +25,7 @@ export function AudioPlayer({
   const ref = audioRef ?? internalRef
   return (
     <div key={src} className={cn('flex w-full flex-col gap-2', className)}>
-      {/* biome-ignore lint/a11y/useMediaCaption: audio-only source, no track to caption */}
+      {/* oxlint-disable-next-line jsx-a11y/media-has-caption -- audio-only source, no track to caption */}
       <audio ref={ref} src={src} preload="metadata" />
       <AudioScrubber audioRef={ref} compact={compact} />
     </div>

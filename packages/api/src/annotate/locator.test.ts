@@ -8,6 +8,7 @@ import { findRange, newEpoch, resolveSelector, selectionContext, sharedTextIndex
 
 function docFrom(html: string): Document {
   const window = new Window()
+  // safe-html: static test fixture HTML (docFrom() callers all pass literals)
   window.document.body.innerHTML = html
   return window.document as unknown as Document
 }

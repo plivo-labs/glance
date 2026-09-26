@@ -158,7 +158,7 @@ describe('A — emoji picker', () => {
     expect(screen.queryByPlaceholderText('Search emoji')).toBe(null)
   })
 
-  test('an emoji is a draft like any other — the submit button wakes up', () => {
+  test('an emoji is a draft like any other — the submit button wakes up', async () => {
     const onSubmit = mock((_body: string, _mentions: string[]) => {})
     render(<Composer placeholder="Add a comment" submitLabel="Comment" onSubmit={onSubmit} />)
     const submitButton = screen.getByRole('button', { name: 'Comment' }) as HTMLButtonElement
@@ -171,6 +171,9 @@ describe('A — emoji picker', () => {
     expect(submitButton.disabled).toBe(false)
     fireEvent.click(submitButton)
     expect(onSubmit.mock.calls[0]).toEqual(['🔥', []])
+    // submit() is async even though this onSubmit is sync — the `await` still yields a tick, and
+    // its continuation (clearing the draft) must settle inside act before the test returns.
+    await act(async () => {})
   })
 })
 

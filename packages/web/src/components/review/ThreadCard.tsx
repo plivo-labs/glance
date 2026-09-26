@@ -66,7 +66,7 @@ export function ThreadCard({
   // RETHROWS after toasting: a reply that resolves on failure lets the caller close the composer
   // and Composer clear the draft, so the typed reply (or the recording) is gone with nothing to
   // retry. Callers that close UI on success must therefore await this and let a rejection stop them.
-  async function run(fn: () => Promise<unknown>, pushed: boolean) {
+  async function run<T>(fn: () => Promise<T>, pushed: boolean) {
     try {
       await fn()
     } catch (err) {
@@ -98,8 +98,16 @@ export function ThreadCard({
 
   // onClick handler for the button actions: they have no draft to protect and their failure is
   // already a toast, so the rejection `run` raises is deliberately dropped rather than left unhandled.
-  // Every button action here (delete, resolve, reopen) is one the room does NOT push back.
-  const act = (fn: () => Promise<unknown>) => () => void run(fn, false).catch(() => {})
+  // Every button action here (delete, resolve, reopen) is one the room does NOT push back. An
+  // await/try-catch (not a `.catch` chain) absorbs it, since `run` already did everything a handler
+  // here needs done.
+  const act = <T,>(fn: () => Promise<T>) => async () => {
+    try {
+      await run(fn, false)
+    } catch {
+      // run() already toasted — nothing left for this onClick handler to do.
+    }
+  }
 
   // A thread nobody has replied to yet is a remark, not a conversation, so it does not pay for a
   // permanently mounted reply bar (measured: that bar costs more than the chrome it replaced, and a

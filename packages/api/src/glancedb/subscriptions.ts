@@ -75,6 +75,7 @@ export function createSubscriptions(transport: Transport) {
 
   function dispatch(e: ChangeEvent): void {
     // A copy: a callback may unsubscribe (its own handler or another) mid-dispatch.
+    // oxlint-disable-next-line unicorn/no-useless-spread -- the copy is the point; `listeners` is a Set being mutated during this loop
     for (const l of [...listeners]) {
       if (l.collection !== e.collection || l.type !== e.type) continue
       try {

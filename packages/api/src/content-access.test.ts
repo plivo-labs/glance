@@ -215,7 +215,7 @@ describe('T1.1 happy path = exactly one D1 round trip', () => {
 // removal / delete / archive between two hits flips 200 → 4xx/410 with no R2 work on the denial.
 // ---------------------------------------------------------------------------------------------
 describe('T1.4 live transitions on the same token', () => {
-  async function expectFlip(s: Setup, t: string, mutate: () => Promise<unknown>, deniedStatus: number) {
+  async function expectFlip(s: Setup, t: string, mutate: () => Promise<void>, deniedStatus: number) {
     const first = await s.app.request(`/_t/${t}/sp/site/index.html`, {}, s.env)
     expect(first.status).toBe(200)
     await mutate()

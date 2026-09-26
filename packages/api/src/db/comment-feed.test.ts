@@ -681,10 +681,10 @@ describe('assembleCommentFeed', () => {
 
     const boundaryRows = distinctRows.map((row) => {
       if (row.commentId === 'authored-10') {
-        return { ...row, commentId: 'boundary-high', createdAt: '2026-07-11T10:10:00.000Z', rowid: 900 }
+        return Object.assign({}, row, { commentId: 'boundary-high', createdAt: '2026-07-11T10:10:00.000Z', rowid: 900 })
       }
       if (row.commentId === 'authored-11') {
-        return { ...row, commentId: 'boundary-low', createdAt: '2026-07-11T10:10:00.000Z', rowid: 100 }
+        return Object.assign({}, row, { commentId: 'boundary-low', createdAt: '2026-07-11T10:10:00.000Z', rowid: 100 })
       }
       return row
     })

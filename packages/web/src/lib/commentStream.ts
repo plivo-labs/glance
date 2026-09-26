@@ -32,10 +32,11 @@ export type CommentStreamEvent = CommentEvent | TypingEvent
 export type CommentStreamSocket = {
   close: () => void
   send: (data: string) => void
-  onopen: (() => void) | null
-  onmessage: ((e: { data: unknown }) => void) | null
-  onclose: (() => void) | null
+  addEventListener: (type: 'open' | 'message' | 'close', fn: (e: { data: unknown }) => void) => void
 }
+
+/** What `post()` puts on the wire — the only two frames this rail ever sends. */
+type OutgoingFrame = { type: 'typing'; threadId: string } | { type: 'typing.stop'; threadId: string }
 
 const WS_PROTOCOL = 'glance.db.v1'
 const RECONNECT_MS = 3000
@@ -109,25 +110,25 @@ export function createCommentStream(
     // Each handler re-checks `disposed`: dispose() clears our own reference and calls ws.close(),
     // but close() is not synchronous delivery — a late event or close callback can still land on
     // this closure afterward, and a disposed stream must stay inert for it (case 5).
-    ws.onopen = () => {
+    ws.addEventListener('open', () => {
       if (disposed) return
       open = true
       // A connection that actually opened resets the backoff: the next outage starts from the fast
       // retry again, so a 300s token expiry costs one 3s gap, not whatever the last outage grew to.
       backoff = reconnectMs
       if (dials > 1) safely(opts.onReconnect)
-    }
-    ws.onmessage = (e) => {
+    })
+    ws.addEventListener('message', (e) => {
       if (disposed) return
       const event = parseFrame(e.data)
       if (event) safely(() => opts.onEvent(event))
-    }
-    ws.onclose = () => {
+    })
+    ws.addEventListener('close', () => {
       if (disposed || socket !== ws) return
       open = false
       socket = null
       redial()
-    }
+    })
   }
 
   /** Backoff, not a fixed interval. This stream is dialled on EVERY viewer mount, whether or not the
@@ -150,7 +151,7 @@ export function createCommentStream(
    *  (and the 300s server-side close is routine), and a typing ping is worthless by the time a
    *  later socket could flush it — buffering keystrokes would only grow without bound and then
    *  deliver a lie. Returns whether the frame actually left. */
-  function post(frame: object): boolean {
+  function post(frame: OutgoingFrame): boolean {
     if (disposed || !open || !socket) return false
     try {
       socket.send(JSON.stringify(frame))
@@ -193,6 +194,19 @@ export function createCommentStream(
   }
 }
 
+/** Raw wire shape of a comments-channel frame once `channel` is stripped off — untrusted server
+ *  input, so every field stays `unknown` until `wellFormed()` narrows it. */
+type RawCommentFrame = {
+  type?: unknown
+  siteId?: unknown
+  filePath?: unknown
+  threadId?: unknown
+  thread?: unknown
+  comment?: unknown
+  viewerId?: unknown
+  expiresAt?: unknown
+}
+
 /** A comments-channel frame, or nothing — anything malformed, non-object, or tagged for the OTHER
  *  channel (`db`) must be silently dropped: a hostile or buggy server frame must never throw. */
 function parseFrame(data: unknown): CommentStreamEvent | null {
@@ -215,7 +229,7 @@ function parseFrame(data: unknown): CommentStreamEvent | null {
  *  throws later, inside the arbiter, while the buffered folds are being applied. That leaves the
  *  buffer undrained and the read unsettled, so every later push queues behind the poison one and
  *  list loading is wedged for the life of the mount. One bad frame must cost one bad frame. */
-function wellFormed(e: Record<string, unknown>): boolean {
+function wellFormed(e: RawCommentFrame): boolean {
   const str = (v: unknown) => typeof v === 'string'
   const withId = (v: unknown) => typeof v === 'object' && v !== null && str((v as { id?: unknown }).id)
   if (e.type === 'typing') return str(e.viewerId) && str(e.threadId) && typeof e.expiresAt === 'number'

@@ -89,8 +89,8 @@ export function logDeletedStmt(db: DrizzleD1Database, siteId: string, at: string
  *  (the id `toDoc` exposes), and `seq` is DROPPED: the raw per-site sequence is the site's whole
  *  mutation count, and its gaps alone would tell a viewer how many documents they cannot see just
  *  changed. It leaves the server only sealed inside a cursor. */
-export function toEvent(row: Omit<ChangeEvent, 'siteId' | 'seq'>) {
-  return { type: row.type, collection: row.collection, id: row.docId, createdBy: row.createdBy, at: row.at }
+export function toEvent(change: Omit<ChangeEvent, 'siteId' | 'seq'>) {
+  return { type: change.type, collection: change.collection, id: change.docId, createdBy: change.createdBy, at: change.at }
 }
 
 // --- Replay reads (the catch-up endpoint's half) ---
@@ -116,11 +116,11 @@ export function changesAfter(
  *  rather than max(seq), so the statement stays a plain column select (D1 maps BATCH result rows
  *  by column NAME, and an unaliased aggregate has none). */
 export async function currentSeq(db: DrizzleD1Database, siteId: string): Promise<number> {
-  const [row] = await db
+  const [head] = await db
     .select({ seq: changeLog.seq })
     .from(changeLog)
     .where(eq(changeLog.siteId, siteId))
     .orderBy(desc(changeLog.seq))
     .limit(1)
-  return row?.seq ?? 0
+  return head?.seq ?? 0
 }

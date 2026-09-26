@@ -4,6 +4,7 @@ import { siteSummaries, sites, spaces } from '../db/schema'
 import type { ResolvedSite } from '../lib/site-access'
 import { fetchAccessFacts, siteAccessFromFacts } from '../lib/site-access'
 import { summarizeDeps } from '../lib/summarize'
+import { describeError } from '../lib/errors'
 import { requireAuth } from '../middleware/auth'
 import type { AppEnv } from '../types'
 
@@ -36,9 +37,13 @@ const MAX_BLOCK_TEXT = 2000
 
 type AskBody = { question: string; quote: string; blockText?: string }
 
+/** The wire shape of an unvalidated ask request — every field is `unknown` until `validateBody`
+ *  narrows it, naming the boundary instead of reaching for a bare dictionary. */
+type AskRequestBody = { question?: unknown; quote?: unknown; blockText?: unknown }
+
 function validateBody(body: unknown): AskBody | null {
   if (typeof body !== 'object' || body === null) return null
-  const { question, quote, blockText } = body as Record<string, unknown>
+  const { question, quote, blockText } = body as AskRequestBody
   if (typeof question !== 'string' || typeof quote !== 'string') return null
   const trimmedQuestion = question.trim()
   if (trimmedQuestion.length < 1 || trimmedQuestion.length > MAX_QUESTION) return null
@@ -103,18 +108,18 @@ ask.post('/:space/:site/ask', async (c) => {
     stream: true,
   }
 
-  let value: unknown
+  let value: ReadableStream
   try {
     // Loosely typed on purpose: workers-types pins gpt-oss's inputs to the Responses shape, but
     // that shape STREAMS EMPTY (see ASK_MODEL comment) — the chat shape works at runtime and the
-    // published types just lag it.
-    value = await (deps.ai.run as (model: string, inputs: unknown) => Promise<unknown>)(ASK_MODEL, request)
+    // published types just lag it. The cast states what it actually returns with `stream: true`.
+    value = await (deps.ai.run as (model: string, inputs: unknown) => Promise<ReadableStream>)(ASK_MODEL, request)
   } catch (err) {
     // Fail loud into Workers Logs: the binding's error names the real cause (model gone, gateway
     // credentials, quota) and the client only ever sees the generic 502 — without this line the
     // only diagnostic path is deploying a probe worker (learned the hard way, 2026-08-17).
-    console.error('ask: AI.run failed', err instanceof Error ? `${err.name}: ${err.message}` : String(err))
+    console.error('ask: AI.run failed', describeError(err))
     return c.json({ error: 'generation failed', retryable: true } as const, 502)
   }
-  return new Response(value as ReadableStream, { headers: { 'content-type': 'text/event-stream' } })
+  return new Response(value, { headers: { 'content-type': 'text/event-stream' } })
 })

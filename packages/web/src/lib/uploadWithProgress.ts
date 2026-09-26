@@ -41,10 +41,10 @@ export function uploadFiles(
     // write whose result the very next read must see — thread the bookmark both ways by hand.
     const bookmark = getDbBookmark()
     if (bookmark) xhr.setRequestHeader(BOOKMARK_HEADER, bookmark)
-    xhr.upload.onprogress = (e) => {
+    xhr.upload.addEventListener('progress', (e) => {
       if (e.lengthComputable) opts.onProgress?.(Math.round((e.loaded / e.total) * 100))
-    }
-    xhr.onload = () => {
+    })
+    xhr.addEventListener('load', () => {
       captureDbBookmark(xhr.getResponseHeader(BOOKMARK_HEADER))
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
@@ -62,9 +62,9 @@ export function uploadFiles(
         }
         reject(new UploadError(xhr.status, message))
       }
-    }
-    xhr.onerror = () => reject(new Error('Network error during upload'))
-    xhr.onabort = () => reject(new Error('Upload aborted'))
+    })
+    xhr.addEventListener('error', () => reject(new Error('Network error during upload')))
+    xhr.addEventListener('abort', () => reject(new Error('Upload aborted')))
     xhr.send(form)
   })
 }

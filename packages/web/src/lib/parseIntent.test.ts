@@ -145,8 +145,15 @@ describe('parseIntent', () => {
   })
 
   // The page→rail click. `id` is a thread id the parent looks up in its OWN loaded threads, so the
-  // filter's whole job is shape: a string, non-empty, within the field cap.
-  const anchorClick = (over: Record<string, unknown> = {}) => ({ type: 'glance:anchor-click', id: 'thread-1', ...over })
+  // filter's whole job is shape: a string, non-empty, within the field cap. `id` is `unknown`,
+  // matching parseIntent.ts's own untrusted read of it — the whole point of these tests is to feed
+  // it every hostile shape and prove the parser rejects each one.
+  type AnchorClickWire = { type: 'glance:anchor-click'; id?: unknown }
+  const anchorClick = (over: Partial<AnchorClickWire> = {}): AnchorClickWire => ({
+    type: 'glance:anchor-click',
+    id: 'thread-1',
+    ...over,
+  })
 
   test('parses a well-formed anchor-click', () => {
     expect(parseIntent(ev({ data: anchorClick() }), expected)).toEqual({ type: 'anchorClick', id: 'thread-1' })

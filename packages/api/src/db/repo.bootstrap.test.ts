@@ -114,10 +114,8 @@ describe('createPersonalSpace — slug-conflict resilience (#27)', () => {
 describe('indexes (0007 migration reaches the harness)', () => {
   test('new-perf-indexes-exist: 0007 is applied by makeDb (guards the silent S-MIGRATE seam)', async () => {
     const db = makeDb()
-    const rows = (await (
-      db as unknown as { all: (q: unknown) => Promise<Array<Record<string, unknown>>> }
-    ).all(sql`SELECT name FROM sqlite_master WHERE type = 'index'`)) as Array<Record<string, unknown>>
-    const names = new Set(rows.map((r) => String(r.name ?? Object.values(r)[0])))
+    const rows = await db.all<{ name: string }>(sql`SELECT name FROM sqlite_master WHERE type = 'index'`)
+    const names = new Set(rows.map((r) => r.name))
     for (const idx of ['sites_owner', 'space_members_user', 'site_user_shares_user', 'site_group_shares_space']) {
       expect(names.has(idx)).toBe(true)
     }

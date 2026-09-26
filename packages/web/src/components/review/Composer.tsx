@@ -263,7 +263,6 @@ export function Composer({
       <div className="relative">
         <textarea
           ref={textareaRef}
-          // biome-ignore lint/a11y/noAutofocus: composer is opened by an explicit user action.
           autoFocus={autoFocus}
           value={body}
           onChange={onBodyChange}

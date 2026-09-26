@@ -39,11 +39,9 @@ export function useForkSite(site: { spaceSlug: string; siteSlug: string }) {
     setForking(true)
     try {
       const slug = forkSlug(title)
-      const forked = await api.post<ForkedSite>(`/api/sites/${site.spaceSlug}/${site.siteSlug}/fork`, {
-        title,
-        visibility,
-        ...(slug ? { slug } : {}),
-      })
+      const body: { title: string; visibility: Visibility; slug?: string } = { title, visibility }
+      if (slug) body.slug = slug
+      const forked = await api.post<ForkedSite>(`/api/sites/${site.spaceSlug}/${site.siteSlug}/fork`, body)
       toast.success('Site forked', { description: `${forked.spaceSlug}/${forked.siteSlug}` })
       navigate(`/${forked.spaceSlug}/${forked.siteSlug}`)
       return true

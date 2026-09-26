@@ -5,7 +5,7 @@
 import { useState } from 'react'
 import { describe, expect, mock, test } from 'bun:test'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { API_KEY_PREFIX, type ApiKeyItem } from '@/lib/types'
+import { API_KEY_PREFIX, type ApiKeyGrants, type ApiKeyItem } from '@/lib/types'
 import { ApiKeyDialog } from './ApiKeyDialog'
 
 // Composed from the exported prefix rather than written out: a key-shaped literal in a test file
@@ -21,7 +21,10 @@ const SITE = {
   status: 'active',
 }
 
-type Call = { url: string; method: string; body: Record<string, unknown> }
+// POST /api/api-keys request body (packages/web/src/components/ApiKeyDialog.tsx); GET requests
+// send no body, hence Partial.
+type MintRequestBody = { name: string; expiresInDays: number; grants: ApiKeyGrants }
+type Call = { url: string; method: string; body: Partial<MintRequestBody> }
 
 function stubFetch(
   mintBody: unknown = {
@@ -36,7 +39,7 @@ function stubFetch(
   const calls: Call[] = []
   globalThis.fetch = ((url: string, init?: RequestInit) => {
     const method = init?.method ?? 'GET'
-    calls.push({ url, method, body: init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {} })
+    calls.push({ url, method, body: init?.body ? (JSON.parse(String(init.body)) as Partial<MintRequestBody>) : {} })
     if (url === '/api/sites/mine') {
       return Promise.resolve(
         new Response(JSON.stringify([SITE]), { status: 200, headers: { 'content-type': 'application/json' } }),
@@ -58,7 +61,9 @@ function stubClipboard() {
 // Mirrors how settings-keys.tsx drives the dialog: `open` lives in the PARENT, so closing and
 // reopening re-renders the SAME ApiKeyDialog instance rather than remounting it — the real test
 // of whether the secret was cleared, not merely never re-fetched.
-function Harness({ onMinted = () => {} }: { onMinted?: (key: ApiKeyItem) => void }) {
+const noopOnMinted = (_key: ApiKeyItem) => {}
+
+function Harness({ onMinted = noopOnMinted }: { onMinted?: (key: ApiKeyItem) => void }) {
   const [open, setOpen] = useState(true)
   return (
     <>

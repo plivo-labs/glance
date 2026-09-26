@@ -13,6 +13,7 @@ import { anchorIdAtPoint, anchorRanges, installIndexInvalidation } from './reflo
 
 function windowWith(html: string) {
   const win = new Window()
+  // safe-html: static test fixture HTML (windowWith() callers all pass literals)
   win.document.body.innerHTML = html
   return win as unknown as Window & { document: Document; Range: typeof Range; Element: typeof Element }
 }

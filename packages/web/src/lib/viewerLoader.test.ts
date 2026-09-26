@@ -30,8 +30,8 @@ const stubMeta = (result: ViewerSite | Promise<ViewerSite>) => {
   spies.push(s)
   return s
 }
-const stubMetaError = (err: unknown) => {
-  const s = spyOn(api, 'get').mockReturnValue(Promise.reject(err))
+const stubMetaError = (rejection: unknown) => {
+  const s = spyOn(api, 'get').mockReturnValue(Promise.reject(rejection))
   spies.push(s)
   return s
 }

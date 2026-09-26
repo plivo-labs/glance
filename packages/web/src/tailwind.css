@@ -122,6 +122,13 @@
   background: currentColor;
 }
 
+/* Login vignette: top blueprint-blue lift + bottom shade to seat the grid. */
+.bp-vignette {
+  background:
+    radial-gradient(120% 90% at 50% -10%, color-mix(in oklch, var(--accent) 12%, transparent), transparent 55%),
+    radial-gradient(90% 90% at 50% 115%, rgb(0 0 0 / 0.6), transparent 60%);
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .bp-rise {
     opacity: 0;

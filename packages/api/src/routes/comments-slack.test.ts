@@ -56,7 +56,7 @@ async function seedCommentApp(opts: { ownerEmail: string; commenterEmail: string
   return { ...route, owner, commenter }
 }
 
-const bindings = (env: AppEnv['Bindings'], extra: Record<string, unknown>) =>
+const bindings = (env: AppEnv['Bindings'], extra: Partial<AppEnv['Bindings']>) =>
   ({ ...env, ...extra }) as unknown as AppEnv['Bindings']
 
 const postComment = (app: ReturnType<typeof makeRouteApp>['app'], env: AppEnv['Bindings'], body: unknown) =>

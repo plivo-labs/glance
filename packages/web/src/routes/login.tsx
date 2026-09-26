@@ -6,6 +6,7 @@ import type { Me, PublicConfig } from '../lib/types'
 import { CopyButton } from '@/components/CopyButton'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+// oxlint-disable-next-line import/no-unassigned-import -- CSS side-effect import, no binding possible
 import '@/tailwind.css'
 
 // Public source — surfaced in the header + footer so a self-hoster can find the repo.
@@ -107,14 +108,7 @@ export function Component() {
         }}
       />
       {/* vignette: top light + bottom shade to seat the grid and lift the content */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 z-0"
-        style={{
-          background:
-            'radial-gradient(120% 90% at 50% -10%, rgba(86,130,196,0.12), transparent 55%), radial-gradient(90% 90% at 50% 115%, rgba(0,0,0,0.6), transparent 60%)',
-        }}
-      />
+      <div aria-hidden className="bp-vignette pointer-events-none absolute inset-0 z-0" />
 
       <div className="relative z-10 mx-auto flex min-h-screen max-w-6xl flex-col px-6 py-7 sm:px-8">
         <header className="bp-rise flex items-center justify-between">

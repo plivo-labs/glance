@@ -530,11 +530,11 @@ dataToken.post('/:space/:site', async (c) => {
   if (!site) return c.json({ error: 'not found' }, 404)
   if (!access.ok) return c.json({ error: 'forbidden' }, access.status)
 
-  const credential = c.get('credential')
+  const cred = c.get('credential')
   let ceiling: DataCapability[] | null = null
-  if (credential.kind === 'key') {
-    if (!credential.grants.data) return c.json({ error: 'forbidden' }, 403)
-    const { scope, caps } = credential.grants.data
+  if (cred.kind === 'key') {
+    if (!cred.grants.data) return c.json({ error: 'forbidden' }, 403)
+    const { scope, caps } = cred.grants.data
     const allowed = scope.kind === 'all-owned' ? site.ownerId === user.id : scope.siteIds.includes(site.id)
     if (!allowed) return c.json({ error: 'forbidden' }, 403)
     ceiling = caps

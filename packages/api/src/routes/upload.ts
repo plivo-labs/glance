@@ -1,6 +1,6 @@
-import { and, eq, sql } from 'drizzle-orm'
+import { and, eq, sql, type SQL } from 'drizzle-orm'
 import { Hono } from 'hono'
-import type { NewFileRow } from '../db/schema'
+import type { NewFileRow, Visibility } from '../db/schema'
 import { files, sites, spaceMembers, spaces, siteUserShares } from '../db/schema'
 import { batchAll } from '../lib/d1'
 import { canReplace } from '../lib/access'
@@ -318,24 +318,30 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
       // lastReplacedBy, and apply visibility only when the caller explicitly sent one (absent → keep
       // the existing tier — replace's long-standing default). One D1 batch so the serving worker
       // never sees a half-updated site.
+      const patch: {
+        contentVersion: SQL
+        lastReplacedBy: string
+        updatedAt: string
+        description: string | null
+        visibility?: Visibility
+        theme?: string | null
+        title?: SQL
+      } = {
+        contentVersion: sql`${sites.contentVersion} + 1`,
+        lastReplacedBy: user.id,
+        updatedAt: new Date().toISOString(),
+        // Unconditional (not COALESCE'd): a redeploy whose entry dropped its description meta
+        // must clear the stale blurb rather than keep unfurling the previous content's.
+        description,
+      }
+      if (hasVisibility && isVisibility(visibility)) patch.visibility = visibility
+      // Explicit-only, like visibility: an owner redeploy without --theme keeps the current one.
+      if (hasTheme) patch.theme = theme
+      if (derivedTitle !== null) patch.title = sql`coalesce(${sites.title}, ${derivedTitle})`
       await db.batch([
         db.delete(files).where(eq(files.siteId, siteId)),
         ...insertRows,
-        db
-          .update(sites)
-          .set({
-            contentVersion: sql`${sites.contentVersion} + 1`,
-            lastReplacedBy: user.id,
-            updatedAt: new Date().toISOString(),
-            ...(hasVisibility && isVisibility(visibility) ? { visibility } : {}),
-            // Explicit-only, like visibility: an owner redeploy without --theme keeps the current one.
-            ...(hasTheme ? { theme } : {}),
-            ...(derivedTitle !== null ? { title: sql`coalesce(${sites.title}, ${derivedTitle})` } : {}),
-            // Unconditional (not COALESCE'd): a redeploy whose entry dropped its description meta
-            // must clear the stale blurb rather than keep unfurling the previous content's.
-            description,
-          })
-          .where(eq(sites.id, siteId)),
+        db.update(sites).set(patch).where(eq(sites.id, siteId)),
       ])
     }
   } catch (err) {
