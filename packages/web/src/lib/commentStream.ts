@@ -42,10 +42,6 @@ const RECONNECT_MS = 3000
 /** The ceiling the backoff doubles up to (see `redial`). A room that is simply unavailable then
  *  costs about one dial a minute per tab instead of twenty. */
 const MAX_RECONNECT_MS = 60_000
-/** The socket route mints a 300s data token, and the room only notices expiry when it next
- *  broadcasts, by closing the socket. That lands the 3s redial on exactly the event the viewer is
- *  waiting for (usually their own comment), so renew before the token lapses instead. */
-const RENEW_MS = 270_000
 /** The whole cost control for the send half: every inbound message WAKES the Durable Object, so an
  *  uncapped keystroke stream is the bill. One ping per thread per window, no matter how fast the
  *  typing. It lives here rather than in the composer so no caller can forget it — and it is shorter
@@ -69,16 +65,14 @@ export type CommentStream = {
 
 export function createCommentStream(
   opts: { site: CommentStreamSite; appOrigin: string; onEvent: (event: CommentStreamEvent) => void; onReconnect: () => void },
-  deps: { newSocket: (url: string, protocols: string[]) => CommentStreamSocket; reconnectMs?: number; renewMs?: number } = {
+  deps: { newSocket: (url: string, protocols: string[]) => CommentStreamSocket; reconnectMs?: number } = {
     newSocket: (url, protocols) => new WebSocket(url, protocols) as unknown as CommentStreamSocket,
   },
 ): CommentStream {
   const reconnectMs = deps.reconnectMs ?? RECONNECT_MS
-  const renewMs = deps.renewMs ?? RENEW_MS
   let disposed = false
   let socket: CommentStreamSocket | null = null
   let redialTimer: ReturnType<typeof setTimeout> | null = null
-  let renewTimer: ReturnType<typeof setTimeout> | null = null
   let dials = 0
   let open = false
   /** The CURRENT wait before the next dial — doubles per failed attempt, resets on a real open. */
@@ -121,16 +115,6 @@ export function createCommentStream(
       // A connection that actually opened resets the backoff: the next outage starts from the fast
       // retry again, so a 300s token expiry costs one 3s gap, not whatever the last outage grew to.
       backoff = reconnectMs
-      renewTimer = setTimeout(() => {
-        renewTimer = null
-        if (disposed || socket !== ws) return
-        // Detach first so this socket's onclose is a no-op, then dial now rather than after the 3s
-        // redial wait. The new socket's open fires onReconnect, whose re-read covers the brief gap.
-        socket = null
-        open = false
-        ws.close()
-        dial()
-      }, renewMs)
       if (dials > 1) safely(opts.onReconnect)
     }
     ws.onmessage = (e) => {
@@ -201,8 +185,6 @@ export function createCommentStream(
       open = false
       if (redialTimer) clearTimeout(redialTimer)
       redialTimer = null
-      if (renewTimer) clearTimeout(renewTimer)
-      renewTimer = null
       lastTypingAt.clear()
       const ws = socket
       socket = null

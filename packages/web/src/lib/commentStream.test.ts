@@ -35,7 +35,7 @@ class FakeSocket {
   }
 }
 
-function makeStream(o: { onEvent?: (e: unknown) => void; onReconnect?: () => void; reconnectMs?: number; renewMs?: number } = {}) {
+function makeStream(o: { onEvent?: (e: unknown) => void; onReconnect?: () => void; reconnectMs?: number } = {}) {
   const sockets: FakeSocket[] = []
   const events: unknown[] = []
   const reconnects: number[] = []
@@ -48,7 +48,6 @@ function makeStream(o: { onEvent?: (e: unknown) => void; onReconnect?: () => voi
         return s
       },
       reconnectMs: o.reconnectMs ?? 5,
-      renewMs: o.renewMs,
     },
   )
   return { stream, sockets, events, reconnects }
@@ -194,20 +193,6 @@ describe('createCommentStream', () => {
     await until('redial after a successful connection', () => sockets[3])
     // Back to the fast retry, not to whatever the outage had grown to.
     expect(Date.now() - openedAt).toBeLessThan(60)
-  })
-
-  // The room closes a past-exp socket only when it next broadcasts, so without a renew the 3s
-  // redial lands on the very event the viewer is waiting for (their own new comment).
-  test('an open socket is renewed before its token lapses: immediate redial, no reconnect wait', async () => {
-    const { sockets, reconnects } = makeStream({ reconnectMs: 1000, renewMs: 20 })
-    sockets[0].onopen?.()
-    const s2 = await until('renew socket', () => sockets[1], 200)
-    expect(sockets[0].closed).toBe(true)
-    sockets[0].onclose?.() // the old socket's late close must not schedule a second dial
-    s2.onopen?.()
-    expect(reconnects).toEqual([1])
-    await tick(10)
-    expect(sockets).toHaveLength(2)
   })
 
   test('on close, a redial is scheduled and a NEW socket is actually dialled', async () => {
