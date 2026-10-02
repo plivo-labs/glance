@@ -1,4 +1,4 @@
-import { and, count, desc, eq } from 'drizzle-orm'
+import { and, desc, eq } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { type Context, Hono } from 'hono'
 import { sessionDb } from '../db/client'
@@ -425,12 +425,13 @@ function scoped(claims: DataClaims, collection: string, docId: string) {
   return and(...docWhere(claims, collection, docId), eq(documents.createdBy, claims.viewerId))
 }
 
-// Cheap per-site row COUNT (siteId is the leftmost column of documents_site_collection_creator,
-// so this is a covering index scan) gating every INSERT — an authorized viewer can't create
-// unbounded documents. A SOFT cap: the COUNT→insert window is racy under concurrency, acceptable
-// for a modest DoS guard. Reads and in-place updates are unaffected (updates never add a row).
+// Per-site row count gating every INSERT — an authorized viewer can't create unbounded documents.
+// Reads the trigger-maintained sites.docCount (one row) rather than COUNT(*) over documents, which
+// read one row per existing document on every insert. A SOFT cap: the read→insert window is racy
+// under concurrency, acceptable for a modest DoS guard. Reads and in-place updates are unaffected
+// (updates never add a row).
 async function atSiteDocQuota(db: DrizzleD1Database, siteId: string): Promise<boolean> {
-  const [row] = await db.select({ n: count() }).from(documents).where(eq(documents.siteId, siteId))
+  const [row] = await db.select({ n: sites.docCount }).from(sites).where(eq(sites.id, siteId)).limit(1)
   return (row?.n ?? 0) >= MAX_DOCS_PER_SITE
 }
 

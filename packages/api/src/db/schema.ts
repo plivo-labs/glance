@@ -73,6 +73,9 @@ export const sites = sqliteTable(
     // (a pure string map — safe for the content-worker bundle) is the single validation authority,
     // so shipping a new theme is a CSS change, not a migration.
     theme: text('theme'),
+    // Number of glance.db `documents` rows this site holds. Never written by app code: the
+    // documents_doc_count_* triggers (migration 0030) own it, so FK-cascade deletes stay counted.
+    docCount: integer('docCount').notNull().default(0),
     createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
     // Last content-activity timestamp: set on create, re-stamped on every REPLACE (upload.ts), so a
     // re-deployed site bubbles back to the top of the Team activity feed (createdAt alone froze a busy
