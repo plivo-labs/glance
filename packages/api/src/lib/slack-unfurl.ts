@@ -85,19 +85,30 @@ export type UnfurlCard = {
 export function buildUnfurlAttachment(card: UnfurlCard, url: string, nowMs: number): SlackAttachment {
   const updated = relativeTime(card.updatedAt, nowMs)
   const meta = [`Glance · ${card.spaceSlug}/${card.siteSlug}`, ...(updated ? [`Updated ${updated}`] : [])]
-  return {
+  const attachment: SlackAttachment = {
     title: escapeSlack(card.title ?? card.siteSlug),
     title_link: url,
-    ...(card.description ? { text: escapeSlack(card.description) } : {}),
-    ...(card.imageUrl ? { image_url: card.imageUrl } : {}),
     footer: meta.join(' · '),
   }
+  if (card.description) attachment.text = escapeSlack(card.description)
+  if (card.imageUrl) attachment.image_url = card.imageUrl
+  return attachment
 }
 
 /** The `link_shared` fields that say WHICH message to attach the unfurl to. `unfurl_id`+`source` is
  *  the modern pair (it also covers composer-time previews); `channel`+`ts` is the fallback for an
  *  event that carries no unfurl_id. */
 export type UnfurlTarget = { unfurl_id?: string; source?: string; channel?: string; message_ts?: string }
+
+/** The chat.unfurl POST body `postUnfurl` assembles: a target discriminant (`unfurl_id`+`source`
+ *  for a link_shared event, `channel`+`ts` for a plain message) plus the per-URL card map. */
+export type PostedUnfurlBody = {
+  unfurl_id?: string
+  source?: string
+  channel?: string
+  ts?: string
+  unfurls: Record<string, SlackAttachment>
+}
 
 /** POST the assembled cards to chat.unfurl. Keys of `unfurls` MUST be the URLs verbatim as they
  *  appeared in the link_shared event; the nested-object form is what Slack's chat.unfurl JSON-body

@@ -9,6 +9,13 @@
  *  by every parse/read shim below so "missing" and "wrong type" always degrade the same way. */
 const str = (v: unknown): string => (typeof v === 'string' ? v : '')
 
+/** Raw wire shape shared by `buildElementAnchor`'s two untrusted-input readers below — every field
+ *  is read through `str()`, which already treats a wrong type the same as absent. */
+type RawElementFields = { selector?: unknown; tag?: unknown; preview?: unknown; textFallback?: unknown }
+
+/** Raw wire shape shared by the text-context readers below. */
+type RawTextFields = { prefix?: unknown; suffix?: unknown; v?: unknown }
+
 /** Collapse whitespace runs WITHOUT trimming. Kept separate from Unicode folding because the
  *  annotate index is already NFKC-folded before it applies the same edge-preserving policy. */
 export const collapseWhitespace = (s: string): string => s.replace(/\s+/g, ' ')
@@ -53,9 +60,9 @@ export function buildElementAnchor(input: { selector: string; tag?: string; prev
  *  defensive truncation `buildElementAnchor` does). Caps are read from ELEMENT_ANCHOR_LIMITS, so the
  *  field list lives in exactly one place. */
 export function parseElementAnchor(raw: unknown): { anchor: ElementAnchor } | { error: string } {
-  const a = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  const a = (raw && typeof raw === 'object' ? raw : {}) as RawElementFields
   if (!str(a.selector).trim()) return { error: 'element anchor requires a selector' }
-  for (const [field, cap] of Object.entries(ELEMENT_ANCHOR_LIMITS))
+  for (const [field, cap] of Object.entries(ELEMENT_ANCHOR_LIMITS) as [keyof RawElementFields, number][])
     if (str(a[field]).length > cap) return { error: 'element anchor field too long' }
   return { anchor: buildElementAnchor({ selector: str(a.selector), tag: str(a.tag), preview: str(a.preview), textFallback: str(a.textFallback) }) }
 }
@@ -83,7 +90,7 @@ export const TEXT_CONTEXT_LIMIT = 64
  *  the thread simply anchors the way it did before context existed. Over-cap input is truncated,
  *  not rejected, for the same reason. */
 export function parseTextContext(raw: unknown): StoredTextContext | null {
-  const c = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  const c = (raw && typeof raw === 'object' ? raw : {}) as RawTextFields
   const prefix = normalizeEdges(str(c.prefix)).slice(-TEXT_CONTEXT_LIMIT)
   const suffix = normalizeEdges(str(c.suffix)).slice(0, TEXT_CONTEXT_LIMIT)
   if (!prefix.trim() && !suffix.trim()) return null
@@ -101,7 +108,7 @@ export function normalizeEdges(s: string): string {
  *  context", which is a complete answer: the painter falls back to first-occurrence matching. */
 export function readTextContext(anchorType: string, anchor: unknown): TextContext | null {
   if (anchorType !== 'text' || anchor == null || typeof anchor !== 'object') return null
-  const a = anchor as Record<string, unknown>
+  const a = anchor as RawTextFields
   if (a.v !== TEXT_CONTEXT_VERSION) return null
   return { prefix: str(a.prefix), suffix: str(a.suffix) }
 }
@@ -112,7 +119,7 @@ export function readTextContext(anchorType: string, anchor: unknown): TextContex
  *  an element anchor or the JSON lacks a usable selector. */
 export function readElementAnchor(anchorType: string, anchor: unknown): ElementAnchor | null {
   if (anchorType !== 'element' || anchor == null || typeof anchor !== 'object') return null
-  const a = anchor as Record<string, unknown>
+  const a = anchor as RawElementFields
   if (typeof a.selector !== 'string' || !a.selector) return null
   return { selector: a.selector, tag: str(a.tag), preview: str(a.preview), textFallback: str(a.textFallback) }
 }

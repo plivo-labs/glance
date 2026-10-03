@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { Hono } from 'hono'
 import { requireSameOrigin } from '../middleware/auth'
+import type { CommentEvent } from '../realtime/comment-events'
 import { makeDb, makeKv, makeR2, seedSite, seedSpace, seedThread, seedUser } from '../test/harness'
 import type { AppEnv } from '../types'
 import { comments } from './comments'
@@ -17,7 +18,7 @@ const APP_URL = 'https://glance.example.com'
 
 /** A DurableObjectNamespace that records every /broadcast-comment request it receives. */
 function recordingRoom() {
-  const requests: { name: string; body: { type: string; siteId: string; [k: string]: unknown } }[] = []
+  const requests: { name: string; body: CommentEvent }[] = []
   const ns = {
     idFromName(name: string) {
       return { name }
@@ -40,13 +41,11 @@ async function setup(o: { room?: boolean } = { room: true }) {
   const r2 = makeR2()
   const kv = makeKv()
   const room = recordingRoom()
-  const env = {
-    APP_URL,
-    SESSION_SECRET: 's',
-    GLANCE_SESSIONS: kv,
-    GLANCE_FILES: r2,
-    ...(o.room === false ? {} : { SITE_ROOM: room.ns }),
-  } as unknown as AppEnv['Bindings']
+  // `room: false` drops the SITE_ROOM binding to exercise the no-realtime path; everything else
+  // is identical, so the binding is added rather than the whole env written out twice.
+  const bindings: Partial<AppEnv['Bindings']> = { APP_URL, SESSION_SECRET: 's', GLANCE_SESSIONS: kv, GLANCE_FILES: r2 }
+  if (o.room !== false) bindings.SITE_ROOM = room.ns as AppEnv['Bindings']['SITE_ROOM']
+  const env = bindings as unknown as AppEnv['Bindings']
   const app = new Hono<AppEnv>()
   app.use('/api/*', requireSameOrigin)
   app.use('/api/*', async (c, next) => {

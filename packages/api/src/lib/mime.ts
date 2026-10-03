@@ -58,11 +58,11 @@ const AUDIO_MIME_TO_EXT: ReadonlyMap<string, string> = Object.entries(EXT_MIME)
  *  back to its canonical extension. Null when neither identifies audio. */
 export function audioExtFromPart(
   filename: string | null | undefined,
-  contentType: string | null | undefined,
+  mimeType: string | null | undefined,
 ): string | null {
   const ext = extOf(filename ?? '')
   if (AUDIO_EXTENSIONS.has(ext)) return ext
-  const mime = (contentType ?? '').split(';')[0].trim().toLowerCase()
+  const mime = (mimeType ?? '').split(';')[0].trim().toLowerCase()
   return AUDIO_MIME_TO_EXT.get(mime) ?? null
 }
 

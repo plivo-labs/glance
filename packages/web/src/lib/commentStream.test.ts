@@ -11,29 +11,7 @@ const APP = 'https://glance.example.com'
 const SITE = { spaceSlug: 'sam', siteSlug: 'demo' }
 const WS_URL = 'wss://glance.example.com/api/sites/sam/demo/comments/socket'
 
-/** Enough of a WebSocket for the rail, plus the levers a test needs. */
-class FakeSocket {
-  onopen: (() => void) | null = null
-  onmessage: ((e: { data: unknown }) => void) | null = null
-  onclose: (() => void) | null = null
-  closed = false
-  /** Rail → server: every frame this socket was asked to send, in order. */
-  sent: string[] = []
-  constructor(
-    readonly url: string,
-    readonly protocols: string[],
-  ) {}
-  close() {
-    this.closed = true
-  }
-  send(data: string) {
-    this.sent.push(data)
-  }
-  /** Server → rail: one pushed frame. */
-  emit(data: unknown) {
-    this.onmessage?.({ data: typeof data === 'string' ? data : JSON.stringify(data) })
-  }
-}
+import { FakeSocket } from '../test/fakeSocket'
 
 function makeStream(o: { onEvent?: (e: unknown) => void; onReconnect?: () => void; reconnectMs?: number } = {}) {
   const sockets: FakeSocket[] = []
@@ -87,13 +65,13 @@ describe('createCommentStream', () => {
 
   test('malformed JSON is ignored without throwing', () => {
     const { sockets, events } = makeStream()
-    expect(() => sockets[0].onmessage?.({ data: '{not json' })).not.toThrow()
+    expect(() => sockets[0].emit('{not json')).not.toThrow()
     expect(events).toEqual([])
   })
 
   test('a non-string payload is ignored without throwing', () => {
     const { sockets, events } = makeStream()
-    expect(() => sockets[0].onmessage?.({ data: { channel: 'comments', type: 'x' } })).not.toThrow()
+    expect(() => sockets[0].emitRaw({ channel: 'comments', type: 'x' })).not.toThrow()
     expect(events).toEqual([])
   })
 

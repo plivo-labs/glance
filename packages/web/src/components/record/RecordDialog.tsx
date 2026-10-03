@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { Pause, Play, RotateCcw } from 'lucide-react'
 import { toast } from 'sonner'
@@ -40,7 +40,6 @@ export function RecordDialog({
   const navigate = useNavigate()
   const rec = useMediaRecorder()
   const [title, setTitle] = useState('')
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   // On a slug collision we bump a suffix so the retry lands on a fresh URL. Held in a ref because the
   // Save handler reads it synchronously; `conflict` drives the retry UI.
@@ -49,22 +48,21 @@ export function RecordDialog({
 
   const space = defaultSpaceSlug(spaces)
 
-  // Preview URL for the recorded blob — revoked on blob change / unmount (also covers dialog close,
-  // which resets the recorder and clears the blob).
-  useEffect(() => {
-    if (!rec.blob) {
-      setPreviewUrl(null)
-      return
-    }
-    const url = URL.createObjectURL(rec.blob)
-    setPreviewUrl(url)
-    return () => URL.revokeObjectURL(url)
-  }, [rec.blob])
+  // The preview URL is derived from the blob, not synced to it: a new blob means a new URL, and no
+  // blob means none. Deriving is also what keeps a re-record from painting the previous, already
+  // revoked URL for a frame — the old value cannot outlive the blob it came from.
+  // no-object-url-leak only follows a create and its revoke inside one function scope, and a
+  // derived URL cannot be written that way — the revoke lives in the effect right below, keyed on
+  // this exact value. Satisfying it instead would mean going back to syncing state from an effect.
+  // oxlint-disable-next-line no-object-url-leak/no-object-url-leak -- revoked by the paired effect below
+  const previewUrl = useMemo(() => (rec.blob ? URL.createObjectURL(rec.blob) : null), [rec.blob])
 
-  // Seed a default title the moment recording stops (only if the user hasn't typed one).
+  // The one thing an effect is still needed for: handing the URL back when it is replaced, and on
+  // unmount — which also covers dialog close, since that resets the recorder and clears the blob.
   useEffect(() => {
-    if (rec.state === 'stopped') setTitle((t) => t || defaultRecordingTitle(new Date()))
-  }, [rec.state])
+    if (!previewUrl) return
+    return () => URL.revokeObjectURL(previewUrl)
+  }, [previewUrl])
 
   function close(next: boolean) {
     if (saving) return
@@ -184,7 +182,16 @@ export function RecordDialog({
                   {rec.state === 'paused' ? <Play /> : <Pause />}
                 </Button>
               )}
-              <VoiceButton state={rec.state} onStart={() => void rec.start()} onStop={rec.stop} />
+              <VoiceButton
+                state={rec.state}
+                onStart={() => void rec.start()}
+                onStop={() => {
+                  // Seed the default title from the stop itself. The recorder only reaches
+                  // 'stopped' through this button, so there is no other path to miss.
+                  setTitle((t) => t || defaultRecordingTitle(new Date()))
+                  rec.stop()
+                }}
+              />
             </div>
             {rec.error && <p className="text-sm font-medium text-destructive">{rec.error}</p>}
           </div>

@@ -13,7 +13,13 @@ import { Window } from 'happy-dom'
 // happy-dom has no CSS Custom Highlight API (`CSS.highlights`, `Highlight`) — a Map stands in
 // (same set/delete shape `applyRanges` calls), so `supportsHighlight` is true and every apply is
 // directly observable.
-
+//
+// packages/api/tsconfig.json has no "dom" lib (this is a Workers project; client.ts itself is
+// excluded from the worker compile for the same reason) and client.ts posts messages typed only as
+// `unknown` at its own boundary — so there is no ambient Window/MessageEvent/MouseEvent/postMessage
+// type in this package for AnyRecord's every dynamic-global and posted-message read below to derive
+// from instead.
+// oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- see the tsconfig/client.ts note above
 type AnyRecord = Record<string, unknown>
 
 // Every Range / every Element in this document reports one of these two boxes (see beforeAll).

@@ -20,10 +20,7 @@ export function LiveWaveform({
   const rafRef = useRef(0)
 
   useEffect(() => {
-    if (!active) {
-      setLevels(IDLE)
-      return
-    }
+    if (!active) return
 
     let ctx: AudioContext | null = null
     let analyser: AnalyserNode | null = null
@@ -69,9 +66,9 @@ export function LiveWaveform({
       aria-hidden
       className={cn('flex h-16 w-full items-center justify-center gap-1', className)}
     >
-      {levels.map((level, i) => (
+      {(active ? levels : IDLE).map((level, i) => (
         <span
-          // biome-ignore lint/suspicious/noArrayIndexKey: fixed-length decorative bar list
+          // oxlint-disable-next-line react/no-array-index-key -- fixed-length decorative bar list
           key={i}
           className="w-1.5 origin-center rounded-full bg-primary/70 transition-transform duration-75"
           style={{ height: '100%', transform: `scaleY(${Math.max(0.06, level).toFixed(3)})` }}

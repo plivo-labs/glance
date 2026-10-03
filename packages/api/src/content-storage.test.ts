@@ -24,7 +24,7 @@ const diff = (before: Ops, after: Ops): Ops =>
   Object.fromEntries(Object.entries(after).map(([k, v]) => [k, v - before[k as keyof Ops]])) as Ops
 
 /** Byte-op delta produced by a single request. */
-async function opsOf(s: Setup, request: () => Promise<unknown>): Promise<Ops> {
+async function opsOf(s: Setup, request: () => Promise<void>): Promise<Ops> {
   const before = ops(s)
   await request()
   return diff(before, ops(s))

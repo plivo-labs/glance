@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { createDbBroker, reconnectDelay } from './dbBroker'
 
+/* oxlint-disable unicorn/require-post-message-target-origin -- every send here is a MessagePort, which has no targetOrigin parameter */
+
 // The realtime half of the P0-1 boundary. A hosted page holds NO credential (the boot payload is
 // exactly {appOrigin}), so it can never open its own WebSocket: the parent owns the socket, binds
 // it to the site the viewer opened, and relays frames down the port the page already handed us.
@@ -17,30 +19,11 @@ const WS_URL = 'wss://glance.example.com/api/_data/_sync/socket'
 
 type Call = { url: string; init?: RequestInit }
 type Handler = (url: string, init?: RequestInit) => Response | Promise<Response>
+// Everything the broker can post down the port: a reply (id/ok/status/body) or a
+// glance:db-{ready,error,open,event} frame. Tests narrow further per assertion.
+type BrokerMsg = { type?: string; id?: number; ok?: boolean; status?: number; body?: unknown; error?: string; events?: unknown[]; cursor?: string }
 
-/** Enough of a WebSocket for the relay, plus the levers a test needs: when it opened, what the
- *  parent sent over it, and whether it was closed. */
-class FakeSocket {
-  onopen: (() => void) | null = null
-  onmessage: ((e: { data: unknown }) => void) | null = null
-  onclose: (() => void) | null = null
-  sent: string[] = []
-  closed = false
-  constructor(
-    readonly url: string,
-    readonly protocols: string[],
-  ) {}
-  send(data: string) {
-    this.sent.push(data)
-  }
-  close() {
-    this.closed = true
-  }
-  /** Server → parent: one pushed frame. */
-  emit(frame: unknown) {
-    this.onmessage?.({ data: JSON.stringify(frame) })
-  }
-}
+import { FakeSocket } from '../test/fakeSocket'
 
 const mintOk = () => Response.json({ token: 'tok-1', caps: ['read', 'create'], expiresIn: 300 })
 const frame = (events: unknown[], cursor: string) => Response.json({ events, cursor })
@@ -74,10 +57,12 @@ function hello(
   over: { origin?: string; source?: unknown } = {},
 ) {
   const ch = new MessageChannel()
-  const received: Record<string, unknown>[] = []
-  ch.port1.onmessage = (e) => {
-    received.push(e.data as Record<string, unknown>)
-  }
+  const received: BrokerMsg[] = []
+  // addEventListener does not implicitly start the port the way `onmessage =` does — start it.
+  ch.port1.addEventListener('message', (e) => {
+    received.push(e.data as BrokerMsg)
+  })
+  ch.port1.start()
   broker.onWindowMessage({
     origin: over.origin ?? CONTENT,
     source: (over.source ?? iframeWin) as Window,
@@ -99,8 +84,8 @@ async function until<T>(what: string, pred: () => T | undefined | false, ms = 50
   }
 }
 
-const typed = (msgs: Record<string, unknown>[], t: string) => msgs.filter((m) => m.type === t)
-const replied = (msgs: Record<string, unknown>[], id: number) => msgs.find((m) => m.id === id)
+const typed = (msgs: BrokerMsg[], t: string) => msgs.filter((m) => m.type === t)
+const replied = (msgs: BrokerMsg[], id: number) => msgs.find((m) => m.id === id)
 
 /** hello → ready → the page asks for the stream. Returns once the socket exists and is open. */
 async function subscribed(handler: Handler, reconnectBaseMs?: number) {

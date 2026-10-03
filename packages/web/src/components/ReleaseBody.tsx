@@ -29,7 +29,7 @@ export function ReleaseBody({ html, className }: { html: string; className?: str
   return (
     <div
       className={cn('leading-relaxed text-foreground/90', PROSE, className)}
-      // biome-ignore lint/security/noDangerouslySetInnerHtml: html is escaped at build time by the shared Marked instance (api lib/markdown.ts)
+      // safe-html: build-time markdown.parse() (api/src/lib/markdown.ts) — escapes raw HTML tokens + neutralizes unsafe URL schemes; baked into whats-new/catalog.ts, not user input
       dangerouslySetInnerHTML={{ __html: html }}
     />
   )

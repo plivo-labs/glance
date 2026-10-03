@@ -1,6 +1,7 @@
 import { and, count, desc, eq, gte, isNull, sql } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { comments, events, files, purgedEventCounts, sites, users } from '../db/schema'
+import { describeError } from './errors'
 
 // Usage-analytics rollups for the admin dashboard. Everything is derived from existing state
 // (users/sites/files/comments) plus the append-only `events` stream, so counts are exact and
@@ -272,12 +273,18 @@ async function cachedHalf<T>(
     await defer(
       compute()
         .then(write)
-        .catch(() => {}),
+        .catch((err) =>
+          console.error('stats: refresh failed', describeError(err)),
+        ),
     )
     return hit.v
   }
   const value = await compute()
-  await defer(write(value).catch(() => {}))
+  await defer(
+    write(value).catch((err) =>
+      console.error('stats: cache write failed', describeError(err)),
+    ),
+  )
   return value
 }
 

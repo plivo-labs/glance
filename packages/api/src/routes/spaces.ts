@@ -131,10 +131,7 @@ spaces.get('/:slug/sites', requireAuth, async (c) => {
   const shared = foldSharedSiteRoles(direct, viaGroup)
   const visible = rows.filter((s) => checkAccess(s, user, isMember, shared.has(s.id)).ok)
   return c.json(
-    visible.map((s) => ({
-      ...toFeedRow(s, c.env.APP_URL),
-      isOwner: s.ownerId === user.id,
-    })),
+    visible.map((s) => Object.assign(toFeedRow(s, c.env.APP_URL), { isOwner: s.ownerId === user.id })),
   )
 })
 

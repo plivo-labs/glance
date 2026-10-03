@@ -494,11 +494,11 @@ describe('comments routes — T9.5 mutations fuse target reads into the access b
 
 const HMAC = 'glance-test-comments-socket'
 const socketUrl = (space: string, site: string) => `/api/sites/${space}/${site}/comments/socket`
-const wsHeaders = (proto?: string) => ({
-  Upgrade: 'websocket',
-  Connection: 'Upgrade',
-  ...(proto === undefined ? {} : { 'Sec-WebSocket-Protocol': proto }),
-})
+const wsHeaders = (proto?: string) => {
+  const headers: Record<string, string> = { Upgrade: 'websocket', Connection: 'Upgrade' }
+  if (proto !== undefined) headers['Sec-WebSocket-Protocol'] = proto
+  return headers
+}
 
 /** A DurableObjectNamespace that records every hop toward the object — so a denial test can prove
  *  the DO was NEVER addressed, not just that the response looked right. Mirrors data-ws.test.ts's
