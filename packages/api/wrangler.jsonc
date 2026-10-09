@@ -6,7 +6,7 @@
   "compatibility_date": "2026-06-01",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
-  "observability": { "enabled": true },
+  "observability": { "enabled": true, "traces": { "enabled": true } },
   // Non-secret config. Secrets (GOOGLE_CLIENT_ID/SECRET, SESSION_SECRET, and the optional
   // DATA_TOKEN_SECRET for the glance.db shared backend) via `wrangler secret put`.
   // setup.sh wires the YOUR-SUBDOMAIN sentinel from the live workers.dev URL on deploy.
