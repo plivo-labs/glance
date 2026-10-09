@@ -1,7 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { type Context, Hono } from 'hono'
-import { sessionDb } from './db/client'
+import { onError, sessionDb } from './db/client'
 import { ANNOTATE_CSS, ANNOTATE_JS, ANNOTATE_VERSION } from './annotate/bundle'
 import { GLANCE_DB_JS, GLANCE_DB_VERSION } from './glancedb/bundle'
 import { type NewEvent, files, sites, spaces } from './db/schema'
@@ -33,6 +33,7 @@ type Ctx = Context<ContentEnv>
 // session cookie. Gated sites carry an HMAC token IN THE PATH (/_t/<token>/...) so
 // relative sub-resources inherit it without cookies — survives 3rd-party-cookie blocking.
 const app = new Hono<ContentEnv>()
+app.onError(onError)
 
 // Per-request drizzle client. The D1 binding is request-scoped, so the client must not be
 // memoized across requests; tests inject a harness db via c.set('db').

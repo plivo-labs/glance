@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { secureHeaders } from 'hono/secure-headers'
-import { sessionDb, withDb } from './db/client'
+import { onError, sessionDb, withDb } from './db/client'
 import { superadminExists } from './db/repo'
 import { purgeRetention } from './lib/retention'
 import { cachedStats } from './lib/stats'
@@ -34,6 +34,7 @@ import type { AppEnv, Bindings } from './types'
 // `run_worker_first: ["/api/*"]` routes API calls here; everything else falls through to
 // the asset layer, which serves index.html for unknown paths (SPA client routing).
 const app = new Hono<AppEnv>()
+app.onError(onError)
 
 // CSP is built per-request so frame-src can reference the content origin (env-specific).
 // 'unsafe-inline' is needed only for React inline style attributes; scripts stay 'self'.
