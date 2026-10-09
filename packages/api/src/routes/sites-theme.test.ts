@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { eq } from 'drizzle-orm'
 import { sites } from '../db/schema'
-import { seedMember, seedSite, seedSpace, seedUser } from '../test/harness'
+import { seedMember, seedSite, seedSpace } from '../test/harness'
 import { auth, makeRouteApp, mintUser } from '../test/route-fixtures'
 import { THEME_INFO } from '../themes/registry'
 import { themes } from './themes'

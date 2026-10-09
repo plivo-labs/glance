@@ -26,7 +26,7 @@ const site = { spaceSlug: 'acme', siteSlug: 'docs' }
 const body = { question: 'what is this?', quote: 'the quick brown fox' }
 
 describe('askStream', () => {
-  test('emits tokens in order, across a line split mid-JSON between two chunks', () => {
+  test('emits tokens in order, across a line split mid-JSON between two chunks', async () => {
     // 'data: {"response":"world"}\n' split right through the JSON payload.
     const res = sseResponse([
       'data: {"response":"hello "}\n',
@@ -36,9 +36,8 @@ describe('askStream', () => {
     ])
     stubFetch(res)
     const tokens: string[] = []
-    return askStream(site, body, (t) => tokens.push(t)).then(() => {
-      expect(tokens).toEqual(['hello ', 'world'])
-    })
+    await askStream(site, body, (t) => tokens.push(t))
+    expect(tokens).toEqual(['hello ', 'world'])
   })
 
   test('Responses-API frames: output_text.delta emits, lifecycle events are silent', async () => {

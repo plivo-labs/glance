@@ -151,10 +151,14 @@ export function makeDb(recorder?: Recorder): HarnessDb {
   // is exactly a result-name collision.
   const EXEC_METHODS = ['run', 'all', 'get', 'values'] as const
   const origPrepare = sqlite.prepare.bind(sqlite)
+  // Named from bun:sqlite's own Statement type (via origPrepare's real return type), not a
+  // hand-rolled `unknown`-returning shape: run/all/get/values keep their real, differing
+  // per-method signatures, so a replacement assigned to `stmt[m]` is still checked against them.
+  type PatchableStmt = Pick<ReturnType<typeof origPrepare>, (typeof EXEC_METHODS)[number]>
   const wrapStmt = (stmt: ReturnType<typeof origPrepare>, sql: string) => {
     for (const m of EXEC_METHODS) {
-      const orig = (stmt[m] as (...a: unknown[]) => unknown).bind(stmt)
-      ;(stmt as unknown as Record<string, unknown>)[m] = (...args: unknown[]) => {
+      const orig = stmt[m].bind(stmt)
+      ;(stmt as unknown as PatchableStmt)[m] = (...args: unknown[]) => {
         observe(sql, args)
         const out = orig(...args)
         if (inBatch && m === 'values') {
@@ -769,8 +773,13 @@ class FakeWebSocketRequestResponsePair {
 /** Install fake `WebSocketPair` / `WebSocketRequestResponsePair` globals — the seam the upgrade
  *  path reads them through (the same `globalThis.x ?? …` idiom content.ts uses for
  *  `caches.default`). Idempotent, and never overwrites a real workerd global. */
+type WorkerSocketGlobals = {
+  WebSocketPair?: typeof FakeWebSocketPair
+  WebSocketRequestResponsePair?: typeof FakeWebSocketRequestResponsePair
+}
+
 export function installWorkerSocketGlobals() {
-  const g = globalThis as unknown as Record<string, unknown>
+  const g = globalThis as unknown as WorkerSocketGlobals
   g.WebSocketPair ??= FakeWebSocketPair
   g.WebSocketRequestResponsePair ??= FakeWebSocketRequestResponsePair
 }

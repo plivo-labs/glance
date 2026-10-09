@@ -4,6 +4,7 @@ import { signDataToken } from '../lib/data-token'
 import { TOKEN_HEADER } from '../realtime/site-room'
 import { type HarnessDb, makeDb, seedMember, seedSite, seedSpace, seedUser } from '../test/harness'
 import wrangler from '../../wrangler.jsonc'
+import type { Unstable_RawConfig } from 'wrangler'
 import { dataApi } from './data'
 
 // The WORKER side of the realtime upgrade. Everything here is about what happens BEFORE the
@@ -60,11 +61,11 @@ const envWith = (room: Room) =>
 const envNoSecret = (room: Room) => ({ CONTENT_URL: 'https://content.example.com', SITE_ROOM: room.ns }) as never
 
 /** The credential channel a browser actually has: `new WebSocket(url, [sentinel, token])`. */
-const wsHeaders = (token?: string) => ({
-  Upgrade: 'websocket',
-  Connection: 'Upgrade',
-  ...(token === undefined ? {} : { 'Sec-WebSocket-Protocol': `${WS_PROTOCOL}, ${token}` }),
-})
+const wsHeaders = (token?: string) => {
+  const headers: Record<string, string> = { Upgrade: 'websocket', Connection: 'Upgrade' }
+  if (token !== undefined) headers['Sec-WebSocket-Protocol'] = `${WS_PROTOCOL}, ${token}`
+  return headers
+}
 
 const socket = (app: TestApp, headers: Record<string, string>, env: unknown, path = SOCKET) =>
   app.request(path, { method: 'GET', headers }, env as never)
@@ -242,10 +243,7 @@ describe('#1: Durable Object wiring', () => {
   })
 
   test('wrangler.jsonc declares SITE_ROOM with new_sqlite_classes', async () => {
-    const cfg = wrangler as {
-      durable_objects?: { bindings: { name: string; class_name: string }[] }
-      migrations?: Record<string, unknown>[]
-    }
+    const cfg = wrangler as Unstable_RawConfig
     expect(cfg.durable_objects?.bindings).toEqual([{ name: 'SITE_ROOM', class_name: 'SiteRoom' }])
     const migrations = cfg.migrations ?? []
     expect(migrations.some((m) => JSON.stringify(m.new_sqlite_classes) === JSON.stringify(['SiteRoom']))).toBe(true)

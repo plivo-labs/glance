@@ -47,7 +47,7 @@ for (const slug of slugs) {
   // /_glance/theme/fonts/<file> so a themed page never calls out to Google (issue #155).
   const fontsDir = join(dir, 'fonts')
   if (existsSync(fontsDir)) {
-    for (const f of readdirSync(fontsDir).filter((f) => f.endsWith('.woff2')).sort()) {
+    for (const f of readdirSync(fontsDir).filter((name) => name.endsWith('.woff2')).sort()) {
       if (fonts[f]) throw new Error(`duplicate font filename across themes: ${f}`)
       fonts[f] = readFileSync(join(fontsDir, f)).toString('base64')
     }

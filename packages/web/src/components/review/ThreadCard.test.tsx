@@ -63,7 +63,7 @@ function renderCard(
 ) {
   const onFocusAnchor = overrides.onFocusAnchor ?? mock((_t: Thread) => {})
   const onChanged = overrides.onChanged ?? mock(() => {})
-  const thread = mkThread({ id: 't1', ...(overrides.comments ? { comments: overrides.comments } : {}) })
+  const thread = overrides.comments ? mkThread({ id: 't1', comments: overrides.comments }) : mkThread({ id: 't1' })
   const view = render(
     <ThreadCard site={SITE} me={ME} thread={thread} onChanged={onChanged} onFocusAnchor={onFocusAnchor} />,
   )

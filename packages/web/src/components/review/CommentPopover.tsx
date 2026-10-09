@@ -205,7 +205,9 @@ function AskPanel({
   const { ref: panelRef, style } = usePlacement(ask.anchor.rect, ASK_PANEL_MAX)
 
   const [question, setQuestion] = useState('')
-  const [turns, setTurns] = useState<Turn[]>([])
+  // Seeded with the auto-asked first turn already streaming — derived here, at init, instead of
+  // pushed from the mount effect below, so that effect never setState's synchronously.
+  const [turns, setTurns] = useState<Turn[]>(() => [{ q: DEFAULT_QUESTION, answer: '', status: 'streaming' }])
   const lastTurn = turns[turns.length - 1]
   const streaming = lastTurn?.status === 'streaming'
 
@@ -224,8 +226,10 @@ function AskPanel({
   const patchLast = (patch: Partial<Turn>) =>
     setTurns((ts) => ts.map((t, i) => (i === ts.length - 1 ? { ...t, ...patch } : t)))
 
-  async function run(q: string) {
-    setTurns((ts) => [...ts, { q, answer: '', status: 'streaming' }])
+  // Streams `q` against the already-appended last turn — shared by `run` (which appends a new
+  // turn first) and the mount effect below (whose turn is already in the initial state, so that
+  // effect never setState's synchronously).
+  async function stream(q: string) {
     stickToBottom.current = true
     const controller = new AbortController()
     abortRef.current = controller
@@ -247,15 +251,21 @@ function AskPanel({
     }
   }
 
+  function run(q: string) {
+    setTurns((ts) => [...ts, { q, answer: '', status: 'streaming' }])
+    void stream(q)
+  }
+
   // The zero-typing open: asking IS the intent behind pressing Ask, so the default question fires
-  // immediately. Mount-only — a new selection mints a new ask id, which remounts this panel.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: fires once, on mount.
+  // immediately. Mount-only — a new selection mints a new ask id, which remounts this panel, and
+  // the first turn is already seeded in the initial state above.
+  /* oxlint-disable react-hooks/exhaustive-deps -- fires once, on mount, by design: depending on ask/onAsk would re-ask on every parent re-render that hands in a new prop identity. */
   useEffect(() => {
-    void run(DEFAULT_QUESTION)
+    void stream(DEFAULT_QUESTION)
   }, [])
+  /* oxlint-enable react-hooks/exhaustive-deps */
 
   // Stick the turn list to its bottom while an answer streams (see stickToBottom above).
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `turns` drives re-runs, not the body.
   useEffect(() => {
     if (!streaming || !stickToBottom.current) return
     const el = answerRef.current
@@ -278,6 +288,7 @@ function AskPanel({
   }
 
   return (
+    // oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- Escape-to-dismiss listener on the panel wrapper (catches the bubbled keydown from its inputs/buttons); the wrapper itself isn't a widget and takes no focus.
     <div
       ref={panelRef}
       style={style}
@@ -315,7 +326,7 @@ function AskPanel({
         className="overflow-y-auto rounded-md border bg-muted/30 px-3 py-2"
       >
         {turns.map((turn, i) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: turns are append-only (an errored one is replaced in place); index identity is exactly their identity.
+          // oxlint-disable-next-line react/no-array-index-key -- turns are append-only (an errored one is replaced in place); index identity is exactly their identity.
           <div key={i} className={i > 0 ? 'mt-2 border-border/60 border-t pt-2' : undefined}>
             <p className="mb-1 font-medium text-[11px] text-muted-foreground">{turn.q}</p>
             {turn.status === 'error' ? (
@@ -349,7 +360,6 @@ function AskPanel({
         ref={textareaRef}
         // The panel is opened by an explicit user action, and the first question is auto-asked —
         // the follow-up box is where the keyboard belongs next.
-        // biome-ignore lint/a11y/noAutofocus: opened by explicit user action
         autoFocus
         value={question}
         // readOnly, NOT disabled, while streaming: a disabled textarea drops focus, and with focus

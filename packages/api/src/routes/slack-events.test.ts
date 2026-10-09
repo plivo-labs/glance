@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test'
+import type { PostedUnfurlBody } from '../lib/slack-unfurl'
 import { APP_URL, makeRouteApp, signSlack } from '../test/route-fixtures'
 import { seedSite, seedSpace, seedUser } from '../test/harness'
 import type { AppEnv } from '../types'
+
 
 // Route-level Slack unfurl: a signed link_shared event → chat.unfurl, exercised through
 // app.request with an injected SLACK_FETCH (the same env DI seam comments-slack.test.ts uses).
@@ -14,7 +16,7 @@ const NOW = () => Math.floor(Date.now() / 1000)
 /** Recording SLACK_FETCH: users.info answers from `emails` (Slack id → email), chat.unfurl records
  *  the posted body. Any other Slack URL is a test bug and throws. */
 function slackFetch(emails: Record<string, string> = {}) {
-  const unfurls: Record<string, unknown>[] = []
+  const unfurls: PostedUnfurlBody[] = []
   let infoCalls = 0
   const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString()
@@ -37,7 +39,7 @@ function slackFetch(emails: Record<string, string> = {}) {
 
 /** The production-shaped fixture env plus the two Slack secrets; `extra` overrides either (or
  *  injects the recording SLACK_FETCH). */
-const envWith = (env: AppEnv['Bindings'], extra: Record<string, unknown>) =>
+const envWith = (env: AppEnv['Bindings'], extra: Partial<AppEnv['Bindings']>) =>
   ({ ...env, SLACK_BOT_TOKEN: 'xoxb-test', SLACK_SIGNING_SECRET: TEST_SIGNING_KEY, ...extra }) as unknown as AppEnv['Bindings']
 
 async function post(
@@ -142,7 +144,7 @@ describe('POST /api/slack/events — link_shared', () => {
     expect(res.status).toBe(200)
     expect(unfurls).toHaveLength(1)
     expect(unfurls[0]).toMatchObject({ unfurl_id: 'C123.1700000000.1.1', source: 'conversations_history' })
-    const card = JSON.stringify((unfurls[0].unfurls as Record<string, unknown>)[url])
+    const card = JSON.stringify(unfurls[0].unfurls[url])
     expect(card).toContain('Q3 Report')
     expect(card).toContain('How the numbers moved')
     expect(card).toContain(url)
@@ -209,7 +211,7 @@ describe('POST /api/slack/events — link_shared', () => {
       linkShared(['https://evil.example/acme/report', `${APP_URL}/api/sites`, `${APP_URL}/acme/missing`, good]),
     )
     expect(unfurls).toHaveLength(1)
-    expect(Object.keys(unfurls[0].unfurls as object)).toEqual([good])
+    expect(Object.keys(unfurls[0].unfurls)).toEqual([good])
   })
 
   test('nothing unfurlable → zero chat.unfurl calls', async () => {
@@ -234,7 +236,7 @@ describe('POST /api/slack/events — link_shared', () => {
     await post(world.app, envWith(world.env, { SLACK_FETCH: fetchImpl }), linkShared([root, deep, root]))
     expect(unfurls).toHaveLength(1)
     // Slack keys unfurls by URL, so both pasted URLs get a card — from one access resolution.
-    expect(Object.keys(unfurls[0].unfurls as object).sort()).toEqual([root, deep].sort())
+    expect(Object.keys(unfurls[0].unfurls).sort()).toEqual([root, deep].sort())
   })
 
   test('a non-link_shared event is acked and ignored', async () => {

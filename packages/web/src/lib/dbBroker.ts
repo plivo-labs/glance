@@ -47,14 +47,17 @@ export type BrokerSite = { spaceSlug: string; siteSlug: string }
 export type BrokerSocket = {
   send: (data: string) => void
   close: () => void
-  onopen: (() => void) | null
-  onmessage: ((e: { data: unknown }) => void) | null
-  onclose: (() => void) | null
+  addEventListener: (type: 'open' | 'message' | 'close', fn: (e: { data: unknown }) => void) => void
 }
 type MintResponse = { token: string; caps: string[]; expiresIn: number }
 type BrokerRequest = { id: number; op: string; collection: string; docId?: string; data?: unknown; cursor?: string }
 
 export type DbBroker = { onWindowMessage: (e: MessageEvent) => void; dispose: () => void }
+
+/** The only postMessage call in this file — MessagePort.postMessage takes no targetOrigin, so
+ *  every port send routes through here instead of carrying its own disable. */
+// oxlint-disable-next-line unicorn/require-post-message-target-origin -- MessagePort.postMessage takes no targetOrigin
+const sendToPort = (p: MessagePort, msg: unknown) => p.postMessage(msg)
 
 export function createDbBroker(
   opts: { site: BrokerSite; contentOrigin: string; appOrigin: string; getSource: () => Window | null | undefined },
@@ -152,8 +155,6 @@ export function createDbBroker(
         markLive = resolve
         failLive = reject
       })
-      // A terminal failure with no subscribe in flight must not surface as an unhandled rejection.
-      live.catch(() => {})
       dial()
     }
     try {
@@ -173,34 +174,44 @@ export function createDbBroker(
     return { ok: res.ok, status: res.status, body }
   }
 
-  function dial(): void {
+  // Callers fire this without awaiting, so nothing it throws may escape as an unhandled rejection:
+  // that would leave `subscribe`'s `await live` hanging forever instead of failing the request.
+  // Everything, token mint included, routes to redial.
+  async function dial(): Promise<void> {
     dials++
-    ensureToken().then((t) => {
+    try {
+      const t = await ensureToken()
       if (disposed || !live) return
-      // Browsers cannot set Authorization on a WebSocket, so the token rides the subprotocol list.
-      const ws = deps.newSocket(`${opts.appOrigin.replace(/^http/, 'ws')}/api/_data/_sync/socket`, [WS_PROTOCOL, t])
-      socket = ws
-      scheduleReauth()
-      ping = setInterval(() => socket === ws && ws.send('ping'), PING_MS)
-      ws.onopen = () => {
-        attempts = 0
-        markLive?.()
-        // Any dial past the first means the page missed a window: tell it to replay. The first
-        // one needs no nudge — the subscribe that started it is still awaiting this moment.
-        if (dials > 1) port?.postMessage({ type: 'glance:db-open' })
-      }
-      ws.onmessage = (e) => {
-        const f = parseFrame(e.data)
-        if (!f) return
-        cursor = f.cursor
-        port?.postMessage({ type: 'glance:db-event', events: f.events, cursor: f.cursor })
-      }
-      ws.onclose = () => {
-        if (socket !== ws) return
-        socket = null
-        redial()
-      }
-    }, redial)
+      openSocket(t)
+    } catch (err) {
+      redial(err)
+    }
+  }
+
+  function openSocket(t: string): void {
+    // Browsers cannot set Authorization on a WebSocket, so the token rides the subprotocol list.
+    const ws = deps.newSocket(`${opts.appOrigin.replace(/^http/, 'ws')}/api/_data/_sync/socket`, [WS_PROTOCOL, t])
+    socket = ws
+    scheduleReauth()
+    ping = setInterval(() => socket === ws && ws.send('ping'), PING_MS)
+    ws.addEventListener('open', () => {
+      attempts = 0
+      markLive?.()
+      // Any dial past the first means the page missed a window: tell it to replay. The first
+      // one needs no nudge — the subscribe that started it is still awaiting this moment.
+      if (dials > 1 && port) sendToPort(port, { type: 'glance:db-open' })
+    })
+    ws.addEventListener('message', (e) => {
+      const f = parseFrame(e.data)
+      if (!f) return
+      cursor = f.cursor
+      if (port) sendToPort(port, { type: 'glance:db-event', events: f.events, cursor: f.cursor })
+    })
+    ws.addEventListener('close', () => {
+      if (socket !== ws) return
+      socket = null
+      redial()
+    })
   }
 
   function redial(err?: unknown): void {
@@ -243,13 +254,18 @@ export function createDbBroker(
   function scheduleReauth(): void {
     if (reauth) clearTimeout(reauth)
     reauth = setTimeout(
-      () => {
+      async () => {
         reauth = null
         if (disposed || !socket) return
-        mint().then((t) => {
-          socket?.send(JSON.stringify({ type: 'auth', token: t }))
-          scheduleReauth()
-        }, redial)
+        let t: string
+        try {
+          t = await mint()
+        } catch (err) {
+          redial(err)
+          return
+        }
+        socket?.send(JSON.stringify({ type: 'auth', token: t }))
+        scheduleReauth()
       },
       Math.max(0, expiresAt - Date.now()),
     )
@@ -276,8 +292,8 @@ export function createDbBroker(
     const req = e.data as BrokerRequest | null
     if (!req || typeof req.id !== 'number') return
     execute(req).then(
-      (r) => p.postMessage({ id: req.id, ...r }),
-      () => p.postMessage({ id: req.id, ok: false, status: 0, body: { error: 'network error' } }),
+      (r) => sendToPort(p, { id: req.id, ...r }),
+      () => sendToPort(p, { id: req.id, ok: false, status: 0, body: { error: 'network error' } }),
     )
   }
 
@@ -290,11 +306,13 @@ export function createDbBroker(
     if (!p) return
     port?.close()
     port = p
-    p.onmessage = (msg) => onPortMessage(p, msg)
+    // addEventListener does not implicitly start the port the way `onmessage =` does — start it.
+    p.addEventListener('message', (msg) => onPortMessage(p, msg))
+    p.start()
     // Mint eagerly so the page learns immediately whether the feature is available here.
     ensureToken().then(
-      () => p.postMessage({ type: 'glance:db-ready' }),
-      (err: { message?: string }) => p.postMessage({ type: 'glance:db-error', error: err?.message ?? 'unavailable' }),
+      () => sendToPort(p, { type: 'glance:db-ready' }),
+      (err: { message?: string }) => sendToPort(p, { type: 'glance:db-error', error: err?.message ?? 'unavailable' }),
     )
   }
 
