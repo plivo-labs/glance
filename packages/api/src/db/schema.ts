@@ -9,6 +9,9 @@ export const users = sqliteTable('users', {
   email: text('email').notNull().unique(),
   name: text('name'),
   googleId: text('googleId').unique(),
+  // Subject from the generic OIDC provider (lib/oidc.ts). Kept apart from googleId so one deploy can
+  // offer both sign-ins without one provider's subject ever matching the other's.
+  oidcSub: text('oidcSub').unique(),
   // Google profile photo URL from the OAuth id_token's `picture` claim, refreshed on every login.
   // Never rendered directly by the browser — the avatar route proxies it same-origin (see
   // routes/avatars.ts), so this column is the ONLY place a googleusercontent URL is held.
@@ -30,6 +33,9 @@ export const spaces = sqliteTable('spaces', {
   type: text('type', { enum: ['personal', 'group'] }).notNull(),
   createdBy: text('createdBy').notNull().references(() => users.id, { onDelete: 'cascade' }),
   createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
+  // Set when the roster mirrors an identity-provider group (lib/oidc-access.ts): membership is
+  // synced on every OIDC sign-in and nobody owns the space, so manual invites/removals are refused.
+  oidcGroup: text('oidcGroup').unique(),
 })
 
 export const spaceMembers = sqliteTable(

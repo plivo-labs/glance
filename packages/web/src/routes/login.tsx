@@ -7,16 +7,17 @@ import { CopyButton } from '@/components/CopyButton'
 import { BrandMark, ByPlivo, Eyebrow } from '@/components/states'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { cn } from '@/lib/utils'
 import '@/tailwind.css'
 
 // Public source — surfaced in the header + footer so a self-hoster can find the repo.
 const REPO_URL = 'https://github.com/plivo-labs/glance'
 
 const ERRORS: Record<string, string> = {
-  denied: 'Wrong door — Glance is restricted to approved Google Workspace accounts.',
-  oauth: "Google sign-in didn't go through. Try again.",
+  denied: 'Wrong door — Glance is restricted to approved work accounts.',
+  oauth: "Sign-in didn't go through. Try again.",
   state: 'Sign-in session expired before it finished. Start over.',
-  exchange: "Couldn't finish the handshake with Google. Try again.",
+  exchange: "Couldn't finish the handshake with your sign-in provider. Try again.",
 }
 
 // Maps bootstrap route status codes to a human message for the first-run setup form.
@@ -30,7 +31,7 @@ const BOOTSTRAP_ERRORS: Record<number, string> = {
 const FEATURES = [
   {
     label: 'SSO for your domain',
-    detail: 'Sign in with your work Google account — no new account, no shared password.',
+    detail: 'Sign in with your work account — no new account, no shared password.',
   },
   {
     label: 'Drag-drop or CLI',
@@ -63,12 +64,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return redirect(next ?? '/dashboard') // already signed in — honor the return URL
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) {
-      // Logged out: ask the server which login options to offer (Google vs. first-run setup).
+      // Logged out: ask the server which login options to offer (Google, OIDC, first-run setup).
       // Degrade gracefully — a config blip must never take down the login page itself.
       try {
         return await api.get<PublicConfig>('/api/config')
       } catch {
-        return { googleEnabled: false, bootstrapAvailable: false } satisfies PublicConfig
+        return { googleEnabled: false, oidcName: null, bootstrapAvailable: false } satisfies PublicConfig
       }
     }
     throw err
@@ -76,12 +77,18 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export function Component() {
-  const { googleEnabled, bootstrapAvailable } = useLoaderData() as PublicConfig
+  const { googleEnabled, oidcName, bootstrapAvailable } = useLoaderData() as PublicConfig
   const [params] = useSearchParams()
   const [busy, setBusy] = useState(false)
   const error = params.get('error')
   const next = params.get('next')
-  const hasAnyMethod = googleEnabled || bootstrapAvailable || import.meta.env.DEV
+  const oidcEnabled = oidcName !== null
+  const provider = googleEnabled ? 'Google Workspace' : oidcName
+  const hasAnyMethod = googleEnabled || oidcEnabled || bootstrapAvailable || import.meta.env.DEV
+  const signIn = (provider: 'google' | 'oidc') => {
+    const qs = next ? `?next=${encodeURIComponent(next)}` : ''
+    window.location.href = `/api/auth/${provider}${qs}`
+  }
 
   // This deployment's own origin drives the copy-paste install one-liner and the demo output,
   // so what a visitor copies is pre-pointed at THIS instance (mirrors GET /api/install).
@@ -198,14 +205,18 @@ export function Component() {
 
             <div className="rounded border bg-card p-6">
               {error && <ErrorBanner className="mb-4">{ERRORS[error] ?? 'Sign-in error.'}</ErrorBanner>}
+              {oidcEnabled && (
+                <Button size="lg" className="h-11 w-full" onClick={() => signIn('oidc')}>
+                  Sign in with {oidcName}
+                </Button>
+              )}
+
               {googleEnabled && (
                 <Button
                   size="lg"
-                  className="h-11 w-full gap-3"
-                  onClick={() => {
-                    const qs = next ? `?next=${encodeURIComponent(next)}` : ''
-                    window.location.href = `/api/auth/google${qs}`
-                  }}
+                  variant={oidcEnabled ? 'outline' : 'default'}
+                  className={cn('h-11 w-full gap-3', oidcEnabled && 'mt-3')}
+                  onClick={() => signIn('google')}
                 >
                   <span className="flex size-6 items-center justify-center rounded-sm bg-white">
                     <GoogleGlyph />
@@ -214,7 +225,7 @@ export function Component() {
                 </Button>
               )}
 
-              {bootstrapAvailable && <SetupPanel next={next} withDivider={googleEnabled} />}
+              {bootstrapAvailable && <SetupPanel next={next} withDivider={googleEnabled || oidcEnabled} />}
 
               {import.meta.env.DEV && (
                 <Button
@@ -239,9 +250,7 @@ export function Component() {
               )}
 
               <p className="mt-4 text-center text-muted-foreground text-xs">
-                {googleEnabled
-                  ? 'Approved Google Workspace accounts only · sessions expire after 24h'
-                  : 'Sessions expire after 24h'}
+                {provider ? `Approved ${provider} accounts only · sessions expire after 24h` : 'Sessions expire after 24h'}
               </p>
             </div>
           </div>

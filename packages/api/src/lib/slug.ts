@@ -17,11 +17,26 @@ export function isValidSlug(slug: string): boolean {
 
 /** Best-effort conversion of an email handle into a candidate personal-space slug. */
 export function slugifyHandle(email: string): string {
-  const handle = (email.split('@')[0] ?? 'user').toLowerCase()
-  let s = handle
+  return slugifyText(email.split('@')[0] ?? 'user', 'user')
+}
+
+/** Best-effort conversion of an identity-provider group name into a candidate group-space slug. */
+export function slugifyGroup(name: string): string {
+  return slugifyText(name, 'group')
+}
+
+/** The base slug, then `-1`…`-25`: the bounded list a creator walks on slug collisions. */
+export function slugCandidates(base: string): string[] {
+  const first = RESERVED_SLUGS.has(base) ? `${base}-1` : base
+  return [first, ...Array.from({ length: 25 }, (_, i) => `${first}-${i + 1}`)]
+}
+
+function slugifyText(text: string, fallback: string): string {
+  let s = text
+    .toLowerCase()
     .replace(/[^a-z0-9-]+/g, '-')
     .replace(/-{2,}/g, '-')
     .replace(/^-+|-+$/g, '')
-  if (s.length < 3) s = `${s || 'user'}-glance`
+  if (s.length < 3) s = `${s || fallback}-glance`
   return s.slice(0, 40).replace(/-+$/g, '')
 }

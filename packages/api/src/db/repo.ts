@@ -1,7 +1,7 @@
 import { and, eq, inArray, ne, sql } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { batchAll } from '../lib/d1'
-import { RESERVED_SLUGS, slugifyHandle } from '../lib/slug'
+import { slugCandidates, slugifyHandle } from '../lib/slug'
 import type { SessionUser } from '../types'
 import {
   type Site,
@@ -76,28 +76,40 @@ export function isUniqueConstraintError(err: unknown): boolean {
 }
 
 /**
- * Create the user's personal space + membership, deriving a free slug from the email handle.
- * Attempts each candidate slug DIRECTLY (no check-then-create TOCTOU): on the unique(spaces.slug)
- * conflict a concurrent same-handle signup would otherwise trigger, it falls through to the next
- * candidate instead of 500ing — so the caller (findOrCreateUser / bootstrapSuperadminByEmail),
- * which has already inserted the user row, never strands a user with no personal space.
+ * Create the user's personal space + membership, deriving a free slug from the email handle, so the
+ * caller (findOrCreateUser / bootstrapSuperadminByEmail), which has already inserted the user row,
+ * never strands a user with no personal space.
  */
 export async function createPersonalSpace(db: DrizzleD1Database, userId: string, email: string): Promise<void> {
-  let base = slugifyHandle(email)
-  if (RESERVED_SLUGS.has(base)) base = `${base}-1`
-  const candidates = [base, ...Array.from({ length: 25 }, (_, i) => `${base}-${i + 1}`)]
-  for (let i = 0; i < candidates.length; i++) {
-    const slug = candidates[i]
+  const base = slugifyHandle(email)
+  await createSpaceWithFreeSlug(db, base, { name: email.split('@')[0] ?? base, type: 'personal', createdBy: userId })
+}
+
+/**
+ * createSpace under the first free slug of `slugCandidates(base)`. Attempts each candidate DIRECTLY
+ * (no check-then-create TOCTOU): on the unique(spaces.slug) conflict a concurrent creator would
+ * otherwise trigger, it falls through to the next candidate instead of 500ing. `raced`, when given,
+ * is asked after every unique conflict for a row a concurrent creator already made for the same
+ * purpose, which then wins. Anything else, or exhausting the bounded list, is a real failure.
+ */
+export async function createSpaceWithFreeSlug(
+  db: DrizzleD1Database,
+  base: string,
+  input: Omit<Parameters<typeof createSpace>[1], 'slug'>,
+  raced?: () => Promise<string | undefined>,
+): Promise<string> {
+  let lastError: unknown
+  for (const slug of slugCandidates(base)) {
     try {
-      await createSpace(db, { slug, name: email.split('@')[0] ?? slug, type: 'personal', createdBy: userId })
-      return
+      return await createSpace(db, { ...input, slug })
     } catch (err) {
-      // Slug taken by a racing signup → try the next candidate; anything else (or exhausting the
-      // bounded list) is a real failure the caller must see.
-      if (isUniqueConstraintError(err) && i < candidates.length - 1) continue
-      throw err
+      if (!isUniqueConstraintError(err)) throw err
+      const id = await raced?.()
+      if (id) return id
+      lastError = err
     }
   }
+  throw lastError
 }
 
 /**
@@ -136,11 +148,18 @@ export async function bootstrapSuperadminByEmail(
 /** Insert a space and add its creator as a member, atomically (D1 batch). Returns the new id. */
 export async function createSpace(
   db: DrizzleD1Database,
-  input: { slug: string; name: string; type: SpaceType; createdBy: string },
+  input: { slug: string; name: string; type: SpaceType; createdBy: string; oidcGroup?: string },
 ): Promise<string> {
   const id = crypto.randomUUID()
   await db.batch([
-    db.insert(spaces).values({ id, slug: input.slug, name: input.name, type: input.type, createdBy: input.createdBy }),
+    db.insert(spaces).values({
+      id,
+      slug: input.slug,
+      name: input.name,
+      type: input.type,
+      createdBy: input.createdBy,
+      oidcGroup: input.oidcGroup ?? null,
+    }),
     db.insert(spaceMembers).values({ spaceId: id, userId: input.createdBy }),
   ])
   return id

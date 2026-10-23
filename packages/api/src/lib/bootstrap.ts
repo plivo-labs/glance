@@ -68,15 +68,22 @@ export async function bootstrapDecision(input: BootstrapDecisionInput): Promise<
 
 export interface PublicConfigInput {
   googleEnabled: boolean
+  oidcName: string | null
   hasSuperadmin: boolean
   bootstrapTokenSet: boolean
 }
 
 /** Public first-run config. Bootstrap is offered only while a token is set and no
- *  superadmin exists yet; `googleEnabled` is passed through from `isGoogleEnabled`. */
-export function buildPublicConfig(input: PublicConfigInput): { googleEnabled: boolean; bootstrapAvailable: boolean } {
+ *  superadmin exists yet; `googleEnabled` is passed through from `isGoogleEnabled`, and
+ *  `oidcName` (the sign-in button's provider label) is null while OIDC is not configured. */
+export function buildPublicConfig(input: PublicConfigInput): {
+  googleEnabled: boolean
+  oidcName: string | null
+  bootstrapAvailable: boolean
+} {
   return {
     googleEnabled: input.googleEnabled,
+    oidcName: input.oidcName,
     bootstrapAvailable: input.bootstrapTokenSet && !input.hasSuperadmin,
   }
 }

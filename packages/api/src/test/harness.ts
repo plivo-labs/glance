@@ -220,7 +220,14 @@ export async function seedSpace(db: DrizzleD1Database, o: Partial<NewSpace> & { 
   const id = o.id ?? nextId('sp')
   await db
     .insert(spaces)
-    .values({ id, slug: o.slug ?? id, name: o.name ?? id, type: o.type ?? 'group', createdBy: o.createdBy })
+    .values({
+      id,
+      slug: o.slug ?? id,
+      name: o.name ?? id,
+      type: o.type ?? 'group',
+      createdBy: o.createdBy,
+      oidcGroup: o.oidcGroup ?? null,
+    })
   return id
 }
 

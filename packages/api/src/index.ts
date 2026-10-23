@@ -8,6 +8,7 @@ import { GLANCE_DB_JS } from './glancedb/bundle'
 import { buildPublicConfig } from './lib/bootstrap'
 import { INSTALL_SH } from './install-script'
 import { isGoogleEnabled } from './lib/oauth'
+import { isOidcEnabled, oidcProviderName } from './lib/oidc'
 import { trackCliUsage } from './middleware/analytics'
 import { requireSameOrigin } from './middleware/auth'
 import { admin } from './routes/admin'
@@ -112,6 +113,7 @@ app.get('/api/config', async (c) =>
   c.json(
     buildPublicConfig({
       googleEnabled: isGoogleEnabled(c.env),
+      oidcName: isOidcEnabled(c.env) ? oidcProviderName(c.env) : null,
       hasSuperadmin: await superadminExists(c.get('db')),
       bootstrapTokenSet: Boolean(c.env.BOOTSTRAP_TOKEN),
     }),

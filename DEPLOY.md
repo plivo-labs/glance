@@ -107,6 +107,31 @@ bun run deploy
 
 The Google button appears automatically once both credentials are set. A later Google login on the same email backfills onto your bootstrap admin (role preserved). While unset, the Google routes return 404 and the button is hidden.
 
+## OIDC sign-in (optional)
+
+Any OpenID Connect provider (Okta, Microsoft Entra ID, Keycloak, Authentik, …) can sign people in, next to or instead of Google. Register a web application with redirect URI `https://glance.<your-subdomain>.workers.dev/api/auth/oidc/callback`, then:
+
+```bash
+cd packages/api
+wrangler secret put OIDC_CLIENT_SECRET
+```
+
+and set these `vars` on the main worker:
+
+| var | example | |
+|---|---|---|
+| `OIDC_ISSUER` | `https://yourcompany.okta.com` | required; must equal the `issuer` in its `/.well-known/openid-configuration` |
+| `OIDC_CLIENT_ID` | `0oa1b2c3d4` | required |
+| `OIDC_PROVIDER_NAME` | `Okta` | button label, default `SSO` |
+| `OIDC_SCOPES` | `openid profile email groups` | default `openid profile email` |
+| `OIDC_GROUPS_CLAIM` | `groups` | id_token claim holding group names, default `groups` |
+| `OIDC_GROUP_PREFIX` | `glance.` | turns on group sync, see below |
+| `OIDC_ADMIN_GROUP` | `glance.admins` | members are superadmin, everyone else is a member |
+
+The id_token must carry `email_verified: true` and an email in `ALLOWED_HD`, which here means the allowed email domain. A user is matched on the provider's `sub`, then on email, so an existing Google or bootstrap account with the same email is linked, not duplicated.
+
+With `OIDC_GROUP_PREFIX` set, every group in the id_token that starts with the prefix becomes a group space named after the rest of the group name (`glance.Platform` → space `platform`). Membership of these spaces is synced on every OIDC sign-in: people are added to the groups the provider sends and removed from the ones it no longer sends. Nobody owns such a space, so invites and removals in Glance are refused; only a superadmin can delete one. With `OIDC_ADMIN_GROUP` set, the role follows that group on every sign-in; `SUPERADMIN_EMAIL` always stays superadmin. Changes in the provider apply at the user's next sign-in, so at most a session (24h) later.
+
 ## CI auto-deploy
 
 `.github/workflows/deploy.yml` deploys both workers + runs the D1 migrate on push to `main`. The only repo secret needed is `CLOUDFLARE_API_TOKEN` (scopes: Workers Scripts, D1, KV, R2). Worker secrets are set once via `wrangler secret put` and persist across deploys.

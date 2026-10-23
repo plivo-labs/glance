@@ -1,6 +1,6 @@
-import { decodeIdToken, generateCodeVerifier, generateState } from 'arctic'
+import { CodeChallengeMethod, decodeIdToken, generateCodeVerifier, generateState } from 'arctic'
 import { and, eq } from 'drizzle-orm'
-import { Hono } from 'hono'
+import { type Context, Hono } from 'hono'
 import { deleteCookie, getSignedCookie, setSignedCookie } from 'hono/cookie'
 import { events, users } from '../db/schema'
 import { bootstrapSuperadminByEmail, createPersonalSpace, superadminStatus, toSessionUser } from '../db/repo'
@@ -9,6 +9,17 @@ import { requireAuth } from '../middleware/auth'
 import { sanitizeAvatarUrl } from '../lib/avatar'
 import { bootstrapDecision } from '../lib/bootstrap'
 import { createGoogle, isGoogleEnabled, OAUTH_SCOPES } from '../lib/oauth'
+import {
+  acceptedOidcEmail,
+  createOidc,
+  discoverOidc,
+  isOidcEnabled,
+  type OidcClaims,
+  type OidcEndpoints,
+  oidcGroups,
+  oidcScopes,
+} from '../lib/oidc'
+import { syncOidcAccess } from '../lib/oidc-access'
 import {
   bearerToken,
   createCliToken,
@@ -43,14 +54,15 @@ export const auth = new Hono<AppEnv>()
 
 // --- Browser OAuth ---
 
-auth.get('/google', async (c) => {
-  if (!isGoogleEnabled(c.env)) return c.notFound()
+type OauthState = { state: string; codeVerifier: string; next?: string | null }
+
+/** Starts an authorization-code round-trip: state, PKCE verifier and the post-login target ride in
+ *  a short-lived signed cookie the callback reads back. */
+async function beginOauth(c: Context<AppEnv>, build: (state: string, codeVerifier: string) => URL): Promise<Response> {
   const state = generateState()
   const codeVerifier = generateCodeVerifier()
   const next = safeNext(c.req.query('next')) // carried through the round-trip in the signed cookie
-  const url = createGoogle(c.env).createAuthorizationURL(state, codeVerifier, OAUTH_SCOPES)
-  url.searchParams.set('hd', c.env.ALLOWED_HD) // UX hint only; the hd claim is verified server-side
-
+  const url = build(state, codeVerifier)
   await setSignedCookie(c, OAUTH_COOKIE, JSON.stringify({ state, codeVerifier, next }), c.env.SESSION_SECRET, {
     httpOnly: true,
     secure: c.env.APP_URL.startsWith('https://'),
@@ -59,27 +71,43 @@ auth.get('/google', async (c) => {
     maxAge: 600,
   })
   return c.redirect(url.toString())
-})
+}
 
-auth.get('/callback', async (c) => {
-  if (!isGoogleEnabled(c.env)) return c.notFound()
+/** The callback's code + stored round-trip state, or the /login error to send the browser to. */
+async function finishOauth(c: Context<AppEnv>): Promise<{ code: string; stored: OauthState } | { error: string }> {
   const code = c.req.query('code')
   const state = c.req.query('state')
   const stored = await getSignedCookie(c, c.env.SESSION_SECRET, OAUTH_COOKIE)
   deleteCookie(c, OAUTH_COOKIE, { path: '/' })
 
-  if (!code || !state || typeof stored !== 'string') return c.redirect('/login?error=oauth')
-  let parsed: { state: string; codeVerifier: string; next?: string | null }
+  if (!code || !state || typeof stored !== 'string') return { error: 'oauth' }
+  let parsed: OauthState
   try {
     parsed = JSON.parse(stored)
   } catch {
-    return c.redirect('/login?error=oauth')
+    return { error: 'oauth' }
   }
-  if (parsed.state !== state) return c.redirect('/login?error=state')
+  if (parsed.state !== state) return { error: 'state' }
+  return { code, stored: parsed }
+}
+
+auth.get('/google', async (c) => {
+  if (!isGoogleEnabled(c.env)) return c.notFound()
+  return beginOauth(c, (state, codeVerifier) => {
+    const url = createGoogle(c.env).createAuthorizationURL(state, codeVerifier, OAUTH_SCOPES)
+    url.searchParams.set('hd', c.env.ALLOWED_HD) // UX hint only; the hd claim is verified server-side
+    return url
+  })
+})
+
+auth.get('/callback', async (c) => {
+  if (!isGoogleEnabled(c.env)) return c.notFound()
+  const round = await finishOauth(c)
+  if ('error' in round) return c.redirect(`/login?error=${round.error}`)
 
   let claims: GoogleClaims
   try {
-    const tokens = await createGoogle(c.env).validateAuthorizationCode(code, parsed.codeVerifier)
+    const tokens = await createGoogle(c.env).validateAuthorizationCode(round.code, round.stored.codeVerifier)
     claims = decodeIdToken(tokens.idToken()) as unknown as GoogleClaims
   } catch {
     return c.redirect('/login?error=exchange')
@@ -93,7 +121,64 @@ auth.get('/callback', async (c) => {
 
   const user = await findOrCreateUser(c.get('db'), c.env, claims, email)
   await createSession(c, user)
-  return c.redirect(safeNext(parsed.next) ?? '/dashboard')
+  return c.redirect(safeNext(round.stored.next) ?? '/dashboard')
+})
+
+auth.get('/oidc', async (c) => {
+  if (!isOidcEnabled(c.env)) return c.notFound()
+  let endpoints: OidcEndpoints
+  try {
+    endpoints = await discoverOidc(c.env)
+  } catch (err) {
+    console.error('oidc: discovery failed', err)
+    return c.redirect('/login?error=oauth')
+  }
+  return beginOauth(c, (state, codeVerifier) =>
+    createOidc(c.env).createAuthorizationURLWithPKCE(
+      endpoints.authorization_endpoint,
+      state,
+      CodeChallengeMethod.S256,
+      codeVerifier,
+      oidcScopes(c.env),
+    ),
+  )
+})
+
+auth.get('/oidc/callback', async (c) => {
+  if (!isOidcEnabled(c.env)) return c.notFound()
+  const round = await finishOauth(c)
+  if ('error' in round) return c.redirect(`/login?error=${round.error}`)
+
+  let claims: OidcClaims
+  try {
+    const endpoints = await discoverOidc(c.env)
+    const tokens = await createOidc(c.env).validateAuthorizationCode(
+      endpoints.token_endpoint,
+      round.code,
+      round.stored.codeVerifier,
+    )
+    claims = decodeIdToken(tokens.idToken()) as OidcClaims
+  } catch (err) {
+    console.error('oidc: token exchange failed', err)
+    return c.redirect('/login?error=exchange')
+  }
+
+  const accepted = acceptedOidcEmail(claims, c.env)
+  if ('refused' in accepted) {
+    console.warn(`oidc: id_token refused (${accepted.refused})`)
+    return c.redirect('/login?error=denied')
+  }
+  const email = accepted.email
+
+  const db = c.get('db')
+  const user = await syncOidcAccess(
+    db,
+    c.env,
+    await findOrCreateIdentity(db, c.env, 'oidcSub', claims, email),
+    oidcGroups(claims, c.env),
+  )
+  await createSession(c, user)
+  return c.redirect(safeNext(round.stored.next) ?? '/dashboard')
 })
 
 auth.post('/logout', async (c) => {
@@ -274,14 +359,27 @@ auth.post('/cli/approve', requireAuth, async (c) => {
 
 // Exported for characterization tests. Matches by googleId then email, so a Google login
 // backfills onto a prior bootstrap user (googleId null, same email) without changing role.
-export async function findOrCreateUser(
+export function findOrCreateUser(
   db: AppEnv['Variables']['db'],
   env: Bindings,
   claims: GoogleClaims,
   email: string,
 ): Promise<SessionUser> {
-  const byGoogle = await db.select().from(users).where(eq(users.googleId, claims.sub)).limit(1)
-  const existing = byGoogle[0] ?? (await db.select().from(users).where(eq(users.email, email)).limit(1))[0]
+  return findOrCreateIdentity(db, env, 'googleId', claims, email)
+}
+
+/** Signs in the user whose `column` holds `claims.sub`, else the one with this (verified) email —
+ *  linking the subject onto it — else a new member with a personal space. Never promotes. */
+async function findOrCreateIdentity(
+  db: AppEnv['Variables']['db'],
+  env: Bindings,
+  column: 'googleId' | 'oidcSub',
+  claims: { sub: string; name?: string; picture?: string },
+  email: string,
+): Promise<SessionUser> {
+  const bySubject = await db.select().from(users).where(eq(users[column], claims.sub)).limit(1)
+  const existing = bySubject[0] ?? (await db.select().from(users).where(eq(users.email, email)).limit(1))[0]
+  const subject = column === 'googleId' ? { googleId: claims.sub } : { oidcSub: claims.sub }
 
   // The photo is re-read from the id_token on EVERY login, which is also the only backfill Google
   // offers: users who signed up before avatars existed get one the next time they sign in. A claim
@@ -292,7 +390,7 @@ export async function findOrCreateUser(
     const name = claims.name ?? existing.name
     await db
       .update(users)
-      .set({ name, googleId: claims.sub, avatarUrl: avatarUrl ?? existing.avatarUrl })
+      .set({ name, ...subject, avatarUrl: avatarUrl ?? existing.avatarUrl })
       .where(eq(users.id, existing.id))
     return toSessionUser({ ...existing, name })
   }
@@ -305,7 +403,7 @@ export async function findOrCreateUser(
     id,
     email,
     name: claims.name ?? null,
-    googleId: claims.sub,
+    ...subject,
     avatarUrl,
     role,
     lastSeenReleaseAt: NEWEST_RELEASE_DATE,

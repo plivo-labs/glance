@@ -201,6 +201,9 @@ export function Component() {
       >
         {/* Invite is owner-only server-side — don't offer a button that can only 403. */}
         {isGroup && space.isOwner && <InviteMembersDialog slug={space.slug} />}
+        {space.managed && (
+          <p className="text-muted-foreground text-sm">Members come from your sign-in provider</p>
+        )}
       </PageHeader>
 
       <section className="space-y-4">
