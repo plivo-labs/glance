@@ -149,6 +149,24 @@ With `OIDC_GROUP_PREFIX` set, every group in the id_token that starts with the p
 
 Nobody owns such a space: invites and removals in Glance are refused with 409 and only a superadmin can delete one. `createdBy` is the first member to sign in, purely because the column is mandatory (the API never treats them as the owner); deleting that user's row hands it to another member, and is refused while they are the only one. Slugs are first-come, so a member can pre-create the obvious `platform`…`platform-25` names; the sync then uses a name-derived suffix (`platform-1f2a3b`), and if even that is taken it skips that one group's space rather than failing the sign-in for the whole group. Creating a group space costs two D1 queries on the sign-in that brings it, so on the Free plan (50 D1 queries per request) a first sign-in with more than about 20 new groups can fail; keep `OIDC_GROUP_PREFIX` (or the provider's groups filter) narrow.
 
+### CLI sign-in
+
+With `OIDC_CLI_CLIENT_ID` set, `glance login` signs in through the provider's device flow (RFC 8628) instead of Glance's own, and sends the provider's token as its bearer. Register a public (native) client with the Device Authorization and Refresh Token grants, and assign it like the web client. The CLI renews the token a minute before it expires. `glance logout` revokes the refresh token at the provider's `revocation_endpoint`; a provider without one (Entra ID) leaves it valid until it expires, and the CLI says so.
+
+| Variable | Example | Meaning |
+|---|---|---|
+| `OIDC_CLI_CLIENT_ID` | `0oa1b2c3d4` | the public client of the CLI; turns the feature on |
+| `OIDC_CLI_SCOPE` | `openid profile offline_access` | default shown; `offline_access` is what yields a refresh token |
+| `OIDC_CLI_TOKEN` | `id` | `id` (default) sends the ID token, `access` the access token |
+| `OIDC_CLI_ISSUER` | `https://yourcompany.okta.com/oauth2/default` | issuer of the CLI's tokens when it is not `OIDC_ISSUER` (a custom authorization server) |
+| `OIDC_CLI_AUDIENCE` | `api://glance` | `aud` of the access tokens, required with `OIDC_CLI_TOKEN=access` |
+
+Glance verifies the JWT against the provider's `jwks_uri` (RS256, issuer, audience, expiry) and maps its `sub` to the user who signed in with `<OIDC_ISSUER> <sub>` in the browser, so people sign in once in the browser first. The CLI client must therefore issue the same `sub` as the web client. Okta does. Microsoft Entra ID issues a different `sub` per application, so there the CLI has to use the web client's own app registration (enable "Allow public client flows" on it and set `OIDC_CLI_CLIENT_ID` to the same client id); a separate registration signs nobody in. A JWT never falls through to Glance's own CLI tokens. Deactivating someone at the provider ends their CLI access when the token expires.
+
+Every request with such a token gets the same group sync as a browser sign-in, so a role or a group space the provider took away is gone as soon as the CLI refreshes its token (about hourly). That needs the groups in the CLI's token: add the groups scope to `OIDC_CLI_SCOPE` (`openid profile offline_access groups` on Okta) and give the CLI client the same groups claim as the web client. Without them the token says nothing about groups and the CLI keeps what the last browser sign-in set.
+
+`POST /api/admin/users/:id/revoke-cli` also covers these tokens: it records the moment, and a token from a sign-in before it (`auth_time`, which a refresh keeps; `iat` when the provider sends none) is refused, so the person must run `glance login` again. Instances without the variable keep the Glance device flow.
+
 ## CI auto-deploy
 
 `.github/workflows/deploy.yml` deploys both workers + runs the D1 migrate on push to `main`. The only repo secret needed is `CLOUDFLARE_API_TOKEN` (scopes: Workers Scripts, D1, KV, R2). Worker secrets are set once via `wrangler secret put` and persist across deploys.

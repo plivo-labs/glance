@@ -13,6 +13,9 @@ export const users = sqliteTable('users', {
   // only unique within one issuer, so the pair is what must never be re-pointed. Kept apart from
   // googleId so one deploy can offer both sign-ins without one provider's subject matching the other's.
   oidcSub: text('oidcSub').unique(),
+  // Epoch seconds of the last revoke-cli. A provider-issued CLI token (lib/oidc-bearer.ts) from a
+  // sign-in before it is refused; Glance's own CLI tokens are deleted from KV instead.
+  cliRevokedAt: integer('cliRevokedAt'),
   // Google profile photo URL from the OAuth id_token's `picture` claim, refreshed on every login.
   // Never rendered directly by the browser — the avatar route proxies it same-origin (see
   // routes/avatars.ts), so this column is the ONLY place a googleusercontent URL is held.

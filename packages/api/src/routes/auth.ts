@@ -22,6 +22,7 @@ import {
   withUserinfo,
 } from '../lib/oidc'
 import { isOidcSyncEnabled, syncOidcAccess } from '../lib/oidc-access'
+import { cliOidcConfig } from '../lib/oidc-bearer'
 import {
   bearerToken,
   createCliToken,
@@ -141,6 +142,12 @@ auth.get('/callback', async (c) => {
   if (user instanceof Response) return user
   await createSession(c, user)
   return c.redirect(safeNext(round.stored.next) ?? '/dashboard')
+})
+
+// What `glance login` needs for the provider's device flow; 404 unless OIDC_CLI_CLIENT_ID is set.
+auth.get('/cli/config', (c) => {
+  const config = cliOidcConfig(c.env)
+  return config ? c.json(config) : c.notFound()
 })
 
 auth.get('/oidc', async (c) => {

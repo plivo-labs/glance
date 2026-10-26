@@ -14,6 +14,9 @@ import (
 // start and poll requests are UNauthenticated (there's no token yet).
 func (c *client) login() error {
 	api := c.baseURL
+	if cfg := c.fetchCliOidc(); cfg != nil {
+		return c.oidcLogin(cfg)
+	}
 	req, _ := http.NewRequest("POST", api+"/api/auth/cli/start", nil)
 	req.Header.Set("User-Agent", userAgent())
 	resp, err := c.http.Do(req)

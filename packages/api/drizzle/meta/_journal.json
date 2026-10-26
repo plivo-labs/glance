@@ -232,6 +232,13 @@
       "when": 1786700000000,
       "tag": "0032_oidc_group_spaces",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1786800000000,
+      "tag": "0033_oidc_cli_revocation",
+      "breakpoints": true
     }
   ]
 }

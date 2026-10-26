@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test'
+import { eq } from 'drizzle-orm'
+import { users } from '../db/schema'
 import { auth, authKey, makeRouteApp, mintKey, mintUser } from '../test/route-fixtures'
 
 describe('POST /api/admin/users/:id/revoke-cli', () => {
@@ -23,6 +25,19 @@ describe('POST /api/admin/users/:id/revoke-cli', () => {
     // The key must stop AUTHENTICATING — not merely have a column changed.
     const after = await app.request('/api/api-keys', { headers: authKey(secret) }, env)
     expect(after.status).toBe(401)
+  })
+
+  test('stamps cliRevokedAt, which is what refuses provider-issued CLI tokens (lib/session.ts)', async () => {
+    const { app, db, kv, env } = makeRouteApp()
+    await mintUser(db, kv, 'admin', { role: 'superadmin' })
+    await mintUser(db, kv, 'owner')
+    const before = Math.floor(Date.now() / 1000)
+
+    await app.request('/api/admin/users/owner/revoke-cli', { method: 'POST', headers: auth('admin') }, env)
+
+    const [owner] = await db.select().from(users).where(eq(users.id, 'owner'))
+    expect(owner?.cliRevokedAt).toBeGreaterThanOrEqual(before)
+    expect((await db.select().from(users).where(eq(users.id, 'admin')))[0]?.cliRevokedAt).toBeNull()
   })
 
   // The slice added D1-key revocation ALONGSIDE the pre-existing KV sweep, and nothing anywhere
