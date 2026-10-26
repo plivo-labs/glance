@@ -140,3 +140,16 @@ export function acceptedOidcEmail(
   if (!email.endsWith(`@${env.ALLOWED_HD.toLowerCase()}`)) return { refused: 'email outside ALLOWED_HD' }
   return { email }
 }
+
+/** The group names the id_token carries in OIDC_GROUPS_CLAIM, or null when the provider did not
+ *  say. An absent claim, a non-array value and Entra ID's group overage (the claim is replaced by
+ *  `_claim_names`) are all "unknown": syncing them as an empty list would strip every managed
+ *  membership and demote every admin on a token that merely omitted the groups. */
+export function oidcGroups(claims: OidcClaims, env: Bindings): string[] | null {
+  const claim = env.OIDC_GROUPS_CLAIM || 'groups'
+  const overage = claims._claim_names
+  if (overage && typeof overage === 'object' && claim in overage) return null
+  const value = claims[claim]
+  if (!Array.isArray(value)) return null
+  return value.filter((group): group is string => typeof group === 'string')
+}

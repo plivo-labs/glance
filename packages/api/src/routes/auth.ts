@@ -16,10 +16,12 @@ import {
   isOidcEnabled,
   type OidcClaims,
   type OidcEndpoints,
+  oidcGroups,
   oidcScopes,
   oidcSubjectKey,
   withUserinfo,
 } from '../lib/oidc'
+import { isOidcSyncEnabled, syncOidcAccess } from '../lib/oidc-access'
 import {
   bearerToken,
   createCliToken,
@@ -188,8 +190,9 @@ auth.get('/oidc/callback', async (c) => {
   const email = accepted.email
 
   const db = c.get('db')
-  const user = await signingIn(c, () => findOrCreateIdentity(db, c.env, 'oidc', claims, email))
-  if (user instanceof Response) return user
+  const identity = await signingIn(c, () => findOrCreateIdentity(db, c.env, 'oidc', claims, email))
+  if (identity instanceof Response) return identity
+  const user = await syncOidcAccess(db, c.env, identity, oidcGroups(claims, c.env))
   await createSession(c, user)
   return c.redirect(safeNext(round.stored.next) ?? '/dashboard')
 })
@@ -419,6 +422,10 @@ async function findOrCreateIdentity(
     existing = (await db.select().from(users).where(eq(users.email, email)).limit(1))[0]
     if (existing) assertAdoptable(provider, env, existing)
   }
+  // Group membership and the admin role are written only by an OIDC sign-in, so while that sync is
+  // on, a Google session would outlive access the provider already revoked. Make the provider's
+  // button the only way in for an account it has claimed, however the Google identity found it.
+  if (provider === 'google' && existing?.oidcSub && isOidcSyncEnabled(env)) throw new SignInRefused('sso')
 
   // The photo is re-read from the id_token on EVERY login, which is also the only backfill Google
   // offers: users who signed up before avatars existed get one the next time they sign in. A claim
