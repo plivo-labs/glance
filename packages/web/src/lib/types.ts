@@ -15,6 +15,8 @@ export interface Me {
 // GET /api/config — public first-run config driving which login options the page offers.
 export interface PublicConfig {
   googleEnabled: boolean
+  // Provider label for the generic OIDC button ("Okta"); null when OIDC is not configured.
+  oidcName: string | null
   bootstrapAvailable: boolean
 }
 
