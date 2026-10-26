@@ -20,6 +20,17 @@ export interface Bindings {
   // Optional: when unset, Google OAuth routes are inert (404) and login is bootstrap-only.
   GOOGLE_CLIENT_ID?: string
   GOOGLE_CLIENT_SECRET?: string
+  // Optional generic OIDC sign-in (Okta, Entra ID, Keycloak, …). Inert (404) unless the issuer,
+  // client id and client secret are all set; see lib/oidc.ts and DEPLOY.md.
+  OIDC_ISSUER?: string
+  OIDC_CLIENT_ID?: string
+  OIDC_CLIENT_SECRET?: string
+  OIDC_PROVIDER_NAME?: string
+  OIDC_SCOPES?: string
+  // Opt-in: let an OIDC identity adopt an existing account by verified email when that account
+  // already has a Google subject or is a superadmin. Off by default — see findOrCreateIdentity in
+  // routes/auth.ts. Without it, only an account with no identity at all can be adopted.
+  OIDC_LINK_EXISTING?: string
   // Optional one-shot secret gating first-superadmin bootstrap. Unset → bootstrap inert (404).
   BOOTSTRAP_TOKEN?: string
   // Optional Slack bot token (xoxb-…). Unset = kill-switch: comment notifications never fan out to
