@@ -34,6 +34,9 @@ export const spaces = sqliteTable('spaces', {
   type: text('type', { enum: ['personal', 'group'] }).notNull(),
   createdBy: text('createdBy').notNull().references(() => users.id, { onDelete: 'cascade' }),
   createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
+  // Set when the roster mirrors an identity-provider group (lib/oidc-access.ts): membership is
+  // synced on every OIDC sign-in and nobody owns the space, so manual invites/removals are refused.
+  oidcGroup: text('oidcGroup').unique(),
 })
 
 export const spaceMembers = sqliteTable(

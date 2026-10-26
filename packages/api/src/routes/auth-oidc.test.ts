@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { eq } from 'drizzle-orm'
 import { Hono } from 'hono'
-import { spaces, users } from '../db/schema'
+import { spaceMembers, spaces, users } from '../db/schema'
 import { resetOidcDiscovery } from '../lib/oidc'
 import { makeDb, makeKv } from '../test/harness'
 import type { AppEnv } from '../types'
@@ -379,6 +379,16 @@ describe('OIDC sign-in routes', () => {
     expect(res.headers.get('set-cookie') ?? '').not.toContain('__Host-glance_session=')
   })
 
+  test('the group-space sync alone also refuses Google for an OIDC account', async () => {
+    const { app, env, db } = setup({ ...GOOGLE_ENV, OIDC_GROUP_PREFIX: 'app.glance.' })
+    await db.insert(users).values({ id: 'u', email: 'john.doe@example.com', oidcSub: `${ISSUER} idp-john` })
+    idTokenClaims = { sub: 'g-1', email: 'john.doe@example.com', email_verified: true, hd: 'example.com' }
+
+    const res = await googleSignIn(app, env)
+    expect(res.headers.get('location')).toBe('/login?error=sso')
+    expect(res.headers.get('set-cookie') ?? '').not.toContain('__Host-glance_session=')
+  })
+
   test('without the sync, Google still signs that account in and links the googleId', async () => {
     const { app, env, db } = setup(GOOGLE_ENV)
     await db.insert(users).values({ id: 'u', email: 'john.doe@example.com', oidcSub: `${ISSUER} idp-john` })
@@ -387,5 +397,22 @@ describe('OIDC sign-in routes', () => {
     const res = await googleSignIn(app, env)
     expect(res.headers.get('location')).toBe('/dashboard')
     expect((await db.select().from(users))[0]).toMatchObject({ id: 'u', googleId: 'g-1' })
+  })
+
+  test('prefixed groups in the id_token become managed spaces the user belongs to', async () => {
+    const { app, env, db } = setup({ OIDC_GROUP_PREFIX: 'app.glance.' })
+    idTokenClaims = claims({ groups: ['app.glance.Platform', 'Everyone'] })
+
+    await signIn(app, env)
+
+    const user = (await db.select().from(users))[0]
+    const managed = await db
+      .select({ slug: spaces.slug, name: spaces.name, oidcGroup: spaces.oidcGroup })
+      .from(spaceMembers)
+      .innerJoin(spaces, eq(spaces.id, spaceMembers.spaceId))
+      .where(eq(spaceMembers.userId, user.id))
+    expect(managed.filter((s) => s.oidcGroup !== null)).toEqual([
+      { slug: 'platform', name: 'Platform', oidcGroup: 'app.glance.Platform' },
+    ])
   })
 })
