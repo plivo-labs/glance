@@ -7,6 +7,7 @@ export interface OidcEndpoints {
   authorization_endpoint: string
   token_endpoint: string
   userinfo_endpoint?: string
+  jwks_uri?: string
 }
 
 export interface OidcClaims {
@@ -70,11 +71,12 @@ function requireHttps(value: unknown, what: string): string {
 
 // Only the resolved document is cached, never the in-flight promise: workerd refuses to let one
 // request await I/O that another request started.
-let discovered: OidcEndpoints | null = null
+const discovered = new Map<string, OidcEndpoints>()
 
-export async function discoverOidc(env: Bindings): Promise<OidcEndpoints> {
-  const issuer = requireHttps(env.OIDC_ISSUER, 'issuer')
-  if (discovered?.issuer === issuer) return discovered
+export async function discoverOidc(env: Bindings, issuerOverride?: string): Promise<OidcEndpoints> {
+  const issuer = requireHttps(issuerOverride ?? env.OIDC_ISSUER, 'issuer')
+  const known = discovered.get(issuer)
+  if (known) return known
   const res = await fetch(`${issuer.replace(/\/+$/, '')}/.well-known/openid-configuration`)
   if (!res.ok) throw new Error(`OIDC discovery failed: ${res.status}`)
   const doc = (await res.json()) as Partial<OidcEndpoints>
@@ -85,19 +87,21 @@ export async function discoverOidc(env: Bindings): Promise<OidcEndpoints> {
   ) {
     throw new Error('OIDC discovery document does not match the configured issuer')
   }
-  discovered = {
+  const endpoints = {
     issuer,
     authorization_endpoint: requireHttps(doc.authorization_endpoint, 'authorization endpoint'),
     token_endpoint: requireHttps(doc.token_endpoint, 'token endpoint'),
     userinfo_endpoint: doc.userinfo_endpoint
       ? requireHttps(doc.userinfo_endpoint, 'userinfo endpoint')
       : undefined,
+    jwks_uri: doc.jwks_uri ? requireHttps(doc.jwks_uri, 'jwks uri') : undefined,
   }
-  return discovered
+  discovered.set(issuer, endpoints)
+  return endpoints
 }
 
 export function resetOidcDiscovery(): void {
-  discovered = null
+  discovered.clear()
 }
 
 /** The id_token's claims completed from the userinfo endpoint, for providers whose id_token leaves

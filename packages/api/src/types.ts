@@ -35,6 +35,18 @@ export interface Bindings {
   OIDC_CLIENT_ID?: string
   OIDC_CLIENT_SECRET?: string
   OIDC_PROVIDER_NAME?: string
+  // CLI sign-in through the provider's device flow (lib/oidc-bearer.ts): the public client the CLI
+  // logs in with, the scope it asks for, and which token it sends as its bearer ("id" or "access").
+  // For "access" tokens (a custom authorization server) OIDC_CLI_AUDIENCE is their `aud`.
+  OIDC_CLI_CLIENT_ID?: string
+  // The issuer of the CLI's tokens when it differs from OIDC_ISSUER (a custom authorization server).
+  OIDC_CLI_ISSUER?: string
+  OIDC_CLI_SCOPE?: string
+  OIDC_CLI_TOKEN?: string
+  OIDC_CLI_AUDIENCE?: string
+  // "1" keeps Glance's own device flow and its CLI tokens open next to the provider's, for a
+  // switch-over while CLIs from before OIDC_CLI_CLIENT_ID are upgraded.
+  OIDC_CLI_LEGACY?: string
   OIDC_SCOPES?: string
   // Opt-in: let an OIDC identity adopt an existing account by verified email when that account
   // already has a Google subject or is a superadmin. Off by default — see findOrCreateIdentity in

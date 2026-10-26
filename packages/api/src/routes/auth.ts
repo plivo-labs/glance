@@ -1,6 +1,7 @@
 import { CodeChallengeMethod, decodeIdToken, generateCodeVerifier, generateState } from 'arctic'
 import { and, eq, isNull, or } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
+import { createMiddleware } from 'hono/factory'
 import { deleteCookie, getSignedCookie, setSignedCookie } from 'hono/cookie'
 import { events, users } from '../db/schema'
 import { bootstrapSuperadminByEmail, createPersonalSpace, superadminStatus, toSessionUser } from '../db/repo'
@@ -22,6 +23,7 @@ import {
   withUserinfo,
 } from '../lib/oidc'
 import { isOidcSyncEnabled, syncOidcAccess } from '../lib/oidc-access'
+import { cliOidcConfig, isClassicCliOpen } from '../lib/oidc-bearer'
 import {
   bearerToken,
   createCliToken,
@@ -141,6 +143,12 @@ auth.get('/callback', async (c) => {
   if (user instanceof Response) return user
   await createSession(c, user)
   return c.redirect(safeNext(round.stored.next) ?? '/dashboard')
+})
+
+// What `glance login` needs for the provider's device flow; 404 unless OIDC_CLI_CLIENT_ID is set.
+auth.get('/cli/config', (c) => {
+  const config = cliOidcConfig(c.env)
+  return config ? c.json(config) : c.notFound()
 })
 
 auth.get('/oidc', async (c) => {
@@ -327,7 +335,21 @@ export async function isCliStartRateLimited(
   return false
 }
 
-auth.post('/cli/start', async (c) => {
+// With OIDC_CLI_CLIENT_ID set the CLI signs in through the provider, so Glance's own flow answers
+// 410: a provider token approving a code here would mint a 30-day token that skips the provider.
+// It runs before requireAuth on /cli/approve, so no credential reaches the handler.
+const classicCliLogin = createMiddleware<AppEnv>(async (c, next) => {
+  if (isClassicCliOpen(c.env)) return next()
+  return c.json(
+    {
+      error: 'cli_login_moved',
+      message: 'This instance signs the CLI in through its identity provider: run glance upgrade, then glance login.',
+    },
+    410,
+  )
+})
+
+auth.post('/cli/start', classicCliLogin, async (c) => {
   const ip = c.req.header('CF-Connecting-IP') ?? 'unknown'
   if (await isCliStartRateLimited(c.env.GLANCE_SESSIONS, ip)) return c.json({ error: 'rate_limited' }, 429)
 
@@ -345,7 +367,7 @@ auth.post('/cli/start', async (c) => {
   })
 })
 
-auth.get('/cli/poll', async (c) => {
+auth.get('/cli/poll', classicCliLogin, async (c) => {
   const deviceCode = c.req.query('device_code')
   if (!deviceCode) return c.json({ error: 'device_code required' }, 400)
   const raw = await c.env.GLANCE_SESSIONS.get(`cli_device:${deviceCode}`)
@@ -356,7 +378,7 @@ auth.get('/cli/poll', async (c) => {
   return c.json({ status: 'complete', accessToken: rec.token })
 })
 
-auth.post('/cli/approve', requireAuth, async (c) => {
+auth.post('/cli/approve', classicCliLogin, requireAuth, async (c) => {
   const { userCode } = await c.req.json<{ userCode?: string }>()
   if (!userCode) return c.json({ error: 'userCode required' }, 400)
   const deviceCode = await c.env.GLANCE_SESSIONS.get(`cli_user:${userCode.toUpperCase()}`)
