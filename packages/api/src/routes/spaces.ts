@@ -11,6 +11,13 @@ import { isValidSlug } from '../lib/slug'
 import { requireAuth, requireControlGrant } from '../middleware/auth'
 import type { AppEnv } from '../types'
 
+const MANAGED_SPACE = 'membership of this space is managed by the identity provider'
+
+/** A space whose roster mirrors an identity-provider group has no owner: the provider decides who
+ *  is in it, and its createdBy is only the first member to sign in. */
+const ownsSpace = (space: { createdBy: string; oidcGroup: string | null }, userId: string) =>
+  space.createdBy === userId && space.oidcGroup === null
+
 export const spaces = new Hono<AppEnv>()
 
 /** True for a SQLite/D1 UNIQUE-constraint violation (message carries "UNIQUE constraint failed"
@@ -86,7 +93,7 @@ spaces.get('/:slug', requireAuth, async (c) => {
   const memberCount = Number(counted[0]?.count ?? 0)
   const isMember = memberRows.length > 0
   // isOwner lets the UI gate owner-only affordances (invite members) instead of offering
-  // actions that can only 403 — the member routes below all enforce createdBy.
+  // actions that can only 403 — the member routes below all enforce ownsSpace.
   return c.json({
     id: space.id,
     slug: space.slug,
@@ -94,7 +101,8 @@ spaces.get('/:slug', requireAuth, async (c) => {
     type: space.type,
     memberCount,
     isMember,
-    isOwner: space.createdBy === user.id,
+    isOwner: ownsSpace(space, user.id),
+    managed: space.oidcGroup !== null,
   })
 })
 
@@ -149,7 +157,8 @@ spaces.post('/:slug/members', requireAuth, requireControlGrant, async (c) => {
 
   const space = (await db.select().from(spacesTable).where(eq(spacesTable.slug, slug)).limit(1))[0]
   if (!space) return c.json({ error: 'space not found' }, 404)
-  if (space.createdBy !== user.id) return c.json({ error: 'forbidden' }, 403)
+  if (space.oidcGroup !== null) return c.json({ error: MANAGED_SPACE }, 409)
+  if (!ownsSpace(space, user.id)) return c.json({ error: 'forbidden' }, 403)
   // A personal space is a single-owner namespace — it has no roster to invite into.
   if (space.type === 'personal') return c.json({ error: 'cannot invite members to a personal space' }, 409)
 
@@ -177,7 +186,8 @@ spaces.delete('/:slug/members/:userId', requireAuth, requireControlGrant, async 
 
   const space = (await db.select().from(spacesTable).where(eq(spacesTable.slug, slug)).limit(1))[0]
   if (!space) return c.json({ error: 'space not found' }, 404)
-  if (space.createdBy !== user.id) return c.json({ error: 'forbidden' }, 403)
+  if (space.oidcGroup !== null) return c.json({ error: MANAGED_SPACE }, 409)
+  if (!ownsSpace(space, user.id)) return c.json({ error: 'forbidden' }, 403)
   if (userId === space.createdBy) return c.json({ error: 'cannot remove the space owner' }, 400)
 
   await db
@@ -195,7 +205,7 @@ spaces.delete('/:slug', requireAuth, requireControlGrant, async (c) => {
   const space = (await db.select().from(spacesTable).where(eq(spacesTable.slug, slug)).limit(1))[0]
   if (!space) return c.json({ error: 'space not found' }, 404)
   if (space.type === 'personal') return c.json({ error: 'personal space cannot be deleted' }, 403)
-  if (user.id !== space.createdBy && user.role !== 'superadmin') return c.json({ error: 'forbidden' }, 403)
+  if (!ownsSpace(space, user.id) && user.role !== 'superadmin') return c.json({ error: 'forbidden' }, 403)
 
   // A group-space delete hard-destroys EVERY site in it (FK cascade + R2 purge), including sites
   // owned by OTHER members — which isn't the owner's to erase. Refuse when any foreign-owned site

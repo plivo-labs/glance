@@ -31,6 +31,8 @@ export interface SpaceDetail extends SpaceSummary {
   memberCount: number
   isMember: boolean
   isOwner: boolean
+  // The roster mirrors an identity-provider group: nobody owns it and invites are refused.
+  managed: boolean
 }
 
 export interface SiteSummary {

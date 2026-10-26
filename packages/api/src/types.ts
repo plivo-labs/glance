@@ -32,10 +32,13 @@ export interface Bindings {
   // routes/auth.ts. Without it, only an account with no identity at all can be adopted.
   OIDC_LINK_EXISTING?: string
   // Opt-in role sync (lib/oidc-access.ts): the id_token claim holding group names (default
-  // `groups`), and the group whose members are superadmin. Setting OIDC_ADMIN_GROUP turns the sync
-  // on for every OIDC sign-in.
+  // `groups`), and the group whose members are superadmin. Setting this (or OIDC_GROUP_PREFIX)
+  // turns the sync on for every OIDC sign-in.
   OIDC_GROUPS_CLAIM?: string
   OIDC_ADMIN_GROUP?: string
+  // Opt-in space sync (lib/oidc-access.ts): every id_token group that starts with this prefix
+  // becomes a group space whose membership is refreshed on each OIDC sign-in.
+  OIDC_GROUP_PREFIX?: string
   // Optional one-shot secret gating first-superadmin bootstrap. Unset → bootstrap inert (404).
   BOOTSTRAP_TOKEN?: string
   // Optional Slack bot token (xoxb-…). Unset = kill-switch: comment notifications never fan out to
