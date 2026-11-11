@@ -27,10 +27,9 @@ describe('C1 — createNotifications inserts N rows; listNotifications returns t
       { recipientId: me, type: 'mention', actorId: actor, siteLabel: 's/a', snippet: 'second' },
       { recipientId: me, type: 'mention', actorId: actor, siteLabel: 's/a', snippet: 'third' },
     ])
-    // The single multi-values insert gives these rows the same millisecond timestamp; newest-first
-    // is therefore made deterministic by listNotifications' rowid-desc tiebreaker.
+    // A batch may cross a millisecond boundary, so ordering within it is determined by the
+    // rowid-desc tiebreaker when timestamps match and by createdAt otherwise.
     const { items } = await listNotifications(db, me)
-    expect(new Set(items.map((n) => n.createdAt)).size).toBe(1)
     expect(items.map((n) => n.snippet)).toEqual(['third', 'second', 'first'])
     expect(items[0].type).toBe('mention')
     expect(items[0].actorName).toBe('Ava')
