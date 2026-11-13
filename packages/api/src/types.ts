@@ -1,6 +1,7 @@
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import type { ApiKeyGrants } from './lib/api-key'
 import type { OgCard } from './lib/og-image'
+import type { PdfRenderRequest } from './lib/pdf'
 
 /** Worker bindings + secrets/vars. Secrets come from `.dev.vars` locally and
  *  `wrangler secret put` in prod; plain vars can live in wrangler.jsonc `vars`. */
@@ -12,6 +13,14 @@ export interface Bindings {
   UPLOAD_LIMITER?: RateLimit
   SUMMARY_LIMITER?: RateLimit
   ASK_LIMITER?: RateLimit
+  PDF_LIMITER?: RateLimit
+  // Cloudflare Browser Rendering, used for one-click PDF export (routes/site-pdf). Declared in
+  // wrangler.jsonc but typed optional: a deploy or local dev without it answers 501 and the web app
+  // falls back to the browser's print dialog.
+  BROWSER?: Fetcher
+  // DI seam for the PDF renderer (same idiom as OG_RENDER): route tests inject a fake so puppeteer
+  // never loads under bun. Never set in prod — unset → the BROWSER binding.
+  PDF_RENDER?: (req: PdfRenderRequest) => Promise<Uint8Array>
   // Workers AI, used to transcribe voice comments server-side. Declared unconditionally in
   // wrangler.jsonc so production always has it bound; typed optional purely so tests and any
   // binding-less deploy degrade gracefully — voice comments still post with a transcript

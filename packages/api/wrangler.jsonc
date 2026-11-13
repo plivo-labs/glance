@@ -50,6 +50,10 @@
   // must use `wrangler dev --local` (the `dev` script does), which disables this binding so env.AI
   // is undefined and transcription falls back — no Cloudflare login required just to run the app.
   "ai": { "binding": "AI", "remote": true },
+  // Browser Rendering: one-click PDF export (src/routes/site-pdf.ts). Optional at runtime like AI — a
+  // deploy or local dev without it answers 501 and the viewer falls back to the browser's print
+  // dialog. The Workers Free plan allows 10 browser-minutes a day; Paid is metered per browser hour.
+  "browser": { "binding": "BROWSER" },
   // Two cron ticks into the same `scheduled` handler (src/index.ts), branched by `event.cron`:
   //   "0 * * * *"  — hourly synthetic stats visitor: refreshes only the stats KV halves past
   //                  their soft TTL (window hourly, totals daily), so the admin dashboard always
@@ -65,6 +69,8 @@
     { "name": "SUMMARY_LIMITER", "namespace_id": "1002", "simple": { "limit": 5, "period": 60 } },
     // Ask is interactive Q&A — its own bucket, not SUMMARY_LIMITER's: 5/min tuned for rare summary
     // regenerations would 429 a conversation, and a few asks would block summary regeneration.
-    { "name": "ASK_LIMITER", "namespace_id": "1003", "simple": { "limit": 20, "period": 60 } }
+    { "name": "ASK_LIMITER", "namespace_id": "1003", "simple": { "limit": 20, "period": 60 } },
+    // A PDF is a headless-browser session (billed time), so it is capped per user like summaries.
+    { "name": "PDF_LIMITER", "namespace_id": "1004", "simple": { "limit": 5, "period": 60 } }
   ]
 }

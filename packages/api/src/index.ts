@@ -21,6 +21,7 @@ import { summary } from './routes/summary'
 import { dataApi, dataToken } from './routes/data'
 import { notifications } from './routes/notifications'
 import { whatsNew } from './routes/whats-new'
+import { sitePdf } from './routes/site-pdf'
 import { sites } from './routes/sites'
 import { slackEvents } from './routes/slack-events'
 import { themes } from './routes/themes'
@@ -132,6 +133,7 @@ app.route('/api/sites', stars)
 app.route('/api/sites', comments)
 // Summaries share the same three-segment isolation as comments and cannot shadow site routes.
 app.route('/api/sites', summary)
+app.route('/api/sites', sitePdf)
 // Ask shares the same three-segment isolation as comments/summary and cannot shadow site routes.
 app.route('/api/sites', ask)
 app.route('/api/comments', commentFeed)

@@ -11,6 +11,7 @@ license; the most significant are listed below. Run `bun pm ls` for the full res
 | drizzle-orm | Apache-2.0 |
 | marked | MIT |
 | arctic | MIT |
+| @cloudflare/puppeteer | Apache-2.0 |
 | react, react-dom | MIT |
 | react-router | MIT |
 
