@@ -115,8 +115,17 @@ func (c *client) deploy(argv []string) error {
 		theme = raw.(string)
 		themeSet = true
 	}
+	// Optional expiry (`30m`, `12h`, `7d`, `2w`, `2026-12-31`, or `none` to clear). Explicit-only like
+	// the theme: absent on replace → the server keeps the current expiry. The server resolves it
+	// against its own clock and validates it, so this passes the text through untouched.
+	expires := ""
+	expiresSet := false
+	if raw, present := flags["expires"]; present {
+		expires = raw.(string)
+		expiresSet = true
+	}
 	if path == "" {
-		return fmt.Errorf("Usage: glance deploy <path> [--space <slug>] [--name <slug>] [--visibility team|private|members] [--theme <slug>|default] [--include-hidden]")
+		return fmt.Errorf("Usage: glance deploy <path> [--space <slug>] [--name <slug>] [--visibility team|private|members] [--theme <slug>|default] [--expires 7d|<date>|none] [--include-hidden]")
 	}
 	if err := c.requireAuth(); err != nil {
 		return err
@@ -245,6 +254,9 @@ func (c *client) deploy(argv []string) error {
 	if themeSet {
 		_ = mw.WriteField("theme", theme)
 	}
+	if expiresSet {
+		_ = mw.WriteField("expires", expires)
+	}
 	// Pulled redeploy: send the version we pulled as the CAS token. The server REQUIRES it for an
 	// editor replace (409 on a stale one) and treats it as advisory for an owner.
 	if replace && marker != nil {
@@ -284,11 +296,15 @@ func (c *client) deploy(argv []string) error {
 		return fmt.Errorf("Upload failed (%d): %s", resp.StatusCode, bodySlice(resp))
 	}
 	var out struct {
-		URL string `json:"url"`
+		URL       string  `json:"url"`
+		ExpiresAt *string `json:"expiresAt"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return err
 	}
 	fmt.Fprintf(c.out, "✓ Deployed → %s\n", out.URL)
+	if out.ExpiresAt != nil {
+		fmt.Fprintf(c.out, "  Expires %s\n", *out.ExpiresAt)
+	}
 	return nil
 }
