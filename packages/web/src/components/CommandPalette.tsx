@@ -15,7 +15,8 @@ import { api } from '@/lib/api'
 import { newSpaceHref } from '@/lib/nav'
 import { encodePathSegments } from '@/lib/paths'
 import { siteName, useRecents, visibleEntries } from '@/lib/recents'
-import type { Me, SiteSummary, SpaceSummary } from '@/lib/types'
+import { splitSnippet } from '@/lib/snippet'
+import type { Me, SiteSearchHit, SpaceSummary } from '@/lib/types'
 
 const SEARCH_DEBOUNCE_MS = 200
 
@@ -34,7 +35,7 @@ export function CommandPalette({
   // React Router route, but /api/* are worker endpoints with no client route (they'd match
   // the splat). Site search is driven by the input; spaces load when the palette opens.
   const [query, setQuery] = useState('')
-  const [sites, setSites] = useState<SiteSummary[]>([])
+  const [sites, setSites] = useState<SiteSearchHit[]>([])
   const [spaces, setSpaces] = useState<SpaceSummary[]>([])
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const reqSeq = useRef(0)
@@ -86,7 +87,7 @@ export function CommandPalette({
     const id = ++reqSeq.current
     timer.current = setTimeout(() => {
       api
-        .get<SiteSummary[]>(`/api/sites/search?q=${encodeURIComponent(q)}`)
+        .get<SiteSearchHit[]>(`/api/sites/search?q=${encodeURIComponent(q)}`)
         .then((res) => {
           if (id === reqSeq.current) setSites(res)
         })
@@ -144,9 +145,25 @@ export function CommandPalette({
                 onSelect={() => run(() => window.open(s.url, '_blank', 'noopener,noreferrer'))}
               >
                 <ExternalLink />
-                <span className="truncate">
-                  {s.title ? `${s.title} · ` : ''}
-                  {s.spaceSlug}/{s.siteSlug}
+                <span className="flex min-w-0 flex-col">
+                  <span className="truncate">
+                    {s.title ? `${s.title} · ` : ''}
+                    {s.spaceSlug}/{s.siteSlug}
+                  </span>
+                  {s.matchedIn === 'content' && s.snippet && (
+                    <span className="truncate text-xs text-muted-foreground" data-testid="palette-site-snippet">
+                      {splitSnippet(s.snippet, query).map((part, i) =>
+                        part.hit ? (
+                          // biome-ignore lint/suspicious/noArrayIndexKey: parts are a static split of one string
+                          <mark key={i} className="rounded-sm bg-transparent font-medium text-foreground">
+                            {part.text}
+                          </mark>
+                        ) : (
+                          part.text
+                        ),
+                      )}
+                    </span>
+                  )}
                 </span>
                 <button
                   type="button"

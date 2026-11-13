@@ -53,6 +53,13 @@ export interface SiteSummary {
   updatedAt: string // last content activity (create or most-recent replace); drives Team activity order
 }
 
+/** A row of GET /api/sites/search: name matches first, then page-text matches with a plain-text
+ *  excerpt. Both fields are absent on older servers, so the palette treats them as optional. */
+export interface SiteSearchHit extends SiteSummary {
+  matchedIn?: 'name' | 'content'
+  snippet?: string
+}
+
 export interface TeamUpload extends SiteSummary {
   uploaderId: string
   uploaderName: string | null
