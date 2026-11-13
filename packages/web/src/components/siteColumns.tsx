@@ -6,7 +6,7 @@ import { VisibilityBadge } from '@/components/visibility'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useStar } from '@/hooks/useStar'
-import { timeAgo } from '@/lib/time'
+import { isoDate, timeAgo } from '@/lib/time'
 import type { SiteSummary, Visibility } from '@/lib/types'
 
 // Reusable site-table columns. Every site-collection shares Name / URL / Visibility / Created so
@@ -66,6 +66,8 @@ export function nameColumn<T extends SiteSummary>(): Column<T> {
           {s.title ?? s.siteSlug}
         </a>
         {s.status === 'archived' && <Badge variant="secondary">archived</Badge>}
+        {s.status === 'expired' && <Badge variant="destructive">expired</Badge>}
+        {s.status === 'active' && s.expiresAt && <Badge variant="outline">expires {isoDate(s.expiresAt)}</Badge>}
         {/* "Shared with me" feed only: an editor grantee can redeploy this site's content. */}
         {s.role === 'editor' && <Badge>You can edit</Badge>}
       </div>

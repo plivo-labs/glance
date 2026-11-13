@@ -1,7 +1,7 @@
 // Mirrors the API response contract (packages/api routes).
 
 export type Visibility = 'private' | 'members' | 'team'
-export type SiteStatus = 'active' | 'archived'
+export type SiteStatus = 'active' | 'archived' | 'expired'
 
 export interface Me {
   id: string
@@ -40,6 +40,8 @@ export interface SiteSummary {
   status: SiteStatus
   // Design theme slug (server-injected stylesheet), null/absent = unthemed.
   theme?: string | null
+  // ISO instant the owner set the site to expire at; null/absent = never.
+  expiresAt?: string | null
   audio?: boolean // every file is audio — a recording/voice site; shows a Mic badge
   hasSummary?: boolean // the site has a stored AI summary; shows a sparkle badge
   // Whether the CALLER has starred this site — per-user state riding a shared feed, never the
