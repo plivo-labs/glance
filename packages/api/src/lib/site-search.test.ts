@@ -1,5 +1,20 @@
 import { describe, expect, test } from 'bun:test'
-import { SEARCH_TEXT_CAP, buildSearchText } from './site-search'
+import { SEARCH_TEXT_CAP, buildSearchText, ftsMatchQuery } from './site-search'
+
+describe('ftsMatchQuery', () => {
+  test('quotes every token, prefix-matches only the last, and returns null when nothing is searchable', () => {
+    expect(ftsMatchQuery('quarterly roadmap')).toBe('"quarterly" "roadmap"*')
+    expect(ftsMatchQuery('go ro')).toBe('"go" "ro"')
+    for (const q of ['', '   ', '"', '*', '()', 'a', '- _']) expect(ftsMatchQuery(q)).toBeNull()
+  })
+
+  test('FTS operators, column filters and stray quotes cannot survive as syntax', () => {
+    for (const q of ['foo" OR "bar', 'NEAR(a b)', 'body:secret', 'siteId:x*', '(a OR', '"unbalanced', '-neg ^start', 'a AND NOT b']) {
+      // Every term is a quoted string of letters/digits; nothing else is left to interpret.
+      expect(ftsMatchQuery(q)).toMatch(/^("[\p{L}\p{N}\p{M}]+"\*?)( "[\p{L}\p{N}\p{M}]+"\*?)*$/u)
+    }
+  })
+})
 
 describe('buildSearchText', () => {
   const html = (path: string) => ({ path, mimeType: 'text/html' })

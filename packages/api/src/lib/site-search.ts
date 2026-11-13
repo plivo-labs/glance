@@ -3,7 +3,7 @@
 // triggers keep in step (inserts, deletes AND FK cascades), so this module only ever writes
 // `site_text`. Every query joins back to `sites`, so access is decided by the live site row, never
 // by these tables. This module owns the SQL: building the text, writing it (as batch statements, so
-// it commits WITH the file swap).
+// it commits WITH the file swap), the injection-safe MATCH string, and snippets.
 import { eq, sql } from 'drizzle-orm'
 import type { BatchItem } from 'drizzle-orm/batch'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
@@ -15,6 +15,11 @@ import { extractText, isSupportedEntry, resolveIndexPath } from './extract'
 // `id` is left off siteText on purpose: it is DB-assigned, and drizzle's insert-select wants the
 // handle's columns to be exactly the ones selected.
 export const siteText = sqliteTable('site_text', { siteId: text('siteId').notNull(), body: text('body').notNull() })
+export const siteSearch = sqliteTable('site_search', { body: text('body') })
+/** Join key FROM site_search TO site_text: the FTS hit's rowid is `site_text.id`. */
+export const searchHitJoin = sql`"site_text"."id" = "site_search"."rowid"`
+/** bm25 rank of the hit (lower = better). Valid only in a query FROM site_search. */
+export const searchRank = sql<number>`"site_search"."rank"`
 
 export const SEARCH_TEXT_CAP = 200_000 // chars of text kept per site
 // extractText already caps each FILE at 40k chars; these bound how many files get read, and how much
@@ -91,3 +96,32 @@ export const copySearchRowStmt = (db: DrizzleD1Database, fromSiteId: string, toS
         .from(siteText)
         .where(eq(siteText.siteId, fromSiteId)),
     )
+
+/**
+ * The MATCH expression for a user query, or null when there is nothing worth searching. Only
+ * letter/number/mark runs survive and each becomes a quoted FTS5 string, so no operator, column
+ * filter, NEAR or unbalanced quote can reach the parser (a `"` cannot occur inside a token).
+ * Tokens AND together; the last one is a prefix match once it has 3+ characters (search-as-you-type).
+ */
+export function ftsMatchQuery(q: string): string | null {
+  const tokens = (q.match(/[\p{L}\p{N}\p{M}]+/gu) ?? []).slice(0, 6)
+  if (!tokens.some((t) => t.length >= 2)) return null
+  return tokens.map((t, i) => (i === tokens.length - 1 && t.length >= 3 ? `"${t}"*` : `"${t}"`)).join(' ')
+}
+
+/** Plain-text excerpts around the match, keyed by site id. Call ONLY with ids that already passed the
+ *  final access check — this reads page text and applies no access rule of its own. */
+export async function siteSnippets(
+  db: DrizzleD1Database,
+  match: string,
+  siteIds: string[],
+): Promise<Map<string, string>> {
+  if (siteIds.length === 0) return new Map()
+  const rows = await db.all<{ siteId: string; snippet: string }>(
+    sql`SELECT site_text.siteId AS siteId, snippet(site_search, 0, '', '', '…', 16) AS snippet FROM site_search JOIN site_text ON site_text.id = site_search.rowid WHERE site_search MATCH ${match} AND site_text.siteId IN (${sql.join(
+      siteIds.map((id) => sql`${id}`),
+      sql`, `,
+    )})`,
+  )
+  return new Map(rows.map((r) => [r.siteId, r.snippet.replace(/\s+/g, ' ').trim()]))
+}

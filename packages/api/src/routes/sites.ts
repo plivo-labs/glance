@@ -26,7 +26,15 @@ import { siteFeedColumns, toFeedRow } from '../lib/site-feed'
 import { readSessionOrBearer } from '../lib/session'
 import { fetchAccessFacts, isSharedFromFacts, resolveSite, resolveSiteForAccess } from '../lib/site-access'
 import { deliverSlack, type SlackRecipient, slackDepsFromEnv, slackEnabled } from '../lib/slack'
-import { copySearchRowStmt } from '../lib/site-search'
+import {
+  copySearchRowStmt,
+  ftsMatchQuery,
+  searchHitJoin,
+  searchRank,
+  siteSearch,
+  siteSnippets,
+  siteText,
+} from '../lib/site-search'
 import { isValidSlug } from '../lib/slug'
 import { copyObjects, deleteKeys, deleteSiteObjects } from '../lib/storage'
 import { signToken } from '../lib/token'
@@ -48,7 +56,9 @@ export const sites = new Hono<AppEnv>()
 // Over-fetch a little past the result cap so the in-memory checkAccess pass can drop a few
 // non-openable candidates and still fill the cap.
 const SEARCH_SCAN_CAP = 200
-
+// Content hits are already reach-filtered in SQL (see searchSites), so the cap only needs slack for
+// the final checkAccess pass, not for rows the caller cannot open.
+const CONTENT_SCAN_CAP = 50
 
 // Escape LIKE metacharacters (`%`, `_`, and the `\` escape char itself) so a user's literal
 // `%`/`_` can't act as wildcards. Pair the bound value with `ESCAPE '\'` in the query.
@@ -70,6 +80,9 @@ export type SearchRow = {
   status: 'active' | 'archived'
   ownerId: string
   createdAt: string
+  matchedIn: 'name' | 'content'
+  /** Plain-text excerpt around the match, content hits only. */
+  snippet?: string
 }
 
 /**
@@ -78,7 +91,12 @@ export type SearchRow = {
  * to stay under D1's bound-parameter cap — then a final in-memory checkAccess pass (the single
  * source of truth) using precomputed membership/share sets so it stays O(rows), not N+1.
  * "Openable" semantics: the result is exactly what checkAccess admits. q matches site title/slug
- * or its space slug/name (LIKE metacharacters in q are escaped).
+ * or its space slug/name (LIKE metacharacters in q are escaped) — `matchedIn: 'name'` — and, after
+ * those, the pages' text via FTS5 — `matchedIn: 'content'` with a snippet.
+ *
+ * Content hits are joined to the exact reach conditions IN SQL, before ORDER/LIMIT: a MATCH that is
+ * limited first would let a common word fill the limit with pages the caller cannot open and push
+ * their own out. Snippets are read last, only for ids that survived the final checkAccess pass.
  */
 export async function searchSites(
   db: AppEnv['Variables']['db'],
@@ -109,6 +127,18 @@ export async function searchSites(
     ...chunk([...shared], D1_MAX_IN).map((ids) => inArray(sitesTable.id, ids)),
   ]
 
+  // Content reach, exact (not the name search's superset): the caller's own sites, the team tier,
+  // `members` sites in a space they belong to, and explicit shares. checkAccess below stays the
+  // arbiter; this only keeps unopenable rows from competing for the LIMIT.
+  const contentReaches = [
+    or(eq(sitesTable.ownerId, user.id), eq(sitesTable.visibility, 'team')),
+    ...chunk([...memberSpaces], D1_MAX_IN).map((ids) =>
+      and(eq(sitesTable.visibility, 'members'), inArray(sitesTable.spaceId, ids)),
+    ),
+    ...chunk([...shared], D1_MAX_IN).map((ids) => inArray(sitesTable.id, ids)),
+  ]
+  const match = ftsMatchQuery(q)
+
   const cols = {
     id: sitesTable.id,
     spaceId: sitesTable.spaceId,
@@ -122,27 +152,55 @@ export async function searchSites(
     ownerId: sitesTable.ownerId,
     createdAt: sitesTable.createdAt,
   }
-  const batches = await batchAll(
-    db,
-    reaches.map((reach) =>
-      db
-        .select(cols)
-        .from(sitesTable)
-        .innerJoin(spaces, eq(sitesTable.spaceId, spaces.id))
-        .where(and(active, qMatch, reach))
-        .orderBy(desc(sitesTable.createdAt))
-        .limit(SEARCH_SCAN_CAP),
-    ),
+  const nameStmts = reaches.map((reach) =>
+    db
+      .select({ ...cols, rank: sql<number>`0`.as('rank') })
+      .from(sitesTable)
+      .innerJoin(spaces, eq(sitesTable.spaceId, spaces.id))
+      .where(and(active, qMatch, reach))
+      .orderBy(desc(sitesTable.createdAt))
+      .limit(SEARCH_SCAN_CAP),
   )
+  const contentStmts = match
+    ? contentReaches.map((reach) =>
+        db
+          .select({ ...cols, rank: searchRank.as('rank') })
+          .from(siteSearch)
+          .innerJoin(siteText, searchHitJoin)
+          .innerJoin(sitesTable, eq(sitesTable.id, siteText.siteId))
+          .innerJoin(spaces, eq(sitesTable.spaceId, spaces.id))
+          .where(and(sql`${siteSearch} MATCH ${match}`, active, reach))
+          .orderBy(searchRank)
+          .limit(CONTENT_SCAN_CAP),
+      )
+    : []
+  // Name and content candidates ride ONE batch (the keystroke path stays two D1 requests).
+  const batches = await batchAll(db, [...nameStmts, ...contentStmts])
 
-  // Union the batches (dedupe by id — a row can satisfy more than one reach), newest first, then
-  // the checkAccess pass (the single source of truth) over precomputed membership/share sets.
-  const byId = new Map<string, SearchRow>()
-  for (const rows of batches) for (const r of rows) byId.set(r.id, r)
-  return [...byId.values()]
-    .sort(byCreatedAtDesc)
-    .filter((r) => checkAccess(r, user, memberSpaces.has(r.spaceId), shared.has(r.id)).ok)
-    .slice(0, limit)
+  // Union each group (dedupe by id — a row can satisfy more than one reach), then the checkAccess
+  // pass (the single source of truth) over precomputed membership/share sets. Name hits first,
+  // newest first; content hits after, best match first, minus anything already listed by name.
+  const openable = (r: Pick<SearchRow, 'id' | 'spaceId' | 'visibility' | 'status' | 'ownerId'>) =>
+    checkAccess(r, user, memberSpaces.has(r.spaceId), shared.has(r.id)).ok
+  const union = (group: typeof batches) => {
+    const byId = new Map<string, (typeof batches)[number][number]>()
+    for (const rows of group) for (const r of rows) byId.set(r.id, r)
+    return [...byId.values()].filter(openable)
+  }
+  const names = union(batches.slice(0, nameStmts.length)).sort(byCreatedAtDesc)
+  const listed = new Set(names.map((r) => r.id))
+  const contents = union(batches.slice(nameStmts.length))
+    .filter((r) => !listed.has(r.id))
+    .sort((a, b) => a.rank - b.rank)
+  const picked = [
+    ...names.map(({ rank: _, ...r }) => ({ ...r, matchedIn: 'name' as const })),
+    ...contents.map(({ rank: _, ...r }) => ({ ...r, matchedIn: 'content' as const })),
+  ].slice(0, limit)
+
+  // Snippets last, for the final content ids only (they have all passed checkAccess above).
+  const contentIds = picked.filter((r) => r.matchedIn === 'content').map((r) => r.id)
+  const snippets = match ? await siteSnippets(db, match, contentIds) : new Map<string, string>()
+  return picked.map((r) => (snippets.has(r.id) ? { ...r, snippet: snippets.get(r.id) } : r))
 }
 
 // POST /api/sites — create an empty site in a space the caller belongs to.
@@ -310,6 +368,8 @@ sites.get('/search', requireAuth, async (c) => {
       isOwner: r.ownerId === user.id,
       url: `${c.env.APP_URL}/${r.spaceSlug}/${r.siteSlug}`,
       createdAt: r.createdAt,
+      matchedIn: r.matchedIn,
+      ...(r.snippet ? { snippet: r.snippet } : {}),
     })),
   )
 })
@@ -775,7 +835,7 @@ sites.delete('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c
   }
 
   await deleteSiteObjects(db, c.env.GLANCE_FILES, site.id)
-  await db.delete(sitesTable).where(eq(sitesTable.id, site.id)) // FK cascade removes files rows
+  await db.delete(sitesTable).where(eq(sitesTable.id, site.id)) // FK cascade removes files rows + search text
 
   return c.json({ ok: true })
 })
