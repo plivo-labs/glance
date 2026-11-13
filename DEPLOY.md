@@ -94,6 +94,12 @@ bun run deploy   # build web → deploy main worker (with assets) → deploy con
 
 Open `https://glance.<your-subdomain>.workers.dev/login`, paste `BOOTSTRAP_TOKEN` into **Complete setup**, and submit. This claims `SUPERADMIN_EMAIL` as the first superadmin and signs you in. Once an admin exists the setup panel disappears and the token is inert.
 
+## PDF export (optional)
+
+The viewer's Download menu makes PDFs on the server with [Cloudflare Browser Rendering](https://developers.cloudflare.com/browser-rendering/), through the `BROWSER` binding in `wrangler.jsonc`. The Workers Free plan allows 10 browser-minutes a day; Workers Paid is metered per browser hour. A PDF export is also limited to 5 a minute per user (`PDF_LIMITER`).
+
+Markdown and plain-text downloads need nothing. If the binding is missing, or a render fails, the PDF option falls back to the browser's own print dialog. To turn server PDFs off, delete the `browser` entry in `wrangler.jsonc`.
+
 ## Google OAuth (optional)
 
 Glance runs fine on bootstrap auth alone. To add Google Workspace SSO, create an OAuth client at console.cloud.google.com → Credentials (authorized redirect URI `https://glance.<your-subdomain>.workers.dev/api/auth/callback`), then:

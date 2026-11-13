@@ -1,9 +1,10 @@
-import { ChevronRight, Command, Download, GitFork, History, Menu, MessageSquare, Share2, Sparkles, Star } from 'lucide-react'
-import { Suspense, lazy, useState } from 'react'
+import { AlignLeft, ChevronRight, Command, Download, FileCode, FileText, GitFork, History, Menu, MessageSquare, Share2, Sparkles, Star } from 'lucide-react'
+import { type ReactNode, Suspense, lazy, useState } from 'react'
 import { Link } from 'react-router'
 import { toast } from 'sonner'
 import { useStar } from '@/hooks/useStar'
 import { api } from '@/lib/api'
+import { DOWNLOAD_FORMATS, type DownloadFormat, shortcutLabel } from '@/lib/download'
 import type { ViewerSite, Visibility } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -11,7 +12,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { ForkDialog } from '@/components/ForkDialog'
 import { ThemeMenu, patchTheme } from '@/components/theme-select'
 import { VISIBILITY_META, VisibilityBadge, VisibilityMenu } from '@/components/visibility'
-import { BrandMark, ByPlivo } from '@/components/states'
+import { BrandMark, ByPlivo, Spinner } from '@/components/states'
 
 // Lazy: both open only from the menu. A static import puts their chunks in the viewer route's
 // import graph, so the iframe cannot mount until they download.
@@ -26,11 +27,18 @@ const ShareDialog = lazy(() => import('@/components/ShareDialog').then((m) => ({
 // too. Commenting is unconditional elsewhere (viewer.tsx) — the rail is just a
 // panel you open and close, not a gate on any of that.
 //
-// The row is the same controls at EVERY breakpoint: only Star, Comments and Download PDF (an icon,
-// like Star; one click, document sites only) earn a permanent slot; Recently opened / Search / Fork /
-// TL;DR / Share live in the hamburger menu. Those menu items are driven from shared state
+// Star, Comments and Download (an icon, like Star; a menu of PDF / Markdown / plain text, document
+// sites only) earn a permanent slot from `sm` up. On a phone the owner row (name, visibility picker, theme)
+// leaves no room for a fourth icon, so Download moves into the hamburger menu there. Recently opened
+// / Search / Fork / TL;DR / Share always live in the hamburger menu. Those menu items are driven from shared state
 // (ForkDialog, SummarySheet, ShareDialog) held here, so the menu item and the sheet/dialog it
 // opens are one action.
+const FORMAT_ICON: Record<DownloadFormat, ReactNode> = {
+  pdf: <FileText />,
+  md: <FileCode />,
+  txt: <AlignLeft />,
+}
+
 export function ViewerTopBar({
   site,
   sitePath,
@@ -39,8 +47,11 @@ export function ViewerTopBar({
   onToggleRail,
   onToggleSidebar,
   onSearch,
-  onDownloadPdf,
-  pdfReady = true,
+  onDownload,
+  downloadReady = true,
+  downloading = false,
+  downloadMenuOpen,
+  onDownloadMenuOpenChange,
   viewTheme,
   onViewTheme,
 }: {
@@ -51,14 +62,17 @@ export function ViewerTopBar({
   onToggleRail: () => void
   onToggleSidebar: () => void
   onSearch: () => void
-  // Posts glance:print into the content iframe (document sites only — absent hides the Download
-  // button). The frame prints itself; the browser's print dialog is where the user picks "Save as
-  // PDF".
-  onDownloadPdf?: () => void
+  // Downloads the page in a format (document sites only — absent hides the control).
+  onDownload?: (format: DownloadFormat) => void
   // False while the frame has not announced itself (still loading, or a file with no annotate
-  // client — a PDF, image or text file): nothing there would answer glance:print, so the button is
-  // disabled rather than doing nothing.
-  pdfReady?: boolean
+  // client — a PDF, image or text file): nothing there could answer a text export or say which file
+  // to render, so the control is disabled rather than doing nothing.
+  downloadReady?: boolean
+  // One download at a time: the trigger shows a spinner (and stays focusable) and the items are disabled meanwhile.
+  downloading?: boolean
+  // Controlled so the ⌘⇧S shortcut (held by the viewer) can open the menu; omit both to leave it uncontrolled.
+  downloadMenuOpen?: boolean
+  onDownloadMenuOpenChange?: (open: boolean) => void
   // Viewer-LOCAL theme override (non-owners): current value + setter. Client-side only — the
   // viewer posts glance:theme into the frame; nothing is written server-side.
   viewTheme?: string | null
@@ -149,18 +163,34 @@ export function ViewerTopBar({
             </span>
           )}
         </Button>
-        {onDownloadPdf && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8"
-            aria-label="Download PDF"
-            title="Download PDF"
-            disabled={!pdfReady}
-            onClick={onDownloadPdf}
-          >
-            <Download />
-          </Button>
+        {onDownload && (
+          <DropdownMenu open={downloadMenuOpen} onOpenChange={onDownloadMenuOpenChange}>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="hidden size-8 sm:inline-flex"
+                aria-label="Download"
+                title={downloadReady ? `Download (${shortcutLabel()})` : 'Download is available once the page has loaded'}
+                aria-busy={downloading}
+                data-testid="viewer-download-btn"
+                disabled={!downloadReady}
+              >
+                {downloading ? <Spinner /> : <Download />}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              {DOWNLOAD_FORMATS.map(({ format, label, ext }) => (
+                <DropdownMenuItem key={format} disabled={downloading} data-testid={`viewer-download-${format}-item`} onSelect={() => onDownload(format)}>
+                  {FORMAT_ICON[format]}
+                  {label}
+                  <span aria-hidden="true" className="ml-auto font-mono text-muted-foreground text-xs">
+                    {ext}
+                  </span>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -187,6 +217,19 @@ export function ViewerTopBar({
               <Sparkles />
               TL;DR
             </DropdownMenuItem>
+            {onDownload &&
+              DOWNLOAD_FORMATS.map(({ format, label }) => (
+                <DropdownMenuItem
+                  key={format}
+                  className="sm:hidden"
+                  disabled={!downloadReady || downloading}
+                  data-testid={`viewer-download-menu-${format}-item`}
+                  onSelect={() => onDownload(format)}
+                >
+                  {FORMAT_ICON[format]}
+                  Download {label}
+                </DropdownMenuItem>
+              ))}
             {site.isOwner && (
               <DropdownMenuItem onSelect={() => setShareOpen(true)}>
                 <Share2 />

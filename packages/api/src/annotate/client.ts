@@ -29,6 +29,7 @@ import { withAnnotateParam } from './linkRewrite'
 import type { TextContext } from '../lib/anchor'
 import { findRange, resolveSelector } from './locator'
 import { anchorIdAtPoint, anchorRanges, type ElementAnchor, installIndexInvalidation, type TextAnchor } from './reflow'
+import { domToMarkdown, siteUrlRewriter } from './markdown'
 import { installSelectionCapture, type Rect } from './selection'
 
 type Boot = { siteId: string; filePath: string; appOrigin: string }
@@ -275,7 +276,7 @@ function focus(target: { quote?: string; selector?: string; context?: TextContex
 // is ignored.
 window.addEventListener('message', (e: MessageEvent) => {
   if (!boot || e.origin !== boot.appOrigin) return
-  const d = e.data as { type?: string; anchors?: PaintAnchor[]; quote?: string; selector?: string; context?: TextContext; href?: string | null }
+  const d = e.data as { type?: string; format?: string; anchors?: PaintAnchor[]; quote?: string; selector?: string; context?: TextContext; href?: string | null }
   if (d?.type === 'glance:paint' && Array.isArray(d.anchors)) paint(d.anchors)
   else if (d?.type === 'glance:focus') focus({ quote: d.quote, selector: d.selector, context: d.context })
   else if (d?.type === 'glance:pending') setPending(typeof d.selector === 'string' ? d.selector : null)
@@ -284,6 +285,12 @@ window.addEventListener('message', (e: MessageEvent) => {
   // realm with the browser's native dialog (the user picks "Save as PDF" there). Full fidelity:
   // the page's own renderer does the layout, including the injected theme stylesheet.
   else if (d?.type === 'glance:print') window.print()
+  // Text / Markdown download: the parent cannot read this cross-origin DOM, so it asks and the page
+  // answers with what a reader sees (innerText follows CSS, so hidden nodes and scripts are skipped).
+  else if (d?.type === 'glance:export' && (d.format === 'text' || d.format === 'markdown')) {
+    const content = d.format === 'text' ? (document.body?.innerText ?? '') : domToMarkdown(document.body, document.title, siteUrlRewriter(window.location.href, boot.appOrigin))
+    toParent({ type: 'glance:export-result', format: d.format, content })
+  }
   // Viewer-local theme override: swap (or restore) the theme stylesheet INSIDE the frame — the
   // parent is cross-origin and cannot touch this DOM. Purely cosmetic and per-viewer: no server
   // write, applies instantly, and the parent persists the choice in ITS localStorage. The href is
@@ -357,4 +364,13 @@ document.addEventListener('click', (e) => {
 })
 
 // Boot handshake: tell the parent which file is mounted (intent-only; parent re-validates).
+// ⌘⇧S / Ctrl+⇧S opens the viewer's Download dialog. A keydown inside this sandboxed frame never
+// reaches the parent, so the shortcut would die the moment the page has focus: forward it, and
+// swallow the browser's own Save-as for it.
+window.addEventListener('keydown', (e) => {
+  if (!boot || !(e.metaKey || e.ctrlKey) || !e.shiftKey || e.altKey || e.key.toLowerCase() !== 's') return
+  e.preventDefault()
+  toParent({ type: 'glance:shortcut', name: 'download' })
+})
+
 if (boot) toParent({ type: 'glance:ready', filePath: boot.filePath })

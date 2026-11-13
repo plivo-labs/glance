@@ -26,8 +26,9 @@ function renderTopBar(
     commentCount: number
     onToggleRail: () => void
     site: ViewerSite
-    onDownloadPdf: () => void
-    pdfReady: boolean
+    onDownload: (format: string) => void
+    downloadReady: boolean
+    downloading: boolean
   }> = {},
 ) {
   const onToggleRail = overrides.onToggleRail ?? mock(() => {})
@@ -43,8 +44,9 @@ function renderTopBar(
           onToggleRail={onToggleRail}
           onToggleSidebar={() => {}}
           onSearch={() => {}}
-          onDownloadPdf={overrides.onDownloadPdf}
-          pdfReady={overrides.pdfReady}
+          onDownload={overrides.onDownload}
+          downloadReady={overrides.downloadReady}
+          downloading={overrides.downloading}
         />
       ),
     },
@@ -95,28 +97,56 @@ describe('ViewerTopBar — the visibility tier rides beside the site name', () =
   })
 })
 
-describe('ViewerTopBar — Download PDF', () => {
-  test('one click on the button asks the frame to print, once', () => {
-    const onDownloadPdf = mock(() => {})
-    renderTopBar({ onDownloadPdf })
-    fireEvent.click(screen.getByRole('button', { name: 'Download PDF' }))
-    expect(onDownloadPdf).toHaveBeenCalledTimes(1)
+describe('ViewerTopBar — Download is a menu of PDF, Markdown and plain text', () => {
+  const openMenu = () => fireEvent.pointerDown(screen.getByRole('button', { name: 'Menu' }), { button: 0 })
+
+  test('the icon opens PDF / Markdown / Plain text, and each item downloads that format once', async () => {
+    const onDownload = mock((_format: string) => {})
+    renderTopBar({ onDownload })
+    for (const [name, format] of [[/^PDF/, 'pdf'], [/^Markdown/, 'md'], [/^Plain text/, 'txt']] as const) {
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Download' }), { button: 0 })
+      fireEvent.click(await screen.findByRole('menuitem', { name }))
+      expect(onDownload).toHaveBeenLastCalledWith(format)
+    }
+    expect(onDownload).toHaveBeenCalledTimes(3)
   })
 
-  test('no Download button without a handler (audio), and the old hamburger print item is gone', async () => {
+  test('on a phone the hamburger menu carries the same three downloads', async () => {
+    const onDownload = mock((_format: string) => {})
+    renderTopBar({ onDownload })
+    openMenu()
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Download Markdown' }))
+    expect(onDownload).toHaveBeenCalledWith('md')
+    openMenu()
+    expect((await screen.findAllByRole('menuitem', { name: /^Download / })).map((i) => i.textContent)).toEqual(['Download PDF', 'Download Markdown', 'Download Plain text'])
+  })
+
+  test('nothing to download without a handler (audio), and the old hamburger print item is gone', async () => {
     renderTopBar({})
-    expect(screen.queryByRole('button', { name: 'Download PDF' })).toBeNull()
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'Menu' }), { button: 0 })
+    expect(screen.queryByRole('button', { name: 'Download' })).toBeNull()
+    openMenu()
     await screen.findByRole('menuitem', { name: /Fork/ })
-    expect(screen.queryByRole('menuitem', { name: /Print/ })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: /Print|Download/ })).toBeNull()
   })
 
-  test('the button is disabled, and does nothing, until the frame has announced itself', () => {
-    const onDownloadPdf = mock(() => {})
-    renderTopBar({ onDownloadPdf, pdfReady: false })
-    const button = screen.getByRole('button', { name: 'Download PDF' }) as HTMLButtonElement
-    expect(button.disabled).toBe(true)
-    fireEvent.click(button)
-    expect(onDownloadPdf).not.toHaveBeenCalled()
+  test('the trigger is disabled, and says why, until the frame has announced itself', async () => {
+    renderTopBar({ onDownload: () => {}, downloadReady: false })
+    const trigger = screen.getByRole('button', { name: 'Download' }) as HTMLButtonElement
+    expect(trigger.disabled).toBe(true)
+    expect(trigger.title).toMatch(/once the page has loaded/)
+    openMenu()
+    expect((await screen.findByRole('menuitem', { name: 'Download PDF' })).getAttribute('aria-disabled')).toBe('true')
+  })
+
+  test('while a download runs the trigger stays focusable (busy) and every item is disabled', async () => {
+    const onDownload = mock((_format: string) => {})
+    renderTopBar({ onDownload, downloading: true })
+    const trigger = screen.getByRole('button', { name: 'Download' }) as HTMLButtonElement
+    expect([trigger.disabled, trigger.getAttribute('aria-busy')]).toEqual([false, 'true'])
+    fireEvent.pointerDown(trigger, { button: 0 })
+    const items = await screen.findAllByRole('menuitem', { name: /^(PDF|Markdown|Plain text)/ })
+    expect(items.map((i) => i.getAttribute('aria-disabled'))).toEqual(['true', 'true', 'true'])
+    fireEvent.click(items[0] as HTMLElement)
+    expect(onDownload).not.toHaveBeenCalled()
   })
 })

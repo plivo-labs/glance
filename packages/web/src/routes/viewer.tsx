@@ -12,6 +12,15 @@ import { askStream } from '@/lib/ask'
 import { type Intent, parseIntent } from '@/lib/parseIntent'
 import { encodePathSegments } from '@/lib/paths'
 import { type ArbiterEvent, type ArbiterState, type Decision, initialArbiter, stepArbiter } from '@/lib/prefetchArbiter'
+import {
+  type DownloadFormat,
+  fetchPdf,
+  fileBaseName,
+  PdfUnavailableError,
+  pdfRequestUrl,
+  requestFrameExport,
+  saveBlob,
+} from '@/lib/download'
 import { recordVisit } from '@/lib/recents'
 import type { Me } from '@/lib/types'
 import { deepLinkReady, railFromSearch, type RevealRequest } from '@/lib/viewerCommands'
@@ -19,6 +28,7 @@ import { loadViewer, PREFETCH_FAILED, type PrefetchResult, type ViewerLoaderData
 import { AudioView } from '@/components/AudioView'
 import { Spinner } from '@/components/states'
 import { CommandPalette } from '@/components/CommandPalette'
+import { useDownloadShortcut } from '@/hooks/useDownloadShortcut'
 import { ViewerTopBar } from '@/components/ViewerTopBar'
 import { viewThemeHref } from '@/components/theme-select'
 import { CommentPopover } from '@/components/review/CommentPopover'
@@ -136,6 +146,53 @@ function Viewer() {
       applyViewTheme(slug) // instant swap, even to null (restores the site default in place)
     },
     [viewThemeKey, applyViewTheme],
+  )
+
+  // Download menu. ⌘⇧S opens it once the frame can answer (filePath is non-null only after its
+  // glance:ready), never on an audio site (no document). One download at a time.
+  const [downloadMenuOpen, setDownloadMenuOpen] = useState(false)
+  const [downloading, setDownloading] = useState(false)
+  const downloadingRef = useRef(false)
+  const openDownloadMenu = useCallback(() => setDownloadMenuOpen(true), [])
+  const frameWindow = useCallback(() => iframeRef.current?.contentWindow, [])
+  useDownloadShortcut(!isAudio && filePath !== null, openDownloadMenu, frameWindow, contentOrigin)
+
+  const runDownload = useCallback(
+    async (format: DownloadFormat) => {
+      if (downloadingRef.current) return
+      downloadingRef.current = true
+      setDownloading(true)
+      const page = filePathRef.current
+      const base = fileBaseName(site.title, site.siteSlug, page && page !== site.indexPath ? page : null)
+      // A PDF takes a few seconds to render on the server, so it says so; text and Markdown are instant.
+      const toastId = format === 'pdf' ? toast.loading('Making your PDF…') : undefined
+      try {
+        if (format === 'pdf') {
+          const themeHref = await viewThemeHref(viewThemeRef.current)
+          const dark = window.matchMedia('(prefers-color-scheme: dark)').matches
+          try {
+            saveBlob(await fetchPdf(pdfRequestUrl(site, { path: page, dark, themeHref })), `${base}.pdf`)
+            toast.success(`Saved ${base}.pdf`, { id: toastId })
+          } catch (err) {
+            if (!(err instanceof PdfUnavailableError)) throw err
+            // No server PDF here (self-hosted without Browser Rendering, or the render failed): the browser's own dialog.
+            toast.dismiss(toastId)
+            toast.info('Server PDF is not available here', { description: 'Opening the browser print dialog instead.' })
+            iframeRef.current?.contentWindow?.postMessage({ type: 'glance:print' }, contentOrigin)
+          }
+          return
+        }
+        const content = await requestFrameExport(iframeRef.current?.contentWindow, contentOrigin, format === 'md' ? 'markdown' : 'text')
+        saveBlob(new Blob([content], { type: format === 'md' ? 'text/markdown;charset=utf-8' : 'text/plain;charset=utf-8' }), `${base}.${format}`)
+        toast.success(`Saved ${base}.${format}`)
+      } catch (err) {
+        toast.error('Could not download', { id: toastId, description: err instanceof Error ? err.message : undefined })
+      } finally {
+        downloadingRef.current = false
+        setDownloading(false)
+      }
+    },
+    [site, contentOrigin],
   )
 
   // Paint anchors back into the iframe via the trusted parent→child channel. A paint IS the
@@ -655,15 +712,14 @@ function Viewer() {
         onToggleRail={toggleRail}
         onToggleSidebar={() => setSidebarOpen((o) => !o)}
         onSearch={() => setCmdOpen(true)}
-        // Download → PDF rides the annotate client's command channel; audio has no document to
-        // print. `filePath` is non-null only once that client has posted its glance:ready, so the
-        // item stays disabled for a frame that could not answer (loading, or a non-HTML file).
-        onDownloadPdf={
-          isAudio
-            ? undefined
-            : () => iframeRef.current?.contentWindow?.postMessage({ type: 'glance:print' }, contentOrigin)
-        }
-        pdfReady={filePath !== null}
+        // Download is a menu (PDF, Markdown, text); audio has no document to export. `filePath` is
+        // non-null only once the annotate client has posted its glance:ready, so the control stays
+        // disabled for a frame that could not answer (loading, or a non-HTML file).
+        onDownload={isAudio ? undefined : runDownload}
+        downloadReady={filePath !== null}
+        downloading={downloading}
+        downloadMenuOpen={downloadMenuOpen}
+        onDownloadMenuOpenChange={setDownloadMenuOpen}
         viewTheme={viewTheme}
         onViewTheme={isAudio ? undefined : onViewTheme}
       />
