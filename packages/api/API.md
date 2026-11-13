@@ -160,6 +160,8 @@ A revoked key stops authenticating immediately. One documented exception: a
 | `PATCH` | `/api/sites/:space/:site` ✱ | Rename / change visibility |
 | `POST` | `/api/sites/:space/:site/move` ✱ | Move to another space |
 | `POST` | `/api/sites/:space/:site/fork` ✱ | Fork |
+| `GET` | `/api/sites/:space/:site/versions` | Version history, newest first (owner only) |
+| `POST` | `/api/sites/:space/:site/versions/:id/restore` ✱ | Restore a version (owner only) |
 | `DELETE` | `/api/sites/:space/:site` | Delete — **always `403` for a key** |
 
 ```jsonc
@@ -172,6 +174,12 @@ A revoked key stops authenticating immediately. One documented exception: a
 `siteSlug` must be a valid slug and not a reserved word (`docs` among them, which is broader than
 the space-level collision that motivated it — a site literally named `docs` is rejected `400`).
 Visibility is `private`, `team`, or a share list; there is no public tier — every viewer needs a login.
+
+Every replace (`POST /api/upload` with `?replace=true`, owner or editor) keeps the content it replaced as a
+**version**: the newest 10 per site, none older than 30 days (a daily purge reclaims the rest). `GET …/versions`
+lists them (`id`, `version`, `createdAt`, `createdBy`, `fileCount`, `totalSize`); `POST …/versions/:id/restore`
+makes one live and keeps the content it replaced as a new version, so a restore can be undone. Both are
+owner-only (no superadmin bypass); restore is refused (`409`) on an archived site.
 
 ## Deploy files
 
