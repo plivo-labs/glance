@@ -16,9 +16,10 @@ describe('pdfRequestUrl / isDownloadShortcut / fileBaseName', () => {
     expect([k({ metaKey: true }), k({ shiftKey: true }), k({ metaKey: true, shiftKey: true, altKey: true })]).toEqual([false, false, false])
   })
 
-  test('file names drop path and reserved characters, and fall back to the slug', () => {
+  test('file names drop path and reserved characters, fall back to the slug, and name a sub-page after its file', () => {
     expect(fileBaseName('Q3: plan / draft?', 'slug')).toBe('Q3 plan draft')
     expect(fileBaseName(null, 'slug')).toBe('slug')
+    expect(fileBaseName('Handbook', 'slug', 'docs/setup guide.html')).toBe('Handbook - setup guide')
   })
 })
 
@@ -31,15 +32,22 @@ describe('fetchPdf', () => {
     globalThis.fetch = (async () => new Response(status === 200 ? 'pdf' : '{}', { status, headers })) as typeof fetch
   }
 
-  test('501 and 502 mean "print instead"; 429 is a plain message; 200 names the file from the header', async () => {
-    reply(501)
-    await expect(fetchPdf('/x', 'f.pdf')).rejects.toBeInstanceOf(PdfUnavailableError)
-    reply(502)
-    await expect(fetchPdf('/x', 'f.pdf')).rejects.toBeInstanceOf(PdfUnavailableError)
-    reply(429)
-    await expect(fetchPdf('/x', 'f.pdf')).rejects.toThrow(/Too many/)
-    reply(200, { 'content-disposition': `attachment; filename="a.pdf"; filename*=UTF-8''R%C3%A9sum%C3%A9.pdf` })
-    expect((await fetchPdf('/x', 'f.pdf')).name).toBe('Résumé.pdf')
+  test('501 and 502 mean "print instead"; every other failure says what happened and what to do', async () => {
+    for (const status of [501, 502]) {
+      reply(status)
+      await expect(fetchPdf('/x')).rejects.toBeInstanceOf(PdfUnavailableError)
+    }
+    for (const [status, message] of [[401, /Sign in again/], [403, /do not have access/], [404, /not found/], [429, /Too many/], [500, /Try again/]] as const) {
+      reply(status)
+      await expect(fetchPdf('/x')).rejects.toThrow(message)
+    }
+    globalThis.fetch = (async () => Promise.reject(new TypeError('Failed to fetch'))) as typeof fetch
+    await expect(fetchPdf('/x')).rejects.toThrow(/Check your connection/)
+  })
+
+  test('a 200 is the PDF bytes', async () => {
+    reply(200)
+    expect(await (await fetchPdf('/x')).text()).toBe('pdf')
   })
 })
 

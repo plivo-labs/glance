@@ -20,6 +20,17 @@ const applyTheme = (href: string) => `new Promise((resolve) => {
   l.setAttribute('href', ${JSON.stringify(href)})
 })`
 
+// A PDF keeps its links, and the content URLs carry a signed token: point them at the viewer.
+const rewriteLinks = (from: string, to: string) => `(() => {
+  const here = location.href.split('#')[0]
+  for (const a of document.querySelectorAll('a[href]')) {
+    const h = a.href
+    if (h.split('#')[0] === here) continue // a jump inside this page stays a jump in the PDF
+    if (h.startsWith(${JSON.stringify(from)})) a.href = ${JSON.stringify(to)} + h.slice(${JSON.stringify(from.length)})
+  }
+  return true
+})()`
+
 // Lazy images only load when scrolled near; walk the page once so a long document is not full of
 // blanks, then wait for web fonts.
 const settle = `(async () => {
@@ -45,6 +56,7 @@ export async function renderPdf(binding: Fetcher, req: PdfRenderRequest): Promis
     await page.waitForNetworkIdle({ idleTime: 500, timeout: IDLE_WAIT_MS }).catch(() => {})
     if (req.themeHref) await page.evaluate(applyTheme(req.themeHref))
     await page.evaluate(settle)
+    await page.evaluate(rewriteLinks(req.linkRewrite.from, req.linkRewrite.to))
     return await page.pdf({
       width: plan.width,
       height: plan.height,

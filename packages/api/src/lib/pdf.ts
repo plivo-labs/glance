@@ -18,7 +18,12 @@ export type PdfPlan = {
   scheme: PdfScheme
 }
 
-export type PdfRenderRequest = { url: string; plan: PdfPlan; themeHref: string | null }
+/**
+ * `linkRewrite.from` is the tokened content URL of the site root the page was loaded from;
+ * every link under it is re-pointed at `to` (the viewer URL) before printing, because a PDF
+ * keeps its links and the token is a credential.
+ */
+export type PdfRenderRequest = { url: string; plan: PdfPlan; themeHref: string | null; linkRewrite: { from: string; to: string } }
 
 /** Same shape the annotate client accepts for a viewer theme override (annotate/client.ts). */
 const THEME_HREF = /^\/_glance\/theme\/[a-z0-9-]+\.css(\?v=[a-z0-9]+)?$/

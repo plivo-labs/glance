@@ -4,13 +4,42 @@
 // left out. It is an export, not a round trip: a page that was authored as .md comes back as its
 // rendered content, not byte for byte (`glance read --pull` gives the exact source).
 
-const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'CANVAS', 'IFRAME', 'VIDEO', 'AUDIO', 'OBJECT', 'EMBED', 'HEAD', 'LINK', 'META', 'NAV', 'FORM', 'BUTTON', 'SELECT', 'TEXTAREA', 'INPUT', 'DIALOG'])
+const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'CANVAS', 'IFRAME', 'VIDEO', 'AUDIO', 'OBJECT', 'EMBED', 'HEAD', 'LINK', 'META', 'NAV', 'FORM', 'BUTTON', 'SELECT', 'TEXTAREA', 'DIALOG'])
 const BLOCK = new Set(['ADDRESS', 'ARTICLE', 'ASIDE', 'BLOCKQUOTE', 'DD', 'DETAILS', 'DIV', 'DL', 'DT', 'FIELDSET', 'FIGCAPTION', 'FIGURE', 'FOOTER', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HEADER', 'HGROUP', 'HR', 'LI', 'MAIN', 'OL', 'P', 'PRE', 'SECTION', 'SUMMARY', 'TABLE', 'UL'])
 
 // A hard line break survives whitespace collapsing as this marker, and becomes "  \n" at the end.
 const BREAK = '\u0001'
 
 type Markdownable = Element & { checkVisibility?: () => boolean }
+
+/** Maps an absolute URL found in the page to what the export may contain; null drops it. */
+export type UrlRewrite = (abs: string, kind: 'link' | 'image') => string | null
+let urlOf: UrlRewrite = (abs) => abs
+
+/**
+ * The page is served from `/_t/<token>/<space>/<site>/…`, and the token is a signed credential: an
+ * export must never carry it. Links into the site become the viewer URL (the reader signs in as
+ * themselves; a link to a spot on this same page stays a plain #anchor), images become the path inside the site, other URLs on this origin are dropped, and
+ * external URLs are the author's own and stay.
+ */
+export function siteUrlRewriter(pageHref: string, appOrigin: string): UrlRewrite {
+  const page = new URL(pageHref)
+  const site = /^\/_t\/[^/]+\/([^/]+)\/([^/]+)\//.exec(page.pathname)
+  return (abs, kind) => {
+    let u: URL
+    try {
+      u = new URL(abs)
+    } catch {
+      return null
+    }
+    if (u.origin !== page.origin) return abs
+    if (kind === 'link' && u.hash && u.pathname === page.pathname) return u.hash // a jump inside this page
+    if (!site || !u.pathname.startsWith(site[0])) return null
+    u.searchParams.delete('glance_annotate')
+    const rest = u.pathname.slice(site[0].length) + u.search + u.hash
+    return kind === 'image' ? rest : `${appOrigin}/${site[1]}/${site[2]}/${rest}`
+  }
+}
 
 function skipped(el: Element): boolean {
   if (SKIP.has(el.tagName.toUpperCase())) return true
@@ -44,17 +73,24 @@ function inline(node: Node): string {
   const el = node as Element
   if (skipped(el)) return ''
   switch (el.tagName.toUpperCase()) {
+    case 'INPUT': {
+      // A task-list checkbox is content (it says whether the item is done); other inputs are not.
+      const box = el as HTMLInputElement
+      return box.type === 'checkbox' ? (box.checked ? '[x] ' : '[ ] ') : ''
+    }
     case 'BR':
       return BREAK
     case 'A': {
       const text = inlineChildren(el)
-      const href = (el as HTMLAnchorElement).href
-      if (!href || /^javascript:/i.test(href) || !collapse(text)) return text
+      const raw = (el as HTMLAnchorElement).href
+      const href = raw && !/^javascript:/i.test(raw) ? urlOf(raw, 'link') : null
+      if (!href || !collapse(text)) return text
       return `[${collapse(text)}](${href.replace(/\(/g, '%28').replace(/\)/g, '%29')})`
     }
     case 'IMG': {
-      const src = (el as HTMLImageElement).src
-      return src && !src.startsWith('data:') ? `![${escapeText(el.getAttribute('alt') ?? '')}](${src})` : ''
+      const raw = (el as HTMLImageElement).src
+      const src = raw && !raw.startsWith('data:') ? urlOf(raw, 'image') : null
+      return src ? `![${escapeText(el.getAttribute('alt') ?? '')}](${src})` : ''
     }
     case 'STRONG':
     case 'B':
@@ -92,8 +128,12 @@ function listItems(list: Element, ordered: boolean): string {
 }
 
 function table(el: Element): string {
+  // A cell that spans columns is followed by empty cells, so the rest stay under their headers.
   const rows = Array.from(el.querySelectorAll('tr'), (tr) =>
-    Array.from(tr.children, (cell) => collapse(inlineChildren(cell)).split(BREAK).join(' ').replace(/\|/g, '\\|')),
+    Array.from(tr.children).flatMap((cell) => {
+      const text = collapse(inlineChildren(cell)).split(BREAK).join(' ').replace(/\|/g, '\\|')
+      return [text, ...Array<string>(Math.min(Math.max(Number(cell.getAttribute('colspan')) || 1, 1), 20) - 1).fill('')]
+    }),
   ).filter((r) => r.length)
   const width = Math.max(0, ...rows.map((r) => r.length))
   if (!width) return ''
@@ -133,7 +173,8 @@ function block(el: Element, tag: string): string[] {
     }
     case 'TABLE': {
       const t = table(el)
-      return t ? [t] : []
+      const caption = collapse(el.querySelector('caption')?.textContent ?? '')
+      return t ? [...(caption ? [wrap('**', escapeText(caption))] : []), t] : []
     }
     case 'DT':
     case 'SUMMARY': {
@@ -173,8 +214,10 @@ function blocks(parent: Node): string[] {
   return out
 }
 
-export function domToMarkdown(root: Element, title = ''): string {
+export function domToMarkdown(root: Element, title = '', rewrite: UrlRewrite = (abs) => abs): string {
+  urlOf = rewrite
   const body = blocks(root).join('\n\n').replace(/\n{3,}/g, '\n\n').trim()
+  urlOf = (abs) => abs
   const heading = title.trim()
   return `${body.startsWith('# ') || !heading ? body : `# ${heading}\n\n${body}`}\n`
 }

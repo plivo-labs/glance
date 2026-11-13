@@ -47,6 +47,8 @@ describe('GET /api/sites/:space/:site/pdf', () => {
     expect(rest.join('/')).toBe('docs/report/notes/a.html')
     expect(await verifyToken('content-secret', 'docs/report', token)).toBe('owner')
     expect(call?.plan).toMatchObject({ width: '210mm', scheme: 'dark' })
+    // Links inside the PDF are re-pointed from the tokened URL to the viewer URL.
+    expect(call?.linkRewrite).toEqual({ from: `${new URL(call?.url ?? '').origin}/_t/${token}/docs/report/`, to: 'https://glance.example.com/docs/report/' })
   })
 
   test('anonymous is 401, a stranger on a private site 403, a missing site 404, and none of them render', async () => {

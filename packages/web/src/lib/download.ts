@@ -30,28 +30,33 @@ export function pdfRequestUrl(
 /** The server cannot make a PDF here (no Browser Rendering binding, or the render failed). */
 export class PdfUnavailableError extends Error {}
 
-export function fileBaseName(title: string | null, siteSlug: string): string {
-  const printable = Array.from(title?.trim() || siteSlug, (ch) => (ch.charCodeAt(0) < 0x20 ? ' ' : ch)).join('')
-  const clean = printable.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim()
-  return clean.slice(0, 120) || siteSlug
+export function fileBaseName(title: string | null, siteSlug: string, page: string | null = null): string {
+  const clean = (s: string) =>
+    Array.from(s, (ch) => (ch.charCodeAt(0) < 0x20 ? ' ' : ch))
+      .join('')
+      .replace(/[\\/:*?"<>|]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  const base = clean(title?.trim() || siteSlug).slice(0, 120) || siteSlug
+  // A sub-page of a multi-page site is named after its file, so exporting two pages never overwrites one file.
+  const stem = clean((page?.split('/').pop() ?? '').replace(/\.[^.]+$/, ''))
+  return stem ? `${base} - ${stem}` : base
 }
 
-function nameFromDisposition(header: string | null): string | null {
-  const utf8 = header && /filename\*=UTF-8''([^;]+)/i.exec(header)?.[1]
-  if (!utf8) return null
+export async function fetchPdf(url: string): Promise<Blob> {
+  let res: Response
   try {
-    return decodeURIComponent(utf8)
+    res = await fetch(url, { credentials: 'include' })
   } catch {
-    return null
+    throw new Error('Could not reach the server. Check your connection and try again.')
   }
-}
-
-export async function fetchPdf(url: string, fallbackName: string): Promise<{ blob: Blob; name: string }> {
-  const res = await fetch(url, { credentials: 'include' })
   if (res.status === 501 || res.status === 502) throw new PdfUnavailableError(`PDF export unavailable (${res.status})`)
+  if (res.status === 401) throw new Error('Your session has ended. Sign in again to download.')
+  if (res.status === 403) throw new Error('You do not have access to download this page.')
+  if (res.status === 404) throw new Error('This page was not found.')
   if (res.status === 429) throw new Error('Too many PDFs just now. Try again in a minute.')
-  if (!res.ok) throw new Error(`Could not make the PDF (${res.status})`)
-  return { blob: await res.blob(), name: nameFromDisposition(res.headers.get('content-disposition')) ?? fallbackName }
+  if (!res.ok) throw new Error(`The PDF could not be made (${res.status}). Try again in a moment.`)
+  return await res.blob()
 }
 
 /** Asks the frame for the page as text or Markdown. The frame is cross-origin, so it answers by message. */

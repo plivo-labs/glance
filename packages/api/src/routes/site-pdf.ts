@@ -46,9 +46,14 @@ sitePdf.get('/:space/:site/pdf', async (c) => {
   }
 
   const token = await signToken(c.env.CONTENT_TOKEN_SECRET, user.id, `${space}/${siteSlug}`, PDF_TOKEN_TTL_SEC)
-  const url = `${c.env.CONTENT_URL}/_t/${token}/${space}/${siteSlug}/${pagePath}`
+  const siteRoot = `${c.env.CONTENT_URL}/_t/${token}/${space}/${siteSlug}/`
   try {
-    const pdf = await render({ url, plan: pdfPlan(options), themeHref: options.themeHref })
+    const pdf = await render({
+      url: `${siteRoot}${pagePath}`,
+      plan: pdfPlan(options),
+      themeHref: options.themeHref,
+      linkRewrite: { from: siteRoot, to: `${c.env.APP_URL}/${space}/${siteSlug}/` },
+    })
     return new Response(pdf as BodyInit, {
       headers: {
         'content-type': 'application/pdf',

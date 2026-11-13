@@ -162,7 +162,8 @@ function Viewer() {
       if (downloadingRef.current) return
       downloadingRef.current = true
       setDownloading(true)
-      const base = fileBaseName(site.title, site.siteSlug)
+      const page = filePathRef.current
+      const base = fileBaseName(site.title, site.siteSlug, page && page !== site.indexPath ? page : null)
       // A PDF takes a few seconds to render on the server, so it says so; text and Markdown are instant.
       const toastId = format === 'pdf' ? toast.loading('Making your PDF…') : undefined
       try {
@@ -170,19 +171,20 @@ function Viewer() {
           const themeHref = await viewThemeHref(viewThemeRef.current)
           const dark = window.matchMedia('(prefers-color-scheme: dark)').matches
           try {
-            const { blob, name } = await fetchPdf(pdfRequestUrl(site, { path: filePathRef.current, dark, themeHref }), `${base}.pdf`)
-            saveBlob(blob, name)
-            toast.success('PDF downloaded', { id: toastId })
+            saveBlob(await fetchPdf(pdfRequestUrl(site, { path: page, dark, themeHref })), `${base}.pdf`)
+            toast.success(`Saved ${base}.pdf`, { id: toastId })
           } catch (err) {
             if (!(err instanceof PdfUnavailableError)) throw err
             // No server PDF here (self-hosted without Browser Rendering, or the render failed): the browser's own dialog.
-            toast.message('Server PDF is not available here', { id: toastId, description: 'Opening the browser print dialog instead.' })
+            toast.dismiss(toastId)
+            toast.info('Server PDF is not available here', { description: 'Opening the browser print dialog instead.' })
             iframeRef.current?.contentWindow?.postMessage({ type: 'glance:print' }, contentOrigin)
           }
           return
         }
         const content = await requestFrameExport(iframeRef.current?.contentWindow, contentOrigin, format === 'md' ? 'markdown' : 'text')
         saveBlob(new Blob([content], { type: format === 'md' ? 'text/markdown;charset=utf-8' : 'text/plain;charset=utf-8' }), `${base}.${format}`)
+        toast.success(`Saved ${base}.${format}`)
       } catch (err) {
         toast.error('Could not download', { id: toastId, description: err instanceof Error ? err.message : undefined })
       } finally {

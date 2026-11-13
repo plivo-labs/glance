@@ -28,6 +28,7 @@ function renderTopBar(
     site: ViewerSite
     onDownload: (format: string) => void
     downloadReady: boolean
+    downloading: boolean
   }> = {},
 ) {
   const onToggleRail = overrides.onToggleRail ?? mock(() => {})
@@ -45,6 +46,7 @@ function renderTopBar(
           onSearch={() => {}}
           onDownload={overrides.onDownload}
           downloadReady={overrides.downloadReady}
+          downloading={overrides.downloading}
         />
       ),
     },
@@ -127,10 +129,24 @@ describe('ViewerTopBar — Download is a menu of PDF, Markdown and plain text', 
     expect(screen.queryByRole('menuitem', { name: /Print|Download/ })).toBeNull()
   })
 
-  test('the trigger is disabled until the frame has announced itself, and while a download runs', async () => {
+  test('the trigger is disabled, and says why, until the frame has announced itself', async () => {
     renderTopBar({ onDownload: () => {}, downloadReady: false })
-    expect((screen.getByRole('button', { name: 'Download' }) as HTMLButtonElement).disabled).toBe(true)
+    const trigger = screen.getByRole('button', { name: 'Download' }) as HTMLButtonElement
+    expect(trigger.disabled).toBe(true)
+    expect(trigger.title).toMatch(/once the page has loaded/)
     openMenu()
     expect((await screen.findByRole('menuitem', { name: 'Download PDF' })).getAttribute('aria-disabled')).toBe('true')
+  })
+
+  test('while a download runs the trigger stays focusable (busy) and every item is disabled', async () => {
+    const onDownload = mock((_format: string) => {})
+    renderTopBar({ onDownload, downloading: true })
+    const trigger = screen.getByRole('button', { name: 'Download' }) as HTMLButtonElement
+    expect([trigger.disabled, trigger.getAttribute('aria-busy')]).toEqual([false, 'true'])
+    fireEvent.pointerDown(trigger, { button: 0 })
+    const items = await screen.findAllByRole('menuitem', { name: /^(PDF|Markdown|Plain text)/ })
+    expect(items.map((i) => i.getAttribute('aria-disabled'))).toEqual(['true', 'true', 'true'])
+    fireEvent.click(items[0] as HTMLElement)
+    expect(onDownload).not.toHaveBeenCalled()
   })
 })

@@ -68,7 +68,7 @@ export function ViewerTopBar({
   // client — a PDF, image or text file): nothing there could answer a text export or say which file
   // to render, so the control is disabled rather than doing nothing.
   downloadReady?: boolean
-  // One download at a time: the trigger shows a spinner and the items are disabled meanwhile.
+  // One download at a time: the trigger shows a spinner (and stays focusable) and the items are disabled meanwhile.
   downloading?: boolean
   // Controlled so the ⌘⇧S shortcut (held by the viewer) can open the menu; omit both to leave it uncontrolled.
   downloadMenuOpen?: boolean
@@ -171,19 +171,22 @@ export function ViewerTopBar({
                 size="icon"
                 className="hidden size-8 sm:inline-flex"
                 aria-label="Download"
-                title={`Download (${shortcutLabel()})`}
+                title={downloadReady ? `Download (${shortcutLabel()})` : 'Download is available once the page has loaded'}
+                aria-busy={downloading}
                 data-testid="viewer-download-btn"
-                disabled={!downloadReady || downloading}
+                disabled={!downloadReady}
               >
                 {downloading ? <Spinner /> : <Download />}
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-48">
               {DOWNLOAD_FORMATS.map(({ format, label, ext }) => (
-                <DropdownMenuItem key={format} data-testid={`viewer-download-${format}-item`} onSelect={() => onDownload(format)}>
+                <DropdownMenuItem key={format} disabled={downloading} data-testid={`viewer-download-${format}-item`} onSelect={() => onDownload(format)}>
                   {FORMAT_ICON[format]}
                   {label}
-                  <span className="ml-auto font-mono text-muted-foreground text-xs">{ext}</span>
+                  <span aria-hidden="true" className="ml-auto font-mono text-muted-foreground text-xs">
+                    {ext}
+                  </span>
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>

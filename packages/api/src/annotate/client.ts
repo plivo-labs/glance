@@ -29,7 +29,7 @@ import { withAnnotateParam } from './linkRewrite'
 import type { TextContext } from '../lib/anchor'
 import { findRange, resolveSelector } from './locator'
 import { anchorIdAtPoint, anchorRanges, type ElementAnchor, installIndexInvalidation, type TextAnchor } from './reflow'
-import { domToMarkdown } from './markdown'
+import { domToMarkdown, siteUrlRewriter } from './markdown'
 import { installSelectionCapture, type Rect } from './selection'
 
 type Boot = { siteId: string; filePath: string; appOrigin: string }
@@ -288,7 +288,7 @@ window.addEventListener('message', (e: MessageEvent) => {
   // Text / Markdown download: the parent cannot read this cross-origin DOM, so it asks and the page
   // answers with what a reader sees (innerText follows CSS, so hidden nodes and scripts are skipped).
   else if (d?.type === 'glance:export' && (d.format === 'text' || d.format === 'markdown')) {
-    const content = d.format === 'text' ? (document.body?.innerText ?? '') : domToMarkdown(document.body, document.title)
+    const content = d.format === 'text' ? (document.body?.innerText ?? '') : domToMarkdown(document.body, document.title, siteUrlRewriter(window.location.href, boot.appOrigin))
     toParent({ type: 'glance:export-result', format: d.format, content })
   }
   // Viewer-local theme override: swap (or restore) the theme stylesheet INSIDE the frame — the
