@@ -107,6 +107,31 @@ bun run deploy
 
 The Google button appears automatically once both credentials are set. A later Google login on the same email backfills onto your bootstrap admin (role preserved). While unset, the Google routes return 404 and the button is hidden.
 
+## OIDC sign-in (optional)
+
+Any OpenID Connect provider (Okta, Microsoft Entra ID, Keycloak, Authentik, …) can sign people in, next to or instead of Google. Register a web application with redirect URI `https://glance.<your-subdomain>.workers.dev/api/auth/oidc/callback`, then:
+
+```bash
+cd packages/api
+wrangler secret put OIDC_CLIENT_SECRET
+```
+
+and set these `vars` on the main worker:
+
+| var | example | |
+|---|---|---|
+| `OIDC_ISSUER` | `https://yourcompany.okta.com` | required; must equal the `issuer` in its `/.well-known/openid-configuration`, and every endpoint it publishes must be `https:` |
+| `OIDC_CLIENT_ID` | `0oa1b2c3d4` | required |
+| `OIDC_PROVIDER_NAME` | `Okta` | button label, default `SSO` |
+| `OIDC_SCOPES` | `openid profile email` | default `openid profile email` |
+| `OIDC_LINK_EXISTING` | `1` | allow an OIDC identity to adopt an existing account by email (see below); off by default |
+
+The id_token must carry `email_verified: true` and an email in `ALLOWED_HD` (the allowed email domain), plus a `sub`, and `azp` when it has several audiences. The provider must accept `client_secret_basic` at its token endpoint — arctic does not do `client_secret_post`. Entra ID does not send `email_verified` by default, so it needs a claims-mapping policy (or an optional claim) before it can sign anyone in here.
+
+A user is matched on `<issuer> <sub>`, so a changed issuer never matches someone else's subject. When that misses, the account with the same verified email is adopted **only if it has no identity yet** (a bootstrap admin, say). An email that already belongs to a Google account, or to a superadmin, is refused unless `OIDC_LINK_EXISTING=1`; a stored subject is never overwritten. A refused email lands on `/login?error=link`.
+
+An OIDC-only deploy therefore has two orders that work: sign in with `SUPERADMIN_EMAIL` (a fresh account is created as superadmin), or bootstrap first and set `OIDC_LINK_EXISTING=1` for the first OIDC sign-in.
+
 ## CI auto-deploy
 
 `.github/workflows/deploy.yml` deploys both workers + runs the D1 migrate on push to `main`. The only repo secret needed is `CLOUDFLARE_API_TOKEN` (scopes: Workers Scripts, D1, KV, R2). Worker secrets are set once via `wrangler secret put` and persist across deploys.
