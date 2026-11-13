@@ -26,11 +26,12 @@ const ShareDialog = lazy(() => import('@/components/ShareDialog').then((m) => ({
 // too. Commenting is unconditional elsewhere (viewer.tsx) — the rail is just a
 // panel you open and close, not a gate on any of that.
 //
-// The row is the same controls at EVERY breakpoint: only Star, Comments and Download PDF (an icon,
-// like Star; one click, document sites only) earn a permanent slot; Recently opened / Search / Fork /
-// TL;DR / Share live in the hamburger menu. Those menu items are driven from shared state
-// (ForkDialog, SummarySheet, ShareDialog) held here, so the menu item and the sheet/dialog it
-// opens are one action.
+// The row is the same controls at every width, with one exception. Star and Comments always have a
+// permanent slot. Download PDF (an icon, one click, document sites only) has one from `sm` up; below
+// that it is a hamburger item, because an owner's row has no room for a fourth control at 390px.
+// Recently opened / Search / Fork / TL;DR / Share live in the hamburger menu. Those menu items are
+// driven from shared state (ForkDialog, SummarySheet, ShareDialog) held here, so the menu item and
+// the sheet/dialog it opens are one action.
 export function ViewerTopBar({
   site,
   sitePath,
@@ -153,7 +154,7 @@ export function ViewerTopBar({
           <Button
             variant="ghost"
             size="icon"
-            className="size-8"
+            className="hidden size-8 sm:inline-flex"
             aria-label="Download PDF"
             title="Download PDF"
             disabled={!pdfReady}
@@ -187,6 +188,14 @@ export function ViewerTopBar({
               <Sparkles />
               TL;DR
             </DropdownMenuItem>
+            {/* The phone twin of the Download button above (hidden from sm up, where the button shows):
+                a fourth permanent control pushes the menu off-screen at 390px for an owner. */}
+            {onDownloadPdf && (
+              <DropdownMenuItem className="sm:hidden" disabled={!pdfReady} onSelect={onDownloadPdf}>
+                <Download />
+                Download PDF
+              </DropdownMenuItem>
+            )}
             {site.isOwner && (
               <DropdownMenuItem onSelect={() => setShareOpen(true)}>
                 <Share2 />

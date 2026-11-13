@@ -108,7 +108,15 @@ describe('ViewerTopBar — Download PDF', () => {
     expect(screen.queryByRole('button', { name: 'Download PDF' })).toBeNull()
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Menu' }), { button: 0 })
     await screen.findByRole('menuitem', { name: /Fork/ })
-    expect(screen.queryByRole('menuitem', { name: /Print/ })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: /Print|Download PDF/ })).toBeNull()
+  })
+
+  test('below sm the same action is a Download PDF item in the hamburger menu', async () => {
+    const onDownloadPdf = mock(() => {})
+    renderTopBar({ onDownloadPdf })
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Menu' }), { button: 0 })
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Download PDF' }))
+    expect(onDownloadPdf).toHaveBeenCalledTimes(1)
   })
 
   test('the button is disabled, and does nothing, until the frame has announced itself', () => {
