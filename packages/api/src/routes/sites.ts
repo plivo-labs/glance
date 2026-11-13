@@ -23,6 +23,7 @@ import { batchAll, chunk, D1_MAX_IN, FEED_ID_CHUNK } from '../lib/d1'
 import { fireAndForget } from '../lib/events'
 import { resolveIndexPath } from '../lib/extract'
 import { siteFeedColumns, toFeedRow } from '../lib/site-feed'
+import { computeSiteInsights } from '../lib/site-insights'
 import { readSessionOrBearer } from '../lib/session'
 import { fetchAccessFacts, isSharedFromFacts, resolveSite, resolveSiteForAccess } from '../lib/site-access'
 import { deliverSlack, type SlackRecipient, slackDepsFromEnv, slackEnabled } from '../lib/slack'
@@ -494,6 +495,19 @@ sites.get('/:spaceSlug/:siteSlug/shares', requireAuth, async (c) => {
     groupIds: shares.groupIds,
     users: shares.users.map((u) => ({ id: u.userId, role: u.role })),
   })
+})
+
+// GET /api/sites/:spaceSlug/:siteSlug/stats — owner-only view counts for the last 30 days. Counts
+// only, never viewer identities. Strictly the owner (no role bypass, see lib/access.ts): who opened
+// a page is exactly the kind of thing a superadmin's custodial powers do not reach.
+sites.get('/:spaceSlug/:siteSlug/stats', requireAuth, async (c) => {
+  const user = c.get('user')
+  const db = c.get('db')
+  const { spaceSlug, siteSlug } = c.req.param()
+  const site = await resolveSite(db, spaceSlug, siteSlug)
+  if (!site) return c.json({ error: 'not found' }, 404)
+  if (site.ownerId !== user.id) return c.json({ error: 'forbidden' }, 403)
+  return c.json(await computeSiteInsights(db, site.id))
 })
 
 // PUT /api/sites/:spaceSlug/:siteSlug/shares — owner-only: replace the whole share set. Strictly
