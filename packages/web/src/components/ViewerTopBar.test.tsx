@@ -21,7 +21,14 @@ const SITE: ViewerSite = {
 // A DATA router, not MemoryRouter: the star control (useStar) calls useRevalidator, which throws
 // outside one — the top bar cannot be rendered bare any more.
 function renderTopBar(
-  overrides: Partial<{ railOpen: boolean; commentCount: number; onToggleRail: () => void; site: ViewerSite }> = {},
+  overrides: Partial<{
+    railOpen: boolean
+    commentCount: number
+    onToggleRail: () => void
+    site: ViewerSite
+    onDownloadPdf: () => void
+    pdfReady: boolean
+  }> = {},
 ) {
   const onToggleRail = overrides.onToggleRail ?? mock(() => {})
   const router = createMemoryRouter([
@@ -36,6 +43,8 @@ function renderTopBar(
           onToggleRail={onToggleRail}
           onToggleSidebar={() => {}}
           onSearch={() => {}}
+          onDownloadPdf={overrides.onDownloadPdf}
+          pdfReady={overrides.pdfReady}
         />
       ),
     },
@@ -83,5 +92,31 @@ describe('ViewerTopBar — the visibility tier rides beside the site name', () =
   test('the owner gets the picker trigger for the tier', () => {
     renderTopBar({ site: { ...SITE, visibility: 'private', isOwner: true } })
     expect(screen.getByRole('button', { name: /Private/ })).toBeTruthy()
+  })
+})
+
+describe('ViewerTopBar — Download → PDF', () => {
+  const openDownload = () => fireEvent.pointerDown(screen.getByRole('button', { name: 'Download' }), { button: 0 })
+
+  test('picking PDF asks the frame to print, once', async () => {
+    const onDownloadPdf = mock(() => {})
+    renderTopBar({ onDownloadPdf })
+    openDownload()
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'PDF' }))
+    expect(onDownloadPdf).toHaveBeenCalledTimes(1)
+  })
+
+  test('no Download button without a handler (audio), and the old hamburger print item is gone', async () => {
+    renderTopBar({})
+    expect(screen.queryByRole('button', { name: 'Download' })).toBeNull()
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Menu' }), { button: 0 })
+    await screen.findByRole('menuitem', { name: /Fork/ })
+    expect(screen.queryByRole('menuitem', { name: /Print/ })).toBeNull()
+  })
+
+  test('PDF is disabled until the frame has announced itself', async () => {
+    renderTopBar({ onDownloadPdf: () => {}, pdfReady: false })
+    openDownload()
+    expect((await screen.findByRole('menuitem', { name: 'PDF' })).getAttribute('data-disabled')).not.toBeNull()
   })
 })
