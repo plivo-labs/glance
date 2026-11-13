@@ -96,9 +96,9 @@ Open `https://glance.<your-subdomain>.workers.dev/login`, paste `BOOTSTRAP_TOKEN
 
 ## PDF export (optional)
 
-The viewer's Download dialog makes PDFs on the server with [Cloudflare Browser Rendering](https://developers.cloudflare.com/browser-rendering/), through the `BROWSER` binding in `wrangler.jsonc`. The Workers Free plan allows 10 browser-minutes a day; Workers Paid is metered per browser hour. A PDF export is also limited to 5 a minute per user (`PDF_LIMITER`).
+The viewer's Download menu makes PDFs on the server with [Cloudflare Browser Rendering](https://developers.cloudflare.com/browser-rendering/), through the `BROWSER` binding in `wrangler.jsonc`. The Workers Free plan allows 10 browser-minutes a day; Workers Paid is metered per browser hour. A PDF export is also limited to 5 a minute per user (`PDF_LIMITER`).
 
-Plain-text download needs nothing. If the binding is missing, or a render fails, the dialog falls back to the browser's own print dialog. To turn server PDFs off, delete the `browser` entry in `wrangler.jsonc`.
+Markdown and plain-text downloads need nothing. If the binding is missing, or a render fails, the PDF option falls back to the browser's own print dialog. To turn server PDFs off, delete the `browser` entry in `wrangler.jsonc`.
 
 ## Google OAuth (optional)
 

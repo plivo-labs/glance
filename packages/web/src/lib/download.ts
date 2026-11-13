@@ -1,47 +1,13 @@
-// The viewer's Download dialog: the options, how they are remembered, and the three ways a download
-// can happen (server PDF, plain text read out of the frame, browser print as the fallback).
+// The viewer's Download menu: what each format does, and the ways a download can happen (server
+// PDF, text or Markdown read out of the frame, browser print as the PDF fallback).
 
-export type DownloadOptions = {
-  format: 'pdf' | 'text'
-  /** info = A4/Letter, content reflowed into a readable column; full = wide pages, as on screen. */
-  size: 'info' | 'full'
-  /** theme = as designed (theme, backgrounds, current light/dark); simple = plain light print. */
-  look: 'theme' | 'simple'
-  paper: 'a4' | 'letter'
-}
+export type DownloadFormat = 'pdf' | 'md' | 'txt'
 
-export const DEFAULT_DOWNLOAD_OPTIONS: DownloadOptions = { format: 'pdf', size: 'info', look: 'theme', paper: 'a4' }
-
-const STORAGE_KEY = 'glance:download'
-
-const ALLOWED: { [K in keyof DownloadOptions]: readonly DownloadOptions[K][] } = {
-  format: ['pdf', 'text'],
-  size: ['info', 'full'],
-  look: ['theme', 'simple'],
-  paper: ['a4', 'letter'],
-}
-
-/** The last choices, field by field: a value that is not one of ours falls back to the default. */
-export function loadDownloadOptions(): DownloadOptions {
-  let saved: Partial<Record<keyof DownloadOptions, unknown>> = {}
-  try {
-    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null')
-    if (parsed && typeof parsed === 'object') saved = parsed
-  } catch {
-    /* storage blocked or corrupt: defaults */
-  }
-  const pick = <K extends keyof DownloadOptions>(key: K): DownloadOptions[K] =>
-    (ALLOWED[key] as readonly unknown[]).includes(saved[key]) ? (saved[key] as DownloadOptions[K]) : DEFAULT_DOWNLOAD_OPTIONS[key]
-  return { format: pick('format'), size: pick('size'), look: pick('look'), paper: pick('paper') }
-}
-
-export function saveDownloadOptions(o: DownloadOptions): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(o))
-  } catch {
-    /* a per-viewer convenience only */
-  }
-}
+export const DOWNLOAD_FORMATS: { format: DownloadFormat; label: string; ext: string }[] = [
+  { format: 'pdf', label: 'PDF', ext: '.pdf' },
+  { format: 'md', label: 'Markdown', ext: '.md' },
+  { format: 'txt', label: 'Plain text', ext: '.txt' },
+]
 
 const isApple = () => typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
 export const shortcutLabel = (): string => (isApple() ? '⌘⇧S' : 'Ctrl+Shift+S')
@@ -50,14 +16,11 @@ export function isDownloadShortcut(e: Pick<KeyboardEvent, 'key' | 'metaKey' | 'c
   return (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 's'
 }
 
-type SiteRef = { spaceSlug: string; siteSlug: string }
-
 export function pdfRequestUrl(
-  site: SiteRef,
-  o: DownloadOptions,
+  site: { spaceSlug: string; siteSlug: string },
   ctx: { path: string | null; dark: boolean; themeHref: string | null },
 ): string {
-  const q = new URLSearchParams({ size: o.size, look: o.look, paper: o.paper, scheme: ctx.dark ? 'dark' : 'light' })
+  const q = new URLSearchParams({ scheme: ctx.dark ? 'dark' : 'light' })
   if (ctx.path) q.set('path', ctx.path)
   // A non-owner's local "View in theme": the server render never sees the client-side swap.
   if (ctx.themeHref) q.set('theme', ctx.themeHref)
@@ -91,8 +54,13 @@ export async function fetchPdf(url: string, fallbackName: string): Promise<{ blo
   return { blob: await res.blob(), name: nameFromDisposition(res.headers.get('content-disposition')) ?? fallbackName }
 }
 
-/** Asks the frame for the page's text. The frame is cross-origin, so it answers by message. */
-export function requestFrameText(frame: Window | null | undefined, origin: string, timeoutMs = 4000): Promise<string> {
+/** Asks the frame for the page as text or Markdown. The frame is cross-origin, so it answers by message. */
+export function requestFrameExport(
+  frame: Window | null | undefined,
+  origin: string,
+  format: 'text' | 'markdown',
+  timeoutMs = 4000,
+): Promise<string> {
   return new Promise((resolve, reject) => {
     if (!frame) return reject(new Error('The page is not ready yet.'))
     const timer = setTimeout(() => {
@@ -100,14 +68,14 @@ export function requestFrameText(frame: Window | null | undefined, origin: strin
       reject(new Error('The page did not answer. Reload it and try again.'))
     }, timeoutMs)
     function onMessage(e: MessageEvent) {
-      const d = e.data as { type?: string; text?: unknown } | null
-      if (e.source !== frame || e.origin !== origin || d?.type !== 'glance:text-result' || typeof d.text !== 'string') return
+      const d = e.data as { type?: string; format?: string; content?: unknown } | null
+      if (e.source !== frame || e.origin !== origin || d?.type !== 'glance:export-result' || d.format !== format || typeof d.content !== 'string') return
       clearTimeout(timer)
       window.removeEventListener('message', onMessage)
-      resolve(d.text)
+      resolve(d.content)
     }
     window.addEventListener('message', onMessage)
-    frame.postMessage({ type: 'glance:text' }, origin)
+    frame.postMessage({ type: 'glance:export', format }, origin)
   })
 }
 

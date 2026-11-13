@@ -35,7 +35,7 @@ async function setup(env: Partial<AppEnv['Bindings']> = {}) {
 describe('GET /api/sites/:space/:site/pdf', () => {
   test('renders through the content URL with a short token for the caller, and names the file', async () => {
     const { get, calls } = await setup()
-    const res = await get('?size=full&look=simple&path=notes/a.html')
+    const res = await get('?scheme=dark&path=notes/a.html')
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toBe('application/pdf')
     expect(res.headers.get('content-disposition')).toContain('filename="Q3 report.pdf"')
@@ -46,7 +46,7 @@ describe('GET /api/sites/:space/:site/pdf', () => {
     const [, , token, ...rest] = new URL(call?.url ?? '').pathname.split('/')
     expect(rest.join('/')).toBe('docs/report/notes/a.html')
     expect(await verifyToken('content-secret', 'docs/report', token)).toBe('owner')
-    expect(call?.plan).toMatchObject({ width: '1280px', media: 'print' })
+    expect(call?.plan).toMatchObject({ width: '210mm', scheme: 'dark' })
   })
 
   test('anonymous is 401, a stranger on a private site 403, a missing site 404, and none of them render', async () => {
@@ -59,7 +59,7 @@ describe('GET /api/sites/:space/:site/pdf', () => {
 
   test('a bad option or path is a 400 before any render', async () => {
     const { get, calls } = await setup()
-    for (const q of ['?size=huge', '?path=../x.html', '?path=logo.png', '?theme=https://evil.example.com/x.css']) {
+    for (const q of ['?scheme=sepia', '?path=../x.html', '?path=logo.png', '?theme=https://evil.example.com/x.css']) {
       expect((await get(q)).status).toBe(400)
     }
     expect(calls).toHaveLength(0)

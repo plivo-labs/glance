@@ -37,7 +37,8 @@ export async function renderPdf(binding: Fetcher, req: PdfRenderRequest): Promis
   try {
     const page = await browser.newPage()
     await page.setViewport({ width: plan.viewportWidth, height: 1100 })
-    await page.emulateMediaType(plan.media)
+    // As designed: the page's screen styles and backgrounds, not its print stylesheet.
+    await page.emulateMediaType('screen')
     await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: plan.scheme }])
     const res = await page.goto(req.url, { waitUntil: 'load', timeout: NAVIGATION_TIMEOUT_MS })
     if (!res?.ok()) throw new Error(`pdf render: page answered ${res?.status() ?? 'nothing'}`)
@@ -48,7 +49,7 @@ export async function renderPdf(binding: Fetcher, req: PdfRenderRequest): Promis
       width: plan.width,
       height: plan.height,
       margin: plan.margin,
-      printBackground: plan.printBackground,
+      printBackground: true,
       preferCSSPageSize: false,
     })
   } finally {

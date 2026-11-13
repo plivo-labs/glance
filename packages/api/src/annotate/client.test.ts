@@ -296,9 +296,9 @@ describe('client.ts — glance:print prints in the frame realm (the parent canno
   })
 })
 
-describe('client.ts — Download: plain text on request, and ⌘⇧S forwarded out of the frame', () => {
+describe('client.ts — Download: text and Markdown on request, and ⌘⇧S forwarded out of the frame', () => {
   const win = () => (globalThis as unknown as AnyRecord).window as unknown as Window & AnyRecord
-  const texts = () => posted.filter((m) => (m as AnyRecord).type === 'glance:text-result') as AnyRecord[]
+  const exports = () => posted.filter((m) => (m as AnyRecord).type === 'glance:export-result') as AnyRecord[]
   const shortcuts = () => posted.filter((m) => (m as AnyRecord).type === 'glance:shortcut') as AnyRecord[]
   const keydown = (init: KeyboardEventInit) => {
     const ev = new ((win() as AnyRecord).KeyboardEvent as typeof KeyboardEvent)('keydown', { cancelable: true, ...init })
@@ -306,13 +306,18 @@ describe('client.ts — Download: plain text on request, and ⌘⇧S forwarded o
     return ev
   }
 
-  test('glance:text answers the app origin with the page text; a foreign origin gets nothing', () => {
-    const before = texts().length
-    send({ type: 'glance:text' }, 'https://evil.example.com')
-    expect(texts()).toHaveLength(before)
-    send({ type: 'glance:text' })
-    expect(texts()).toHaveLength(before + 1)
-    expect(String(texts().at(-1)?.text)).toContain('alpha sentence.')
+  test('glance:export answers the app origin in the asked format; a foreign origin or an unknown format gets nothing', () => {
+    const before = exports().length
+    send({ type: 'glance:export', format: 'text' }, 'https://evil.example.com')
+    send({ type: 'glance:export', format: 'pdf' })
+    expect(exports()).toHaveLength(before)
+    send({ type: 'glance:export', format: 'text' })
+    send({ type: 'glance:export', format: 'markdown' })
+    const [text, markdown] = exports().slice(before)
+    expect(text).toMatchObject({ format: 'text' })
+    expect(String(text?.content)).toContain('alpha sentence.')
+    expect(markdown).toMatchObject({ format: 'markdown' })
+    expect(String(markdown?.content)).toContain('beta sentence.')
   })
 
   test('Cmd/Ctrl+Shift+S is forwarded and swallowed; plain Cmd+S and Shift+S are left alone', () => {

@@ -1,38 +1,12 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import {
-  DEFAULT_DOWNLOAD_OPTIONS,
-  fetchPdf,
-  fileBaseName,
-  isDownloadShortcut,
-  loadDownloadOptions,
-  PdfUnavailableError,
-  pdfRequestUrl,
-  requestFrameText,
-  saveDownloadOptions,
-} from './download'
-
-beforeEach(() => localStorage.clear())
-
-describe('remembered options', () => {
-  test('round-trips, and a bad value falls back field by field', () => {
-    saveDownloadOptions({ format: 'text', size: 'full', look: 'simple', paper: 'letter' })
-    expect(loadDownloadOptions()).toEqual({ format: 'text', size: 'full', look: 'simple', paper: 'letter' })
-    localStorage.setItem('glance:download', JSON.stringify({ format: 'docx', size: 'full' }))
-    expect(loadDownloadOptions()).toEqual({ ...DEFAULT_DOWNLOAD_OPTIONS, size: 'full' })
-    localStorage.setItem('glance:download', '{not json')
-    expect(loadDownloadOptions()).toEqual(DEFAULT_DOWNLOAD_OPTIONS)
-  })
-})
+import { afterEach, describe, expect, test } from 'bun:test'
+import { fetchPdf, fileBaseName, isDownloadShortcut, PdfUnavailableError, pdfRequestUrl, requestFrameExport } from './download'
 
 describe('pdfRequestUrl / isDownloadShortcut / fileBaseName', () => {
-  test('the request carries the choices, and path and theme only when there are some', () => {
+  test('the request carries the scheme, and path and theme only when there are some', () => {
     const site = { spaceSlug: 'a b', siteSlug: 'site' }
-    const bare = pdfRequestUrl(site, DEFAULT_DOWNLOAD_OPTIONS, { path: null, dark: false, themeHref: null })
-    expect(bare).toBe('/api/sites/a%20b/site/pdf?size=info&look=theme&paper=a4&scheme=light')
-    const full = new URL(pdfRequestUrl(site, DEFAULT_DOWNLOAD_OPTIONS, { path: 'docs/x.html', dark: true, themeHref: '/_glance/theme/kapow.css' }), 'http://x')
-    expect(full.searchParams.get('path')).toBe('docs/x.html')
-    expect(full.searchParams.get('theme')).toBe('/_glance/theme/kapow.css')
-    expect(full.searchParams.get('scheme')).toBe('dark')
+    expect(pdfRequestUrl(site, { path: null, dark: false, themeHref: null })).toBe('/api/sites/a%20b/site/pdf?scheme=light')
+    const full = new URL(pdfRequestUrl(site, { path: 'docs/x.html', dark: true, themeHref: '/_glance/theme/kapow.css' }), 'http://x')
+    expect([full.searchParams.get('scheme'), full.searchParams.get('path'), full.searchParams.get('theme')]).toEqual(['dark', 'docs/x.html', '/_glance/theme/kapow.css'])
   })
 
   test('only Cmd/Ctrl+Shift+S is the shortcut', () => {
@@ -69,26 +43,27 @@ describe('fetchPdf', () => {
   })
 })
 
-describe('requestFrameText', () => {
+describe('requestFrameExport', () => {
   const frame = () => {
     const posted: unknown[] = []
     return { posted, win: { postMessage: (m: unknown) => posted.push(m) } as unknown as Window }
   }
-  const answer = (source: unknown, origin: string, text: string) =>
-    window.dispatchEvent(new MessageEvent('message', { data: { type: 'glance:text-result', text }, origin, source: source as MessageEventSource }))
+  const answer = (source: unknown, origin: string, format: string, content: string) =>
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'glance:export-result', format, content }, origin, source: source as MessageEventSource }))
 
-  test('resolves with the frame\'s own answer and ignores another origin or source', async () => {
+  test('asks for the format and resolves with that frame\'s own answer, ignoring another origin, source or format', async () => {
     const { posted, win } = frame()
-    const pending = requestFrameText(win, 'https://content.example.com')
-    expect(posted).toEqual([{ type: 'glance:text' }])
-    answer(win, 'https://evil.example.com', 'spoofed')
-    answer(frame().win, 'https://content.example.com', 'other frame')
-    answer(win, 'https://content.example.com', 'the page text')
-    expect(await pending).toBe('the page text')
+    const pending = requestFrameExport(win, 'https://content.example.com', 'markdown')
+    expect(posted).toEqual([{ type: 'glance:export', format: 'markdown' }])
+    answer(win, 'https://evil.example.com', 'markdown', 'spoofed')
+    answer(frame().win, 'https://content.example.com', 'markdown', 'other frame')
+    answer(win, 'https://content.example.com', 'text', 'wrong format')
+    answer(win, 'https://content.example.com', 'markdown', '# the page')
+    expect(await pending).toBe('# the page')
   })
 
   test('rejects when the frame never answers, and when there is no frame', async () => {
-    await expect(requestFrameText(frame().win, 'https://content.example.com', 20)).rejects.toThrow(/did not answer/)
-    await expect(requestFrameText(null, 'https://content.example.com')).rejects.toThrow(/not ready/)
+    await expect(requestFrameExport(frame().win, 'https://content.example.com', 'text', 20)).rejects.toThrow(/did not answer/)
+    await expect(requestFrameExport(null, 'https://content.example.com', 'text')).rejects.toThrow(/not ready/)
   })
 })

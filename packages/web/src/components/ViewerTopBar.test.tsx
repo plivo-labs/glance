@@ -26,7 +26,7 @@ function renderTopBar(
     commentCount: number
     onToggleRail: () => void
     site: ViewerSite
-    onDownload: () => void
+    onDownload: (format: string) => void
     downloadReady: boolean
   }> = {},
 ) {
@@ -95,17 +95,28 @@ describe('ViewerTopBar — the visibility tier rides beside the site name', () =
   })
 })
 
-describe('ViewerTopBar — Download opens the dialog', () => {
+describe('ViewerTopBar — Download is a menu of PDF, Markdown and plain text', () => {
   const openMenu = () => fireEvent.pointerDown(screen.getByRole('button', { name: 'Menu' }), { button: 0 })
 
-  test('one click on the icon, and the phone menu item, each open the dialog once', async () => {
-    const onDownload = mock(() => {})
+  test('the icon opens PDF / Markdown / Plain text, and each item downloads that format once', async () => {
+    const onDownload = mock((_format: string) => {})
     renderTopBar({ onDownload })
-    fireEvent.click(screen.getByRole('button', { name: 'Download' }))
-    expect(onDownload).toHaveBeenCalledTimes(1)
+    for (const [name, format] of [[/^PDF/, 'pdf'], [/^Markdown/, 'md'], [/^Plain text/, 'txt']] as const) {
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Download' }), { button: 0 })
+      fireEvent.click(await screen.findByRole('menuitem', { name }))
+      expect(onDownload).toHaveBeenLastCalledWith(format)
+    }
+    expect(onDownload).toHaveBeenCalledTimes(3)
+  })
+
+  test('on a phone the hamburger menu carries the same three downloads', async () => {
+    const onDownload = mock((_format: string) => {})
+    renderTopBar({ onDownload })
     openMenu()
-    fireEvent.click(await screen.findByRole('menuitem', { name: /Download/ }))
-    expect(onDownload).toHaveBeenCalledTimes(2)
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Download Markdown' }))
+    expect(onDownload).toHaveBeenCalledWith('md')
+    openMenu()
+    expect((await screen.findAllByRole('menuitem', { name: /^Download / })).map((i) => i.textContent)).toEqual(['Download PDF', 'Download Markdown', 'Download Plain text'])
   })
 
   test('nothing to download without a handler (audio), and the old hamburger print item is gone', async () => {
@@ -116,16 +127,10 @@ describe('ViewerTopBar — Download opens the dialog', () => {
     expect(screen.queryByRole('menuitem', { name: /Print|Download/ })).toBeNull()
   })
 
-  test('both controls are disabled, and do nothing, until the frame has announced itself', async () => {
-    const onDownload = mock(() => {})
-    renderTopBar({ onDownload, downloadReady: false })
-    const button = screen.getByRole('button', { name: 'Download' }) as HTMLButtonElement
-    expect(button.disabled).toBe(true)
-    fireEvent.click(button)
+  test('the trigger is disabled until the frame has announced itself, and while a download runs', async () => {
+    renderTopBar({ onDownload: () => {}, downloadReady: false })
+    expect((screen.getByRole('button', { name: 'Download' }) as HTMLButtonElement).disabled).toBe(true)
     openMenu()
-    const item = await screen.findByRole('menuitem', { name: /Download/ })
-    expect(item.getAttribute('aria-disabled')).toBe('true')
-    fireEvent.click(item)
-    expect(onDownload).not.toHaveBeenCalled()
+    expect((await screen.findByRole('menuitem', { name: 'Download PDF' })).getAttribute('aria-disabled')).toBe('true')
   })
 })
