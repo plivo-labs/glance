@@ -1,6 +1,6 @@
 import { and, eq, isNotNull } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
-import { comments, commentThreads, files, sites } from '../db/schema'
+import { comments, commentThreads, files, siteVersionFiles, siteVersions, sites } from '../db/schema'
 
 export const MAX_FILE_BYTES = 20 * 1024 * 1024 // 20MB/file (spec resolved decision #3)
 
@@ -94,27 +94,40 @@ export async function copyObjects(
   }))
 }
 
-/** Delete all R2 objects recorded for a site: the site's uploaded files AND its voice-comment
+/** Delete all R2 objects recorded for a site: the site's uploaded files, the files its retained
+ *  VERSIONS own (a replace keeps the replaced objects — see lib/versions.ts), AND its voice-comment
  *  audio (comments ⨝ threads on this site with a non-null audioKey), batched ≤1000. */
 export async function deleteSiteObjects(db: DrizzleD1Database, bucket: R2Bucket, siteId: string): Promise<void> {
   const fileRows = await db.select({ storageKey: files.storageKey }).from(files).where(eq(files.siteId, siteId))
+  const versionRows = await db
+    .select({ storageKey: siteVersionFiles.storageKey })
+    .from(siteVersionFiles)
+    .innerJoin(siteVersions, eq(siteVersionFiles.versionId, siteVersions.id))
+    .where(eq(siteVersions.siteId, siteId))
   const audioRows = await db
     .select({ audioKey: comments.audioKey })
     .from(comments)
     .innerJoin(commentThreads, eq(comments.threadId, commentThreads.id))
     .where(and(eq(commentThreads.siteId, siteId), isNotNull(comments.audioKey)))
   const audioKeys = audioRows.map((r) => r.audioKey).filter((k): k is string => k !== null)
-  await deleteKeys(bucket, [...fileRows.map((r) => r.storageKey), ...audioKeys])
+  await deleteKeys(bucket, [...fileRows.map((r) => r.storageKey), ...versionRows.map((r) => r.storageKey), ...audioKeys])
 }
 
-/** Delete all R2 objects for EVERY site in a space: uploaded files (files ⨝ sites) AND voice-comment
- *  audio (comments ⨝ threads ⨝ sites), both filtered by spaceId, batched ≤1000. Replaces the N+1
- *  per-site `deleteSiteObjects` loop on space delete. */
+/** Delete all R2 objects for EVERY site in a space: uploaded files (files ⨝ sites), version-owned
+ *  files (site_version_files ⨝ site_versions ⨝ sites) AND voice-comment audio (comments ⨝ threads ⨝
+ *  sites), all filtered by spaceId, batched ≤1000. Replaces the N+1 per-site `deleteSiteObjects`
+ *  loop on space delete. */
 export async function deleteSpaceObjects(db: DrizzleD1Database, bucket: R2Bucket, spaceId: string): Promise<void> {
   const fileRows = await db
     .select({ storageKey: files.storageKey })
     .from(files)
     .innerJoin(sites, eq(files.siteId, sites.id))
+    .where(eq(sites.spaceId, spaceId))
+  const versionRows = await db
+    .select({ storageKey: siteVersionFiles.storageKey })
+    .from(siteVersionFiles)
+    .innerJoin(siteVersions, eq(siteVersionFiles.versionId, siteVersions.id))
+    .innerJoin(sites, eq(siteVersions.siteId, sites.id))
     .where(eq(sites.spaceId, spaceId))
   const audioRows = await db
     .select({ audioKey: comments.audioKey })
@@ -123,5 +136,5 @@ export async function deleteSpaceObjects(db: DrizzleD1Database, bucket: R2Bucket
     .innerJoin(sites, eq(commentThreads.siteId, sites.id))
     .where(and(eq(sites.spaceId, spaceId), isNotNull(comments.audioKey)))
   const audioKeys = audioRows.map((r) => r.audioKey).filter((k): k is string => k !== null)
-  await deleteKeys(bucket, [...fileRows.map((r) => r.storageKey), ...audioKeys])
+  await deleteKeys(bucket, [...fileRows.map((r) => r.storageKey), ...versionRows.map((r) => r.storageKey), ...audioKeys])
 }
