@@ -1,4 +1,4 @@
-import { ChevronRight, Command, GitFork, History, Menu, MessageSquare, Printer, Share2, Sparkles, Star } from 'lucide-react'
+import { ChevronRight, Command, Download, GitFork, History, Menu, MessageSquare, Share2, Sparkles, Star } from 'lucide-react'
 import { Suspense, lazy, useState } from 'react'
 import { Link } from 'react-router'
 import { toast } from 'sonner'
@@ -26,10 +26,11 @@ const ShareDialog = lazy(() => import('@/components/ShareDialog').then((m) => ({
 // too. Commenting is unconditional elsewhere (viewer.tsx) — the rail is just a
 // panel you open and close, not a gate on any of that.
 //
-// The row is the same three controls at EVERY breakpoint: only Star and Comments earn a permanent
-// slot; Recently opened / Search / Fork / TL;DR / Share live in the hamburger menu. Those menu
-// items are driven from shared state (ForkDialog, SummarySheet, ShareDialog) held here, so the
-// menu item and the sheet/dialog it opens are one action.
+// The row is the same controls at EVERY breakpoint: only Star, Comments and Download PDF (an icon,
+// like Star; one click, document sites only) earn a permanent slot; Recently opened / Search / Fork /
+// TL;DR / Share live in the hamburger menu. Those menu items are driven from shared state
+// (ForkDialog, SummarySheet, ShareDialog) held here, so the menu item and the sheet/dialog it
+// opens are one action.
 export function ViewerTopBar({
   site,
   sitePath,
@@ -38,7 +39,8 @@ export function ViewerTopBar({
   onToggleRail,
   onToggleSidebar,
   onSearch,
-  onPrint,
+  onDownloadPdf,
+  pdfReady = true,
   viewTheme,
   onViewTheme,
 }: {
@@ -49,9 +51,14 @@ export function ViewerTopBar({
   onToggleRail: () => void
   onToggleSidebar: () => void
   onSearch: () => void
-  // Posts glance:print into the content iframe (HTML sites only — absent hides the item). The
-  // frame prints itself; the browser's print dialog is where the user picks "Save as PDF".
-  onPrint?: () => void
+  // Posts glance:print into the content iframe (document sites only — absent hides the Download
+  // button). The frame prints itself; the browser's print dialog is where the user picks "Save as
+  // PDF".
+  onDownloadPdf?: () => void
+  // False while the frame has not announced itself (still loading, or a file with no annotate
+  // client — a PDF, image or text file): nothing there would answer glance:print, so the button is
+  // disabled rather than doing nothing.
+  pdfReady?: boolean
   // Viewer-LOCAL theme override (non-owners): current value + setter. Client-side only — the
   // viewer posts glance:theme into the frame; nothing is written server-side.
   viewTheme?: string | null
@@ -142,6 +149,19 @@ export function ViewerTopBar({
             </span>
           )}
         </Button>
+        {onDownloadPdf && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8"
+            aria-label="Download PDF"
+            title="Download PDF"
+            disabled={!pdfReady}
+            onClick={onDownloadPdf}
+          >
+            <Download />
+          </Button>
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon" className="size-8" aria-label="Menu">
@@ -167,12 +187,6 @@ export function ViewerTopBar({
               <Sparkles />
               TL;DR
             </DropdownMenuItem>
-            {onPrint && (
-              <DropdownMenuItem onSelect={onPrint}>
-                <Printer />
-                Print / Save as PDF
-              </DropdownMenuItem>
-            )}
             {site.isOwner && (
               <DropdownMenuItem onSelect={() => setShareOpen(true)}>
                 <Share2 />

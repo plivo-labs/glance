@@ -21,7 +21,14 @@ const SITE: ViewerSite = {
 // A DATA router, not MemoryRouter: the star control (useStar) calls useRevalidator, which throws
 // outside one — the top bar cannot be rendered bare any more.
 function renderTopBar(
-  overrides: Partial<{ railOpen: boolean; commentCount: number; onToggleRail: () => void; site: ViewerSite }> = {},
+  overrides: Partial<{
+    railOpen: boolean
+    commentCount: number
+    onToggleRail: () => void
+    site: ViewerSite
+    onDownloadPdf: () => void
+    pdfReady: boolean
+  }> = {},
 ) {
   const onToggleRail = overrides.onToggleRail ?? mock(() => {})
   const router = createMemoryRouter([
@@ -36,6 +43,8 @@ function renderTopBar(
           onToggleRail={onToggleRail}
           onToggleSidebar={() => {}}
           onSearch={() => {}}
+          onDownloadPdf={overrides.onDownloadPdf}
+          pdfReady={overrides.pdfReady}
         />
       ),
     },
@@ -83,5 +92,31 @@ describe('ViewerTopBar — the visibility tier rides beside the site name', () =
   test('the owner gets the picker trigger for the tier', () => {
     renderTopBar({ site: { ...SITE, visibility: 'private', isOwner: true } })
     expect(screen.getByRole('button', { name: /Private/ })).toBeTruthy()
+  })
+})
+
+describe('ViewerTopBar — Download PDF', () => {
+  test('one click on the button asks the frame to print, once', () => {
+    const onDownloadPdf = mock(() => {})
+    renderTopBar({ onDownloadPdf })
+    fireEvent.click(screen.getByRole('button', { name: 'Download PDF' }))
+    expect(onDownloadPdf).toHaveBeenCalledTimes(1)
+  })
+
+  test('no Download button without a handler (audio), and the old hamburger print item is gone', async () => {
+    renderTopBar({})
+    expect(screen.queryByRole('button', { name: 'Download PDF' })).toBeNull()
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Menu' }), { button: 0 })
+    await screen.findByRole('menuitem', { name: /Fork/ })
+    expect(screen.queryByRole('menuitem', { name: /Print/ })).toBeNull()
+  })
+
+  test('the button is disabled, and does nothing, until the frame has announced itself', () => {
+    const onDownloadPdf = mock(() => {})
+    renderTopBar({ onDownloadPdf, pdfReady: false })
+    const button = screen.getByRole('button', { name: 'Download PDF' }) as HTMLButtonElement
+    expect(button.disabled).toBe(true)
+    fireEvent.click(button)
+    expect(onDownloadPdf).not.toHaveBeenCalled()
   })
 })
