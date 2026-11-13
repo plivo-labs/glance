@@ -85,3 +85,27 @@ describe('ViewerTopBar — the visibility tier rides beside the site name', () =
     expect(screen.getByRole('button', { name: /Private/ })).toBeTruthy()
   })
 })
+
+describe('ViewerTopBar — Insights is an owner-only menu item', () => {
+  const openMenu = () => fireEvent.pointerDown(screen.getByRole('button', { name: 'Menu' }), { button: 0 })
+
+  test('a non-owner has no Insights item', async () => {
+    renderTopBar({ site: { ...SITE, isOwner: false } })
+    openMenu()
+    await screen.findByRole('menuitem', { name: /Fork/ })
+    expect(screen.queryByRole('menuitem', { name: /Insights/ })).toBeNull()
+  })
+
+  test('the owner opens the sheet from the menu', async () => {
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ days: 30, totalViews: 0, uniqueViewers: 0, series: [], pages: [] }), {
+          headers: { 'content-type': 'application/json' },
+        }),
+      )) as unknown as typeof fetch
+    renderTopBar({ site: { ...SITE, isOwner: true } })
+    openMenu()
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Insights/ }))
+    expect(await screen.findByText('Last 30 days (UTC). Counts only, no names.')).toBeTruthy()
+  })
+})

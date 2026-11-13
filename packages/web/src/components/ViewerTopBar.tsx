@@ -1,4 +1,4 @@
-import { ChevronRight, Command, GitFork, History, Menu, MessageSquare, Printer, Share2, Sparkles, Star } from 'lucide-react'
+import { ChartColumn, ChevronRight, Command, GitFork, History, Menu, MessageSquare, Printer, Share2, Sparkles, Star } from 'lucide-react'
 import { Suspense, lazy, useState } from 'react'
 import { Link } from 'react-router'
 import { toast } from 'sonner'
@@ -13,10 +13,11 @@ import { ThemeMenu, patchTheme } from '@/components/theme-select'
 import { VISIBILITY_META, VisibilityBadge, VisibilityMenu } from '@/components/visibility'
 import { BrandMark, ByPlivo } from '@/components/states'
 
-// Lazy: both open only from the menu. A static import puts their chunks in the viewer route's
+// Lazy: all three open only from the menu. A static import puts their chunks in the viewer route's
 // import graph, so the iframe cannot mount until they download.
 const SummarySheet = lazy(() => import('@/components/SummarySheet').then((m) => ({ default: m.SummarySheet })))
 const ShareDialog = lazy(() => import('@/components/ShareDialog').then((m) => ({ default: m.ShareDialog })))
+const InsightsSheet = lazy(() => import('@/components/InsightsSheet').then((m) => ({ default: m.InsightsSheet })))
 
 // The persistent top chrome for the viewer: brand (→ dashboard) + a breadcrumb, then one action
 // row — Star, Comments, hamburger. Replaces the old floating PreviewToolbar dock.
@@ -59,6 +60,7 @@ export function ViewerTopBar({
 }) {
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
+  const [insightsOpen, setInsightsOpen] = useState(false)
   const [forkOpen, setForkOpen] = useState(false)
   // Star has a permanent slot in the row, so it is the one action with no menu-item twin.
   const { starred, toggle: toggleStar } = useStar(site)
@@ -179,10 +181,16 @@ export function ViewerTopBar({
                 Share…
               </DropdownMenuItem>
             )}
+            {site.isOwner && (
+              <DropdownMenuItem onSelect={() => setInsightsOpen(true)}>
+                <ChartColumn />
+                Insights
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-      {/* All three render through a portal, so they can live inside the header without affecting
+      {/* All four render through a portal, so they can live inside the header without affecting
           layout. Controlled (no inline trigger) — their menu items drive this state. */}
       <ForkDialog site={site} open={forkOpen} onOpenChange={setForkOpen} />
       <Suspense fallback={null}>
@@ -199,6 +207,14 @@ export function ViewerTopBar({
             title={site.title}
             open={shareOpen}
             onOpenChange={setShareOpen}
+          />
+        )}
+        {site.isOwner && (
+          <InsightsSheet
+            spaceSlug={site.spaceSlug}
+            siteSlug={site.siteSlug}
+            open={insightsOpen}
+            onOpenChange={setInsightsOpen}
           />
         )}
       </Suspense>
