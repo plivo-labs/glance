@@ -284,6 +284,9 @@ window.addEventListener('message', (e: MessageEvent) => {
   // realm with the browser's native dialog (the user picks "Save as PDF" there). Full fidelity:
   // the page's own renderer does the layout, including the injected theme stylesheet.
   else if (d?.type === 'glance:print') window.print()
+  // Plain-text download: the parent cannot read this cross-origin DOM, so it asks and the page
+  // answers with what a reader sees (innerText follows CSS, so hidden nodes and scripts are skipped).
+  else if (d?.type === 'glance:text') toParent({ type: 'glance:text-result', title: document.title, text: document.body?.innerText ?? '' })
   // Viewer-local theme override: swap (or restore) the theme stylesheet INSIDE the frame — the
   // parent is cross-origin and cannot touch this DOM. Purely cosmetic and per-viewer: no server
   // write, applies instantly, and the parent persists the choice in ITS localStorage. The href is
@@ -357,4 +360,13 @@ document.addEventListener('click', (e) => {
 })
 
 // Boot handshake: tell the parent which file is mounted (intent-only; parent re-validates).
+// ⌘⇧S / Ctrl+⇧S opens the viewer's Download dialog. A keydown inside this sandboxed frame never
+// reaches the parent, so the shortcut would die the moment the page has focus: forward it, and
+// swallow the browser's own Save-as for it.
+window.addEventListener('keydown', (e) => {
+  if (!boot || !(e.metaKey || e.ctrlKey) || !e.shiftKey || e.altKey || e.key.toLowerCase() !== 's') return
+  e.preventDefault()
+  toParent({ type: 'glance:shortcut', name: 'download' })
+})
+
 if (boot) toParent({ type: 'glance:ready', filePath: boot.filePath })

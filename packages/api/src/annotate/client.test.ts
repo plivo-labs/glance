@@ -296,6 +296,37 @@ describe('client.ts — glance:print prints in the frame realm (the parent canno
   })
 })
 
+describe('client.ts — Download: plain text on request, and ⌘⇧S forwarded out of the frame', () => {
+  const win = () => (globalThis as unknown as AnyRecord).window as unknown as Window & AnyRecord
+  const texts = () => posted.filter((m) => (m as AnyRecord).type === 'glance:text-result') as AnyRecord[]
+  const shortcuts = () => posted.filter((m) => (m as AnyRecord).type === 'glance:shortcut') as AnyRecord[]
+  const keydown = (init: KeyboardEventInit) => {
+    const ev = new ((win() as AnyRecord).KeyboardEvent as typeof KeyboardEvent)('keydown', { cancelable: true, ...init })
+    win().dispatchEvent(ev as unknown as Event)
+    return ev
+  }
+
+  test('glance:text answers the app origin with the page text; a foreign origin gets nothing', () => {
+    const before = texts().length
+    send({ type: 'glance:text' }, 'https://evil.example.com')
+    expect(texts()).toHaveLength(before)
+    send({ type: 'glance:text' })
+    expect(texts()).toHaveLength(before + 1)
+    expect(String(texts().at(-1)?.text)).toContain('alpha sentence.')
+  })
+
+  test('Cmd/Ctrl+Shift+S is forwarded and swallowed; plain Cmd+S and Shift+S are left alone', () => {
+    const before = shortcuts().length
+    expect(keydown({ key: 'S', metaKey: true, shiftKey: true }).defaultPrevented).toBe(true)
+    expect(keydown({ key: 's', ctrlKey: true, shiftKey: true }).defaultPrevented).toBe(true)
+    expect(shortcuts()).toHaveLength(before + 2)
+    expect(shortcuts().at(-1)?.name).toBe('download')
+    expect(keydown({ key: 's', metaKey: true }).defaultPrevented).toBe(false)
+    expect(keydown({ key: 'S', shiftKey: true }).defaultPrevented).toBe(false)
+    expect(shortcuts()).toHaveLength(before + 2)
+  })
+})
+
 describe('client.ts — glance:theme swaps the theme stylesheet inside the frame (viewer-local override)', () => {
   const link = () => document.getElementById('glance-theme') as HTMLLinkElement | null
 
