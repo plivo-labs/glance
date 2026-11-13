@@ -3,11 +3,13 @@
 // triggers keep in step (inserts, deletes AND FK cascades), so this module only ever writes
 // `site_text`. Every query joins back to `sites`, so access is decided by the live site row, never
 // by these tables. This module owns the SQL: building the text, writing it (as batch statements, so
-// it commits WITH the file swap), the injection-safe MATCH string, and snippets.
-import { eq, sql } from 'drizzle-orm'
+// it commits WITH the file swap), the injection-safe MATCH string, snippets, and the cron backfill.
+import { and, desc, eq, isNull, sql } from 'drizzle-orm'
 import type { BatchItem } from 'drizzle-orm/batch'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { sqliteTable, text } from 'drizzle-orm/sqlite-core'
+import { files, sites } from '../db/schema'
+import { batchAll } from './d1'
 import { extractText, isSupportedEntry, resolveIndexPath } from './extract'
 
 // Query-builder handles. Not in db/schema.ts on purpose: drizzle-kit would try to `CREATE TABLE` the
@@ -26,6 +28,11 @@ export const SEARCH_TEXT_CAP = 200_000 // chars of text kept per site
 // of each, so a huge upload (or a cron tick) cannot spend unbounded CPU or memory on indexing.
 export const UPLOAD_INDEX_MAX_FILES = 50
 export const READ_BYTES_PER_FILE = 1024 * 1024
+// The hourly backfill runs inside one invocation with a small subrequest budget (the free plan
+// allows 50): per site that is 1 file-list read + one R2 get per file + 1 batch.
+export const BACKFILL_SITES_PER_TICK = 4
+export const BACKFILL_MAX_FILES = 8
+
 type Candidate = { path: string; mimeType: string | null }
 
 /** Most useful text first, so the cap drops the tail: the root-served entry, then the rest by path. */
@@ -124,4 +131,58 @@ export async function siteSnippets(
     )})`,
   )
   return new Map(rows.map((r) => [r.siteId, r.snippet.replace(/\s+/g, ' ').trim()]))
+}
+
+/**
+ * One cron tick of the backfill: index a few not-yet-indexed sites (newest first) by reading their
+ * html/md files from R2. Bounded — BACKFILL_SITES_PER_TICK sites, BACKFILL_MAX_FILES reads each, the
+ * first READ_BYTES_PER_FILE of every file. The write only lands if the site is still at the content
+ * version we read and still unindexed, so a replace racing the tick wins: its own batch has already
+ * written fresh rows and a stale read can never overwrite them. A site that fails is left for the
+ * next tick. Returns how many sites it processed.
+ */
+export async function backfillSiteSearch(db: DrizzleD1Database, bucket: R2Bucket): Promise<number> {
+  const pending = await db
+    .select({ id: sites.id, contentVersion: sites.contentVersion })
+    .from(sites)
+    .where(isNull(sites.searchIndexedAt))
+    .orderBy(desc(sites.updatedAt))
+    .limit(BACKFILL_SITES_PER_TICK)
+  let processed = 0
+  for (const site of pending) {
+    try {
+      const rows = await db
+        .select({ path: files.path, storageKey: files.storageKey, mimeType: files.mimeType })
+        .from(files)
+        .where(eq(files.siteId, site.id))
+      const body = await buildSearchText(
+        rows,
+        async (f) => {
+          const object = await bucket.get(f.storageKey, { range: { offset: 0, length: READ_BYTES_PER_FILE } })
+          return object ? object.text() : null
+        },
+        BACKFILL_MAX_FILES,
+      )
+      const unchanged = and(eq(sites.id, site.id), eq(sites.contentVersion, site.contentVersion), isNull(sites.searchIndexedAt))
+      await batchAll(db, [
+        ...(body
+          ? [
+              db
+                .insert(siteText)
+                .select(
+                  db
+                    .select({ siteId: sql<string>`${site.id}`.as('siteId'), body: sql<string>`${body}`.as('body') })
+                    .from(sites)
+                    .where(unchanged),
+                ),
+            ]
+          : []),
+        db.update(sites).set({ searchIndexedAt: new Date().toISOString() }).where(unchanged),
+      ])
+      processed++
+    } catch (err) {
+      console.error('backfillSiteSearch: site failed', { siteId: site.id, error: String(err) })
+    }
+  }
+  return processed
 }
