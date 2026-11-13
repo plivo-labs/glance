@@ -1,6 +1,8 @@
-import { and, count, eq, isNotNull, lt, sql } from 'drizzle-orm'
+import { and, count, eq, inArray, isNotNull, lt, sql } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
-import { events, notifications, purgedEventCounts } from '../db/schema'
+import { events, notifications, purgedEventCounts, siteVersionFiles, siteVersions } from '../db/schema'
+import { D1_MAX_IN } from './d1'
+import { deleteKeys } from './storage'
 
 // Daily retention purge (issue #82, issue #102 item 2). `events` gets one row per page view AND
 // per CLI call (middleware/analytics.ts) with no cap — nothing ever deleted it. `notifications`
@@ -8,6 +10,14 @@ import { events, notifications, purgedEventCounts } from '../db/schema'
 // (see index.ts `scheduled`), separate from the hourly stats tick.
 export const EVENTS_RETENTION_DAYS = 90
 export const READ_NOTIFICATIONS_RETENTION_DAYS = 30
+// Site version history: a version survives only while it is among the site's newest KEEP AND younger
+// than the age cap (both must hold). Age is the SNAPSHOT time, i.e. when the content was superseded.
+export const SITE_VERSIONS_KEEP = 10
+export const SITE_VERSIONS_RETENTION_DAYS = 30
+// One pass handles D1_MAX_IN versions (the id list is bound into inArray); a run stops after
+// MAX_PASSES so the Workers subrequest budget (~4 + one R2 delete per 1000 keys per pass) can't be
+// blown by a backlog — whatever is left is simply picked up by the next daily run.
+const VERSION_PURGE_MAX_PASSES = 10
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const cutoff = (now: Date, days: number) => new Date(now.getTime() - days * DAY_MS).toISOString()
@@ -52,4 +62,35 @@ export async function purgeRetention(db: DrizzleD1Database, now: Date = new Date
   await db
     .delete(notifications)
     .where(and(isNotNull(notifications.readAt), lt(notifications.createdAt, notificationsCutoff)))
+}
+
+/**
+ * Purges site versions that fell out of the retention window: not among the newest
+ * SITE_VERSIONS_KEEP of their site, or older than SITE_VERSIONS_RETENTION_DAYS. A site whose only
+ * versions are all past the age cap loses them all — "none older than 30 days" is absolute.
+ *
+ * ORDER IS THE SAFETY: the R2 objects go first, then the rows, keyed by the EXACT ids selected (the
+ * predicate is never re-evaluated at delete time, so a version created mid-run can't be caught by
+ * it). If the R2 delete throws, the rows survive and the next run retries; the reverse order would
+ * strand the objects with nothing left pointing at them. Deleting a version cascades its file rows.
+ */
+export async function purgeSiteVersions(db: DrizzleD1Database, bucket: R2Bucket, now: Date = new Date()): Promise<void> {
+  const ageCutoff = cutoff(now, SITE_VERSIONS_RETENTION_DAYS)
+  for (let pass = 0; pass < VERSION_PURGE_MAX_PASSES; pass++) {
+    const doomed = await db.all<{ id: string }>(sql`
+      SELECT id FROM (
+        SELECT id, createdAt, row_number() OVER (PARTITION BY siteId ORDER BY createdAt DESC, version DESC) AS rn
+        FROM site_versions
+      ) WHERE rn > ${SITE_VERSIONS_KEEP} OR createdAt < ${ageCutoff}
+      LIMIT ${D1_MAX_IN}`)
+    if (doomed.length === 0) return
+    const ids = doomed.map((r) => r.id)
+    const keys = await db
+      .select({ storageKey: siteVersionFiles.storageKey })
+      .from(siteVersionFiles)
+      .where(inArray(siteVersionFiles.versionId, ids))
+    await deleteKeys(bucket, keys.map((k) => k.storageKey))
+    await db.delete(siteVersions).where(inArray(siteVersions.id, ids))
+    if (ids.length < D1_MAX_IN) return
+  }
 }

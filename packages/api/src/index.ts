@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { secureHeaders } from 'hono/secure-headers'
 import { onError, sessionDb, withDb } from './db/client'
 import { superadminExists } from './db/repo'
-import { purgeRetention } from './lib/retention'
+import { purgeRetention, purgeSiteVersions } from './lib/retention'
 import { cachedStats } from './lib/stats'
 import { GLANCE_DB_JS } from './glancedb/bundle'
 import { buildPublicConfig } from './lib/bootstrap'
@@ -167,13 +167,15 @@ const DAILY_PURGE_CRON = '0 3 * * *'
 // inline await — there is no visitor waiting on this response, so nothing needs to run behind it.
 //
 // Daily retention purge (issue #82): trims `events` (90d) and read `notifications` (30d) — see
-// lib/retention.ts for the delete shapes and how it preserves stats.ts's all-time totals.
+// lib/retention.ts for the delete shapes and how it preserves stats.ts's all-time totals. It also
+// purges site versions past their window (newest 10 per site, none older than 30d) and their R2 keys.
 export default {
   fetch: app.fetch,
   async scheduled(event, env, _ctx) {
     const db = sessionDb(env.GLANCE_DB, 'first-unconstrained')
     if (event.cron === DAILY_PURGE_CRON) {
       await purgeRetention(db)
+      await purgeSiteVersions(db, env.GLANCE_FILES)
       return
     }
     await cachedStats(env.GLANCE_SESSIONS, db, (p) => p.then(() => {}))
