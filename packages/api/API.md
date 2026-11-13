@@ -152,7 +152,7 @@ A revoked key stops authenticating immediately. One documented exception: a
 | `GET` | `/api/sites/mine` | Sites you own, newest first |
 | `GET` | `/api/sites/shared` | Sites shared with you |
 | `GET` | `/api/sites/team` | Team feed |
-| `GET` | `/api/sites/search?q=` | Search |
+| `GET` | `/api/sites/search?q=` | Search by name, then by page text; each row has `matchedIn` (`name` or `content`) and, for content hits, a `snippet` |
 | `GET` | `/api/sites/:space/:site` | Viewer metadata + a token-gated content URL |
 | `GET` | `/api/sites/:space/:site/exists` | Slug-conflict probe |
 | `GET` | `/api/sites/:space/:site/shares` | Current shares |

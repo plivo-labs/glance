@@ -6,6 +6,7 @@ import { batchAll } from '../lib/d1'
 import { canReplace } from '../lib/access'
 import { fireAndForget } from '../lib/events'
 import { capTitle, extractHtmlMeta, NO_META, pickEntry } from '../lib/extract'
+import { searchRowStmts, searchTextFromUpload } from '../lib/site-search'
 import { isValidSlug } from '../lib/slug'
 import { deleteKeys, MAX_FILE_BYTES, sanitizePath } from '../lib/storage'
 import { isVisibility, normalizeVisibility } from '../lib/visibility'
@@ -230,6 +231,9 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
   // it outright, clearing it to null when the new entry carries no description meta.
   const entry = pickEntry(items.map(({ path, file }) => ({ path, file, mimeType: file.type || null })))
   const metaPromise = entry ? extractHtmlMeta(entry, entry.file) : Promise.resolve(NO_META)
+  // Searchable text of every html/md file, started alongside the meta parse and awaited with it. It
+  // lands in the SAME batch as the file swap below, so search never lags or leads the served bytes.
+  const searchPromise = searchTextFromUpload(items)
 
   // Write the objects with bounded concurrency so latency doesn't scale linearly with file count.
   // Track every key we attempt: if ANY put throws mid-flight, delete the ones already written so
@@ -259,6 +263,10 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
   const meta = await metaPromise
   const derivedTitle = actingAsEditor ? null : meta.title
   const { description } = meta
+  // null = indexing failed; stamp nothing so the cron backfill retries (the stale row is deleted
+  // by the swap, never left describing the old bytes).
+  const searchText = await searchPromise
+  const searchIndexedAt = searchText === null ? null : new Date().toISOString()
 
   const newRows = plan.map((p) => p.row)
   const insertRows = newRows.map((r) => db.insert(files).values(r))
@@ -280,8 +288,10 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
           visibility: isVisibility(visibility) ? visibility : 'team',
           theme,
           ownerId: user.id,
+          searchIndexedAt,
         }),
         ...insertRows,
+        ...searchRowStmts(db, siteId, searchText),
       ])
     } else if (actingAsEditor) {
       // EDITOR REPLACE — CAS: atomically claim the revision via a conditional bump. A stale
@@ -311,7 +321,8 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
       await db.batch([
         db.delete(files).where(eq(files.siteId, siteId)),
         ...insertRows,
-        db.update(sites).set({ description }).where(eq(sites.id, siteId)),
+        db.update(sites).set({ description, searchIndexedAt }).where(eq(sites.id, siteId)),
+        ...searchRowStmts(db, siteId, searchText),
       ])
     } else {
       // OWNER / SUPERADMIN REPLACE: atomically swap file rows, bump the version advisorily + record
@@ -334,8 +345,10 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
             // Unconditional (not COALESCE'd): a redeploy whose entry dropped its description meta
             // must clear the stale blurb rather than keep unfurling the previous content's.
             description,
+            searchIndexedAt,
           })
           .where(eq(sites.id, siteId)),
+        ...searchRowStmts(db, siteId, searchText),
       ])
     }
   } catch (err) {

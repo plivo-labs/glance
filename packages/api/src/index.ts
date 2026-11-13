@@ -3,6 +3,7 @@ import { secureHeaders } from 'hono/secure-headers'
 import { onError, sessionDb, withDb } from './db/client'
 import { superadminExists } from './db/repo'
 import { purgeRetention } from './lib/retention'
+import { backfillSiteSearch } from './lib/site-search'
 import { cachedStats } from './lib/stats'
 import { GLANCE_DB_JS } from './glancedb/bundle'
 import { buildPublicConfig } from './lib/bootstrap'
@@ -166,6 +167,9 @@ const DAILY_PURGE_CRON = '0 3 * * *'
 // entries, keeping GET /api/admin/stats on fresh KV with zero inline D1 compute. The defer is an
 // inline await — there is no visitor waiting on this response, so nothing needs to run behind it.
 //
+// Each hourly tick also indexes a few not-yet-indexed sites into the content-search table
+// (backfillSiteSearch: bounded sites and R2 reads per tick, so it fits one invocation's budget).
+//
 // Daily retention purge (issue #82): trims `events` (90d) and read `notifications` (30d) — see
 // lib/retention.ts for the delete shapes and how it preserves stats.ts's all-time totals.
 export default {
@@ -176,6 +180,14 @@ export default {
       await purgeRetention(db)
       return
     }
-    await cachedStats(env.GLANCE_SESSIONS, db, (p) => p.then(() => {}))
+    // Stats first, then one bounded slice of the search backfill (lib/site-search.ts). A stats
+    // failure must not starve the backfill, nor a backfill fault hide the stats error.
+    try {
+      await cachedStats(env.GLANCE_SESSIONS, db, (p) => p.then(() => {}))
+    } finally {
+      await backfillSiteSearch(db, env.GLANCE_FILES).catch((err) =>
+        console.error('scheduled: search backfill failed', { error: String(err) }),
+      )
+    }
   },
 } satisfies ExportedHandler<Bindings>
