@@ -26,8 +26,8 @@ function renderTopBar(
     commentCount: number
     onToggleRail: () => void
     site: ViewerSite
-    onDownloadPdf: () => void
-    pdfReady: boolean
+    onDownload: () => void
+    downloadReady: boolean
   }> = {},
 ) {
   const onToggleRail = overrides.onToggleRail ?? mock(() => {})
@@ -43,8 +43,8 @@ function renderTopBar(
           onToggleRail={onToggleRail}
           onToggleSidebar={() => {}}
           onSearch={() => {}}
-          onDownloadPdf={overrides.onDownloadPdf}
-          pdfReady={overrides.pdfReady}
+          onDownload={overrides.onDownload}
+          downloadReady={overrides.downloadReady}
         />
       ),
     },
@@ -95,28 +95,37 @@ describe('ViewerTopBar — the visibility tier rides beside the site name', () =
   })
 })
 
-describe('ViewerTopBar — Download PDF', () => {
-  test('one click on the button asks the frame to print, once', () => {
-    const onDownloadPdf = mock(() => {})
-    renderTopBar({ onDownloadPdf })
-    fireEvent.click(screen.getByRole('button', { name: 'Download PDF' }))
-    expect(onDownloadPdf).toHaveBeenCalledTimes(1)
+describe('ViewerTopBar — Download opens the dialog', () => {
+  const openMenu = () => fireEvent.pointerDown(screen.getByRole('button', { name: 'Menu' }), { button: 0 })
+
+  test('one click on the icon, and the phone menu item, each open the dialog once', async () => {
+    const onDownload = mock(() => {})
+    renderTopBar({ onDownload })
+    fireEvent.click(screen.getByRole('button', { name: 'Download' }))
+    expect(onDownload).toHaveBeenCalledTimes(1)
+    openMenu()
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Download/ }))
+    expect(onDownload).toHaveBeenCalledTimes(2)
   })
 
-  test('no Download button without a handler (audio), and the old hamburger print item is gone', async () => {
+  test('nothing to download without a handler (audio), and the old hamburger print item is gone', async () => {
     renderTopBar({})
-    expect(screen.queryByRole('button', { name: 'Download PDF' })).toBeNull()
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'Menu' }), { button: 0 })
+    expect(screen.queryByRole('button', { name: 'Download' })).toBeNull()
+    openMenu()
     await screen.findByRole('menuitem', { name: /Fork/ })
-    expect(screen.queryByRole('menuitem', { name: /Print/ })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: /Print|Download/ })).toBeNull()
   })
 
-  test('the button is disabled, and does nothing, until the frame has announced itself', () => {
-    const onDownloadPdf = mock(() => {})
-    renderTopBar({ onDownloadPdf, pdfReady: false })
-    const button = screen.getByRole('button', { name: 'Download PDF' }) as HTMLButtonElement
+  test('both controls are disabled, and do nothing, until the frame has announced itself', async () => {
+    const onDownload = mock(() => {})
+    renderTopBar({ onDownload, downloadReady: false })
+    const button = screen.getByRole('button', { name: 'Download' }) as HTMLButtonElement
     expect(button.disabled).toBe(true)
     fireEvent.click(button)
-    expect(onDownloadPdf).not.toHaveBeenCalled()
+    openMenu()
+    const item = await screen.findByRole('menuitem', { name: /Download/ })
+    expect(item.getAttribute('aria-disabled')).toBe('true')
+    fireEvent.click(item)
+    expect(onDownload).not.toHaveBeenCalled()
   })
 })

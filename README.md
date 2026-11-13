@@ -52,6 +52,7 @@ npx skills add plivo-labs/glance
 - **Visibility:** each site is `private`, `members`, or `team`. Every link requires a login; nothing is public.
 - **Audio:** audio files play in a built-in player. You can record audio or leave voice comments in the browser. Voice comments are transcribed, so agents read them as text.
 - **Slack** (optional): get comment notifications as Slack DMs, and Glance links show as preview cards in Slack. See [DEPLOY.md](DEPLOY.md).
+- **Download:** ⌘⇧S (Ctrl+Shift+S) or the download icon opens a dialog to save a page as a PDF (info size or original size, as designed or simple) or as plain text. One-click PDF uses Cloudflare Browser Rendering; see [DEPLOY.md](DEPLOY.md).
 - **`glance.db`** (experimental, opt-in): a small JSON document store your pages can use directly from the browser. See [SHARED_BACKEND.md](SHARED_BACKEND.md).
 
 ## Security

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { type LoaderFunctionArgs, useLoaderData, useParams, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import { api, ApiError } from '@/lib/api'
@@ -12,6 +12,16 @@ import { askStream } from '@/lib/ask'
 import { type Intent, parseIntent } from '@/lib/parseIntent'
 import { encodePathSegments } from '@/lib/paths'
 import { type ArbiterEvent, type ArbiterState, type Decision, initialArbiter, stepArbiter } from '@/lib/prefetchArbiter'
+import {
+  type DownloadOptions,
+  fetchPdf,
+  fileBaseName,
+  PdfUnavailableError,
+  pdfRequestUrl,
+  requestFrameText,
+  saveBlob,
+  shortcutLabel,
+} from '@/lib/download'
 import { recordVisit } from '@/lib/recents'
 import type { Me } from '@/lib/types'
 import { deepLinkReady, railFromSearch, type RevealRequest } from '@/lib/viewerCommands'
@@ -19,11 +29,15 @@ import { loadViewer, PREFETCH_FAILED, type PrefetchResult, type ViewerLoaderData
 import { AudioView } from '@/components/AudioView'
 import { Spinner } from '@/components/states'
 import { CommandPalette } from '@/components/CommandPalette'
+import { useDownloadShortcut } from '@/hooks/useDownloadShortcut'
 import { ViewerTopBar } from '@/components/ViewerTopBar'
 import { viewThemeHref } from '@/components/theme-select'
 import { CommentPopover } from '@/components/review/CommentPopover'
 import { ReviewRail, type TypingPing } from '@/components/review/ReviewRail'
 import { ViewerSidebar } from '@/components/ViewerSidebar'
+
+// Lazy: opens only from the top bar or ⌘⇧S, so the dialog's chunk stays out of the iframe's way.
+const DownloadDialog = lazy(() => import('@/components/DownloadDialog').then((m) => ({ default: m.DownloadDialog })))
 
 // S11: the loader resolves on SITE META alone; the comments prefetch for the predicted entry file
 // is fired unawaited and rides along as a pending promise — the iframe never waits on comments.
@@ -136,6 +150,42 @@ function Viewer() {
       applyViewTheme(slug) // instant swap, even to null (restores the site default in place)
     },
     [viewThemeKey, applyViewTheme],
+  )
+
+  // Download dialog. The dialog mounts on first open; the shortcut works once the frame can answer
+  // (filePath is non-null only after its glance:ready), and never on an audio site (no document).
+  const [downloadOpen, setDownloadOpen] = useState(false)
+  const [downloadMounted, setDownloadMounted] = useState(false)
+  const openDownload = useCallback(() => {
+    setDownloadMounted(true)
+    setDownloadOpen(true)
+  }, [])
+  const frameWindow = useCallback(() => iframeRef.current?.contentWindow, [])
+  const canDownload = !isAudio && filePath !== null
+  useDownloadShortcut(canDownload, openDownload, frameWindow, contentOrigin)
+  const printInFrame = useCallback(() => iframeRef.current?.contentWindow?.postMessage({ type: 'glance:print' }, contentOrigin), [contentOrigin])
+
+  const runDownload = useCallback(
+    async (options: DownloadOptions) => {
+      const base = fileBaseName(site.title, site.siteSlug)
+      if (options.format === 'text') {
+        const text = await requestFrameText(iframeRef.current?.contentWindow, contentOrigin)
+        saveBlob(new Blob([text], { type: 'text/plain;charset=utf-8' }), `${base}.txt`)
+        return
+      }
+      try {
+        const themeHref = await viewThemeHref(viewThemeRef.current)
+        const dark = window.matchMedia('(prefers-color-scheme: dark)').matches
+        const { blob, name } = await fetchPdf(pdfRequestUrl(site, options, { path: filePathRef.current, dark, themeHref }), `${base}.pdf`)
+        saveBlob(blob, name)
+      } catch (err) {
+        if (!(err instanceof PdfUnavailableError)) throw err
+        // No server PDF here (self-hosted without Browser Rendering, or the render failed): the browser's own dialog.
+        toast.message('Server PDF is not available here', { description: 'Opening the browser print dialog instead.' })
+        printInFrame()
+      }
+    },
+    [site, contentOrigin, printInFrame],
   )
 
   // Paint anchors back into the iframe via the trusted parent→child channel. A paint IS the
@@ -655,20 +705,21 @@ function Viewer() {
         onToggleRail={toggleRail}
         onToggleSidebar={() => setSidebarOpen((o) => !o)}
         onSearch={() => setCmdOpen(true)}
-        // Download → PDF rides the annotate client's command channel; audio has no document to
-        // print. `filePath` is non-null only once that client has posted its glance:ready, so the
-        // item stays disabled for a frame that could not answer (loading, or a non-HTML file).
-        onDownloadPdf={
-          isAudio
-            ? undefined
-            : () => iframeRef.current?.contentWindow?.postMessage({ type: 'glance:print' }, contentOrigin)
-        }
-        pdfReady={filePath !== null}
+        // Download opens the dialog; audio has no document to render. `filePath` is non-null only
+        // once the annotate client has posted its glance:ready, so the control stays disabled for a
+        // frame that could not answer (loading, or a non-HTML file).
+        onDownload={isAudio ? undefined : openDownload}
+        downloadReady={filePath !== null}
         viewTheme={viewTheme}
         onViewTheme={isAudio ? undefined : onViewTheme}
       />
 
       <CommandPalette open={cmdOpen} onOpenChange={setCmdOpen} user={me} />
+      {downloadMounted && (
+        <Suspense fallback={null}>
+          <DownloadDialog open={downloadOpen} onOpenChange={setDownloadOpen} onDownload={runDownload} onPrint={printInFrame} shortcut={shortcutLabel()} />
+        </Suspense>
+      )}
 
       <ViewerSidebar
         open={sidebarOpen}

@@ -4,6 +4,7 @@ import { Link } from 'react-router'
 import { toast } from 'sonner'
 import { useStar } from '@/hooks/useStar'
 import { api } from '@/lib/api'
+import { shortcutLabel } from '@/lib/download'
 import type { ViewerSite, Visibility } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -26,9 +27,10 @@ const ShareDialog = lazy(() => import('@/components/ShareDialog').then((m) => ({
 // too. Commenting is unconditional elsewhere (viewer.tsx) — the rail is just a
 // panel you open and close, not a gate on any of that.
 //
-// The row is the same controls at EVERY breakpoint: only Star, Comments and Download PDF (an icon,
-// like Star; one click, document sites only) earn a permanent slot; Recently opened / Search / Fork /
-// TL;DR / Share live in the hamburger menu. Those menu items are driven from shared state
+// Star, Comments and Download (an icon, like Star; it opens the Download dialog, document sites
+// only) earn a permanent slot from `sm` up. On a phone the owner row (name, visibility picker, theme)
+// leaves no room for a fourth icon, so Download moves into the hamburger menu there. Recently opened
+// / Search / Fork / TL;DR / Share always live in the hamburger menu. Those menu items are driven from shared state
 // (ForkDialog, SummarySheet, ShareDialog) held here, so the menu item and the sheet/dialog it
 // opens are one action.
 export function ViewerTopBar({
@@ -39,8 +41,8 @@ export function ViewerTopBar({
   onToggleRail,
   onToggleSidebar,
   onSearch,
-  onDownloadPdf,
-  pdfReady = true,
+  onDownload,
+  downloadReady = true,
   viewTheme,
   onViewTheme,
 }: {
@@ -51,14 +53,12 @@ export function ViewerTopBar({
   onToggleRail: () => void
   onToggleSidebar: () => void
   onSearch: () => void
-  // Posts glance:print into the content iframe (document sites only — absent hides the Download
-  // button). The frame prints itself; the browser's print dialog is where the user picks "Save as
-  // PDF".
-  onDownloadPdf?: () => void
+  // Opens the Download dialog (document sites only — absent hides the control).
+  onDownload?: () => void
   // False while the frame has not announced itself (still loading, or a file with no annotate
-  // client — a PDF, image or text file): nothing there would answer glance:print, so the button is
-  // disabled rather than doing nothing.
-  pdfReady?: boolean
+  // client — a PDF, image or text file): nothing there could answer a text export or say which file
+  // to render, so the control is disabled rather than doing nothing.
+  downloadReady?: boolean
   // Viewer-LOCAL theme override (non-owners): current value + setter. Client-side only — the
   // viewer posts glance:theme into the frame; nothing is written server-side.
   viewTheme?: string | null
@@ -149,15 +149,16 @@ export function ViewerTopBar({
             </span>
           )}
         </Button>
-        {onDownloadPdf && (
+        {onDownload && (
           <Button
             variant="ghost"
             size="icon"
-            className="size-8"
-            aria-label="Download PDF"
-            title="Download PDF"
-            disabled={!pdfReady}
-            onClick={onDownloadPdf}
+            className="hidden size-8 sm:inline-flex"
+            aria-label="Download"
+            title={`Download (${shortcutLabel()})`}
+            data-testid="viewer-download-btn"
+            disabled={!downloadReady}
+            onClick={onDownload}
           >
             <Download />
           </Button>
@@ -187,6 +188,12 @@ export function ViewerTopBar({
               <Sparkles />
               TL;DR
             </DropdownMenuItem>
+            {onDownload && (
+              <DropdownMenuItem className="sm:hidden" disabled={!downloadReady} data-testid="viewer-download-menu-item" onSelect={onDownload}>
+                <Download />
+                Download…
+              </DropdownMenuItem>
+            )}
             {site.isOwner && (
               <DropdownMenuItem onSelect={() => setShareOpen(true)}>
                 <Share2 />
