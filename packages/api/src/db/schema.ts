@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm'
 import { type AnySQLiteColumn, index, integer, primaryKey, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core'
 import type { ApiKeyGrants } from '../lib/api-key'
 
@@ -76,6 +77,10 @@ export const sites = sqliteTable(
     // Number of glance.db `documents` rows this site holds. Never written by app code: the
     // documents_doc_count_* triggers (migration 0030) own it, so FK-cascade deletes stay counted.
     docCount: integer('docCount').notNull().default(0),
+    // When this site's current content last landed in `site_text` (and so the `site_search` index,
+    // migration 0032); null = not indexed yet. Written in the same batch as the text
+    // (lib/site-search.ts), so the cron backfill can use `IS NULL` as its work queue.
+    searchIndexedAt: text('searchIndexedAt'),
     createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
     // Last content-activity timestamp: set on create, re-stamped on every REPLACE (upload.ts), so a
     // re-deployed site bubbles back to the top of the Team activity feed (createdAt alone froze a busy
@@ -89,6 +94,8 @@ export const sites = sqliteTable(
     // equality on the leading pair, `updatedAt` last so the ORDER BY is a reverse index scan and
     // the LIMIT stops it early — otherwise the feed's correlated EXISTS columns run once per SITE.
     index('sites_status_visibility_updated').on(t.status, t.visibility, t.updatedAt),
+    // The search backfill's queue scan; partial, so it empties out once every site is indexed.
+    index('sites_search_unindexed').on(t.updatedAt).where(sql`${t.searchIndexedAt} IS NULL`),
   ],
 )
 

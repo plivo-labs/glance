@@ -26,6 +26,7 @@ import { siteFeedColumns, toFeedRow } from '../lib/site-feed'
 import { readSessionOrBearer } from '../lib/session'
 import { fetchAccessFacts, isSharedFromFacts, resolveSite, resolveSiteForAccess } from '../lib/site-access'
 import { deliverSlack, type SlackRecipient, slackDepsFromEnv, slackEnabled } from '../lib/slack'
+import { copySearchRowStmt } from '../lib/site-search'
 import { isValidSlug } from '../lib/slug'
 import { copyObjects, deleteKeys, deleteSiteObjects } from '../lib/storage'
 import { signToken } from '../lib/token'
@@ -730,8 +731,12 @@ sites.post('/:spaceSlug/:siteSlug/fork', requireAuth, requireControlGrant, async
         visibility: wantVisibility ?? site.visibility,
         ownerId: user.id,
         forkedFrom: site.id,
+        // The bytes are copied, so the source's search text is the fork's too: take its index stamp and
+        // row. A source the cron has not indexed yet is NULL here, which leaves the fork for the same backfill.
+        searchIndexedAt: sql`(select ${sitesTable.searchIndexedAt} from ${sitesTable} where ${sitesTable.id} = ${site.id})`,
       }),
       ...copied.map((f) => db.insert(filesTable).values({ id: crypto.randomUUID(), siteId: id, ...f })),
+      copySearchRowStmt(db, site.id, id),
     ])
   } catch (err) {
     // Don't orphan the objects we just wrote (e.g. a concurrent fork won the (spaceId, slug) unique).

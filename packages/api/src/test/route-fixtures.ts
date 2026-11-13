@@ -14,6 +14,7 @@ import { sites } from '../routes/sites'
 import { slackEvents } from '../routes/slack-events'
 import { spaces } from '../routes/spaces'
 import { stars } from '../routes/stars'
+import { upload } from '../routes/upload'
 import type { AppEnv } from '../types'
 import type { ApiKeyGrants } from '../lib/api-key'
 import { makeDb, makeKv, makeR2, seedApiKey, seedUser } from './harness'
@@ -50,6 +51,7 @@ export function makeRouteApp() {
   app.route('/api/slack', slackEvents)
   app.route('/api/api-keys', apiKeys)
   app.route('/api/admin', admin)
+  app.route('/api/upload', upload)
   return { app, env, db, kv, r2 }
 }
 
