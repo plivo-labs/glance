@@ -95,28 +95,28 @@ describe('ViewerTopBar — the visibility tier rides beside the site name', () =
   })
 })
 
-describe('ViewerTopBar — Download → PDF', () => {
-  const openDownload = () => fireEvent.pointerDown(screen.getByRole('button', { name: 'Download' }), { button: 0 })
-
-  test('picking PDF asks the frame to print, once', async () => {
+describe('ViewerTopBar — Download PDF', () => {
+  test('one click on the button asks the frame to print, once', () => {
     const onDownloadPdf = mock(() => {})
     renderTopBar({ onDownloadPdf })
-    openDownload()
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'PDF' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Download PDF' }))
     expect(onDownloadPdf).toHaveBeenCalledTimes(1)
   })
 
   test('no Download button without a handler (audio), and the old hamburger print item is gone', async () => {
     renderTopBar({})
-    expect(screen.queryByRole('button', { name: 'Download' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Download PDF' })).toBeNull()
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Menu' }), { button: 0 })
     await screen.findByRole('menuitem', { name: /Fork/ })
     expect(screen.queryByRole('menuitem', { name: /Print/ })).toBeNull()
   })
 
-  test('PDF is disabled until the frame has announced itself', async () => {
-    renderTopBar({ onDownloadPdf: () => {}, pdfReady: false })
-    openDownload()
-    expect((await screen.findByRole('menuitem', { name: 'PDF' })).getAttribute('data-disabled')).not.toBeNull()
+  test('the button is disabled, and does nothing, until the frame has announced itself', () => {
+    const onDownloadPdf = mock(() => {})
+    renderTopBar({ onDownloadPdf, pdfReady: false })
+    const button = screen.getByRole('button', { name: 'Download PDF' }) as HTMLButtonElement
+    expect(button.disabled).toBe(true)
+    fireEvent.click(button)
+    expect(onDownloadPdf).not.toHaveBeenCalled()
   })
 })
