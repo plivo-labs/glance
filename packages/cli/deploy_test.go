@@ -22,6 +22,8 @@ type deployState struct {
 	visibility      string
 	theme           string            // the theme form field's value, when sent
 	themeSent       bool              // whether a theme field appeared at all (explicit-only contract)
+	expires         string            // the expires form field's value, when sent
+	expiresSent     bool              // whether an expires field appeared at all (explicit-only contract)
 	expectedVersion string            // the expectedVersion form field, if sent
 	files           map[string]string // rel filename -> contents (unstripped)
 }
@@ -60,6 +62,9 @@ func newDeployServer(t *testing.T) (*httptest.Server, *deployState) {
 				} else if p.FormName() == "theme" {
 					st.theme = string(data)
 					st.themeSent = true
+				} else if p.FormName() == "expires" {
+					st.expires = string(data)
+					st.expiresSent = true
 				} else if p.FormName() == "expectedVersion" {
 					st.expectedVersion = string(data)
 				}
@@ -147,6 +152,31 @@ func TestDeployCommand(t *testing.T) {
 		}
 		if !st3.themeSent || st3.theme != "none" {
 			t.Errorf("theme = %q (sent=%v), want none", st3.theme, st3.themeSent)
+		}
+	})
+
+	t.Run("expires-flag-is-explicit-only", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), "report.html")
+		writeFile(t, file, "<h1>hi</h1>")
+
+		// Omitted → no expires field on the wire (a redeploy must not strip a chosen expiry).
+		srv, st := newDeployServer(t)
+		c, _ := newTestClient(srv.URL, "tok")
+		if err := c.deploy([]string{file}); err != nil {
+			t.Fatalf("deploy: %v", err)
+		}
+		if st.expiresSent {
+			t.Errorf("expires field sent without --expires (got %q)", st.expires)
+		}
+
+		// --expires 7d → the text travels verbatim; the server resolves it.
+		srv2, st2 := newDeployServer(t)
+		c2, _ := newTestClient(srv2.URL, "tok")
+		if err := c2.deploy([]string{file, "--expires", "7d"}); err != nil {
+			t.Fatalf("deploy --expires: %v", err)
+		}
+		if !st2.expiresSent || st2.expires != "7d" {
+			t.Errorf("expires = %q (sent=%v), want 7d", st2.expires, st2.expiresSent)
 		}
 	})
 

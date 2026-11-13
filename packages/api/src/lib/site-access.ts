@@ -19,7 +19,8 @@ export type ResolvedSite = {
   title: string | null
   description: string | null
   visibility: Visibility
-  status: 'active' | 'archived'
+  status: 'active' | 'archived' | 'expired'
+  expiresAt: string | null
   ownerId: string
   contentVersion: number
   theme: string | null
@@ -35,6 +36,7 @@ const RESOLVED_SITE_COLUMNS = {
   description: sitesTable.description,
   visibility: sitesTable.visibility,
   status: sitesTable.status,
+  expiresAt: sitesTable.expiresAt,
   ownerId: sitesTable.ownerId,
   contentVersion: sitesTable.contentVersion,
   theme: sitesTable.theme,
@@ -227,7 +229,7 @@ export type ViewerAuth = { user: SessionUser | null; access: AccessResult }
  *  revoked share, tightened visibility, or deleted user blocks access immediately. */
 export async function authorizeViewerById(
   db: DrizzleD1Database,
-  site: Pick<ResolvedSite, 'id' | 'spaceId' | 'visibility' | 'status' | 'ownerId'>,
+  site: Pick<ResolvedSite, 'id' | 'spaceId' | 'visibility' | 'status' | 'ownerId'> & { expiresAt?: string | null },
   userId: string,
 ): Promise<ViewerAuth> {
   const [userRow, isMember, isShared] = await Promise.all([

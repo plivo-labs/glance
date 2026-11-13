@@ -54,7 +54,15 @@ export const sites = sqliteTable(
     visibility: text('visibility', { enum: ['private', 'members', 'team'] })
       .notNull()
       .default('team'),
-    status: text('status', { enum: ['active', 'archived'] }).notNull().default('active'),
+    // 'archived' is an admin's call (moderation, reversible only by an admin); 'expired' is the
+    // owner's own `expiresAt` coming due (reversible by the owner: redeploy, or set a new expiry).
+    // Kept apart so neither can be mistaken for, or undone as, the other. Every non-'active' status
+    // is 410 for everyone (lib/access.ts), so gates test `!== 'active'`, never `=== 'archived'`.
+    status: text('status', { enum: ['active', 'archived', 'expired'] }).notNull().default('active'),
+    // ISO-8601 UTC instant after which the site stops serving; null = never. The hourly cron flips
+    // an active site past it to 'expired' (lib/expiry.ts), and checkAccess also refuses it, so the
+    // cron's up-to-an-hour lag never serves a page late.
+    expiresAt: text('expiresAt'),
     ownerId: text('ownerId').notNull().references(() => users.id, { onDelete: 'cascade' }),
     // Monotonic content-revision counter, bumped on every REPLACE. Editor replaces MUST pass the
     // version they pulled (CAS: UPDATE … WHERE contentVersion=?) so a stale redeploy 409s instead
@@ -85,6 +93,8 @@ export const sites = sqliteTable(
   (t) => [
     unique('sites_space_slug_unq').on(t.spaceId, t.slug),
     index('sites_owner').on(t.ownerId),
+    // Serves the hourly expiry sweep (`status = 'active' AND expiresAt <= now`).
+    index('sites_expires').on(t.expiresAt),
     // Serves the team feed's `status = ? AND visibility = ? ORDER BY updatedAt DESC LIMIT n`:
     // equality on the leading pair, `updatedAt` last so the ORDER BY is a reverse index scan and
     // the LIMIT stops it early — otherwise the feed's correlated EXISTS columns run once per SITE.

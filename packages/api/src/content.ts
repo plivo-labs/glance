@@ -193,7 +193,7 @@ async function serve(c: Ctx, spaceSlug: string, siteSlug: string, rest: string, 
   if (!facts.user) return c.text('Forbidden', 403)
   const access = checkAccess(siteRow, facts.user, facts.isMember, isSharedFromFacts(facts))
   if (!access.ok) {
-    if (access.status === 410) return c.text('This site has been archived', 410)
+    if (access.status === 410) return c.text(access.reason === 'expired' ? 'This site has expired' : 'This site has been archived', 410)
     return c.text('Forbidden', access.status)
   }
 

@@ -30,7 +30,7 @@ Put it in your shell profile to make it permanent. Token + URL are saved to `~/.
 | command | what it does |
 |---|---|
 | `glance login` | device-code flow: prints a URL + code, opens a browser, polls until you approve, saves the token |
-| `glance deploy <path> [--space <slug>] [--name <slug>] [--visibility team\|private\|members]` | uploads a file or a folder |
+| `glance deploy <path> [--space <slug>] [--name <slug>] [--visibility team\|private\|members] [--expires 7d\|<date>\|none]` | uploads a file or a folder |
 | `glance list` | lists your sites — `space/slug  visibility  url` |
 | `glance delete <space/slug>` | confirms (y/N), then deletes |
 | `glance move <space/slug> <new-space>` | moves a site to another space you belong to (keeps its files, comments, shares) |
@@ -61,6 +61,9 @@ A key can deploy, create, fork and move, but **never deletes a site** and never 
 - `--name` defaults to the **file name (sans extension)** or **folder name**, slugified. Pass `--name` to override (required if the derived name isn't a valid slug — lowercase, 3–40 chars).
 - `--space` defaults to your **personal space**. Pass `--space` to target a team/group space.
 - `--visibility` defaults to `team`.
+- `--expires` (`30m`, `12h`, `7d`, `2w`, `2026-12-31`, or `none`) makes the page stop serving after that time; it is
+  kept, not deleted, and the owner can bring it back by redeploying or setting a new expiry. Leave it off on a redeploy to keep
+  the current expiry.
 - If the site already exists and you own it, prompts `Replace? (y/N)`. If owned by someone else, it aborts.
 - Prints `✓ Deployed → <url>`.
 
