@@ -26,8 +26,8 @@ const ShareDialog = lazy(() => import('@/components/ShareDialog').then((m) => ({
 // too. Commenting is unconditional elsewhere (viewer.tsx) — the rail is just a
 // panel you open and close, not a gate on any of that.
 //
-// The row is the same controls at EVERY breakpoint: only Star, Comments and Download (document
-// sites only — icon-only below `sm`) earn a permanent slot; Recently opened / Search / Fork /
+// The row is the same controls at EVERY breakpoint: only Star, Comments and Download (an icon, like
+// Star; document sites only) earn a permanent slot; Recently opened / Search / Fork /
 // TL;DR / Share live in the hamburger menu. Those menu items are driven from shared state
 // (ForkDialog, SummarySheet, ShareDialog) held here, so the menu item and the sheet/dialog it
 // opens are one action.
@@ -152,9 +152,8 @@ export function ViewerTopBar({
         {onDownloadPdf && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button size="sm" variant="ghost" className="gap-1.5 max-sm:size-8 max-sm:p-0" aria-label="Download" title="Download">
-                <Download className="size-3.5" />
-                <span className="max-sm:hidden">Download</span>
+              <Button variant="ghost" size="icon" className="size-8" aria-label="Download" title="Download">
+                <Download />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-40">
