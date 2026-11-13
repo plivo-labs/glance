@@ -1,7 +1,8 @@
 import type { Site } from '../db/schema'
 import type { SessionUser } from '../types'
 
-export type AccessResult = { ok: true } | { ok: false; status: 401 | 403 | 410 }
+// `reason` is set only on a 410, to tell an owner-set expiry apart from an admin archive.
+export type AccessResult = { ok: true } | { ok: false; status: 401 | 403 | 410; reason?: 'expired' }
 
 const ALLOW: AccessResult = { ok: true }
 
@@ -14,7 +15,10 @@ const ALLOW: AccessResult = { ok: true }
  *   members → space member (or owner)
  *   team    → any authenticated user in the allowed domain
  *   shared  → any user/group explicitly granted access (additive, any tier)
- *   archived→ 410 for everyone
+ *   archived→ 410 for everyone (an admin's call)
+ *   expired → 410 for everyone (the owner's `expiresAt` came due; checked here against the clock too,
+ *             so the hourly cron's lag never serves a page late — callers that don't select
+ *             `expiresAt` fall back to the cron flip)
  *
  * There is no public/anonymous tier: every tier requires an authenticated user.
  *
@@ -25,12 +29,16 @@ const ALLOW: AccessResult = { ok: true }
  * this function, so one bypass line hands back the whole corpus.
  */
 export function checkAccess(
-  site: Pick<Site, 'visibility' | 'status' | 'ownerId'>,
+  site: Pick<Site, 'visibility' | 'status' | 'ownerId'> & { expiresAt?: string | null },
   user: Pick<SessionUser, 'id' | 'role'> | null,
   isMember: boolean,
   isShared = false,
+  now: Date = new Date(),
 ): AccessResult {
-  if (site.status === 'archived') return { ok: false, status: 410 }
+  if (site.status === 'expired' || (site.status === 'active' && !!site.expiresAt && site.expiresAt <= now.toISOString())) {
+    return { ok: false, status: 410, reason: 'expired' }
+  }
+  if (site.status !== 'active') return { ok: false, status: 410 }
   // Explicit per-user / per-group grant — additive on top of the visibility tier.
   if (isShared && user) return ALLOW
 

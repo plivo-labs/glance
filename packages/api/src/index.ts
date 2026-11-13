@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { secureHeaders } from 'hono/secure-headers'
 import { onError, sessionDb, withDb } from './db/client'
 import { superadminExists } from './db/repo'
+import { expireDueSites } from './lib/expiry'
 import { purgeRetention } from './lib/retention'
 import { cachedStats } from './lib/stats'
 import { GLANCE_DB_JS } from './glancedb/bundle'
@@ -160,7 +161,7 @@ export { SiteRoom } from './realtime/site-room'
 // expression rather than running both jobs on every tick.
 const DAILY_PURGE_CRON = '0 3 * * *'
 
-// Hourly synthetic stats visitor (issue #102, Option A). cachedStats already models
+// Hourly: flip sites past their expiresAt to 'expired' (lib/expiry.ts), then the synthetic stats visitor (issue #102, Option A). cachedStats already models
 // refresh-only-when-stale, so a cron tick is just a caller on a fixed clock: each run recomputes
 // only the halves past their soft TTL (window hourly, totals daily) and rewrites their KV
 // entries, keeping GET /api/admin/stats on fresh KV with zero inline D1 compute. The defer is an
@@ -176,6 +177,8 @@ export default {
       await purgeRetention(db)
       return
     }
+    // Expiry first: it is the cheap, user-visible job, so a stats failure below can't skip it.
+    await expireDueSites(db)
     await cachedStats(env.GLANCE_SESSIONS, db, (p) => p.then(() => {}))
   },
 } satisfies ExportedHandler<Bindings>

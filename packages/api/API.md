@@ -157,7 +157,7 @@ A revoked key stops authenticating immediately. One documented exception: a
 | `GET` | `/api/sites/:space/:site/exists` | Slug-conflict probe |
 | `GET` | `/api/sites/:space/:site/shares` | Current shares |
 | `PUT` | `/api/sites/:space/:site/shares` ✱ | Replace shares |
-| `PATCH` | `/api/sites/:space/:site` ✱ | Rename / change visibility |
+| `PATCH` | `/api/sites/:space/:site` ✱ | Rename / change visibility / theme / expiry (`expires`: `7d`, `2026-12-31`, `none`) |
 | `POST` | `/api/sites/:space/:site/move` ✱ | Move to another space |
 | `POST` | `/api/sites/:space/:site/fork` ✱ | Fork |
 | `DELETE` | `/api/sites/:space/:site` | Delete — **always `403` for a key** |
@@ -183,6 +183,7 @@ POST /api/upload/:spaceSlug/:siteSlug        multipart/form-data      ✱ contro
 | --- | --- |
 | `files` | Repeated. Each file's name is its in-site path. ≤20MB each, ≤200 files. |
 | `visibility` | Optional. Create defaults to `team`; on replace, omitting it keeps the current tier. |
+| `expires` | Optional. `30m`, `12h`, `7d`, `2w`, `YYYY-MM-DD` (end of that UTC day), an ISO timestamp, or `none`. Create applies it; on replace, omitting it keeps the current expiry. A page past its expiry returns `410` and is not deleted; an owner redeploy (or a new `expires`) brings it back. |
 | `title` | Optional display title. Never renames an already-titled site on replace. |
 | `expectedVersion` | The `contentVersion` you last read. Required for an **editor** replace (optimistic concurrency); advisory for the owner. |
 
