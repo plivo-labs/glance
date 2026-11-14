@@ -1,6 +1,6 @@
-import { decodeIdToken, generateCodeVerifier, generateState } from 'arctic'
-import { and, eq } from 'drizzle-orm'
-import { Hono } from 'hono'
+import { CodeChallengeMethod, decodeIdToken, generateCodeVerifier, generateState } from 'arctic'
+import { and, eq, isNull, or } from 'drizzle-orm'
+import { type Context, Hono } from 'hono'
 import { deleteCookie, getSignedCookie, setSignedCookie } from 'hono/cookie'
 import { events, users } from '../db/schema'
 import { bootstrapSuperadminByEmail, createPersonalSpace, superadminStatus, toSessionUser } from '../db/repo'
@@ -9,6 +9,20 @@ import { requireAuth } from '../middleware/auth'
 import { sanitizeAvatarUrl } from '../lib/avatar'
 import { bootstrapDecision } from '../lib/bootstrap'
 import { createGoogle, isGoogleEnabled, OAUTH_SCOPES } from '../lib/oauth'
+import {
+  acceptedOidcEmail,
+  createOidc,
+  discoverOidc,
+  isOidcEnabled,
+  type OidcClaims,
+  type OidcEndpoints,
+  oidcGroups,
+  oidcScopes,
+  oidcSubjectKey,
+  withUserinfo,
+} from '../lib/oidc'
+import { isOidcSyncEnabled, syncOidcAccess } from '../lib/oidc-access'
+import { cliOidcConfig } from '../lib/oidc-bearer'
 import {
   bearerToken,
   createCliToken,
@@ -19,7 +33,10 @@ import {
 } from '../lib/session'
 import type { AppEnv, Bindings, SessionUser } from '../types'
 
-const OAUTH_COOKIE = 'glance_oauth'
+// `__Host-` for the same reason as the session cookie (lib/session.ts): the content origin shares the
+// app's registrable domain, and without the prefix it could plant its own signed state and finish a
+// sign-in as the attacker (login CSRF).
+const OAUTH_COOKIE = '__Host-glance_oauth'
 
 /** Only allow same-origin absolute paths as a post-login redirect (no open redirect). */
 function safeNext(next: string | null | undefined): string | null {
@@ -43,43 +60,72 @@ export const auth = new Hono<AppEnv>()
 
 // --- Browser OAuth ---
 
-auth.get('/google', async (c) => {
-  if (!isGoogleEnabled(c.env)) return c.notFound()
+type OauthProvider = 'google' | 'oidc'
+
+// The provider rides in the cookie too: without it a state minted by /api/auth/google could be
+// replayed at /api/auth/oidc/callback (same state, same verifier, different token endpoint).
+type OauthState = { provider: OauthProvider; state: string; codeVerifier: string; next?: string | null }
+
+/** Starts an authorization-code round-trip: state, PKCE verifier and the post-login target ride in
+ *  a short-lived signed cookie the callback reads back. */
+async function beginOauth(
+  c: Context<AppEnv>,
+  provider: OauthProvider,
+  build: (state: string, codeVerifier: string) => URL,
+): Promise<Response> {
   const state = generateState()
   const codeVerifier = generateCodeVerifier()
   const next = safeNext(c.req.query('next')) // carried through the round-trip in the signed cookie
-  const url = createGoogle(c.env).createAuthorizationURL(state, codeVerifier, OAUTH_SCOPES)
-  url.searchParams.set('hd', c.env.ALLOWED_HD) // UX hint only; the hd claim is verified server-side
-
-  await setSignedCookie(c, OAUTH_COOKIE, JSON.stringify({ state, codeVerifier, next }), c.env.SESSION_SECRET, {
+  const url = build(state, codeVerifier)
+  const payload: OauthState = { provider, state, codeVerifier, next }
+  await setSignedCookie(c, OAUTH_COOKIE, JSON.stringify(payload), c.env.SESSION_SECRET, {
     httpOnly: true,
-    secure: c.env.APP_URL.startsWith('https://'),
+    secure: true,
     sameSite: 'Lax', // Strict would drop the cookie on the cross-site callback redirect
     path: '/',
     maxAge: 600,
   })
   return c.redirect(url.toString())
+}
+
+/** The callback's code + stored round-trip state, or the /login error to send the browser to. */
+async function finishOauth(
+  c: Context<AppEnv>,
+  provider: OauthProvider,
+): Promise<{ code: string; stored: OauthState } | { error: string }> {
+  const code = c.req.query('code')
+  const state = c.req.query('state')
+  const stored = await getSignedCookie(c, c.env.SESSION_SECRET, OAUTH_COOKIE)
+  deleteCookie(c, OAUTH_COOKIE, { path: '/', secure: true })
+
+  if (!code || !state || typeof stored !== 'string') return { error: 'oauth' }
+  let parsed: OauthState
+  try {
+    parsed = JSON.parse(stored)
+  } catch {
+    return { error: 'oauth' }
+  }
+  if (parsed.state !== state || parsed.provider !== provider) return { error: 'state' }
+  return { code, stored: parsed }
+}
+
+auth.get('/google', async (c) => {
+  if (!isGoogleEnabled(c.env)) return c.notFound()
+  return beginOauth(c, 'google', (state, codeVerifier) => {
+    const url = createGoogle(c.env).createAuthorizationURL(state, codeVerifier, OAUTH_SCOPES)
+    url.searchParams.set('hd', c.env.ALLOWED_HD) // UX hint only; the hd claim is verified server-side
+    return url
+  })
 })
 
 auth.get('/callback', async (c) => {
   if (!isGoogleEnabled(c.env)) return c.notFound()
-  const code = c.req.query('code')
-  const state = c.req.query('state')
-  const stored = await getSignedCookie(c, c.env.SESSION_SECRET, OAUTH_COOKIE)
-  deleteCookie(c, OAUTH_COOKIE, { path: '/' })
-
-  if (!code || !state || typeof stored !== 'string') return c.redirect('/login?error=oauth')
-  let parsed: { state: string; codeVerifier: string; next?: string | null }
-  try {
-    parsed = JSON.parse(stored)
-  } catch {
-    return c.redirect('/login?error=oauth')
-  }
-  if (parsed.state !== state) return c.redirect('/login?error=state')
+  const round = await finishOauth(c, 'google')
+  if ('error' in round) return c.redirect(`/login?error=${round.error}`)
 
   let claims: GoogleClaims
   try {
-    const tokens = await createGoogle(c.env).validateAuthorizationCode(code, parsed.codeVerifier)
+    const tokens = await createGoogle(c.env).validateAuthorizationCode(round.code, round.stored.codeVerifier)
     claims = decodeIdToken(tokens.idToken()) as unknown as GoogleClaims
   } catch {
     return c.redirect('/login?error=exchange')
@@ -91,9 +137,71 @@ auth.get('/callback', async (c) => {
     return c.redirect('/login?error=denied')
   }
 
-  const user = await findOrCreateUser(c.get('db'), c.env, claims, email)
+  const db = c.get('db')
+  const user = await signingIn(c, () => findOrCreateIdentity(db, c.env, 'google', claims, email))
+  if (user instanceof Response) return user
   await createSession(c, user)
-  return c.redirect(safeNext(parsed.next) ?? '/dashboard')
+  return c.redirect(safeNext(round.stored.next) ?? '/dashboard')
+})
+
+// What `glance login` needs for the provider's device flow; 404 unless OIDC_CLI_CLIENT_ID is set.
+auth.get('/cli/config', (c) => {
+  const config = cliOidcConfig(c.env)
+  return config ? c.json(config) : c.notFound()
+})
+
+auth.get('/oidc', async (c) => {
+  if (!isOidcEnabled(c.env)) return c.notFound()
+  let endpoints: OidcEndpoints
+  try {
+    endpoints = await discoverOidc(c.env)
+  } catch (err) {
+    console.error('oidc: discovery failed', err)
+    return c.redirect('/login?error=oauth')
+  }
+  return beginOauth(c, 'oidc', (state, codeVerifier) =>
+    createOidc(c.env).createAuthorizationURLWithPKCE(
+      endpoints.authorization_endpoint,
+      state,
+      CodeChallengeMethod.S256,
+      codeVerifier,
+      oidcScopes(c.env),
+    ),
+  )
+})
+
+auth.get('/oidc/callback', async (c) => {
+  if (!isOidcEnabled(c.env)) return c.notFound()
+  const round = await finishOauth(c, 'oidc')
+  if ('error' in round) return c.redirect(`/login?error=${round.error}`)
+
+  let claims: OidcClaims
+  try {
+    const endpoints = await discoverOidc(c.env)
+    const tokens = await createOidc(c.env).validateAuthorizationCode(
+      endpoints.token_endpoint,
+      round.code,
+      round.stored.codeVerifier,
+    )
+    claims = await withUserinfo(decodeIdToken(tokens.idToken()) as OidcClaims, endpoints, tokens.accessToken())
+  } catch (err) {
+    console.error('oidc: token exchange failed', err)
+    return c.redirect('/login?error=exchange')
+  }
+
+  const accepted = acceptedOidcEmail(claims, c.env)
+  if ('refused' in accepted) {
+    console.warn(`oidc: id_token refused (${accepted.refused})`)
+    return c.redirect('/login?error=denied')
+  }
+  const email = accepted.email
+
+  const db = c.get('db')
+  const identity = await signingIn(c, () => findOrCreateIdentity(db, c.env, 'oidc', claims, email))
+  if (identity instanceof Response) return identity
+  const user = await syncOidcAccess(db, c.env, identity, oidcGroups(claims, c.env))
+  await createSession(c, user)
+  return c.redirect(safeNext(round.stored.next) ?? '/dashboard')
 })
 
 auth.post('/logout', async (c) => {
@@ -272,16 +380,59 @@ auth.post('/cli/approve', requireAuth, async (c) => {
 
 // --- helpers ---
 
-// Exported for characterization tests. Matches by googleId then email, so a Google login
-// backfills onto a prior bootstrap user (googleId null, same email) without changing role.
-export async function findOrCreateUser(
+// Exported for characterization tests. Matches by googleId then email, so a Google login backfills
+// onto a prior bootstrap user (googleId null, same email) without changing role. An email that
+// already carries a DIFFERENT googleId is refused, never re-pointed.
+export function findOrCreateUser(
   db: AppEnv['Variables']['db'],
   env: Bindings,
   claims: GoogleClaims,
   email: string,
 ): Promise<SessionUser> {
-  const byGoogle = await db.select().from(users).where(eq(users.googleId, claims.sub)).limit(1)
-  const existing = byGoogle[0] ?? (await db.select().from(users).where(eq(users.email, email)).limit(1))[0]
+  return findOrCreateIdentity(db, env, 'google', claims, email)
+}
+
+/** A sign-in the identity rules refuse. `link` = this verified email already belongs to another
+ *  identity; `sso` = the account's access is managed by a provider that must sign it in. */
+export class SignInRefused extends Error {
+  constructor(readonly reason: 'link' | 'sso') {
+    super(`sign-in refused: ${reason}`)
+  }
+}
+
+/** Runs a find-or-create, turning a policy refusal into the /login redirect that explains it. */
+async function signingIn(c: Context<AppEnv>, create: () => Promise<SessionUser>): Promise<SessionUser | Response> {
+  try {
+    return await create()
+  } catch (err) {
+    if (err instanceof SignInRefused) return c.redirect(`/login?error=${err.reason}`)
+    throw err
+  }
+}
+
+/** Signs in the user whose stored subject is `claims.sub`, else the account with this (verified)
+ *  email — adopting it only under the rules below — else a new member with a personal space.
+ *  Never promotes. Throws SignInRefused when the email is not this identity's to take. */
+async function findOrCreateIdentity(
+  db: AppEnv['Variables']['db'],
+  env: Bindings,
+  provider: OauthProvider,
+  claims: { sub: string; name?: string; picture?: string },
+  email: string,
+): Promise<SessionUser> {
+  const subject = provider === 'oidc' ? oidcSubjectKey(env.OIDC_ISSUER as string, claims.sub) : claims.sub
+  const stored = provider === 'oidc' ? { oidcSub: subject } : { googleId: subject }
+  const subjectColumn = provider === 'oidc' ? users.oidcSub : users.googleId
+  const bySubject = await db.select().from(users).where(eq(subjectColumn, subject)).limit(1)
+  let existing = bySubject[0]
+  if (!existing) {
+    existing = (await db.select().from(users).where(eq(users.email, email)).limit(1))[0]
+    if (existing) assertAdoptable(provider, env, existing)
+  }
+  // Group membership and the admin role are written only by an OIDC sign-in, so while that sync is
+  // on, a Google session would outlive access the provider already revoked. Make the provider's
+  // button the only way in for an account it has claimed, however the Google identity found it.
+  if (provider === 'google' && existing?.oidcSub && isOidcSyncEnabled(env)) throw new SignInRefused('sso')
 
   // The photo is re-read from the id_token on EVERY login, which is also the only backfill Google
   // offers: users who signed up before avatars existed get one the next time they sign in. A claim
@@ -290,10 +441,14 @@ export async function findOrCreateUser(
 
   if (existing) {
     const name = claims.name ?? existing.name
-    await db
+    // The subject condition makes adoption atomic: of two sign-ins that both found this row
+    // subjectless, only the first write matches, and the other is refused instead of overwriting it.
+    const updated = await db
       .update(users)
-      .set({ name, googleId: claims.sub, avatarUrl: avatarUrl ?? existing.avatarUrl })
-      .where(eq(users.id, existing.id))
+      .set({ name, ...stored, avatarUrl: avatarUrl ?? existing.avatarUrl })
+      .where(and(eq(users.id, existing.id), or(isNull(subjectColumn), eq(subjectColumn, subject))))
+      .returning({ id: users.id })
+    if (updated.length === 0) throw new SignInRefused('link')
     return toSessionUser({ ...existing, name })
   }
 
@@ -305,11 +460,32 @@ export async function findOrCreateUser(
     id,
     email,
     name: claims.name ?? null,
-    googleId: claims.sub,
+    ...stored,
     avatarUrl,
     role,
     lastSeenReleaseAt: NEWEST_RELEASE_DATE,
   })
   await createPersonalSpace(db, id, email)
   return { id, email, name: claims.name ?? null, role }
+}
+
+/** The rules for adopting an existing row by its (provider-verified) email, i.e. linking a second
+ *  identity onto it. The row never gets a subject overwritten: doing that would hand whatever the
+ *  row owns to a recycled, renamed or attacker-controlled email at the provider. */
+function assertAdoptable(
+  provider: OauthProvider,
+  env: Bindings,
+  existing: { googleId: string | null; oidcSub: string | null; role: SessionUser['role'] },
+): void {
+  if (provider === 'google') {
+    // bySubject already missed, so a non-null googleId here is a DIFFERENT Google identity.
+    if (existing.googleId !== null) throw new SignInRefused('link')
+    return
+  }
+
+  if (existing.oidcSub !== null) throw new SignInRefused('link')
+  // An account that already belongs to Google, or that is a superadmin, is only adoptable when the
+  // deploy says so: the IdP cannot prove it controls the same address the way Google's `hd` does.
+  const needsOptIn = existing.googleId !== null || existing.role === 'superadmin'
+  if (needsOptIn && env.OIDC_LINK_EXISTING !== '1') throw new SignInRefused('link')
 }

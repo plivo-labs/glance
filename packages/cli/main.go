@@ -69,6 +69,9 @@ func dispatch(cmd string, rest []string) error {
 		if cfg != nil {
 			base, token = cfg.ApiUrl, cfg.Token
 		}
+		if cfg != nil && cfg.Oidc != nil {
+			return newClient(base, "", os.Stdout).oidcLogout(cfg.Oidc)
+		}
 		return newClient(base, token, os.Stdout).logout()
 	}
 	if run, found := authedCmds[cmd]; found {

@@ -1,9 +1,14 @@
 import type { Context } from 'hono'
 import { deleteCookie, getSignedCookie, setSignedCookie } from 'hono/cookie'
+import { eq } from 'drizzle-orm'
 import { getUserById } from '../db/repo'
+import { users } from '../db/schema'
 import type { AppEnv, Credential, SessionUser } from '../types'
 import { API_KEY_PREFIX, apiKeyDb, resolveApiKey, touchApiKeyLastUsed } from './api-key'
 import { fireAndForget } from './events'
+import { oidcGroups, oidcSubjectKey } from './oidc'
+import { syncOidcAccess } from './oidc-access'
+import { isOidcBearerEnabled, looksLikeJwt, oidcSignedInAt, verifyOidcBearer } from './oidc-bearer'
 
 const SESSION_COOKIE = '__Host-glance_session'
 const SESSION_TTL = 60 * 60 * 24 // 24h
@@ -70,8 +75,14 @@ export async function destroyCliToken(c: Context<AppEnv>, token: string): Promis
 }
 
 /** Revoke EVERY CLI token a user holds — the offboarding kill-switch. Enumerates the per-user
- *  index (`cli_index:<userId>:*`) and deletes each `cli:<token>` plus its index entry. */
+ *  index (`cli_index:<userId>:*`) and deletes each `cli:<token>` plus its index entry. Provider-
+ *  issued tokens cannot be deleted, so the moment is stamped and readCredential refuses older ones. */
 export async function revokeUserCliTokens(c: Context<AppEnv>, userId: string): Promise<void> {
+  await c
+    .get('db')
+    .update(users)
+    .set({ cliRevokedAt: Math.floor(Date.now() / 1000) })
+    .where(eq(users.id, userId))
   const prefix = `cli_index:${userId}:`
   let cursor: string | undefined
   do {
@@ -125,6 +136,26 @@ export async function readCredential(c: Context<AppEnv>): Promise<Credential | n
     // never allowed to fail the request (touchApiKeyLastUsed swallows its own errors).
     await fireAndForget(c, touchApiKeyLastUsed(db, resolved.id, resolved.lastUsedAt))
     return { kind: 'key', user: keyUser, keyId: resolved.id, grants: resolved.grants }
+  }
+
+  // A provider-issued JWT is verified against the provider's keys and never falls through to the
+  // KV token store, for the same reason as a bad API key above. The user must already exist: a
+  // first sign-in happens in the browser, the CLI only reuses that account. The token's groups get
+  // the same sync as a browser sign-in, so a refreshed token cannot keep a role or space the
+  // provider took away.
+  if (isOidcBearerEnabled(c.env) && looksLikeJwt(token)) {
+    const claims = await verifyOidcBearer(c.env, token)
+    if (!claims) return null
+    const db = c.get('db')
+    const [row] = await db
+      .select({ id: users.id, email: users.email, name: users.name, role: users.role, cliRevokedAt: users.cliRevokedAt })
+      .from(users)
+      .where(eq(users.oidcSub, oidcSubjectKey(c.env.OIDC_ISSUER as string, claims.sub)))
+      .limit(1)
+    if (!row) return null
+    const { cliRevokedAt, ...user } = row
+    if (cliRevokedAt !== null && oidcSignedInAt(claims) <= cliRevokedAt) return null
+    return { kind: 'cli', user: await syncOidcAccess(db, c.env, user, oidcGroups(claims, c.env)) }
   }
 
   const cliUser = await readCliToken(c, token)

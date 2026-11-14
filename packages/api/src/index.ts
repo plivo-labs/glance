@@ -8,6 +8,7 @@ import { GLANCE_DB_JS } from './glancedb/bundle'
 import { buildPublicConfig } from './lib/bootstrap'
 import { INSTALL_SH } from './install-script'
 import { isGoogleEnabled } from './lib/oauth'
+import { isOidcEnabled, oidcProviderName } from './lib/oidc'
 import { trackCliUsage } from './middleware/analytics'
 import { requireSameOrigin } from './middleware/auth'
 import { admin } from './routes/admin'
@@ -84,13 +85,14 @@ app.get('/api/glance.js', (c) =>
 app.route('/api/themes', themes)
 
 // Maintenance write freeze (e.g. during a database migration). WRITE_FREEZE=1 answers every
-// unsafe /api/* request with 503 + Retry-After, plus GET /api/auth/callback (login writes the users
-// row). Registered BEFORE /api/_data and the guards so the data plane freezes too; reads and
+// unsafe /api/* request with 503 + Retry-After, plus the two sign-in callbacks (each writes the
+// users row). Registered BEFORE /api/_data and the guards so the data plane freezes too; reads and
 // preflights pass untouched, as does the data-token mint (a POST that writes nothing, needed for
 // glance.db reads). Unset or 0 → no-op.
+const WRITE_FREEZE_WRITING_GETS = new Set(['/api/auth/callback', '/api/auth/oidc/callback'])
 app.use('/api/*', async (c, next) => {
   if (c.env.WRITE_FREEZE !== '1') return next()
-  const read = ['GET', 'HEAD', 'OPTIONS'].includes(c.req.method) && c.req.path !== '/api/auth/callback'
+  const read = ['GET', 'HEAD', 'OPTIONS'].includes(c.req.method) && !WRITE_FREEZE_WRITING_GETS.has(c.req.path)
   if (read || c.req.path.startsWith('/api/data-token/')) return next()
   return c.json({ error: 'maintenance' }, 503, { 'Retry-After': '300' })
 })
@@ -112,6 +114,7 @@ app.get('/api/config', async (c) =>
   c.json(
     buildPublicConfig({
       googleEnabled: isGoogleEnabled(c.env),
+      oidcName: isOidcEnabled(c.env) ? oidcProviderName(c.env) : null,
       hasSuperadmin: await superadminExists(c.get('db')),
       bootstrapTokenSet: Boolean(c.env.BOOTSTRAP_TOKEN),
     }),
