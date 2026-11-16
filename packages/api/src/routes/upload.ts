@@ -263,10 +263,9 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
   const meta = await metaPromise
   const derivedTitle = actingAsEditor ? null : meta.title
   const { description } = meta
-  // null = indexing failed; stamp nothing so the cron backfill retries (the stale row is deleted
-  // by the swap, never left describing the old bytes).
-  const searchText = await searchPromise
-  const searchIndexedAt = searchText === null ? null : new Date().toISOString()
+  // No stamp = indexing failed (no text) or ran out of budget (partial text): the cron backfill takes
+  // the site. Either way the swap deletes the stale row, never leaving it describing the old bytes.
+  const { text: searchText, indexedAt: searchIndexedAt } = await searchPromise
 
   const newRows = plan.map((p) => p.row)
   const insertRows = newRows.map((r) => db.insert(files).values(r))

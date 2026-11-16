@@ -28,6 +28,14 @@ export const SEARCH_TEXT_CAP = 200_000 // chars of text kept per site
 // of each, so a huge upload (or a cron tick) cannot spend unbounded CPU or memory on indexing.
 export const UPLOAD_INDEX_MAX_FILES = 50
 export const READ_BYTES_PER_FILE = 1024 * 1024
+// ... and this bounds the TOTAL: 50 files x 1 MiB would still be two HTMLRewriter passes over 50 MiB.
+// 4 MiB of page source per upload, and 4 MiB per backfill tick shared by all its sites. It counts
+// bytes READ, not text kept (markup-heavy pages yield little text but cost the same to scan), and
+// each read is cut to what is left. Source past the budget is simply not indexed: an upload still
+// succeeds and keeps what it indexed, but is left unstamped so the backfill (its own budget) takes
+// the site; a backfill site cut by it keeps what fit, stays unstamped and counts as one attempt, so
+// one bigger than the budget is retried BACKFILL_MAX_ATTEMPTS times at most.
+export const SEARCH_SOURCE_BUDGET = 4 * 1024 * 1024
 // The hourly backfill runs inside one invocation with a small subrequest budget (the free plan
 // allows 50): per site that is 1 file-list read + one R2 get per file + 1 batch.
 export const BACKFILL_SITES_PER_TICK = 4
@@ -48,18 +56,22 @@ function indexOrder<T extends Candidate>(candidates: T[]): T[] {
 }
 
 /** The searchable text of a site: visible text of its html/md files, entry first, joined and capped.
- *  `read` returns a file's (possibly truncated) source, or null when it is unavailable. */
+ *  `read` returns the first `maxBytes` of a file, or null when it is unavailable. Every byte read is
+ *  charged to `budget`; once it is spent, no more files are read. */
 export async function buildSearchText<T extends Candidate>(
   candidates: T[],
-  read: (c: T) => Promise<string | null>,
+  read: (c: T, maxBytes: number) => Promise<ArrayBuffer | null>,
   maxFiles: number,
+  budget: { left: number },
 ): Promise<string> {
   const parts: string[] = []
   let length = 0
   for (const c of indexOrder(candidates).slice(0, maxFiles)) {
-    const source = await read(c)
+    if (budget.left <= 0) break
+    const source = await read(c, Math.min(READ_BYTES_PER_FILE, budget.left))
     if (source === null) continue
-    const extracted = await extractText(c, source)
+    budget.left -= source.byteLength
+    const extracted = await extractText(c, new TextDecoder().decode(source))
     if (!extracted.ok) continue
     parts.push(extracted.text)
     length += extracted.text.length + 1
@@ -71,19 +83,24 @@ export async function buildSearchText<T extends Candidate>(
   return /[\uD800-\uDBFF]$/.test(capped) ? capped.slice(0, -1) : capped
 }
 
-/** Index text for an upload's in-memory files. Never rejects: null means "could not index", which
- *  the caller records as not-indexed so the cron backfill retries — an index fault must not fail an
- *  upload that is otherwise fine. */
-export async function searchTextFromUpload(items: { path: string; file: File }[]): Promise<string | null> {
+/** Index text and stamp for an upload's in-memory files. Never rejects: no stamp means "not fully
+ *  indexed", which the caller records as such so the cron backfill picks the site up — an index
+ *  fault (text null) or a spent budget (the text that fit) must not fail an upload that is fine. */
+export async function searchTextFromUpload(
+  items: { path: string; file: File }[],
+): Promise<{ text: string | null; indexedAt: string | null }> {
+  const budget = { left: SEARCH_SOURCE_BUDGET }
   try {
-    return await buildSearchText(
+    const text = await buildSearchText(
       items.map(({ path, file }) => ({ path, mimeType: file.type || null, file })),
-      (c) => c.file.slice(0, READ_BYTES_PER_FILE).text(),
+      (c, maxBytes) => c.file.slice(0, maxBytes).arrayBuffer(),
       UPLOAD_INDEX_MAX_FILES,
+      budget,
     )
+    return { text, indexedAt: budget.left > 0 ? new Date().toISOString() : null }
   } catch (err) {
     console.error('searchTextFromUpload: indexing failed', { error: String(err) })
-    return null
+    return { text: null, indexedAt: null }
   }
 }
 
@@ -138,13 +155,15 @@ export async function siteSnippets(
 }
 
 /**
- * One cron tick of the backfill: index a few not-yet-indexed sites (newest first) by reading their
- * html/md files from R2. Bounded — BACKFILL_SITES_PER_TICK sites, BACKFILL_MAX_FILES reads each, the
- * first READ_BYTES_PER_FILE of every file. The write only lands if the site is still at the content
- * version we read and still unindexed, so a replace racing the tick wins: its own batch has already
- * written fresh rows and a stale read can never overwrite them. A site that fails is retried on a
- * later tick, behind sites with fewer failures, until it has failed BACKFILL_MAX_ATTEMPTS times.
- * Returns how many sites it indexed.
+ * One cron tick of the backfill: index a few not-yet-indexed sites (fewest failed attempts first,
+ * then newest) by reading their html/md files from R2. Bounded — BACKFILL_SITES_PER_TICK sites,
+ * BACKFILL_MAX_FILES reads each, the first READ_BYTES_PER_FILE of every file, SEARCH_SOURCE_BUDGET
+ * bytes in all: once the budget is spent the tick ends, leaving the rest of its sites untouched. The
+ * write only lands if the site is still at the content version we read and still unindexed, so a
+ * replace racing the tick wins: its own batch has already written fresh rows and a stale read can
+ * never overwrite them. Text is upserted, because an upload that ran out of budget leaves a partial
+ * row. A site that fails, or is cut by the budget, is retried on a later tick behind sites with
+ * fewer attempts until it has used BACKFILL_MAX_ATTEMPTS. Returns how many sites it wrote.
  */
 export async function backfillSiteSearch(db: DrizzleD1Database, bucket: R2Bucket): Promise<number> {
   const pending = await db
@@ -153,8 +172,11 @@ export async function backfillSiteSearch(db: DrizzleD1Database, bucket: R2Bucket
     .where(and(isNull(sites.searchIndexedAt), lt(sites.searchAttempts, BACKFILL_MAX_ATTEMPTS)))
     .orderBy(asc(sites.searchAttempts), desc(sites.updatedAt))
     .limit(BACKFILL_SITES_PER_TICK)
+  const budget = { left: SEARCH_SOURCE_BUDGET }
+  const failedTry = sql`${sites.searchAttempts} + 1`
   let processed = 0
   for (const site of pending) {
+    if (budget.left <= 0) break
     // Gates the write AND a failure count: both only apply to the content version we read.
     const unchanged = and(eq(sites.id, site.id), eq(sites.contentVersion, site.contentVersion), isNull(sites.searchIndexedAt))
     try {
@@ -164,11 +186,12 @@ export async function backfillSiteSearch(db: DrizzleD1Database, bucket: R2Bucket
         .where(eq(files.siteId, site.id))
       const body = await buildSearchText(
         rows,
-        async (f) => {
-          const object = await bucket.get(f.storageKey, { range: { offset: 0, length: READ_BYTES_PER_FILE } })
-          return object ? object.text() : null
+        async (f, maxBytes) => {
+          const object = await bucket.get(f.storageKey, { range: { offset: 0, length: maxBytes } })
+          return object ? object.arrayBuffer() : null
         },
         BACKFILL_MAX_FILES,
+        budget,
       )
       await batchAll(db, [
         ...(body
@@ -180,10 +203,14 @@ export async function backfillSiteSearch(db: DrizzleD1Database, bucket: R2Bucket
                     .select({ siteId: sql<string>`${site.id}`.as('siteId'), body: sql<string>`${body}`.as('body') })
                     .from(sites)
                     .where(unchanged),
-                ),
+                )
+                .onConflictDoUpdate({ target: siteText.siteId, set: { body: sql`excluded.body` } }),
             ]
           : []),
-        db.update(sites).set({ searchIndexedAt: new Date().toISOString() }).where(unchanged),
+        db
+          .update(sites)
+          .set(budget.left > 0 ? { searchIndexedAt: new Date().toISOString() } : { searchAttempts: failedTry })
+          .where(unchanged),
       ])
       processed++
     } catch (err) {
@@ -191,7 +218,7 @@ export async function backfillSiteSearch(db: DrizzleD1Database, bucket: R2Bucket
       // The fault may be D1 itself, so recording the failure must not end the tick.
       await db
         .update(sites)
-        .set({ searchAttempts: sql`${sites.searchAttempts} + 1` })
+        .set({ searchAttempts: failedTry })
         .where(unchanged)
         .catch((e) => console.error('backfillSiteSearch: failure not recorded', { siteId: site.id, error: String(e) }))
     }

@@ -3,7 +3,7 @@ import { eq, inArray, sql } from 'drizzle-orm'
 import { files, sites } from '../db/schema'
 import worker from '../index'
 import { makeDb, makeKv, makeR2, seedFile, seedSite, seedSpace, seedUser } from '../test/harness'
-import { BACKFILL_MAX_ATTEMPTS, BACKFILL_MAX_FILES, BACKFILL_SITES_PER_TICK, backfillSiteSearch, siteText } from './site-search'
+import { BACKFILL_MAX_ATTEMPTS, BACKFILL_MAX_FILES, BACKFILL_SITES_PER_TICK, READ_BYTES_PER_FILE, SEARCH_SOURCE_BUDGET, backfillSiteSearch, siteText } from './site-search'
 
 async function world() {
   const db = makeDb()
@@ -77,6 +77,21 @@ describe('backfillSiteSearch', () => {
     w.raceRead(() => void w.db.update(sites).set({ contentVersion: 1 }).where(eq(sites.id, id)).run())
     await w.tick()
     expect([await w.row(id), await w.stamp(id)]).toEqual([null, null]) // still queued for the swap's batch or the next tick
+  })
+
+  test('a tick reads at most the source budget; the cut site keeps the text that fit, replaces an upload\'s partial row and is charged an attempt', async () => {
+    const w = await world()
+    const small = await w.site(w.page('small'))
+    const pad = ' '.repeat(READ_BYTES_PER_FILE)
+    const big = await w.site(Object.fromEntries(Array.from({ length: 6 }, (_, i) => [`p${i}.html`, `<p>big${i}</p>${pad}`]))) // newest: leads the queue
+    await w.db.insert(siteText).values({ siteId: big, body: 'partial from the upload' })
+    const before = w.r2.gets()
+    expect(await w.tick()).toBe(1) // the budget is gone, so the older site is not touched
+    expect(w.r2.gets() - before).toBe(SEARCH_SOURCE_BUDGET / READ_BYTES_PER_FILE)
+    expect(await w.row(big)).toBe('big0\nbig1\nbig2\nbig3')
+    expect([await w.stamp(big), await w.tries(big), await w.row(small)]).toEqual([null, 1, null])
+    await w.tick()
+    expect(await w.row(small)).toBe('small') // the cut site now queues behind it
   })
 
   test('a failure is not charged to content a replace swapped in while the tick was reading', async () => {

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { eq, sql } from 'drizzle-orm'
 import { sites, users } from '../db/schema'
-import { siteText } from '../lib/site-search'
+import { READ_BYTES_PER_FILE, siteText } from '../lib/site-search'
 import { seedFile, seedMember, seedSite, seedSpace } from '../test/harness'
 import { APP_URL, makeRouteApp, mintUser } from '../test/route-fixtures'
 
@@ -51,6 +51,15 @@ describe('search index follows the files', () => {
     await put(ctx, 'owner', 'doc', { 'a.css': 'body{}' }, { replace: true })
     expect([await body(ctx, id), await matches(ctx, 'bravo')]).toEqual([null, []])
     expect(await stamp(ctx, id)).not.toBeNull()
+  })
+
+  test('an upload past the source budget still succeeds: the text that fit is kept and the site is left for the backfill', async () => {
+    const ctx = await setup()
+    const pad = ' '.repeat(READ_BYTES_PER_FILE)
+    const pages = Object.fromEntries(Array.from({ length: 6 }, (_, i) => [`p${i}.html`, `<p>part${i}</p>${pad}`]))
+    expect((await put(ctx, 'owner', 'big', pages)).status).toBe(200)
+    const id = await idOf(ctx, 'big')
+    expect([await body(ctx, id), await stamp(ctx, id)]).toEqual(['part0\npart1\npart2\npart3', null])
   })
 
   test('editor replace re-indexes; a stale-version 409 leaves the index alone', async () => {

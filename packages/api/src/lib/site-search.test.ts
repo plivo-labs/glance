@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { SEARCH_TEXT_CAP, buildSearchText, ftsMatchQuery } from './site-search'
+import { SEARCH_SOURCE_BUDGET, SEARCH_TEXT_CAP, buildSearchText, ftsMatchQuery } from './site-search'
 
 describe('ftsMatchQuery', () => {
   test('quotes every token, prefix-matches only the last, and returns null when nothing is searchable', () => {
@@ -18,11 +18,13 @@ describe('ftsMatchQuery', () => {
 
 describe('buildSearchText', () => {
   const html = (path: string) => ({ path, mimeType: 'text/html' })
+  const bytes = (text: string) => new TextEncoder().encode(text).buffer as ArrayBuffer
 
   test('entry first, non-text files skipped, unavailable files tolerated', async () => {
     const pages: Record<string, string> = { 'b.html': '<p>second</p>', 'index.html': '<p>first</p>', 'a.css': 'body{}' }
     const files = [html('b.html'), html('index.html'), { path: 'a.css', mimeType: 'text/css' }, html('gone.html')]
-    expect(await buildSearchText(files, async (c) => pages[c.path] ?? null, 10)).toBe('first\nsecond')
+    const read = async (c: { path: string }) => (c.path in pages ? bytes(pages[c.path] as string) : null)
+    expect(await buildSearchText(files, read, 10, { left: SEARCH_SOURCE_BUDGET })).toBe('first\nsecond')
   })
 
   test('the per-site cap bounds the text and stops reading further files', async () => {
@@ -31,9 +33,20 @@ describe('buildSearchText', () => {
     const files = Array.from({ length: 20 }, (_, i) => html(`p${i}.html`))
     const text = await buildSearchText(files, async () => {
       reads++
-      return big
-    }, 20)
+      return bytes(big)
+    }, 20, { left: SEARCH_SOURCE_BUDGET })
     expect(text.length).toBeLessThanOrEqual(SEARCH_TEXT_CAP)
     expect(reads).toBeLessThan(20)
+  })
+
+  test('each read is cut to the budget left, and no file is read once it is spent', async () => {
+    const budget = { left: 100 }
+    const asked: number[] = []
+    const read = async (_c: unknown, max: number) => {
+      asked.push(max)
+      return bytes('<p>w</p>'.padEnd(60).slice(0, max))
+    }
+    expect(await buildSearchText(['a', 'b', 'c'].map((n) => html(`${n}.html`)), read, 10, budget)).toBe('w\nw')
+    expect([asked, budget.left]).toEqual([[100, 40], 0])
   })
 })
