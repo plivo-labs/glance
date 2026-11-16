@@ -119,7 +119,7 @@ For a maintenance window (e.g. a database migration), set repo Actions variable 
 
 Page text is searchable through `site_text` (the text of each site's html/md files) and `site_search`, an FTS5 virtual table over it (migration `0032_site_search.sql`).
 
-- **Existing sites are indexed by the hourly cron, up to 4 sites an hour** (a run also stops after reading 4 MiB of page source), so a large install catches up over days. A site that fails or is cut short 3 times is skipped until it is uploaded again. CJK text has no word breaks, so each unbroken run is one token: a query matches it from the start of the run only (a prefix match, from 3 characters).
+- **Existing sites are indexed by the hourly cron, up to 4 sites an hour** (a run also stops after reading 4 MiB of page source), so a large install catches up over days. A site that fails 3 times, or is bigger than that 4 MiB budget on its own, is skipped until it is uploaded again. CJK text has no word breaks, so each unbroken run is one token: a query matches it from the start of the run only (a prefix match, from 3 characters).
 - **`wrangler d1 export` fails while `site_search` exists** ("Export is not supported for virtual tables"). The index is derived data, so drop it, export, then recreate and rebuild it. From `packages/api`:
 
 ```bash

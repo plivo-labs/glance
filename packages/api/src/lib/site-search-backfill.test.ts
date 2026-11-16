@@ -79,19 +79,21 @@ describe('backfillSiteSearch', () => {
     expect([await w.row(id), await w.stamp(id)]).toEqual([null, null]) // still queued for the swap's batch or the next tick
   })
 
-  test('a tick reads at most the source budget; the cut site keeps the text that fit, replaces an upload\'s partial row and is charged an attempt', async () => {
+  test('a tick reads at most the source budget; a cut site keeps what fit, is charged only if cut alone, and its row never shrinks', async () => {
     const w = await world()
     const small = await w.site(w.page('small'))
     const pad = ' '.repeat(READ_BYTES_PER_FILE)
     const big = await w.site(Object.fromEntries(Array.from({ length: 6 }, (_, i) => [`p${i}.html`, `<p>big${i}</p>${pad}`]))) // newest: leads the queue
-    await w.db.insert(siteText).values({ siteId: big, body: 'partial from the upload' })
+    await w.db.insert(siteText).values({ siteId: big, body: 'short partial row' })
     const before = w.r2.gets()
     expect(await w.tick()).toBe(1) // the budget is gone, so the older site is not touched
     expect(w.r2.gets() - before).toBe(SEARCH_SOURCE_BUDGET / READ_BYTES_PER_FILE)
     expect(await w.row(big)).toBe('big0\nbig1\nbig2\nbig3')
     expect([await w.stamp(big), await w.tries(big), await w.row(small)]).toEqual([null, 1, null])
-    await w.tick()
-    expect(await w.row(small)).toBe('small') // the cut site now queues behind it
+    await w.db.update(siteText).set({ body: 'a longer partial row than a tick can build' }).where(eq(siteText.siteId, big))
+    await w.tick() // `small` goes first now, and takes some of the budget `big` is cut by
+    expect(await w.row(small)).toBe('small')
+    expect([await w.tries(big), (await w.row(big))?.slice(0, 8)]).toEqual([1, 'a longer'])
   })
 
   test('a failure is not charged to content a replace swapped in while the tick was reading', async () => {

@@ -33,8 +33,9 @@ export const READ_BYTES_PER_FILE = 1024 * 1024
 // bytes READ, not text kept (markup-heavy pages yield little text but cost the same to scan), and
 // each read is cut to what is left. Source past the budget is simply not indexed: an upload still
 // succeeds and keeps what it indexed, but is left unstamped so the backfill (its own budget) takes
-// the site; a backfill site cut by it keeps what fit, stays unstamped and counts as one attempt, so
-// one bigger than the budget is retried BACKFILL_MAX_ATTEMPTS times at most.
+// the site. A backfill site cut by it keeps what fit and stays unstamped; if it had the whole budget
+// to itself that counts as an attempt, so a site bigger than the budget is retried
+// BACKFILL_MAX_ATTEMPTS times at most (one that only ran out of what earlier sites left just waits).
 export const SEARCH_SOURCE_BUDGET = 4 * 1024 * 1024
 // The hourly backfill runs inside one invocation with a small subrequest budget (the free plan
 // allows 50): per site that is 1 file-list read + one R2 get per file + 1 batch.
@@ -171,8 +172,9 @@ export async function siteSnippets(
  * write only lands if the site is still at the content version we read and still unindexed, so a
  * replace racing the tick wins: its own batch has already written fresh rows and a stale read can
  * never overwrite them. Text is upserted, because an upload that ran out of budget leaves a partial
- * row. A site that fails, or is cut by the budget, is retried on a later tick behind sites with
- * fewer attempts until it has used BACKFILL_MAX_ATTEMPTS. Returns how many sites it wrote.
+ * row, and only ever grows (a cut tick must not shrink a longer row). A site that fails, or is cut
+ * while it had the whole budget, is retried on a later tick behind sites with fewer attempts until
+ * it has used BACKFILL_MAX_ATTEMPTS. Returns how many sites it wrote.
  */
 export async function backfillSiteSearch(db: DrizzleD1Database, bucket: R2Bucket): Promise<number> {
   const pending = await db
@@ -186,6 +188,7 @@ export async function backfillSiteSearch(db: DrizzleD1Database, bucket: R2Bucket
   let processed = 0
   for (const site of pending) {
     if (budget.left <= 0) break
+    const alone = budget.left === SEARCH_SOURCE_BUDGET // no earlier site spent any of it
     // Gates the write AND a failure count: both only apply to the content version we read.
     const unchanged = and(eq(sites.id, site.id), eq(sites.contentVersion, site.contentVersion), isNull(sites.searchIndexedAt))
     try {
@@ -202,6 +205,11 @@ export async function backfillSiteSearch(db: DrizzleD1Database, bucket: R2Bucket
         BACKFILL_MAX_FILES,
         budget,
       )
+      const cut = budget.left <= 0
+      // A cut site stays unstamped, and is charged an attempt only if it was cut alone: one that just
+      // ran out of what earlier sites left is not at fault, and reaches the head of the queue as they
+      // finish or fall behind.
+      const mark = !cut ? { searchIndexedAt: new Date().toISOString() } : alone ? { searchAttempts: failedTry } : null
       await batchAll(db, [
         ...(body
           ? [
@@ -213,13 +221,14 @@ export async function backfillSiteSearch(db: DrizzleD1Database, bucket: R2Bucket
                     .from(sites)
                     .where(unchanged),
                 )
-                .onConflictDoUpdate({ target: siteText.siteId, set: { body: sql`excluded.body` } }),
+                .onConflictDoUpdate({
+                  target: siteText.siteId,
+                  set: { body: sql`excluded.body` },
+                  setWhere: sql`length(excluded.body) > length(${siteText.body})`,
+                }),
             ]
           : []),
-        db
-          .update(sites)
-          .set(budget.left > 0 ? { searchIndexedAt: new Date().toISOString() } : { searchAttempts: failedTry })
-          .where(unchanged),
+        ...(mark ? [db.update(sites).set(mark).where(unchanged)] : []),
       ])
       processed++
     } catch (err) {
