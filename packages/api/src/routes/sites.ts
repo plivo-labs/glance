@@ -498,8 +498,9 @@ sites.get('/:spaceSlug/:siteSlug/shares', requireAuth, async (c) => {
 })
 
 // GET /api/sites/:spaceSlug/:siteSlug/stats — owner-only view counts for the last 30 days. Counts
-// only, never viewer identities. Strictly the owner (no role bypass, see lib/access.ts): who opened
-// a page is exactly the kind of thing a superadmin's custodial powers do not reach.
+// only, never viewer identities. Strictly the owner, no role bypass (see lib/access.ts): a
+// superadmin's custodial powers stop at the content, and a site's usage numbers sit on the owner's
+// side of that line.
 sites.get('/:spaceSlug/:siteSlug/stats', requireAuth, async (c) => {
   const user = c.get('user')
   const db = c.get('db')
