@@ -1,5 +1,5 @@
 import { RotateCcw } from 'lucide-react'
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Button } from '@/components/ui/button'
@@ -24,12 +24,19 @@ type State = { kind: 'loading' } | { kind: 'failed' } | { kind: 'ready'; version
 export function HistorySheet({ spaceSlug, siteSlug, open, onOpenChange, onRestored }: Props) {
   const [state, setState] = useState<State>({ kind: 'loading' })
 
+  // Only the newest request may write state: closing and reopening the sheet starts a new load while
+  // an older one can still be in flight, and its late answer (or failure) must not replace the new.
+  const latest = useRef(0)
   const load = useCallback(() => {
+    const mine = ++latest.current
     setState({ kind: 'loading' })
     siteVersions
       .list(spaceSlug, siteSlug)
-      .then((versions) => setState({ kind: 'ready', versions }))
+      .then((versions) => {
+        if (mine === latest.current) setState({ kind: 'ready', versions })
+      })
       .catch((error: unknown) => {
+        if (mine !== latest.current) return
         setState({ kind: 'failed' })
         toast.error('Could not load history', { description: error instanceof Error ? error.message : undefined })
       })
