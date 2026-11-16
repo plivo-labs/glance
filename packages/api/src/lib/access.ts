@@ -1,5 +1,6 @@
 import type { Site } from '../db/schema'
 import type { SessionUser } from '../types'
+import { isLapsed } from './expiry'
 
 // `reason` is set only on a 410, to tell an owner-set expiry apart from an admin archive.
 export type AccessResult = { ok: true } | { ok: false; status: 401 | 403 | 410; reason?: 'expired' }
@@ -35,7 +36,7 @@ export function checkAccess(
   isShared = false,
   now: Date = new Date(),
 ): AccessResult {
-  if (site.status === 'expired' || (site.status === 'active' && !!site.expiresAt && site.expiresAt <= now.toISOString())) {
+  if (isLapsed(site, now)) {
     return { ok: false, status: 410, reason: 'expired' }
   }
   if (site.status !== 'active') return { ok: false, status: 410 }

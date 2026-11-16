@@ -56,6 +56,6 @@ describe('checkAccess — expiry', () => {
     expect(checkAccess({ ...base, status: 'expired' }, owner, true)).toEqual({ ok: false, status: 410, reason: 'expired' })
     expect(checkAccess({ ...base, status: 'active', expiresAt: at(-1) }, owner, true, false, NOW)).toEqual({ ok: false, status: 410, reason: 'expired' })
     expect(checkAccess({ ...base, status: 'active', expiresAt: at(HOUR) }, owner, true, false, NOW)).toEqual({ ok: true })
-    expect(checkAccess({ ...base, status: 'archived' }, owner, true)).toEqual({ ok: false, status: 410 })
+    expect(checkAccess({ ...base, status: 'archived', expiresAt: at(-1) }, owner, true, false, NOW)).toEqual({ ok: false, status: 410 })
   })
 })
