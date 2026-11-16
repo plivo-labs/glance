@@ -55,6 +55,13 @@ describe('isSupportedEntry', () => {
 })
 
 describe('extractText', () => {
+  test('block elements separate words even without whitespace between them; inline ones do not', async () => {
+    const body = '<h1>Team</h1><p>Plan</p><ul><li>one</li><li>two</li></ul>x<br>y<p>S<b>ea</b>rch</p><table><tr><td>a</td><td>b</td></tr></table>'
+    const result = await extractText({ path: 'index.html', mimeType: 'text/html' }, body)
+    if (!result.ok) throw new Error(result.reason)
+    expect(result.text).toBe('Team Plan one two x y Search a b')
+  })
+
   test('extracts visible HTML text in order without leaking active content or attributes', async () => {
     const sentinel = 'END_OF_LONG_TEXT'
     const longText = `${'😀'.repeat(17_000)}${sentinel}`

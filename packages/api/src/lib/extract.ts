@@ -144,6 +144,9 @@ export async function extractHtmlMeta(entry: EntryFile, body: Blob | string): Pr
   return { title: clean(chunks.join(''), TITLE_CAP), description: ogDescription ?? nameDescription }
 }
 
+const BLOCK_TAGS =
+  'title, p, div, section, article, header, footer, main, nav, aside, h1, h2, h3, h4, h5, h6, ul, ol, li, dl, dt, dd, table, thead, tbody, tr, td, th, caption, blockquote, pre, figure, figcaption, form, fieldset, details, summary, address'
+
 export async function extractText(entry: EntryFile, body: string): Promise<Extracted> {
   if (!isSupportedEntry(entry)) {
     return { ok: false, reason: 'unsupported' }
@@ -168,7 +171,22 @@ export async function extractText(entry: EntryFile, body: string): Promise<Extra
     )
     .transform(new Response(body))
   const chunks: string[] = []
+  // Block-level tags separate words even when the markup has no whitespace between them (minified
+  // output: "<h1>A</h1><p>B</p>" must read "A B", not "AB"); inline tags must not ("<b>S</b>earch").
   const transformed = new HTMLRewriter()
+    .on(BLOCK_TAGS, {
+      element(element) {
+        chunks.push(' ')
+        element.onEndTag(() => {
+          chunks.push(' ')
+        })
+      },
+    })
+    .on('br, hr', {
+      element() {
+        chunks.push(' ')
+      },
+    })
     .onDocument({
       text(text) {
         chunks.push(text.text)
