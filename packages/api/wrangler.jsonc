@@ -50,10 +50,11 @@
   // must use `wrangler dev --local` (the `dev` script does), which disables this binding so env.AI
   // is undefined and transcription falls back — no Cloudflare login required just to run the app.
   "ai": { "binding": "AI", "remote": true },
-  // Browser Rendering: one-click PDF export (src/routes/site-pdf.ts). Optional at runtime like AI — a
-  // deploy or local dev without it answers 501 and the viewer falls back to the browser's print
-  // dialog. The Workers Free plan allows 10 browser-minutes a day; Paid is metered per browser hour.
-  "browser": { "binding": "BROWSER" },
+  // Browser Rendering: one-click PDF export (src/routes/site-pdf.ts). OFF by default: it is metered
+  // (the Workers Free plan allows 10 browser-minutes a day; Paid is billed per browser hour), so
+  // enabling it is your call. Uncomment the line below and redeploy; see DEPLOY.md "PDF export".
+  // Without it the PDF option answers 501 and the viewer falls back to the browser's print dialog.
+  // "browser": { "binding": "BROWSER" },
   // Two cron ticks into the same `scheduled` handler (src/index.ts), branched by `event.cron`:
   //   "0 * * * *"  — hourly synthetic stats visitor: refreshes only the stats KV halves past
   //                  their soft TTL (window hourly, totals daily), so the admin dashboard always

@@ -14,9 +14,9 @@ export interface Bindings {
   SUMMARY_LIMITER?: RateLimit
   ASK_LIMITER?: RateLimit
   PDF_LIMITER?: RateLimit
-  // Cloudflare Browser Rendering, used for one-click PDF export (routes/site-pdf). Declared in
-  // wrangler.jsonc but typed optional: a deploy or local dev without it answers 501 and the web app
-  // falls back to the browser's print dialog.
+  // Cloudflare Browser Rendering, used for one-click PDF export (routes/site-pdf). Opt-in: the
+  // binding is commented out in wrangler.jsonc, and without it the route answers 501 and the web
+  // app falls back to the browser's print dialog.
   BROWSER?: Fetcher
   // DI seam for the PDF renderer (same idiom as OG_RENDER): route tests inject a fake so puppeteer
   // never loads under bun. Never set in prod — unset → the BROWSER binding.
