@@ -54,6 +54,16 @@ describe('computeSiteInsights', () => {
     expect((await computeSiteInsights(db, siteId, NOW)).pages).toHaveLength(10)
   })
 
+  test('the window opens at midnight UTC on its first day: that instant counts, a millisecond earlier does not', async () => {
+    const { db, siteId } = await fixture()
+    await seedEvent(db, { siteId, userId: 'u2', action: 'edge.html', createdAt: '2026-07-01T00:00:00.000Z' })
+    await seedEvent(db, { siteId, userId: 'u2', action: 'before.html', createdAt: '2026-06-30T23:59:59.999Z' })
+    const r = await computeSiteInsights(db, siteId, NOW)
+    expect(r.series[0]).toEqual({ date: '2026-07-01', views: 1 })
+    expect(r.pages).toEqual([{ path: 'edge.html', views: 1 }])
+    expect(r.totalViews).toBe(1)
+  })
+
   test('ignores other sites, cli events, and views older than the window', async () => {
     const { db, siteId, otherId } = await fixture()
     await seedEvent(db, { siteId: otherId, userId: 'u2', action: 'x.html', createdAt: daysAgo(1) })
