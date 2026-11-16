@@ -69,6 +69,19 @@ describe('replace snapshots the replaced files into a version', () => {
   })
 })
 
+describe('SITE_VERSIONS_KEEP=0', () => {
+  test('versions.off: no snapshot on either replace path, and the replaced objects are deleted as before versions existed', async () => {
+    const ctx = await setup()
+    ctx.env.SITE_VERSIONS_KEEP = '0'
+    await deploy(ctx, 'owner', { 'index.html': 'one' })
+    expect((await deploy(ctx, 'owner', { 'index.html': 'two' })).status).toBe(200)
+    expect((await deploy(ctx, 'ed', { 'index.html': 'three' }, 2)).status).toBe(200)
+
+    expect(await versionRows(ctx)).toHaveLength(0)
+    expect(ctx.r2.store.size).toBe(1) // only the live file's object remains
+  })
+})
+
 describe('every lifecycle path accounts for version-owned objects', () => {
   // Two deploys → one live file + one version file: two R2 objects, both must be reclaimed.
   async function withHistory() {

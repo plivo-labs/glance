@@ -1,10 +1,13 @@
 import { and, eq, sql } from 'drizzle-orm'
+import type { BatchItem } from 'drizzle-orm/batch'
 import { Hono } from 'hono'
 import type { NewFileRow } from '../db/schema'
 import { files, sites, spaceMembers, spaces, siteUserShares } from '../db/schema'
 import { batchAll } from '../lib/d1'
 import { canReplace } from '../lib/access'
+import { fireAndForget } from '../lib/events'
 import { capTitle, extractHtmlMeta, NO_META, pickEntry } from '../lib/extract'
+import { versionPolicy } from '../lib/retention'
 import { isValidSlug } from '../lib/slug'
 import { deleteKeys, MAX_FILE_BYTES, sanitizePath } from '../lib/storage'
 import { snapshotSiteFiles } from '../lib/versions'
@@ -147,7 +150,7 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
       .where(and(slugKey(), eq(siteUserShares.userId, user.id)))
       .limit(1),
     db
-      .select({ id: files.id })
+      .select({ storageKey: files.storageKey })
       .from(files)
       .innerJoin(sites, eq(files.siteId, sites.id))
       .innerJoin(spaces, eq(sites.spaceId, spaces.id))
@@ -161,6 +164,12 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
   const replace = c.req.query('replace') === 'true'
   const isCreate = !existing
   let siteId: string
+  let oldKeys: string[] = []
+  // False when the operator turned version history off (SITE_VERSIONS_KEEP=0): a replace then
+  // snapshots nothing and deletes the replaced objects, exactly as it did before versions existed.
+  const snapshot = versionPolicy(c.env).keep > 0
+  const snapshotStmts = (o: Parameters<typeof snapshotSiteFiles>[1]): BatchItem<'sqlite'>[] =>
+    snapshot ? [...snapshotSiteFiles(db, o)] : []
   // True when the actor is exercising an EDITOR grant (not the owner). Editors are content-only:
   // no visibility change, no archived-site edit, and every replace is version-CAS'd.
   let actingAsEditor = false
@@ -192,6 +201,7 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
     if (existingFileRows.length > 0 && !replace) {
       return c.json({ error: 'site exists', conflict: true }, 409)
     }
+    oldKeys = existingFileRows.map((r) => r.storageKey)
   }
 
   // Plan every object under a fresh prefix. Build the rows first so the R2 keys are known BEFORE
@@ -309,8 +319,8 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
       // The replaced rows are snapshotted into a version in this same batch (labelled with the
       // version the editor pulled, since the claim already bumped the column) — a stale 409 above
       // never reaches here, so it can't leave a phantom version.
-      await db.batch([
-        ...snapshotSiteFiles(db, { siteId, createdBy: user.id, version: expectedVersion as number }),
+      await batchAll(db, [
+        ...snapshotStmts({ siteId, createdBy: user.id, version: expectedVersion as number }),
         db.delete(files).where(eq(files.siteId, siteId)),
         ...insertRows,
         db.update(sites).set({ description }).where(eq(sites.id, siteId)),
@@ -321,8 +331,8 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
       // the existing tier — replace's long-standing default). One D1 batch so the serving worker
       // never sees a half-updated site. The rows being replaced are snapshotted into a version first
       // (their R2 objects are kept, owned by the version).
-      await db.batch([
-        ...snapshotSiteFiles(db, { siteId, createdBy: user.id }),
+      await batchAll(db, [
+        ...snapshotStmts({ siteId, createdBy: user.id }),
         db.delete(files).where(eq(files.siteId, siteId)),
         ...insertRows,
         db
@@ -349,8 +359,11 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
     throw err
   }
 
-  // The replaced objects are NOT deleted: the snapshot above handed their keys to a version, and the
-  // daily retention purge (lib/retention.ts) reclaims them once the version ages out.
+  // With history on, the replaced objects are NOT deleted: the snapshot above handed their keys to a
+  // version, and the retention purge (lib/retention.ts) reclaims them once it ages out. With history
+  // off they are safe to purge only after the row swap committed; waitUntil keeps a transient R2
+  // failure from 500-ing an already-committed replace (the swap is done, reclaiming is best-effort).
+  if (!snapshot && oldKeys.length > 0) await fireAndForget(c, deleteKeys(c.env.GLANCE_FILES, oldKeys))
 
   return c.json({
     url: `${c.env.APP_URL}/${spaceSlug}/${siteSlug}`,
