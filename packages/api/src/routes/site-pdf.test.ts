@@ -27,8 +27,8 @@ async function setup(env: Partial<AppEnv['Bindings']> = {}) {
   await seedMember(fixture.db, space, 'owner')
   await seedSite(fixture.db, { spaceId: space, ownerId: 'owner', slug: 'report', title: 'Q3 report' })
   await seedSite(fixture.db, { spaceId: space, ownerId: 'owner', slug: 'secret', visibility: 'private' })
-  const get = (query = '', user: string | null = 'owner', site = 'report') =>
-    fixture.app.request(`/api/sites/docs/${site}/pdf${query}`, { headers: user ? { Authorization: `Bearer tok-${user}` } : {} }, bindings)
+  const get = (query = '', user: string | null = 'owner', site = 'report', extra: Record<string, string> = {}) =>
+    fixture.app.request(`/api/sites/docs/${site}/pdf${query}`, { headers: { ...(user ? { Authorization: `Bearer tok-${user}` } : {}), ...extra } }, bindings)
   return { get, calls }
 }
 
@@ -59,6 +59,15 @@ describe('GET /api/sites/:space/:site/pdf', () => {
     expect((await get('', 'stranger', 'secret')).status).toBe(403)
     expect((await get('', 'owner', 'nope')).status).toBe(404)
     expect(calls).toHaveLength(0)
+  })
+
+  test('a cookie request from another site is refused before it can start a render', async () => {
+    const { get, calls } = await setup()
+    const cookie = { Cookie: '__Host-glance_session=x' }
+    expect((await get('', 'owner', 'report', { ...cookie, 'Sec-Fetch-Site': 'cross-site' })).status).toBe(403)
+    expect((await get('', 'owner', 'report', cookie)).status).toBe(403)
+    expect(calls).toHaveLength(0)
+    expect((await get('', 'owner', 'report', { ...cookie, 'Sec-Fetch-Site': 'same-origin' })).status).toBe(200)
   })
 
   test('a bad option or path is a 400 before any render', async () => {

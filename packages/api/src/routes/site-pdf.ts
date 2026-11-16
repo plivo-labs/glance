@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { containsToken, PdfPageNotFound, parsePdfQuery, pdfDisposition, pdfPagePath, pdfPlan, type PdfRenderRequest, redactToken } from '../lib/pdf'
 import { fetchAccessFacts, siteAccessFromFacts } from '../lib/site-access'
 import { signToken } from '../lib/token'
-import { requireAuth } from '../middleware/auth'
+import { cookieAuthed, isSameOrigin, requireAuth } from '../middleware/auth'
 import type { AppEnv } from '../types'
 
 // One-click "Download PDF" without the browser's print dialog: the page is loaded by a headless
@@ -23,6 +23,13 @@ function pickRenderer(env: AppEnv['Bindings']): Renderer | null {
   return async (req) => (await import('../lib/pdf-render')).renderPdf(binding, req)
 }
 
+// Every render is billed browser time, and a plain GET rides the session cookie: a link on another
+// site must not be able to start one. Same rule as the other cookie gates (isSameOrigin); a bearer
+// client (the CLI) carries no cookie and is not affected.
+sitePdf.use('*', async (c, next) => {
+  if (cookieAuthed(c) && !isSameOrigin(c)) return c.json({ error: 'csrf' }, 403)
+  await next()
+})
 sitePdf.use('*', requireAuth)
 
 sitePdf.get('/:space/:site/pdf', async (c) => {
