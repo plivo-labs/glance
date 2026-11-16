@@ -330,6 +330,16 @@ describe('client.ts — Download: text and Markdown on request, and ⌘⇧S forw
     expect(keydown({ key: 'S', shiftKey: true }).defaultPrevented).toBe(false)
     expect(shortcuts()).toHaveLength(before + 2)
   })
+
+  test('a page that already handled the combination keeps it', () => {
+    const doc = win().document as unknown as Document
+    const own = (e: Event) => e.preventDefault()
+    doc.addEventListener('keydown', own)
+    const before = shortcuts().length
+    doc.dispatchEvent(new ((win() as AnyRecord).KeyboardEvent as typeof KeyboardEvent)('keydown', { bubbles: true, cancelable: true, key: 's', metaKey: true, shiftKey: true }))
+    doc.removeEventListener('keydown', own)
+    expect(shortcuts()).toHaveLength(before)
+  })
 })
 
 describe('client.ts — glance:theme swaps the theme stylesheet inside the frame (viewer-local override)', () => {

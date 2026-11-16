@@ -366,9 +366,10 @@ document.addEventListener('click', (e) => {
 // Boot handshake: tell the parent which file is mounted (intent-only; parent re-validates).
 // ⌘⇧S / Ctrl+⇧S opens the viewer's Download dialog. A keydown inside this sandboxed frame never
 // reaches the parent, so the shortcut would die the moment the page has focus: forward it, and
-// swallow the browser's own Save-as for it.
+// swallow the browser's own Save-as for it. A page that already handled the combination (its own
+// editor, say) calls preventDefault first, and keeps it.
 window.addEventListener('keydown', (e) => {
-  if (!boot || !(e.metaKey || e.ctrlKey) || !e.shiftKey || e.altKey || e.key.toLowerCase() !== 's') return
+  if (!boot || e.defaultPrevented || !(e.metaKey || e.ctrlKey) || !e.shiftKey || e.altKey || e.key.toLowerCase() !== 's') return
   e.preventDefault()
   toParent({ type: 'glance:shortcut', name: 'download' })
 })
