@@ -115,7 +115,7 @@ describe('ViewerTopBar — Insights is an owner-only menu item', () => {
     renderTopBar({ site: { ...SITE, isOwner: true } })
     openMenu()
     fireEvent.click(await screen.findByRole('menuitem', { name: /Insights/ }))
-    expect(await screen.findByText('Last 30 days (UTC). Counts only, no names.')).toBeTruthy()
+    expect(await screen.findByText('Last 30 days (UTC), including your own views. Counts only, no names.')).toBeTruthy()
   })
 })
 

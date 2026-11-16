@@ -115,7 +115,7 @@ export function InsightsSheet({ spaceSlug, siteSlug, open, onOpenChange }: Props
             <ChartColumn className="size-4 text-brand-text" />
             Insights
           </SheetTitle>
-          <SheetDescription>Last 30 days (UTC). Counts only, no names.</SheetDescription>
+          <SheetDescription>Last 30 days (UTC), including your own views. Counts only, no names.</SheetDescription>
         </SheetHeader>
         <div className="flex-1 overflow-y-auto px-5 py-4">
           {state.kind === 'loading' && (
