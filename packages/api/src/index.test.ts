@@ -75,6 +75,42 @@ describe('scheduled — daily retention purge (issue #82)', () => {
   })
 })
 
+describe('scheduled — daily purge jobs are isolated', () => {
+  test('a failing retention purge does not skip the version purge, which gets the operator policy; the cron still fails', async () => {
+    const prepared: string[] = []
+    const binds: unknown[][] = []
+    const prepare = (sql: string) => {
+      prepared.push(sql)
+      const down = /\bevents\b/.test(sql) // purgeRetention's first query
+      const run = async () => {
+        if (down) throw new Error('d1 down')
+        return { results: [], success: true, meta: {} }
+      }
+      const statement = {
+        bind: (...args: unknown[]) => {
+          binds.push(args)
+          return statement
+        },
+        all: run,
+        run,
+        raw: async () => (await run()).results,
+      }
+      return statement
+    }
+    const env = {
+      GLANCE_DB: { withSession: () => ({ prepare, getBookmark: () => null }) },
+      GLANCE_FILES: {},
+      SITE_VERSIONS_KEEP: '3',
+    } as never
+
+    const tick = worker.scheduled({ cron: '0 3 * * *', scheduledTime: Date.now() } as never, env, { waitUntil: () => {} } as never)
+
+    await expect(tick).rejects.toThrow('daily purge failed')
+    expect(prepared.some((q) => q.includes('site_versions'))).toBe(true)
+    expect(binds.some((b) => b[0] === 3)).toBe(true) // SITE_VERSIONS_KEEP reached the purge
+  })
+})
+
 describe('WRITE_FREEZE maintenance switch', () => {
   const statement = {
     bind: () => statement,

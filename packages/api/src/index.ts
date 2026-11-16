@@ -175,8 +175,14 @@ export default {
   async scheduled(event, env, _ctx) {
     const db = sessionDb(env.GLANCE_DB, 'first-unconstrained')
     if (event.cron === DAILY_PURGE_CRON) {
-      await purgeRetention(db)
-      await purgeSiteVersions(db, env.GLANCE_FILES, new Date(), versionPolicy(env))
+      // Isolated: one throwing must not skip the other. Both run, then every failure is rethrown so
+      // the invocation still shows as failed in the Workers dashboard.
+      const jobs = await Promise.allSettled([
+        purgeRetention(db),
+        purgeSiteVersions(db, env.GLANCE_FILES, new Date(), versionPolicy(env)),
+      ])
+      const errors = jobs.flatMap((j) => (j.status === 'rejected' ? [j.reason] : []))
+      if (errors.length > 0) throw new AggregateError(errors, 'scheduled: daily purge failed')
       return
     }
     await cachedStats(env.GLANCE_SESSIONS, db, (p) => p.then(() => {}))
