@@ -45,7 +45,7 @@ describe('upload expires field', () => {
     expect(Math.abs(Date.parse((await row('timed'))?.expiresAt as string) - (Date.now() + 48 * HOUR))).toBeLessThan(60_000)
     await post('plain')
     expect((await row('plain'))?.expiresAt).toBeNull()
-    expect((await post('bad', { expires: 'whenever' })).status).toBe(400)
+    for (const bad of ['whenever', '']) expect((await post('bad', { expires: bad })).status).toBe(400)
     expect(await row('bad')).toBeUndefined()
   })
 
@@ -95,7 +95,7 @@ describe('PATCH /api/sites expires', () => {
     expect(Date.parse((await row())?.e as string)).toBeGreaterThan(Date.now())
     await patch({ expires: 'none' })
     expect((await row())?.e).toBeNull()
-    expect((await patch({ expires: 'yesterday' })).status).toBe(400)
+    for (const bad of ['yesterday', '']) expect((await patch({ expires: bad })).status).toBe(400)
     expect((await row())?.v).toBe(0)
   })
 

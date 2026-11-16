@@ -12,14 +12,15 @@ export type ExpiryInput = { kind: 'set'; at: string } | { kind: 'clear' } | { ki
  * Parses the `expires` value the CLI and the PATCH route share. Relative (`30m`, `12h`, `7d`, `2w`)
  * is resolved HERE, against the server clock, so a skewed laptop clock can't mint a wrong expiry.
  * `YYYY-MM-DD` means the end of that UTC day; a full ISO-8601 instant is taken as given.
- * `none` / `never` / empty clears it. Anything not at least a minute out is refused (it would be
+ * `none` / `never` (or JSON null on PATCH) clears it; an empty value is refused, so a blank flag
+ * can't silently drop an expiry. Anything not at least a minute out is refused (it would be
  * dead on arrival), and so is anything more than five years out.
  */
 export function parseExpiry(raw: unknown, now: Date = new Date()): ExpiryInput {
   if (raw === null) return { kind: 'clear' }
   if (typeof raw !== 'string') return { kind: 'invalid', reason: 'expires must be a string' }
   const v = raw.trim().toLowerCase()
-  if (v === '' || v === 'none' || v === 'never') return { kind: 'clear' }
+  if (v === 'none' || v === 'never') return { kind: 'clear' }
 
   let at: number
   const rel = /^(\d{1,4})([mhdw])$/.exec(v)

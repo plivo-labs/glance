@@ -17,9 +17,9 @@ describe('parseExpiry', () => {
     expect(parseExpiry('2026-12-31T10:00:00Z', NOW)).toEqual({ kind: 'set', at: '2026-12-31T10:00:00.000Z' })
   })
 
-  test('none / never / empty / null clear; garbage, the past, under a minute, over five years, non-strings are refused', () => {
-    for (const v of ['none', 'NEVER', '  ', null]) expect(parseExpiry(v, NOW)).toEqual({ kind: 'clear' })
-    for (const v of ['soon', '2026-05-31', '30s', '2040-01-01', 7]) expect(parseExpiry(v, NOW).kind).toBe('invalid')
+  test('only none / never / null clear; empty, garbage, the past, under a minute, over five years, non-strings are refused', () => {
+    for (const v of ['none', 'NEVER', null]) expect(parseExpiry(v, NOW)).toEqual({ kind: 'clear' })
+    for (const v of ['', '  ', 'soon', '2026-05-31', '30s', '2040-01-01', 7]) expect(parseExpiry(v, NOW).kind).toBe('invalid')
   })
 })
 
