@@ -6,7 +6,7 @@ const ORIGIN = 'https://content.example.com'
 const frameWin = {} as Window
 
 function setup(enabled = true) {
-  const onOpen = mock(() => {})
+  const onOpen = mock(() => true)
   renderHook(() => useDownloadShortcut(enabled, onOpen, () => frameWin, ORIGIN))
   return onOpen
 }
@@ -21,6 +21,14 @@ describe('useDownloadShortcut', () => {
     expect(ev.defaultPrevented).toBe(true)
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', metaKey: true, cancelable: true }))
     expect(onOpen).toHaveBeenCalledTimes(1)
+  })
+
+  test('when the menu cannot open (no icon on screen) the browser keeps the shortcut', () => {
+    const onOpen = mock(() => false)
+    renderHook(() => useDownloadShortcut(true, onOpen, () => frameWin, ORIGIN))
+    const ev = new KeyboardEvent('keydown', { key: 'S', metaKey: true, shiftKey: true, cancelable: true })
+    window.dispatchEvent(ev)
+    expect([onOpen.mock.calls.length, ev.defaultPrevented]).toEqual([1, false])
   })
 
   test('only OUR frame, from its own origin, can ask for it; disabled hears nothing', () => {

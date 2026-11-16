@@ -4,13 +4,13 @@ import { isDownloadShortcut } from '@/lib/download'
 // ⌘⇧S / Ctrl+Shift+S opens the Download dialog. The page lives in a cross-origin iframe, so a key
 // pressed with the page focused never reaches this window: the annotate client forwards it as
 // glance:shortcut (only the frame we embed, from its own origin, is believed).
-export function useDownloadShortcut(enabled: boolean, onOpen: () => void, frame: () => Window | null | undefined, origin: string): void {
+// `onOpen` returns whether it opened the menu; when it did nothing (the trigger is not on screen) the browser keeps its own Save-as.
+export function useDownloadShortcut(enabled: boolean, onOpen: () => boolean, frame: () => Window | null | undefined, origin: string): void {
   useEffect(() => {
     if (!enabled) return
     function onKey(e: KeyboardEvent) {
       if (!isDownloadShortcut(e)) return
-      e.preventDefault()
-      onOpen()
+      if (onOpen()) e.preventDefault()
     }
     function onMessage(e: MessageEvent) {
       const d = e.data as { type?: string; name?: string } | null

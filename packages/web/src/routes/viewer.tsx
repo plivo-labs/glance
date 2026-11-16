@@ -154,9 +154,11 @@ function Viewer() {
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const downloadingRef = useRef(false)
-  // The menu hangs off the top-bar icon; below `sm` that icon is hidden (downloads sit in the hamburger menu), so the shortcut stays quiet.
+  // The menu hangs off the top-bar icon; below `sm` that icon is hidden (downloads sit in the hamburger menu), so the shortcut stays quiet (and the browser keeps its own).
   const openDownloadMenu = useCallback(() => {
-    if (downloadIconVisible()) setDownloadMenuOpen(true)
+    if (!downloadIconVisible()) return false
+    setDownloadMenuOpen(true)
+    return true
   }, [])
   const frameWindow = useCallback(() => iframeRef.current?.contentWindow, [])
   useDownloadShortcut(!isAudio && filePath !== null, openDownloadMenu, frameWindow, contentOrigin)
