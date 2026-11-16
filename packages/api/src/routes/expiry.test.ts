@@ -121,8 +121,7 @@ describe('PATCH /api/admin/sites/:id/restore', () => {
     const expiries = { stale: iso(-HOUR), live: iso(HOUR) }
     for (const [id, expiresAt] of Object.entries(expiries)) {
       await seedSite(db, { id, spaceId: sp, ownerId: 'owner', slug: id, status: 'archived', expiresAt })
-      const res = await app.request(`/api/admin/sites/${id}/restore`, { method: 'PATCH', headers: auth('admin') }, env)
-      expect(res.status).toBe(200)
+      expect((await app.request(`/api/admin/sites/${id}/restore`, { method: 'PATCH', headers: auth('admin') }, env)).status).toBe(200)
     }
     const row = async (id: string) => (await db.select({ status: sites.status, expiresAt: sites.expiresAt }).from(sites).where(eq(sites.id, id)))[0]
     expect(await row('stale')).toEqual({ status: 'expired', expiresAt: expiries.stale })

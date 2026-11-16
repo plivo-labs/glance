@@ -141,7 +141,6 @@ describe('T1.3 denial matrix — no R2/cache work on any denial (pin)', () => {
     expectNoByteWork(s)
   })
 
-  // The hourly sweep may not have flipped the row yet: an 'active' site past its expiresAt is still 410.
   test('active site past its expiresAt, owner → 410 expired, before the sweep flips it', async () => {
     const s = setup()
     const { owner } = await privateSite(s, { expiresAt: new Date(Date.now() - 60_000).toISOString() })
