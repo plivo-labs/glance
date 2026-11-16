@@ -655,12 +655,15 @@ function Viewer() {
         onToggleRail={toggleRail}
         onToggleSidebar={() => setSidebarOpen((o) => !o)}
         onSearch={() => setCmdOpen(true)}
-        // Print rides the annotate client's command channel; audio has no document to print.
-        onPrint={
+        // Download → PDF rides the annotate client's command channel; audio has no document to
+        // print. `filePath` is non-null only once that client has posted its glance:ready, so the
+        // item stays disabled for a frame that could not answer (loading, or a non-HTML file).
+        onDownloadPdf={
           isAudio
             ? undefined
             : () => iframeRef.current?.contentWindow?.postMessage({ type: 'glance:print' }, contentOrigin)
         }
+        pdfReady={filePath !== null}
         viewTheme={viewTheme}
         onViewTheme={isAudio ? undefined : onViewTheme}
       />
@@ -702,7 +705,7 @@ function Viewer() {
                 // links (other origins) to target=_blank; these two flags let that click open a REAL
                 // new tab that isn't itself sandboxed, so the destination site loads normally.
                 // allow-modals: window.print() counts as a modal, and Chromium blocks it in a
-                // sandboxed frame without this flag — required by the Print / Save as PDF action
+                // sandboxed frame without this flag — required by the Download → PDF action
                 // (the annotate client's glance:print handler). Also un-blocks alert()/confirm()
                 // for hosted pages, which matches how interactive artifacts behave elsewhere.
                 sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms allow-top-navigation-by-user-activation allow-modals"
