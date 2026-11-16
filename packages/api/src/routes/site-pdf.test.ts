@@ -70,6 +70,11 @@ describe('GET /api/sites/:space/:site/pdf', () => {
     expect((await get('', 'owner', 'report', { ...cookie, 'Sec-Fetch-Site': 'same-origin' })).status).toBe(200)
   })
 
+  test('the cross-site rule does not turn the no-renderer 501 into a 403', async () => {
+    const { get } = await setup({ PDF_RENDER: undefined })
+    expect((await get('', 'owner', 'report', { Cookie: '__Host-glance_session=x' })).status).toBe(501)
+  })
+
   test('a bad option or path is a 400 before any render', async () => {
     const { get, calls } = await setup()
     for (const q of ['?scheme=sepia', '?path=../x.html', '?path=logo.png', '?theme=https://evil.example.com/x.css']) {

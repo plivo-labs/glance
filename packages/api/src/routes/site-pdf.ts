@@ -23,13 +23,6 @@ function pickRenderer(env: AppEnv['Bindings']): Renderer | null {
   return async (req) => (await import('../lib/pdf-render')).renderPdf(binding, req)
 }
 
-// Every render is billed browser time, and a plain GET rides the session cookie: a link on another
-// site must not be able to start one. Same rule as the other cookie gates (isSameOrigin); a bearer
-// client (the CLI) carries no cookie and is not affected.
-sitePdf.use('*', async (c, next) => {
-  if (cookieAuthed(c) && !isSameOrigin(c)) return c.json({ error: 'csrf' }, 403)
-  await next()
-})
 sitePdf.use('*', requireAuth)
 
 sitePdf.get('/:space/:site/pdf', async (c) => {
@@ -47,6 +40,11 @@ sitePdf.get('/:space/:site/pdf', async (c) => {
 
   const render = pickRenderer(c.env)
   if (!render) return c.json({ error: 'pdf export is not enabled on this deployment' }, 501)
+  // Every render is billed browser time, and a plain GET rides the session cookie: a link on another
+  // site must not be able to start one. Same rule as the other cookie gates (isSameOrigin); a bearer
+  // client (the CLI) carries no cookie and is not affected. Checked here, not as route middleware,
+  // so it covers only this handler and a deployment with no renderer still answers 501 (print fallback).
+  if (cookieAuthed(c) && !isSameOrigin(c)) return c.json({ error: 'csrf' }, 403)
   if (c.env.PDF_LIMITER) {
     const { success } = await c.env.PDF_LIMITER.limit({ key: user.id })
     if (!success) return c.json({ error: 'rate limited' }, 429)
@@ -64,8 +62,9 @@ sitePdf.get('/:space/:site/pdf', async (c) => {
       title: site.title?.trim() || siteSlug,
       linkRewrite: { from: tokenRoot, to: `${c.env.APP_URL}/` },
     })
-    // Fail closed: the rewrite and the title fallback should leave the token nowhere, and this is
-    // what makes that a guarantee. The viewer falls back to the browser's print dialog.
+    // Fail closed, as a backstop to the link rewrite and the title fallback. It reads the PDF's link
+    // and metadata strings (what the rewrite is for); text a page prints on its own is not scanned.
+    // The viewer falls back to the browser's print dialog.
     if (containsToken(pdf, token)) {
       console.error('sitePdf: the render still carried the content token, refusing it', { space, site: siteSlug })
       return c.json({ error: 'pdf render failed' }, 502)
