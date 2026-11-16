@@ -93,7 +93,7 @@ export function titleScript(title: string): string {
 }
 
 /** The content token out of a message that may quote a content URL (a failed navigation does). */
-export const redactToken = (message: string): string => message.replace(/\/_t\/[^/\s]+\//g, '/_t/<redacted>/')
+export const redactToken = (message: string): string => message.replace(/\/_t\/[^/\s?#]+/g, '/_t/<redacted>')
 
 const startsWith = (bytes: Uint8Array, at: number, needle: number[]): boolean => needle.every((b, j) => bytes[at + j] === b)
 

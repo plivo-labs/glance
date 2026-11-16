@@ -96,6 +96,7 @@ describe('titleScript', () => {
 describe('redactToken / containsToken', () => {
   test('a quoted content URL loses its token, and a message without one is untouched', () => {
     expect(redactToken('net::ERR_ABORTED at https://c.example.com/_t/AAA.bbb_CC-d/docs/site/a.html')).toBe('net::ERR_ABORTED at https://c.example.com/_t/<redacted>/docs/site/a.html')
+    expect(redactToken('goto https://c.example.com/_t/AAA.bbb?x=1 failed')).toBe('goto https://c.example.com/_t/<redacted>?x=1 failed')
     expect(redactToken('browser down')).toBe('browser down')
   })
 

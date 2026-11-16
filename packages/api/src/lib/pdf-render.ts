@@ -7,7 +7,7 @@ const NAVIGATION_TIMEOUT_MS = 20_000
 // Late fetches get this long to land. A dashboard that polls never goes quiet, so it is a cap, not a wait.
 const IDLE_WAIT_MS = 5_000
 const MAX_SCROLL_STEPS = 60
-// The whole render, from launch to bytes. Only the navigation and the idle wait have limits of their
+// The whole render once the browser is up (launch has its own timeout), to the bytes. Only the navigation and the idle wait have limits of their
 // own; a page that hangs the main thread would otherwise hold a billed browser for minutes.
 const RENDER_DEADLINE_MS = 30_000
 
