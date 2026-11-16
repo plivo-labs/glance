@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { containsToken, parsePdfQuery, pdfDisposition, pdfPagePath, pdfPlan, type PdfRenderRequest, redactToken } from '../lib/pdf'
+import { containsToken, PdfPageNotFound, parsePdfQuery, pdfDisposition, pdfPagePath, pdfPlan, type PdfRenderRequest, redactToken } from '../lib/pdf'
 import { fetchAccessFacts, siteAccessFromFacts } from '../lib/site-access'
 import { signToken } from '../lib/token'
 import { requireAuth } from '../middleware/auth'
@@ -71,6 +71,8 @@ sitePdf.get('/:space/:site/pdf', async (c) => {
       },
     })
   } catch (err) {
+    // A path that passed validation but is not a file in the site: say so, not "render failed".
+    if (err instanceof PdfPageNotFound) return c.json({ error: 'page not found' }, 404)
     console.error('sitePdf: render failed', { space, site: siteSlug, error: redactToken(err instanceof Error ? err.message : String(err)) })
     return c.json({ error: 'pdf render failed' }, 502)
   }

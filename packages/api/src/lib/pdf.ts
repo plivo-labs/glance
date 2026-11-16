@@ -18,6 +18,9 @@ export type PdfPlan = {
   scheme: PdfScheme
 }
 
+/** The content worker has no such file: the caller asked for a page that is not in the site. */
+export class PdfPageNotFound extends Error {}
+
 /**
  * `linkRewrite.from` is the tokened content origin (`<content>/_t/<token>/`); every link under it,
  * in this site or a sibling one, is re-pointed at `to` (`<app>/`) before printing, because a PDF

@@ -1,7 +1,7 @@
 // Server-side PDF through Cloudflare Browser Rendering (the BROWSER binding). Kept out of pdf.ts so
 // tests never load puppeteer: the route imports this lazily, and tests inject PDF_RENDER instead.
 import puppeteer from '@cloudflare/puppeteer'
-import { type PdfRenderRequest, rewriteLinksScript, titleScript } from './pdf'
+import { PdfPageNotFound, type PdfRenderRequest, rewriteLinksScript, titleScript } from './pdf'
 
 const NAVIGATION_TIMEOUT_MS = 20_000
 // Late fetches get this long to land. A dashboard that polls never goes quiet, so it is a cap, not a wait.
@@ -50,6 +50,7 @@ export async function renderPdf(binding: Fetcher, req: PdfRenderRequest): Promis
     await page.emulateMediaType('screen')
     await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: plan.scheme }])
     const res = await page.goto(req.url, { waitUntil: 'load', timeout: NAVIGATION_TIMEOUT_MS })
+    if (res?.status() === 404) throw new PdfPageNotFound('pdf render: page not found')
     if (!res?.ok()) throw new Error(`pdf render: page answered ${res?.status() ?? 'nothing'}`)
     await page.waitForNetworkIdle({ idleTime: 500, timeout: IDLE_WAIT_MS }).catch(() => {})
     if (req.themeHref) await page.evaluate(applyTheme(req.themeHref))

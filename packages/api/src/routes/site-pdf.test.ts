@@ -1,6 +1,6 @@
 import { describe, expect, spyOn, test } from 'bun:test'
+import { PdfPageNotFound, type PdfRenderRequest } from '../lib/pdf'
 import { verifyToken } from '../lib/token'
-import type { PdfRenderRequest } from '../lib/pdf'
 import { seedMember, seedSite, seedSpace } from '../test/harness'
 import { makeRouteApp, mintUser } from '../test/route-fixtures'
 import type { AppEnv } from '../types'
@@ -78,6 +78,11 @@ describe('GET /api/sites/:space/:site/pdf', () => {
 
     const broken = await setup({ PDF_RENDER: async () => Promise.reject(new Error('browser down')) })
     expect((await broken.get()).status).toBe(502)
+  })
+
+  test('a page that is not in the site is a 404, not a render failure', async () => {
+    const missing = await setup({ PDF_RENDER: async () => Promise.reject(new PdfPageNotFound('gone')) })
+    expect((await missing.get('?path=nope.html')).status).toBe(404)
   })
 
   test('a failed render never logs the token, and a PDF that still carries it is refused', async () => {
