@@ -9,7 +9,7 @@ import { upload } from './upload'
 
 // `expires` mirrors theme's create/replace split: CREATE applies it, REPLACE touches expiresAt only
 // when explicitly sent, and an owner's redeploy is how an EXPIRED site comes back. PATCH sets and
-// clears it too; an admin-archived site is never revived by either.
+// clears it too; an admin-archived site is never revived by either, and an admin restore never revives an expired one.
 
 const HOUR = 3_600_000
 const iso = (ms: number) => new Date(Date.now() + ms).toISOString()
@@ -109,5 +109,23 @@ describe('PATCH /api/sites expires', () => {
     const archived = await setupPatch('archived', null)
     await archived.patch({ expires: '1d' })
     expect((await archived.row())?.s).toBe('archived')
+  })
+})
+
+describe('PATCH /api/admin/sites/:id/restore', () => {
+  test('lifts the archive only: a passed expiry comes back as expired and is kept, a live one as active', async () => {
+    const { app, env, db, kv } = makeRouteApp()
+    await mintUser(db, kv, 'admin', { role: 'superadmin' })
+    await mintUser(db, kv, 'owner')
+    const sp = await seedSpace(db, { createdBy: 'owner', slug: 'docs' })
+    const expiries = { stale: iso(-HOUR), live: iso(HOUR) }
+    for (const [id, expiresAt] of Object.entries(expiries)) {
+      await seedSite(db, { id, spaceId: sp, ownerId: 'owner', slug: id, status: 'archived', expiresAt })
+      const res = await app.request(`/api/admin/sites/${id}/restore`, { method: 'PATCH', headers: auth('admin') }, env)
+      expect(res.status).toBe(200)
+    }
+    const row = async (id: string) => (await db.select({ status: sites.status, expiresAt: sites.expiresAt }).from(sites).where(eq(sites.id, id)))[0]
+    expect(await row('stale')).toEqual({ status: 'expired', expiresAt: expiries.stale })
+    expect(await row('live')).toEqual({ status: 'active', expiresAt: expiries.live })
   })
 })

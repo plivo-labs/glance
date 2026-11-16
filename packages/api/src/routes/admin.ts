@@ -69,15 +69,16 @@ admin.patch('/sites/:id/archive', async (c) => {
   return c.json({ ok: true })
 })
 
-// PATCH /api/admin/sites/:id/restore — reactivate an archived site. 404 if missing.
+// PATCH /api/admin/sites/:id/restore — lift an archive. 404 if missing. Only the admin's hold is
+// lifted: a site whose owner-set expiry has passed comes back as 'expired' (the owner's call to
+// revive), never 'active', and its expiresAt is left as the owner set it.
 admin.patch('/sites/:id/restore', async (c) => {
   const db = c.get('db')
   const id = c.req.param('id')
   const existing = await db.select({ id: sites.id, expiresAt: sites.expiresAt }).from(sites).where(eq(sites.id, id)).limit(1)
   if (existing.length === 0) return c.json({ error: 'site not found' }, 404)
-  // A past expiry would just expire the site again at the next sweep, so restoring drops it.
-  const expiresAt = isPastExpiry(existing[0]?.expiresAt) ? null : (existing[0]?.expiresAt ?? null)
-  await db.update(sites).set({ status: 'active', expiresAt }).where(eq(sites.id, id))
+  const status = isPastExpiry(existing[0]?.expiresAt) ? 'expired' : 'active'
+  await db.update(sites).set({ status }).where(eq(sites.id, id))
   return c.json({ ok: true })
 })
 
