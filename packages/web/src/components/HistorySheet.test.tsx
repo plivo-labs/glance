@@ -34,15 +34,16 @@ describe('HistorySheet', () => {
     expect(await screen.findByText('Version 2')).toBeDefined()
     expect(document.body.textContent).toContain('by Ada')
     expect(document.body.textContent).toContain('3 files · 2.0 KB')
+    // The relative time is a hint; the exact moment is one hover away.
+    expect(document.querySelector('time')?.getAttribute('title')).toBe(new Date(V2.createdAt).toLocaleString())
   })
 
   test('Restore asks first, then POSTs the restore and reports success', async () => {
     const calls = stubFetch([V2])
     const onRestored = renderSheet()
-    fireEvent.click(await screen.findByRole('button', { name: 'Restore' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Restore version 2' }))
     expect(calls.some((c) => c.method === 'POST')).toBe(false) // the dialog guards the POST
-    // The dialog's confirm button shares the row button's label; it is the last one in the DOM.
-    fireEvent.click(screen.getAllByRole('button', { name: 'Restore' }).at(-1) as HTMLElement)
+    fireEvent.click(screen.getByRole('button', { name: 'Restore' }))
     await waitFor(() => expect(onRestored).toHaveBeenCalledTimes(1))
     expect(calls.find((c) => c.method === 'POST')?.url).toBe('/api/sites/sp/site/versions/v2/restore')
   })

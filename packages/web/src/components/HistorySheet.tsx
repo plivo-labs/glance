@@ -81,7 +81,11 @@ export function HistorySheet({ spaceSlug, siteSlug, open, onOpenChange, onRestor
                   <div className="min-w-0 flex-1">
                     <div className="font-medium text-sm">Version {v.version}</div>
                     <div className="truncate text-muted-foreground text-xs">
-                      Replaced {timeAgo(v.createdAt)} by {versionAuthor(v)}
+                      Replaced{' '}
+                      <time dateTime={v.createdAt} title={new Date(v.createdAt).toLocaleString()}>
+                        {timeAgo(v.createdAt)}
+                      </time>{' '}
+                      by {versionAuthor(v)}
                     </div>
                     <div className="text-muted-foreground text-xs">
                       {v.fileCount} {v.fileCount === 1 ? 'file' : 'files'} · {formatBytes(v.totalSize)}
@@ -93,7 +97,12 @@ export function HistorySheet({ spaceSlug, siteSlug, open, onOpenChange, onRestor
                     confirmLabel="Restore"
                     onConfirm={() => restore(v)}
                   >
-                    <Button variant="outline" size="sm" data-testid="history-version-restore-btn">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      aria-label={`Restore version ${v.version}`}
+                      data-testid="history-version-restore-btn"
+                    >
                       Restore
                     </Button>
                   </ConfirmDialog>
