@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test'
-import { eq, sql } from 'drizzle-orm'
+import { eq, inArray, sql } from 'drizzle-orm'
 import { files, sites } from '../db/schema'
 import worker from '../index'
 import { makeDb, makeKv, makeR2, seedFile, seedSite, seedSpace, seedUser } from '../test/harness'
-import { BACKFILL_MAX_FILES, BACKFILL_SITES_PER_TICK, backfillSiteSearch, siteText } from './site-search'
+import { BACKFILL_MAX_ATTEMPTS, BACKFILL_MAX_FILES, BACKFILL_SITES_PER_TICK, backfillSiteSearch, siteText } from './site-search'
 
 async function world() {
   const db = makeDb()
@@ -20,6 +20,7 @@ async function world() {
   const page = (text: string) => ({ 'index.html': `<p>${text}</p>` })
   const tick = () => backfillSiteSearch(db, r2 as unknown as R2Bucket)
   const row = async (id: string) => (await db.all<{ body: string }>(sql`SELECT body FROM site_text WHERE siteId = ${id}`))[0]?.body ?? null
+  const tries = async (id: string) => (await db.select({ n: sites.searchAttempts }).from(sites).where(eq(sites.id, id)))[0]?.n
   const stamp = async (id: string) => (await db.select({ at: sites.searchIndexedAt }).from(sites).where(eq(sites.id, id)))[0]?.at ?? null
   // `onRead` runs before every R2 read, as a concurrent writer would.
   const raceRead = (onRead: () => void) => {
@@ -29,7 +30,7 @@ async function world() {
       return realGet(key, opts)
     }) as typeof r2.get
   }
-  return { db, r2, site, page, tick, row, stamp, raceRead }
+  return { db, r2, site, page, tick, row, stamp, tries, raceRead }
 }
 
 describe('backfillSiteSearch', () => {
@@ -78,15 +79,36 @@ describe('backfillSiteSearch', () => {
     expect([await w.row(id), await w.stamp(id)]).toEqual([null, null]) // still queued for the swap's batch or the next tick
   })
 
-  test('a site whose read fails stays unindexed for the next tick and does not block the others', async () => {
+  test('a failure is not charged to content a replace swapped in while the tick was reading', async () => {
     const w = await world()
-    const bad = await w.site(w.page('bad'))
-    const good = await w.site(w.page('good'))
-    const badKey = (await w.db.select({ k: files.storageKey }).from(files).where(eq(files.siteId, bad)))[0]?.k
+    const id = await w.site(w.page('x'))
+    w.raceRead(() => {
+      void w.db.update(sites).set({ contentVersion: 1 }).where(eq(sites.id, id)).run()
+      throw new Error('r2 down')
+    })
+    await w.tick()
+    expect(await w.tries(id)).toBe(0)
+  })
+
+  test('sites that keep failing stop blocking the queue: fewest attempts first, skipped after the cap', async () => {
+    const w = await world()
+    const good = await w.site(w.page('good')) // oldest, so behind every failing site until the order changes
+    const bad = []
+    for (let i = 0; i < BACKFILL_SITES_PER_TICK; i++) bad.push(await w.site(w.page(`bad ${i}`)))
+    const badKeys = (await w.db.select({ k: files.storageKey }).from(files).where(inArray(files.siteId, bad))).map((r) => r.k)
+    let badReads = 0
     const realGet = w.r2.get
-    w.r2.get = ((key: string, opts?: never) => (key === badKey ? Promise.reject(new Error('r2 down')) : realGet(key, opts))) as typeof w.r2.get
-    expect(await w.tick()).toBe(1)
-    expect([await w.row(good), await w.stamp(bad)]).toEqual(['good', null])
+    w.r2.get = ((key: string, opts?: never) => {
+      if (!badKeys.includes(key)) return realGet(key, opts)
+      badReads++
+      return Promise.reject(new Error('r2 down'))
+    }) as typeof w.r2.get
+    await w.tick()
+    expect(await w.row(good)).toBeNull() // the four newest took tick 1
+    await w.tick()
+    expect(await w.row(good)).toBe('good') // tick 2 starts with the site that has no failures
+    for (let i = 0; i < BACKFILL_MAX_ATTEMPTS * 2; i++) await w.tick()
+    expect(badReads).toBe(bad.length * BACKFILL_MAX_ATTEMPTS) // then each failing site is left alone
   })
 })
 

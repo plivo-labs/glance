@@ -31,6 +31,8 @@ const matches = async (ctx: Ctx, word: string) =>
   (await ctx.db.all<{ siteId: string }>(sql`SELECT t.siteId AS siteId FROM site_search s JOIN site_text t ON t.id = s.rowid WHERE site_search MATCH ${`"${word}"`}`)).map((r) => r.siteId)
 const stamp = async (ctx: Ctx, siteId: string) =>
   (await ctx.db.select({ at: sites.searchIndexedAt }).from(sites).where(eq(sites.id, siteId)))[0]?.at ?? null
+const attempts = async (ctx: Ctx, siteId: string) =>
+  (await ctx.db.select({ n: sites.searchAttempts }).from(sites).where(eq(sites.id, siteId)))[0]?.n
 const idOf = async (ctx: Ctx, slug: string) => (await ctx.db.select({ id: sites.id }).from(sites).where(eq(sites.slug, slug)))[0]?.id as string
 
 describe('search index follows the files', () => {
@@ -41,8 +43,10 @@ describe('search index follows the files', () => {
     expect(await body(ctx, id)).toBe('Roadmap\n# Launch plan')
     expect(await stamp(ctx, id)).not.toBeNull()
     expect(await matches(ctx, 'roadmap')).toEqual([id])
+    await ctx.db.update(sites).set({ searchAttempts: 3 }).where(eq(sites.id, id))
     await put(ctx, 'owner', 'doc', { 'index.html': '<p>bravo</p>' }, { replace: true })
     expect(await body(ctx, id)).toBe('bravo')
+    expect(await attempts(ctx, id)).toBe(0) // new content gets a fresh set of backfill tries
     expect([await matches(ctx, 'bravo'), await matches(ctx, 'roadmap')]).toEqual([[id], []]) // one hit, old words gone
     await put(ctx, 'owner', 'doc', { 'a.css': 'body{}' }, { replace: true })
     expect([await body(ctx, id), await matches(ctx, 'bravo')]).toEqual([null, []])
@@ -56,8 +60,9 @@ describe('search index follows the files', () => {
     await send(ctx, 'owner', 'PUT', '/api/sites/acme/doc/shares', { users: [{ id: 'ed', role: 'editor' }] })
     expect((await put(ctx, 'ed', 'doc', { 'index.html': '<p>stale</p>' }, { replace: true, expectedVersion: 9 })).status).toBe(409)
     expect(await body(ctx, id)).toBe('alpha')
+    await ctx.db.update(sites).set({ searchAttempts: 3 }).where(eq(sites.id, id))
     expect((await put(ctx, 'ed', 'doc', { 'index.html': '<p>charlie</p>' }, { replace: true, expectedVersion: 0 })).status).toBe(200)
-    expect([await body(ctx, id), await matches(ctx, 'charlie'), await matches(ctx, 'alpha')]).toEqual(['charlie', [id], []])
+    expect([await body(ctx, id), await matches(ctx, 'charlie'), await matches(ctx, 'alpha'), await attempts(ctx, id)]).toEqual(['charlie', [id], [], 0])
   })
 
   test('fork copies the source text and stamp; a fork of an unindexed source stays unindexed', async () => {

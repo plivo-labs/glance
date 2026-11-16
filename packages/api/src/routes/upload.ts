@@ -321,7 +321,7 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
       await db.batch([
         db.delete(files).where(eq(files.siteId, siteId)),
         ...insertRows,
-        db.update(sites).set({ description, searchIndexedAt }).where(eq(sites.id, siteId)),
+        db.update(sites).set({ description, searchIndexedAt, searchAttempts: 0 }).where(eq(sites.id, siteId)),
         ...searchRowStmts(db, siteId, searchText),
       ])
     } else {
@@ -346,6 +346,7 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
             // must clear the stale blurb rather than keep unfurling the previous content's.
             description,
             searchIndexedAt,
+            searchAttempts: 0,
           })
           .where(eq(sites.id, siteId)),
         ...searchRowStmts(db, siteId, searchText),

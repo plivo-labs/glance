@@ -39,6 +39,12 @@ END;
 -- the backfill and "indexed, but nothing to index" stays distinct from "not looked at".
 ALTER TABLE `sites` ADD COLUMN `searchIndexedAt` text;
 --> statement-breakpoint
--- The backfill's `WHERE searchIndexedAt IS NULL ORDER BY updatedAt DESC LIMIT n`. Partial, so once
--- the backfill has caught up the index holds (almost) nothing.
-CREATE INDEX `sites_search_unindexed` ON `sites` (`updatedAt`) WHERE `searchIndexedAt` IS NULL;
+-- Failed backfill tries for the current content (upload resets it). The backfill queue is fewest
+-- attempts first, then newest, and skips a site at BACKFILL_MAX_ATTEMPTS, so a site that always
+-- fails cannot hold the head of the queue and starve the older ones.
+ALTER TABLE `sites` ADD COLUMN `searchAttempts` integer DEFAULT 0 NOT NULL;
+--> statement-breakpoint
+-- The backfill's `WHERE searchIndexedAt IS NULL AND searchAttempts < n ORDER BY searchAttempts,
+-- updatedAt DESC LIMIT n`. Partial, so once the backfill has caught up the index holds (almost)
+-- nothing; the range on the leading column and the DESC key serve the filter and the order.
+CREATE INDEX `sites_search_unindexed` ON `sites` (`searchAttempts`, `updatedAt` DESC) WHERE `searchIndexedAt` IS NULL;
