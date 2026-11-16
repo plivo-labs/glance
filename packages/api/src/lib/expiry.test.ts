@@ -15,11 +15,12 @@ describe('parseExpiry', () => {
     expect(parseExpiry('2W', NOW)).toEqual({ kind: 'set', at: at(14 * 24 * HOUR) })
     expect(parseExpiry('2026-12-31', NOW)).toEqual({ kind: 'set', at: '2026-12-31T23:59:59.999Z' })
     expect(parseExpiry('2026-12-31T10:00:00Z', NOW)).toEqual({ kind: 'set', at: '2026-12-31T10:00:00.000Z' })
+    expect(parseExpiry('2026-12-31T23:30:00-05:00', NOW)).toEqual({ kind: 'set', at: '2027-01-01T04:30:00.000Z' })
   })
 
   test('only none / never / null clear; empty, garbage, the past, under a minute, over five years, non-strings are refused', () => {
     for (const v of ['none', 'NEVER', null]) expect(parseExpiry(v, NOW)).toEqual({ kind: 'clear' })
-    for (const v of ['', '  ', 'soon', '2026-05-31', '30s', '2040-01-01', 7]) expect(parseExpiry(v, NOW).kind).toBe('invalid')
+    for (const v of ['', '  ', 'soon', '2026-05-31', '30s', '2040-01-01', 7, '2027-02-30', '2027-02-30T10:00:00Z']) expect(parseExpiry(v, NOW).kind).toBe('invalid')
   })
 })
 

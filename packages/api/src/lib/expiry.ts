@@ -26,10 +26,9 @@ export function parseExpiry(raw: unknown, now: Date = new Date()): ExpiryInput {
   const rel = /^(\d{1,4})([mhdw])$/.exec(v)
   if (rel) {
     at = now.getTime() + Number(rel[1]) * UNIT_MS[rel[2] as keyof typeof UNIT_MS]
-  } else if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
-    at = Date.parse(`${v}T23:59:59.999Z`)
-  } else if (/^\d{4}-\d{2}-\d{2}t/.test(v)) {
-    at = Date.parse(v)
+  } else if (/^\d{4}-\d{2}-\d{2}(t|$)/.test(v)) {
+    if (!isRealDay(v)) return { kind: 'invalid', reason: 'expires is not a valid date' }
+    at = Date.parse(v.length === 10 ? `${v}T23:59:59.999Z` : v)
   } else {
     return { kind: 'invalid', reason: 'expires must look like 30m, 12h, 7d, 2w, 2026-12-31, an ISO timestamp, or none' }
   }
@@ -37,6 +36,13 @@ export function parseExpiry(raw: unknown, now: Date = new Date()): ExpiryInput {
   if (at < now.getTime() + MINUTE_MS) return { kind: 'invalid', reason: 'expires must be at least a minute in the future' }
   if (at > now.getTime() + MAX_EXPIRY_MS) return { kind: 'invalid', reason: 'expires must be within five years' }
   return { kind: 'set', at: new Date(at).toISOString() }
+}
+
+/** `Date.parse` rolls an impossible day over (2027-02-30 becomes 03-02), so check the calendar day itself. */
+function isRealDay(ymd: string): boolean {
+  const [y, m, d] = [Number(ymd.slice(0, 4)), Number(ymd.slice(5, 7)), Number(ymd.slice(8, 10))]
+  const day = new Date(Date.UTC(y, m - 1, d))
+  return day.getUTCMonth() === m - 1 && day.getUTCDate() === d
 }
 
 /** True when an `expiresAt` instant has passed. ISO-8601 UTC strings compare correctly as text. */
