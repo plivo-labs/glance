@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import type { SiteInsights } from '@/lib/insights'
 import { InsightsSheet } from './InsightsSheet'
 
@@ -47,6 +47,17 @@ describe('InsightsSheet', () => {
     renderSheet()
     expect(await screen.findByText('No views in the last 30 days.')).toBeTruthy()
     expect(screen.queryByRole('img', { name: /^Views per day/ })).toBeNull()
+  })
+
+  test('a failed load says so, and Try again fetches again', async () => {
+    stubFetch({ error: 'boom' }, 500)
+    renderSheet()
+    expect(await screen.findByText('Could not load insights.')).toBeTruthy()
+    const urls = stubFetch({ days: 30, totalViews: 5, uniqueViewers: 2, series, pages: [{ path: 'index.html', views: 5 }] })
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(screen.getByText('Loading insights…')).toBeTruthy()
+    expect(await screen.findByText('Unique viewers')).toBeTruthy()
+    expect(urls).toEqual(['/api/sites/acme/doc/stats'])
   })
 
   test('the chart label states the total and the busiest day, since the per-day numbers are hover-only', async () => {
