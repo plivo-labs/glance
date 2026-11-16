@@ -43,6 +43,14 @@ export function isPastExpiry(expiresAt: string | null | undefined, now: Date = n
   return !!expiresAt && expiresAt <= now.toISOString()
 }
 
+/**
+ * True for an 'expired' site, and for an 'active' one past its expiresAt that the hourly sweep has
+ * not flipped yet. 'archived' never counts: that is an admin's call, not the owner's clock.
+ */
+export function isLapsed(site: { status: string; expiresAt?: string | null }, now: Date = new Date()): boolean {
+  return site.status === 'expired' || (site.status === 'active' && isPastExpiry(site.expiresAt, now))
+}
+
 /** Hourly sweep: flips every active site whose expiresAt has passed to 'expired'. Returns the count. */
 export async function expireDueSites(db: DrizzleD1Database, now: Date = new Date()): Promise<number> {
   const flipped = await db

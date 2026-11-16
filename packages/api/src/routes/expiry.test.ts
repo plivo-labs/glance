@@ -61,13 +61,15 @@ describe('upload expires field', () => {
     expect((await row('site-a'))?.expiresAt).toBeNull()
   })
 
-  test('an owner redeploy revives an EXPIRED site (stale expiry dropped, or the new one kept); archived stays archived', async () => {
+  test('an owner redeploy revives a LAPSED site (stale expiry dropped, or the new one kept), even one the sweep has not flipped; archived stays archived', async () => {
     const { db, sp, owner, post, row } = await setupUpload()
-    for (const [slug, status] of [['gone', 'expired'], ['back', 'expired'], ['mod', 'archived']] as const) {
-      await seedSite(db, { id: slug, spaceId: sp, ownerId: owner, slug, status, expiresAt: status === 'expired' ? iso(-HOUR) : null })
+    for (const [slug, status] of [['gone', 'expired'], ['late', 'active'], ['back', 'expired'], ['mod', 'archived']] as const) {
+      await seedSite(db, { id: slug, spaceId: sp, ownerId: owner, slug, status, expiresAt: iso(-HOUR) })
     }
     await post('gone', { replace: true })
     expect(await row('gone')).toEqual({ status: 'active', expiresAt: null })
+    await post('late', { replace: true })
+    expect(await row('late')).toEqual({ status: 'active', expiresAt: null })
     await post('back', { replace: true, expires: '7d' })
     expect(Date.parse((await row('back'))?.expiresAt as string)).toBeGreaterThan(Date.now())
     await post('mod', { replace: true })

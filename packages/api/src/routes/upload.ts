@@ -5,7 +5,7 @@ import { files, sites, spaceMembers, spaces, siteUserShares } from '../db/schema
 import { batchAll } from '../lib/d1'
 import { canReplace } from '../lib/access'
 import { fireAndForget } from '../lib/events'
-import { parseExpiry } from '../lib/expiry'
+import { isLapsed, parseExpiry } from '../lib/expiry'
 import { capTitle, extractHtmlMeta, NO_META, pickEntry } from '../lib/extract'
 import { isValidSlug } from '../lib/slug'
 import { deleteKeys, MAX_FILE_BYTES, sanitizePath } from '../lib/storage'
@@ -170,6 +170,8 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
 
   const replace = c.req.query('replace') === 'true'
   const isCreate = !existing
+  // Past its expiry, whether or not the hourly sweep has flipped the row yet.
+  const lapsed = !!existing && isLapsed(existing)
   let siteId: string
   let oldKeys: string[] = []
   // True when the actor is exercising an EDITOR grant (not the owner). Editors are content-only:
@@ -341,11 +343,12 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
             ...(hasVisibility && isVisibility(visibility) ? { visibility } : {}),
             // Explicit-only, like visibility: an owner redeploy without --theme keeps the current one.
             ...(hasTheme ? { theme } : {}),
-            // Same explicit-only rule for the expiry. A redeploy is also how an owner revives an
-            // EXPIRED site: with no new expiry the stale one is cleared (leaving a past instant
-            // would expire it again at the next sweep). An admin-'archived' site is left archived.
-            ...(hasExpires ? { expiresAt } : existing?.status === 'expired' ? { expiresAt: null } : {}),
-            ...(existing?.status === 'expired' ? { status: 'active' as const } : {}),
+            // Same explicit-only rule for the expiry. A redeploy is also how an owner revives a LAPSED
+            // site (flipped to 'expired', or still 'active' inside the sweep's lag): with no new
+            // expiry the stale one is cleared (leaving a past instant would expire it again at the
+            // next sweep). An admin-'archived' site is left archived.
+            ...(hasExpires ? { expiresAt } : lapsed ? { expiresAt: null } : {}),
+            ...(lapsed ? { status: 'active' as const } : {}),
             ...(derivedTitle !== null ? { title: sql`coalesce(${sites.title}, ${derivedTitle})` } : {}),
             // Unconditional (not COALESCE'd): a redeploy whose entry dropped its description meta
             // must clear the stale blurb rather than keep unfurling the previous content's.
@@ -372,7 +375,7 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
     fileCount: newRows.length,
     contentVersion: newVersion,
     // The expiry now in force: this upload's own on create/explicit, else what the site already had
-    // (null once a redeploy revived an expired site).
-    expiresAt: isCreate || hasExpires ? expiresAt : existing?.status === 'expired' ? null : (existing?.expiresAt ?? null),
+    // (null once a redeploy revived a lapsed site).
+    expiresAt: isCreate || hasExpires ? expiresAt : lapsed ? null : (existing?.expiresAt ?? null),
   })
 })
