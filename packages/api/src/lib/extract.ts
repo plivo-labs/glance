@@ -45,8 +45,8 @@ export function isSupportedEntry(entry: EntryFile): boolean {
 }
 
 // HTMLRewriter text chunks carry RAW source text — entities are NOT decoded ('&amp;' arrives as
-// '&amp;'). Derived titles render as plain text in the app, so decode numeric references plus the
-// named entities that actually occur in titles; anything unknown is left as-is rather than guessed.
+// '&amp;'). Derived titles and extracted page text are plain text, so decode numeric references plus
+// the named entities that actually occur in them; anything unknown is left as-is rather than guessed.
 const NAMED_ENTITIES: Record<string, string> = {
   amp: '&',
   lt: '<',
@@ -177,5 +177,6 @@ export async function extractText(entry: EntryFile, body: string): Promise<Extra
     .transform(stripped)
   await transformed.text()
 
-  return extracted(chunks.join('').replace(/\s+/g, ' ').trim())
+  // Joined first: an entity can straddle two chunks.
+  return extracted(decodeEntities(chunks.join('')).replace(/\s+/g, ' ').trim())
 }

@@ -101,6 +101,12 @@ describe('extractText', () => {
     expect(result.truncated).toBeFalse()
   })
 
+  test('decodes entities, so the text is what the page shows', async () => {
+    const body = '<p>AT&amp;T &lt;b&gt; &quot;q&quot; it&#39;s&nbsp;&#x2192; &unknown;</p>'
+    const result = await extractText({ path: 'index.html', mimeType: 'text/html' }, body)
+    expect(result).toEqual({ ok: true, text: 'AT&T <b> "q" it\'s → &unknown;', truncated: false })
+  })
+
   test('caps markdown at the exact boundary without splitting surrogate pairs', async () => {
     const entry = { path: 'readme.md', mimeType: 'text/markdown' }
 
