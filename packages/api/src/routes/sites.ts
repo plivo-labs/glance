@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, or, type SQL, sql } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { type Context, Hono } from 'hono'
 import { createNotifications, usersEmailsByIds } from '../db/notifications'
@@ -567,7 +567,7 @@ sites.patch('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
     title?: string | null
     theme?: string | null
     expiresAt?: string | null
-    status?: 'active'
+    status?: SQL
   } = {}
   if (visibility !== undefined) {
     const vis = normalizeVisibility(visibility)
@@ -588,12 +588,14 @@ sites.patch('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
   }
   // Expiry (`7d`, `2026-12-31`, `none`; null clears): presentation-neutral like theme, so no
   // contentVersion/updatedAt bump. Setting or clearing it is also how an owner revives an EXPIRED
-  // site; an admin-'archived' one stays archived (that is the admin's call, not the owner's).
+  // site; an admin-'archived' one stays archived (that is the admin's call, not the owner's). The
+  // status is decided IN the UPDATE, from the row's own value: deciding it from the `site` read above
+  // would let the hourly sweep (or an admin archive) land in between and be overwritten.
   if (expires !== undefined) {
     const expiry = parseExpiry(expires)
     if (expiry.kind === 'invalid') return c.json({ error: expiry.reason }, 400)
     patch.expiresAt = expiry.kind === 'set' ? expiry.at : null
-    if (site.status === 'expired') patch.status = 'active'
+    patch.status = sql`case when ${sitesTable.status} = 'archived' then 'archived' else 'active' end`
   }
   if (Object.keys(patch).length > 0) {
     await db.update(sitesTable).set(patch).where(eq(sitesTable.id, site.id))
