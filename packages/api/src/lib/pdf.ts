@@ -19,8 +19,8 @@ export type PdfPlan = {
 }
 
 /**
- * `linkRewrite.from` is the tokened content URL of the site root the page was loaded from;
- * every link under it is re-pointed at `to` (the viewer URL) before printing, because a PDF
+ * `linkRewrite.from` is the tokened content origin (`<content>/_t/<token>/`); every link under it,
+ * in this site or a sibling one, is re-pointed at `to` (`<app>/`) before printing, because a PDF
  * keeps its links and the token is a credential.
  */
 export type PdfRenderRequest = { url: string; plan: PdfPlan; themeHref: string | null; linkRewrite: { from: string; to: string } }
@@ -41,6 +41,37 @@ export function parsePdfQuery(q: Record<string, string | undefined>): PdfOptions
 export function pdfPlan(o: PdfOptions): PdfPlan {
   const margin = '15mm'
   return { viewportWidth: 680, width: '210mm', height: '297mm', margin: { top: margin, right: margin, bottom: margin, left: margin }, scheme: o.scheme }
+}
+
+/**
+ * Browser-side script (a string: this package compiles without the DOM lib) that re-points every
+ * link under `from` at `to` before the page is printed. HTML and SVG `<a>` alike, resolved against
+ * the page the way the browser would. A jump to a target that exists in this very page stays a
+ * jump (the PDF keeps it as an internal link); anything else, a self-link included, is rewritten
+ * because Chrome writes it into the PDF as an external URI. One odd link never fails the render.
+ */
+export function rewriteLinksScript(from: string, to: string): string {
+  return `(() => {
+  const FROM = ${JSON.stringify(from)}, TO = ${JSON.stringify(to)}
+  const here = location.href.split('#')[0]
+  const base = document.baseURI
+  const target = (hash) => {
+    let id = hash.slice(1)
+    try { id = decodeURIComponent(id) } catch (e) {}
+    return id !== '' && (document.getElementById(id) !== null || document.getElementsByName(id).length > 0)
+  }
+  for (const a of document.querySelectorAll('a')) {
+    try {
+      const attr = a.hasAttribute('href') ? 'href' : 'xlink:href'
+      const raw = a.getAttribute(attr)
+      if (raw === null) continue
+      const u = new URL(raw, base)
+      if (u.href.split('#')[0] === here && target(u.hash)) continue
+      if (u.href.startsWith(FROM)) a.setAttribute(attr, TO + u.href.slice(FROM.length))
+    } catch (e) {}
+  }
+  return true
+})()`
 }
 
 const DOC_EXT = /\.(html?|md|markdown)$/i

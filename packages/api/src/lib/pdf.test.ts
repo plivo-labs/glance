@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { type PdfOptions, parsePdfQuery, pdfDisposition, pdfPagePath, pdfPlan } from './pdf'
+import { Window } from 'happy-dom'
+import { type PdfOptions, parsePdfQuery, pdfDisposition, pdfPagePath, pdfPlan, rewriteLinksScript } from './pdf'
 
 const base: PdfOptions = { scheme: 'light', themeHref: null }
 
@@ -35,5 +36,44 @@ describe('pdfPagePath / pdfDisposition', () => {
     expect(pdfDisposition('Q3: "plan"', 'slug')).toBe(`attachment; filename="Q3 plan.pdf"; filename*=UTF-8''Q3%20plan.pdf`)
     expect(pdfDisposition('R\u00e9sum\u00e9', 'slug')).toContain(`filename*=UTF-8''R%C3%A9sum%C3%A9.pdf`)
     expect(pdfDisposition(null, 'slug')).toContain('filename="slug.pdf"')
+  })
+})
+
+describe('rewriteLinksScript', () => {
+  const PAGE = 'https://content.example.com/_t/SECRET.TOKEN/docs/site/guide/page.html'
+  const FROM = 'https://content.example.com/_t/SECRET.TOKEN/'
+  const TO = 'https://app.example.com/'
+
+  /** Runs the script in a page at PAGE and returns each link's href attribute afterwards. */
+  function links(html: string): string[] {
+    const win = new Window({ url: PAGE })
+    win.document.body.innerHTML = html
+    // happy-dom has no eval: hand the script the page's own document and location.
+    new Function('document', 'location', `return ${rewriteLinksScript(FROM, TO)}`)(win.document, win.location)
+    return Array.from(win.document.querySelectorAll('a'), (a) => a.getAttribute('href') ?? a.getAttribute('xlink:href') ?? '')
+  }
+
+  test('a link to this very page, or to a sibling site, leaves the token behind', () => {
+    expect(links('<a href="page.html">self</a><a href="">empty</a><a href="../../other/x.html">sibling</a><a href="/_t/SECRET.TOKEN/docs/site/y.html">abs</a>')).toEqual([
+      'https://app.example.com/docs/site/guide/page.html',
+      'https://app.example.com/docs/site/guide/page.html',
+      'https://app.example.com/docs/other/x.html',
+      'https://app.example.com/docs/site/y.html',
+    ])
+  })
+
+  test('a jump to a target that exists stays a jump; a missing target is rewritten like any link', () => {
+    expect(links('<h2 id="intro">x</h2><a href="#intro">a</a><a href="page.html#intro">b</a><a href="#gone">c</a><a href="#">d</a>')).toEqual([
+      '#intro',
+      'page.html#intro',
+      'https://app.example.com/docs/site/guide/page.html#gone',
+      'https://app.example.com/docs/site/guide/page.html#',
+    ])
+  })
+
+  test('an SVG link is rewritten too, and links that are not ours are left alone', () => {
+    expect(
+      links('<svg><a xlink:href="../../other/d.html"><text>t</text></a></svg><a href="https://example.org/p">ext</a><a href="mailto:a@b.co">m</a><a name="anchor">n</a>'),
+    ).toEqual(['https://app.example.com/docs/other/d.html', 'https://example.org/p', 'mailto:a@b.co', ''])
   })
 })

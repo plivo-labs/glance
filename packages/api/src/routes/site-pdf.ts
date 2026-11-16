@@ -46,13 +46,15 @@ sitePdf.get('/:space/:site/pdf', async (c) => {
   }
 
   const token = await signToken(c.env.CONTENT_TOKEN_SECRET, user.id, `${space}/${siteSlug}`, PDF_TOKEN_TTL_SEC)
-  const siteRoot = `${c.env.CONTENT_URL}/_t/${token}/${space}/${siteSlug}/`
+  // The token is minted for this site, but a relative link can climb out of it (../other-site/), so
+  // the rewrite covers the whole tokened origin and sends every such link to the viewer.
+  const tokenRoot = `${c.env.CONTENT_URL}/_t/${token}/`
   try {
     const pdf = await render({
-      url: `${siteRoot}${pagePath}`,
+      url: `${tokenRoot}${space}/${siteSlug}/${pagePath}`,
       plan: pdfPlan(options),
       themeHref: options.themeHref,
-      linkRewrite: { from: siteRoot, to: `${c.env.APP_URL}/${space}/${siteSlug}/` },
+      linkRewrite: { from: tokenRoot, to: `${c.env.APP_URL}/` },
     })
     return new Response(pdf as BodyInit, {
       headers: {
