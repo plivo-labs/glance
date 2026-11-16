@@ -33,9 +33,14 @@ function Stat({ label, value }: { label: string; value: number }) {
 
 function ViewsChart({ series }: { series: SiteInsights['series'] }) {
   const max = Math.max(1, ...series.map((p) => p.views))
+  const total = series.reduce((sum, p) => sum + p.views, 0)
+  const peak = series.reduce((best, p) => (p.views > best.views ? p : best), series[0])
+  // The per-day numbers live in hover-only tooltips, so the label carries the summary for readers
+  // who cannot hover.
+  const label = `Views per day: ${plural(total)} in total, busiest day ${dayLabel(peak.date)} with ${plural(peak.views)}`
   return (
     <div>
-      <div role="img" aria-label="Views per day" className="flex h-24 items-end gap-px">
+      <div role="img" aria-label={label} className="flex h-24 items-end gap-px">
         {series.map((p) => (
           <div key={p.date} title={`${dayLabel(p.date)}: ${plural(p.views)}`} className="flex h-full flex-1 items-end">
             <div
