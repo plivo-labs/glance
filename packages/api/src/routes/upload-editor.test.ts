@@ -39,11 +39,12 @@ async function fx() {
   return { db, app, env, site, oldKey }
 }
 
-type Opts = { slug?: string; replace?: boolean; visibility?: string; expectedVersion?: number }
+type Opts = { slug?: string; replace?: boolean; visibility?: string; expires?: string; expectedVersion?: number }
 function post(app: Hono<AppEnv>, env: AppEnv['Bindings'], token: string, opts: Opts = {}) {
   const fd = new FormData()
   fd.append('files', html('<html>new</html>'))
   if (opts.visibility !== undefined) fd.append('visibility', opts.visibility)
+  if (opts.expires !== undefined) fd.append('expires', opts.expires)
   if (opts.expectedVersion !== undefined) fd.append('expectedVersion', String(opts.expectedVersion))
   const q = opts.replace ? '?replace=true' : ''
   return app.request(`/api/upload/acme/${opts.slug ?? 'doc'}${q}`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd }, env)
@@ -75,6 +76,14 @@ describe('upload — editor-share enforcement', () => {
     const { db, app, env } = await fx()
     expect((await post(app, env, 'ed', { replace: true, expectedVersion: 0, visibility: 'private' })).status).toBe(200)
     expect((await siteRow(db)).visibility).toBe('team')
+  })
+
+  test('upload.editor.expires.ignored: an editor replace cannot set an expiry, and the response reports the stored one', async () => {
+    const { db, app, env } = await fx()
+    const res = await post(app, env, 'ed', { replace: true, expectedVersion: 0, expires: '7d' })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ expiresAt: null })
+    expect((await siteRow(db)).expiresAt).toBeNull()
   })
 
   test('upload.owner.visibility.applied: an owner replace with visibility changes it', async () => {

@@ -278,6 +278,16 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
   // The revision this upload publishes: CREATE starts at 0; every REPLACE bumps by one (advisory for
   // the owner, CAS-enforced for an editor).
   const newVersion = existing ? existing.contentVersion + 1 : 0
+  // The expiry in force once this upload commits (also what the response reports): CREATE and an
+  // owner's explicit field write it, an owner redeploy of a lapsed site clears the stale one, and an
+  // editor never writes it, so they get the stored value back, not the one they asked for.
+  const nextExpiresAt = actingAsEditor
+    ? (existing?.expiresAt ?? null)
+    : isCreate || hasExpires
+      ? expiresAt
+      : lapsed
+        ? null
+        : (existing?.expiresAt ?? null)
 
   try {
     if (isCreate) {
@@ -347,7 +357,7 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
             // site (flipped to 'expired', or still 'active' inside the sweep's lag): with no new
             // expiry the stale one is cleared (leaving a past instant would expire it again at the
             // next sweep). An admin-'archived' site is left archived.
-            ...(hasExpires ? { expiresAt } : lapsed ? { expiresAt: null } : {}),
+            ...(hasExpires || lapsed ? { expiresAt: nextExpiresAt } : {}),
             ...(lapsed ? { status: 'active' as const } : {}),
             ...(derivedTitle !== null ? { title: sql`coalesce(${sites.title}, ${derivedTitle})` } : {}),
             // Unconditional (not COALESCE'd): a redeploy whose entry dropped its description meta
@@ -374,8 +384,6 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
     siteSlug,
     fileCount: newRows.length,
     contentVersion: newVersion,
-    // The expiry now in force: this upload's own on create/explicit, else what the site already had
-    // (null once a redeploy revived a lapsed site).
-    expiresAt: isCreate || hasExpires ? expiresAt : lapsed ? null : (existing?.expiresAt ?? null),
+    expiresAt: nextExpiresAt,
   })
 })
