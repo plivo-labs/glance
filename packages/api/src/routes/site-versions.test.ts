@@ -88,10 +88,14 @@ describe('trimming at write time', () => {
   test('versions.trim.replace: a replace trims the site to SITE_VERSIONS_KEEP and deletes the dropped objects', async () => {
     const ctx = await setup()
     ctx.env.SITE_VERSIONS_KEEP = '2'
+    // Another site already over the cap: a replace here must trim THIS site only (that is the daily purge's job).
+    await seedSite(ctx.db, { id: 'site2', spaceId: 'acme', ownerId: 'owner', slug: 'other-doc' })
+    for (const v of [1, 2, 3]) await ctx.db.insert(siteVersions).values({ siteId: 'site2', version: v, fileCount: 1, totalSize: 1 })
     for (const t of ['a', 'b', 'c', 'd', 'e']) await deploy(ctx, 'owner', { 'index.html': t })
 
     expect(await versionNumbers(ctx)).toEqual([3, 4]) // the two newest; 1 and 2 were trimmed along the way
     expect(ctx.r2.store.size).toBe(3) // live + the two kept versions
+    expect(await ctx.db.select().from(siteVersions).where(eq(siteVersions.siteId, 'site2'))).toHaveLength(3)
   })
 
   test('versions.trim.failure: a failing trim never fails the committed replace; the rows stay for the daily purge', async () => {
