@@ -7,6 +7,9 @@ const NAVIGATION_TIMEOUT_MS = 20_000
 // Late fetches get this long to land. A dashboard that polls never goes quiet, so it is a cap, not a wait.
 const IDLE_WAIT_MS = 5_000
 const MAX_SCROLL_STEPS = 60
+// The whole render, from launch to bytes. Only the navigation and the idle wait have limits of their
+// own; a page that hangs the main thread would otherwise hold a billed browser for minutes.
+const RENDER_DEADLINE_MS = 30_000
 
 // Browser-side snippets, as strings: this package compiles without the DOM lib.
 //
@@ -34,6 +37,12 @@ const settle = `(async () => {
 export async function renderPdf(binding: Fetcher, req: PdfRenderRequest): Promise<Uint8Array> {
   const { plan } = req
   const browser = await puppeteer.launch(binding)
+  // Closing the browser rejects whatever call is still pending, so the deadline is enforced, not just reported.
+  let timedOut = false
+  const kill = setTimeout(() => {
+    timedOut = true
+    void browser.close().catch(() => {})
+  }, RENDER_DEADLINE_MS)
   try {
     const page = await browser.newPage()
     await page.setViewport({ width: plan.viewportWidth, height: 1100 })
@@ -55,7 +64,11 @@ export async function renderPdf(binding: Fetcher, req: PdfRenderRequest): Promis
       printBackground: true,
       preferCSSPageSize: false,
     })
+  } catch (err) {
+    if (timedOut) throw new Error(`pdf render: no result within ${RENDER_DEADLINE_MS / 1000}s`)
+    throw err
   } finally {
-    await browser.close()
+    clearTimeout(kill)
+    await browser.close().catch(() => {})
   }
 }
