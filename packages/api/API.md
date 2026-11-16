@@ -183,7 +183,7 @@ POST /api/upload/:spaceSlug/:siteSlug        multipart/form-data      ✱ contro
 | --- | --- |
 | `files` | Repeated. Each file's name is its in-site path. ≤20MB each, ≤200 files. |
 | `visibility` | Optional. Create defaults to `team`; on replace, omitting it keeps the current tier. |
-| `expires` | Optional. `30m`, `12h`, `7d`, `2w`, `YYYY-MM-DD` (end of that UTC day), an ISO timestamp, or `none`. Create applies it; on replace, omitting it keeps the current expiry. A page past its expiry returns `410` and is not deleted; an owner redeploy (or a new `expires`) brings it back. |
+| `expires` | Optional. `30m`, `12h`, `7d`, `2w`, `YYYY-MM-DD` (end of that UTC day), an ISO timestamp, or `none` (the only value that clears it; an empty one is a `400`). Create applies it; on replace, omitting it keeps the current expiry, and an editor's replace ignores it. A page past its expiry returns `410` and is not deleted; an owner redeploy (or a new `expires`) brings it back. |
 | `title` | Optional display title. Never renames an already-titled site on replace. |
 | `expectedVersion` | The `contentVersion` you last read. Required for an **editor** replace (optimistic concurrency); advisory for the owner. |
 
