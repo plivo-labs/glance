@@ -129,11 +129,18 @@ describe('ViewerTopBar — Download is a menu of PDF, Markdown and plain text', 
     expect(screen.queryByRole('menuitem', { name: /Print|Download/ })).toBeNull()
   })
 
-  test('the trigger is disabled, and says why, until the frame has announced itself', async () => {
-    renderTopBar({ onDownload: () => {}, downloadReady: false })
+  test('until the frame has announced itself the trigger stays focusable, says why, and will not open', async () => {
+    const onDownload = mock((_format: string) => {})
+    renderTopBar({ onDownload, downloadReady: false })
     const trigger = screen.getByRole('button', { name: 'Download' }) as HTMLButtonElement
-    expect(trigger.disabled).toBe(true)
-    expect(trigger.title).toMatch(/once the page has loaded/)
+    expect([trigger.disabled, trigger.getAttribute('aria-disabled')]).toEqual([false, 'true'])
+    expect(document.getElementById(trigger.getAttribute('aria-describedby') ?? '')?.textContent).toMatch(/once the page has loaded/)
+    // Each attempt on its own: a pointer press and Enter would toggle the menu open and shut again.
+    for (const attempt of [() => fireEvent.pointerDown(trigger, { button: 0 }), () => fireEvent.keyDown(trigger, { key: 'Enter' })]) {
+      attempt()
+      await new Promise((r) => setTimeout(r, 50))
+      expect(screen.queryByRole('menuitem', { name: /^PDF/ })).toBeNull()
+    }
     openMenu()
     expect((await screen.findByRole('menuitem', { name: 'Download PDF' })).getAttribute('aria-disabled')).toBe('true')
   })

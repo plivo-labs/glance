@@ -33,6 +33,8 @@ const ShareDialog = lazy(() => import('@/components/ShareDialog').then((m) => ({
 // / Search / Fork / TL;DR / Share always live in the hamburger menu. Those menu items are driven from shared state
 // (ForkDialog, SummarySheet, ShareDialog) held here, so the menu item and the sheet/dialog it
 // opens are one action.
+const DOWNLOAD_NOT_READY = 'Download is available once the page has loaded'
+
 const FORMAT_ICON: Record<DownloadFormat, ReactNode> = {
   pdf: <FileText />,
   md: <FileCode />,
@@ -81,6 +83,10 @@ export function ViewerTopBar({
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
   const [forkOpen, setForkOpen] = useState(false)
+  // Always controlled inside, so the "not ready yet" rule holds whether or not the viewer drives the menu.
+  const [localMenuOpen, setLocalMenuOpen] = useState(false)
+  const menuOpen = downloadMenuOpen ?? localMenuOpen
+  const setMenuOpen = onDownloadMenuOpenChange ?? setLocalMenuOpen
   // Star has a permanent slot in the row, so it is the one action with no menu-item twin.
   const { starred, toggle: toggleStar } = useStar(site)
   return (
@@ -164,33 +170,48 @@ export function ViewerTopBar({
           )}
         </Button>
         {onDownload && (
-          <DropdownMenu open={downloadMenuOpen} onOpenChange={onDownloadMenuOpenChange}>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="hidden size-8 sm:inline-flex"
-                aria-label="Download"
-                title={downloadReady ? `Download (${shortcutLabel()})` : 'Download is available once the page has loaded'}
-                aria-busy={downloading}
-                data-testid="viewer-download-btn"
-                disabled={!downloadReady}
-              >
-                {downloading ? <Spinner /> : <Download />}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-48">
-              {DOWNLOAD_FORMATS.map(({ format, label, ext }) => (
-                <DropdownMenuItem key={format} disabled={downloading} data-testid={`viewer-download-${format}-item`} onSelect={() => onDownload(format)}>
-                  {FORMAT_ICON[format]}
-                  {label}
-                  <span aria-hidden="true" className="ml-auto font-mono text-muted-foreground text-xs">
-                    {ext}
-                  </span>
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <>
+            {/* aria-disabled, not disabled: a disabled button is not focusable and (pointer-events-none)
+                shows no tooltip, so nobody could learn why it is off. The menu just refuses to open. */}
+            <DropdownMenu
+              open={menuOpen && downloadReady}
+              onOpenChange={(open) => {
+                if (downloadReady) setMenuOpen(open)
+              }}
+            >
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className={cn('hidden size-8 sm:inline-flex', !downloadReady && 'opacity-50')}
+                  aria-label="Download"
+                  title={downloadReady ? `Download (${shortcutLabel()})` : DOWNLOAD_NOT_READY}
+                  aria-busy={downloading}
+                  aria-disabled={!downloadReady || undefined}
+                  aria-describedby={downloadReady ? undefined : 'viewer-download-hint'}
+                  data-testid="viewer-download-btn"
+                >
+                  {downloading ? <Spinner /> : <Download />}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                {DOWNLOAD_FORMATS.map(({ format, label, ext }) => (
+                  <DropdownMenuItem key={format} disabled={downloading} data-testid={`viewer-download-${format}-item`} onSelect={() => onDownload(format)}>
+                    {FORMAT_ICON[format]}
+                    {label}
+                    <span aria-hidden="true" className="ml-auto font-mono text-muted-foreground text-xs">
+                      {ext}
+                    </span>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            {!downloadReady && (
+              <span id="viewer-download-hint" className="sr-only">
+                {DOWNLOAD_NOT_READY}
+              </span>
+            )}
+          </>
         )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
