@@ -176,7 +176,9 @@ the space-level collision that motivated it — a site literally named `docs` is
 Visibility is `private`, `team`, or a share list; there is no public tier — every viewer needs a login.
 
 Every replace (`POST /api/upload` with `?replace=true`, owner or editor) keeps the content it replaced as a
-**version**: the newest 10 per site, none older than 30 days (a daily purge reclaims the rest). `GET …/versions`
+**version**: by default the newest 10 per site, none older than 30 days (trimmed after each replace, and by a
+daily purge). Operators tune this with `SITE_VERSIONS_KEEP` and `SITE_VERSIONS_RETENTION_DAYS`; with
+`SITE_VERSIONS_KEEP=0` a replace keeps nothing and deletes the old files (see DEPLOY.md). `GET …/versions`
 lists them (`id`, `version`, `createdAt`, `createdBy`, `fileCount`, `totalSize`); `POST …/versions/:id/restore`
 makes one live and keeps the content it replaced as a new version, so a restore can be undone. Both are
 owner-only (no superadmin bypass); restore is refused (`409`) on an archived site.
