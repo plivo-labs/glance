@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { Window } from 'happy-dom'
-import { type PdfOptions, parsePdfQuery, pdfDisposition, pdfPagePath, pdfPlan, rewriteLinksScript } from './pdf'
+import { type PdfOptions, parsePdfQuery, pdfDisposition, pdfPagePath, pdfPlan, rewriteLinksScript, titleScript } from './pdf'
 
 const base: PdfOptions = { scheme: 'light', themeHref: null }
 
@@ -75,5 +75,20 @@ describe('rewriteLinksScript', () => {
     expect(
       links('<svg><a xlink:href="../../other/d.html"><text>t</text></a></svg><a href="https://example.org/p">ext</a><a href="mailto:a@b.co">m</a><a name="anchor">n</a>'),
     ).toEqual(['https://app.example.com/docs/other/d.html', 'https://example.org/p', 'mailto:a@b.co', ''])
+  })
+})
+
+describe('titleScript', () => {
+  const run = (html: string) => {
+    const win = new Window({ url: 'https://content.example.com/_t/SECRET.TOKEN/docs/site/index.html' })
+    win.document.documentElement.innerHTML = html
+    new Function('document', `return ${titleScript('Q3 report')}`)(win.document)
+    return win.document.title
+  }
+
+  test('a page without a title is named for the site, never for its tokened URL; its own title wins', () => {
+    expect(run('<head></head><body>x</body>')).toBe('Q3 report')
+    expect(run('<head><title>  </title></head><body>x</body>')).toBe('Q3 report')
+    expect(run('<head><title>Mine</title></head><body>x</body>')).toBe('Mine')
   })
 })

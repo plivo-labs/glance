@@ -1,7 +1,7 @@
 // Server-side PDF through Cloudflare Browser Rendering (the BROWSER binding). Kept out of pdf.ts so
 // tests never load puppeteer: the route imports this lazily, and tests inject PDF_RENDER instead.
 import puppeteer from '@cloudflare/puppeteer'
-import { type PdfRenderRequest, rewriteLinksScript } from './pdf'
+import { type PdfRenderRequest, rewriteLinksScript, titleScript } from './pdf'
 
 const NAVIGATION_TIMEOUT_MS = 20_000
 // Late fetches get this long to land. A dashboard that polls never goes quiet, so it is a cap, not a wait.
@@ -47,6 +47,7 @@ export async function renderPdf(binding: Fetcher, req: PdfRenderRequest): Promis
     await page.evaluate(settle)
     // A PDF keeps its links, and the content URLs carry a signed token: point them at the viewer.
     await page.evaluate(rewriteLinksScript(req.linkRewrite.from, req.linkRewrite.to))
+    await page.evaluate(titleScript(req.title))
     return await page.pdf({
       width: plan.width,
       height: plan.height,

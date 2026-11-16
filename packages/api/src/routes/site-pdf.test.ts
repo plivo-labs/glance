@@ -47,6 +47,7 @@ describe('GET /api/sites/:space/:site/pdf', () => {
     expect(rest.join('/')).toBe('docs/report/notes/a.html')
     expect(await verifyToken('content-secret', 'docs/report', token)).toBe('owner')
     expect(call?.plan).toMatchObject({ width: '210mm', scheme: 'dark' })
+    expect(call?.title).toBe('Q3 report')
     // Links inside the PDF are re-pointed from the tokened origin (a relative link can climb out of
     // the site) to the viewer.
     expect(call?.linkRewrite).toEqual({ from: `${new URL(call?.url ?? '').origin}/_t/${token}/`, to: 'https://glance.example.com/' })

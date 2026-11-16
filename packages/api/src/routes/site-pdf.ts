@@ -54,6 +54,7 @@ sitePdf.get('/:space/:site/pdf', async (c) => {
       url: `${tokenRoot}${space}/${siteSlug}/${pagePath}`,
       plan: pdfPlan(options),
       themeHref: options.themeHref,
+      title: site.title?.trim() || siteSlug,
       linkRewrite: { from: tokenRoot, to: `${c.env.APP_URL}/` },
     })
     return new Response(pdf as BodyInit, {

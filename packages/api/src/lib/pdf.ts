@@ -23,7 +23,14 @@ export type PdfPlan = {
  * in this site or a sibling one, is re-pointed at `to` (`<app>/`) before printing, because a PDF
  * keeps its links and the token is a credential.
  */
-export type PdfRenderRequest = { url: string; plan: PdfPlan; themeHref: string | null; linkRewrite: { from: string; to: string } }
+export type PdfRenderRequest = {
+  url: string
+  plan: PdfPlan
+  themeHref: string | null
+  linkRewrite: { from: string; to: string }
+  /** Named in the PDF when the page has no <title> of its own. */
+  title: string
+}
 
 /** Same shape the annotate client accepts for a viewer theme override (annotate/client.ts). */
 const THEME_HREF = /^\/_glance\/theme\/[a-z0-9-]+\.css(\?v=[a-z0-9]+)?$/
@@ -72,6 +79,14 @@ export function rewriteLinksScript(from: string, to: string): string {
   }
   return true
 })()`
+}
+
+/**
+ * Browser-side script: a page with no <title> is printed with its own URL as the PDF's title, and
+ * that URL carries the token. Give it the site's title instead.
+ */
+export function titleScript(title: string): string {
+  return `(() => { if (document.title.trim() === '') document.title = ${JSON.stringify(title)}; return true })()`
 }
 
 const DOC_EXT = /\.(html?|md|markdown)$/i
