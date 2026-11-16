@@ -159,32 +159,23 @@ func TestDeployCommand(t *testing.T) {
 		file := filepath.Join(t.TempDir(), "report.html")
 		writeFile(t, file, "<h1>hi</h1>")
 
-		// Omitted → no expires field on the wire (a redeploy must not strip a chosen expiry).
-		srv, st := newDeployServer(t)
-		c, _ := newTestClient(srv.URL, "tok")
-		if err := c.deploy([]string{file}); err != nil {
-			t.Fatalf("deploy: %v", err)
-		}
-		if st.expiresSent {
-			t.Errorf("expires field sent without --expires (got %q)", st.expires)
-		}
-
-		// --expires 7d → the text travels verbatim; the server resolves it.
-		srv2, st2 := newDeployServer(t)
-		c2, _ := newTestClient(srv2.URL, "tok")
-		if err := c2.deploy([]string{file, "--expires", "7d"}); err != nil {
-			t.Fatalf("deploy --expires: %v", err)
-		}
-		if !st2.expiresSent || st2.expires != "7d" {
-			t.Errorf("expires = %q (sent=%v), want 7d", st2.expires, st2.expiresSent)
-		}
-
-		// A blank value is a usage error and nothing is sent: only `none` clears an expiry.
-		for _, args := range [][]string{{file, "--expires", ""}, {file, "--expires"}} {
-			srv3, st3 := newDeployServer(t)
-			c3, _ := newTestClient(srv3.URL, "tok")
-			if err := c3.deploy(args); err == nil || st3.expiresSent {
-				t.Errorf("deploy %q: err = %v, expiresSent = %v, want a usage error and nothing sent", args, err, st3.expiresSent)
+		// Absent → no field (a redeploy must not strip a chosen expiry); a value travels verbatim for
+		// the server to resolve; a blank one is a usage error, never a clear (only `none` clears).
+		for _, tc := range []struct {
+			args []string
+			sent string // "" = no expires field expected on the wire
+			fail bool
+		}{
+			{[]string{file}, "", false},
+			{[]string{file, "--expires", "7d"}, "7d", false},
+			{[]string{file, "--expires", ""}, "", true},
+			{[]string{file, "--expires"}, "", true},
+		} {
+			srv, st := newDeployServer(t)
+			c, _ := newTestClient(srv.URL, "tok")
+			err := c.deploy(tc.args)
+			if (err != nil) != tc.fail || st.expiresSent != (tc.sent != "") || st.expires != tc.sent {
+				t.Errorf("deploy %q: err = %v, expires = %q (sent=%v), want fail=%v sent=%q", tc.args[1:], err, st.expires, st.expiresSent, tc.fail, tc.sent)
 			}
 		}
 	})
