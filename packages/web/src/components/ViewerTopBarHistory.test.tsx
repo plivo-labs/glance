@@ -18,13 +18,13 @@ describe('ViewerTopBar History menu item', () => {
     contentUrl: 'https://content.example.com/sp/site/',
     indexPath: 'index.html',
   }
-  async function openMenu(isOwner: boolean) {
+  async function openMenu(isOwner: boolean, status: ViewerSite['status'] = 'active') {
     const router = createMemoryRouter([
       {
         path: '/',
         element: (
           <ViewerTopBar
-            site={{ ...SITE, isOwner }}
+            site={{ ...SITE, isOwner, status }}
             sitePath=""
             railOpen={false}
             commentCount={0}
@@ -43,6 +43,11 @@ describe('ViewerTopBar History menu item', () => {
   test('only the owner gets it', async () => {
     await openMenu(false)
     expect(screen.queryByText('History')).toBeNull()
+  })
+
+  test('an archived site hides it, since a restore would only be refused', async () => {
+    await openMenu(true, 'archived')
+    expect(document.body.textContent).not.toContain('History')
   })
 
   test('the owner sees it', async () => {

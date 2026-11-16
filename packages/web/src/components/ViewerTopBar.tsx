@@ -71,6 +71,8 @@ export function ViewerTopBar({
   const [historyOpen, setHistoryOpen] = useState(false)
   // Star has a permanent slot in the row, so it is the one action with no menu-item twin.
   const { starred, toggle: toggleStar } = useStar(site)
+  // Owner only, and only while active: the server refuses a restore on an archived site (409).
+  const canViewHistory = site.isOwner && site.status === 'active'
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-background px-3 md:gap-3">
       <Link
@@ -189,7 +191,7 @@ export function ViewerTopBar({
               <Sparkles />
               TL;DR
             </DropdownMenuItem>
-            {site.isOwner && (
+            {canViewHistory && (
               <DropdownMenuItem data-testid="viewer-history-menu-item" onSelect={() => setHistoryOpen(true)}>
                 <RotateCcw />
                 History
@@ -223,7 +225,7 @@ export function ViewerTopBar({
             onOpenChange={setShareOpen}
           />
         )}
-        {site.isOwner && (
+        {canViewHistory && (
           <HistorySheet
             spaceSlug={site.spaceSlug}
             siteSlug={site.siteSlug}
