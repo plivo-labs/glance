@@ -10,7 +10,7 @@ import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { sqliteTable, text } from 'drizzle-orm/sqlite-core'
 import { files, sites } from '../db/schema'
 import { batchAll } from './d1'
-import { extractText, isSupportedEntry, resolveIndexPath } from './extract'
+import { cap, extractText, isSupportedEntry, resolveIndexPath } from './extract'
 
 // Query-builder handles. Not in db/schema.ts on purpose: drizzle-kit would try to `CREATE TABLE` the
 // virtual table, and nothing outside this feature needs them.
@@ -137,6 +137,15 @@ export function ftsMatchQuery(q: string): string | null {
   return tokens.map((t, i) => (i === tokens.length - 1 && t.length >= 3 ? `"${t}"*` : `"${t}"`)).join(' ')
 }
 
+// snippet()'s last argument counts TOKENS, so a page of very long words could still return kilobytes.
+export const SNIPPET_CAP = 300 // chars
+
+/** One line, capped to SNIPPET_CAP chars (never splitting a surrogate pair), with an ellipsis when cut. */
+function tidySnippet(raw: string): string {
+  const { text, truncated } = cap(raw.replace(/\s+/g, ' ').trim(), SNIPPET_CAP)
+  return truncated ? `${text}…` : text
+}
+
 /** Plain-text excerpts around the match, keyed by site id. Call ONLY with ids that already passed the
  *  final access check — this reads page text and applies no access rule of its own. */
 export async function siteSnippets(
@@ -151,7 +160,7 @@ export async function siteSnippets(
       sql`, `,
     )})`,
   )
-  return new Map(rows.map((r) => [r.siteId, r.snippet.replace(/\s+/g, ' ').trim()]))
+  return new Map(rows.map((r) => [r.siteId, tidySnippet(r.snippet)]))
 }
 
 /**

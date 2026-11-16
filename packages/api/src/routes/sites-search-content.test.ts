@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { siteText } from '../lib/site-search'
+import { SNIPPET_CAP, siteText } from '../lib/site-search'
 import { auth, makeRouteApp, mintUser } from '../test/route-fixtures'
 import { makeDb, seedGroupShare, seedMember, seedSite, seedSpace, seedUser, seedUserShare } from '../test/harness'
 import type { SessionUser } from '../types'
@@ -29,6 +29,13 @@ describe('searchSites — page content', () => {
     expect(hit?.snippet).toContain('billing')
     expect((await w.search('quarterly roadm')).map((r) => r.id)).toEqual([id]) // the last word matches as a prefix
     expect(await w.search('quarter roadmap')).toEqual([]) // an earlier word does not
+  })
+
+  test('a snippet stays near 300 characters even when the words around the match are very long', async () => {
+    const w = await world()
+    await w.site('wordy', `${`${'x'.repeat(100)} `.repeat(20)}needle`) // 16 tokens of 100 characters
+    const [hit] = await w.search('needle')
+    expect(hit?.snippet?.length).toBeLessThanOrEqual(SNIPPET_CAP + 1)
   })
 
   test('name matches come first and a page matching by name AND content is listed once, as a name hit', async () => {

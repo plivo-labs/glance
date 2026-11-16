@@ -7,7 +7,7 @@ export const DESCRIPTION_CAP = 300
 export type EntryFile = { path: string; mimeType: string | null }
 export type Extracted = { ok: true; text: string; truncated: boolean } | { ok: false; reason: string }
 
-function cap(text: string, limit = TEXT_CAP): { text: string; truncated: boolean } {
+export function cap(text: string, limit = TEXT_CAP): { text: string; truncated: boolean } {
   if (text.length <= limit) return { text, truncated: false }
   let capped = text.slice(0, limit)
   if (/[\uD800-\uDBFF]$/.test(capped)) capped = capped.slice(0, -1)
