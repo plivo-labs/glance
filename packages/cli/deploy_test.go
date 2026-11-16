@@ -178,6 +178,15 @@ func TestDeployCommand(t *testing.T) {
 		if !st2.expiresSent || st2.expires != "7d" {
 			t.Errorf("expires = %q (sent=%v), want 7d", st2.expires, st2.expiresSent)
 		}
+
+		// A blank value is a usage error and nothing is sent: only `none` clears an expiry.
+		for _, args := range [][]string{{file, "--expires", ""}, {file, "--expires"}} {
+			srv3, st3 := newDeployServer(t)
+			c3, _ := newTestClient(srv3.URL, "tok")
+			if err := c3.deploy(args); err == nil || st3.expiresSent {
+				t.Errorf("deploy %q: err = %v, expiresSent = %v, want a usage error and nothing sent", args, err, st3.expiresSent)
+			}
+		}
 	})
 
 	t.Run("single-file-name-sans-extension", func(t *testing.T) {

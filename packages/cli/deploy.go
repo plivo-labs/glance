@@ -117,12 +117,16 @@ func (c *client) deploy(argv []string) error {
 	}
 	// Optional expiry (`30m`, `12h`, `7d`, `2w`, `2026-12-31`, or `none` to clear). Explicit-only like
 	// the theme: absent on replace → the server keeps the current expiry. The server resolves it
-	// against its own clock and validates it, so this passes the text through untouched.
+	// against its own clock and validates it, so this passes the text through untouched, except a
+	// blank value (`--expires` with nothing after it): only `none` clears, so that is a usage error.
 	expires := ""
 	expiresSet := false
 	if raw, present := flags["expires"]; present {
 		expires = raw.(string)
 		expiresSet = true
+	}
+	if expiresSet && strings.TrimSpace(expires) == "" {
+		return fmt.Errorf("--expires needs a value, e.g. 7d, 2026-12-31, or none to clear it.")
 	}
 	if path == "" {
 		return fmt.Errorf("Usage: glance deploy <path> [--space <slug>] [--name <slug>] [--visibility team|private|members] [--theme <slug>|default] [--expires 7d|<date>|none] [--include-hidden]")
