@@ -53,7 +53,7 @@ export interface Bindings {
   // Optional maintenance switch: "1" → writes and login return 503 + Retry-After (see index.ts).
   WRITE_FREEZE?: string
   // Optional version-history knobs (see lib/retention.ts versionPolicy): newest N versions kept per
-  // site (0 = keep no history) and the age cap in days. Unset = 10 and 30.
+  // site and the age cap in days; 0 for either keeps no history. Unset = 10 and 30.
   SITE_VERSIONS_KEEP?: string
   SITE_VERSIONS_RETENTION_DAYS?: string
 }

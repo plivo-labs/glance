@@ -122,8 +122,8 @@ Every replace (and every restore) keeps the content it replaced as a **version**
 | Var | Default | Meaning |
 | --- | --- | --- |
 | `SITE_VERSIONS_KEEP` | `10` | Versions kept per site (the newest N). `0` turns history off: a replace snapshots nothing and deletes the replaced files, as before versions existed. |
-| `SITE_VERSIONS_RETENTION_DAYS` | `30` | A version is purged this many days after it was replaced. |
+| `SITE_VERSIONS_RETENTION_DAYS` | `30` | A version is purged this many days after it was replaced. `0` also turns history off. |
 
 Set them in the `vars` block of `packages/api/wrangler.jsonc`, or, with CI auto-deploy, as repo Actions variables of the same names (the workflow passes them to `wrangler deploy`; unset means the defaults). Values must be non-negative whole numbers; anything else falls back to the default.
 
-A site is trimmed to the window right after each replace or restore, and the daily purge (03:00 UTC) covers the rest instance-wide. Both cap the work per run to stay inside the free plan's 50 subrequests, so lowering the values, or setting `SITE_VERSIONS_KEEP=0`, reclaims existing versions gradually (a site on its next replace, everything else over the following daily runs), not instantly.
+A site is trimmed to the window right after each replace or restore, and the daily purge (03:00 UTC) covers the rest instance-wide. The daily purge caps each run to fit the free plan's 50 subrequests, and the per-replace trim does one bounded pass, so lowering the values, or turning history off, reclaims existing versions gradually (a site on its next replace, everything else over the following daily runs), not instantly.
