@@ -123,20 +123,23 @@ Page text is searchable through `site_text` (the text of each site's html/md fil
 - **`wrangler d1 export` fails while `site_search` exists** ("Export is not supported for virtual tables"). The index is derived data, so drop it, export, then recreate and rebuild it. From `packages/api`:
 
 ```bash
+# The dump holds user emails and page text: keep it, and the helper files, outside the checkout.
+D=$(mktemp -d)
+
 # 1. Drop the index. Triggers first: a trigger left on a missing table would fail every upload.
-cat > drop-search.sql <<'SQL'
+cat > "$D/drop-search.sql" <<'SQL'
 DROP TRIGGER site_text_ai;
 DROP TRIGGER site_text_ad;
 DROP TRIGGER site_text_au;
 DROP TABLE site_search;
 SQL
-wrangler d1 execute glance-db --remote --file drop-search.sql
+wrangler d1 execute glance-db --remote --file "$D/drop-search.sql"
 
 # 2. Export.
-wrangler d1 export glance-db --remote --output backup.sql
+wrangler d1 export glance-db --remote --output "$D/backup.sql"
 
 # 3. Recreate the index (the statements of drizzle/0032_site_search.sql) and rebuild it from site_text.
-cat > restore-search.sql <<'SQL'
+cat > "$D/restore-search.sql" <<'SQL'
 CREATE VIRTUAL TABLE `site_search` USING fts5(
 	`body`,
 	content = 'site_text',
@@ -155,7 +158,7 @@ CREATE TRIGGER `site_text_au` AFTER UPDATE ON `site_text` BEGIN
 END;
 INSERT INTO site_search(site_search) VALUES('rebuild');
 SQL
-wrangler d1 execute glance-db --remote --file restore-search.sql
+wrangler d1 execute glance-db --remote --file "$D/restore-search.sql"
 ```
 
 - Content search requests error while the table is missing, so pick a quiet moment. Uploads, forks and deletes in that window are fine: the rebuild re-reads all of `site_text`.
