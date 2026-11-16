@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { parsePdfQuery, pdfDisposition, pdfPagePath, pdfPlan, type PdfRenderRequest } from '../lib/pdf'
+import { containsToken, parsePdfQuery, pdfDisposition, pdfPagePath, pdfPlan, type PdfRenderRequest, redactToken } from '../lib/pdf'
 import { fetchAccessFacts, siteAccessFromFacts } from '../lib/site-access'
 import { signToken } from '../lib/token'
 import { requireAuth } from '../middleware/auth'
@@ -57,6 +57,12 @@ sitePdf.get('/:space/:site/pdf', async (c) => {
       title: site.title?.trim() || siteSlug,
       linkRewrite: { from: tokenRoot, to: `${c.env.APP_URL}/` },
     })
+    // Fail closed: the rewrite and the title fallback should leave the token nowhere, and this is
+    // what makes that a guarantee. The viewer falls back to the browser's print dialog.
+    if (containsToken(pdf, token)) {
+      console.error('sitePdf: the render still carried the content token, refusing it', { space, site: siteSlug })
+      return c.json({ error: 'pdf render failed' }, 502)
+    }
     return new Response(pdf as BodyInit, {
       headers: {
         'content-type': 'application/pdf',
@@ -65,7 +71,7 @@ sitePdf.get('/:space/:site/pdf', async (c) => {
       },
     })
   } catch (err) {
-    console.error('sitePdf: render failed', { space, site: siteSlug, error: err instanceof Error ? err.message : String(err) })
+    console.error('sitePdf: render failed', { space, site: siteSlug, error: redactToken(err instanceof Error ? err.message : String(err)) })
     return c.json({ error: 'pdf render failed' }, 502)
   }
 })

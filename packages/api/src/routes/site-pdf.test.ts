@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, spyOn, test } from 'bun:test'
 import { verifyToken } from '../lib/token'
 import type { PdfRenderRequest } from '../lib/pdf'
 import { seedMember, seedSite, seedSpace } from '../test/harness'
@@ -78,5 +78,29 @@ describe('GET /api/sites/:space/:site/pdf', () => {
 
     const broken = await setup({ PDF_RENDER: async () => Promise.reject(new Error('browser down')) })
     expect((await broken.get()).status).toBe(502)
+  })
+
+  test('a failed render never logs the token, and a PDF that still carries it is refused', async () => {
+    const logged: string[] = []
+    const spy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => void logged.push(JSON.stringify(args)))
+    try {
+      const failing = await setup({ PDF_RENDER: async (req) => Promise.reject(new Error(`net::ERR_ABORTED at ${req.url}`)) })
+      expect((await failing.get()).status).toBe(502)
+
+      let token = ''
+      const leaky = await setup({
+        PDF_RENDER: async (req) => {
+          token = new URL(req.url).pathname.split('/')[2] as string
+          return new TextEncoder().encode(`%PDF /URI (${req.url})`)
+        },
+      })
+      const res = await leaky.get()
+      expect([res.status, res.headers.get('content-type')]).toEqual([502, 'application/json'])
+      expect(token).not.toBe('')
+      expect(logged.length).toBeGreaterThan(0)
+      expect(logged.join('')).not.toContain(token)
+    } finally {
+      spy.mockRestore()
+    }
   })
 })

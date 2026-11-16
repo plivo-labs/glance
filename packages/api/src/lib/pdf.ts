@@ -89,6 +89,21 @@ export function titleScript(title: string): string {
   return `(() => { if (document.title.trim() === '') document.title = ${JSON.stringify(title)}; return true })()`
 }
 
+/** The content token out of a message that may quote a content URL (a failed navigation does). */
+export const redactToken = (message: string): string => message.replace(/\/_t\/[^/\s]+\//g, '/_t/<redacted>/')
+
+const startsWith = (bytes: Uint8Array, at: number, needle: number[]): boolean => needle.every((b, j) => bytes[at + j] === b)
+
+/** True when the token (ASCII) appears anywhere in the bytes. A PDF's link and metadata strings are plain text. */
+export function containsToken(bytes: Uint8Array, token: string): boolean {
+  const needle = Array.from(token, (ch) => ch.charCodeAt(0))
+  if (needle.length === 0) return false
+  for (let i = bytes.indexOf(needle[0] as number); i !== -1 && i + needle.length <= bytes.length; i = bytes.indexOf(needle[0] as number, i + 1)) {
+    if (startsWith(bytes, i, needle)) return true
+  }
+  return false
+}
+
 const DOC_EXT = /\.(html?|md|markdown)$/i
 
 /** Control characters become spaces (a header or a path must never carry them). */

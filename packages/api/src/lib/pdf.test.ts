@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { Window } from 'happy-dom'
-import { type PdfOptions, parsePdfQuery, pdfDisposition, pdfPagePath, pdfPlan, rewriteLinksScript, titleScript } from './pdf'
+import { containsToken, type PdfOptions, parsePdfQuery, pdfDisposition, pdfPagePath, pdfPlan, redactToken, rewriteLinksScript, titleScript } from './pdf'
 
 const base: PdfOptions = { scheme: 'light', themeHref: null }
 
@@ -90,5 +90,21 @@ describe('titleScript', () => {
     expect(run('<head></head><body>x</body>')).toBe('Q3 report')
     expect(run('<head><title>  </title></head><body>x</body>')).toBe('Q3 report')
     expect(run('<head><title>Mine</title></head><body>x</body>')).toBe('Mine')
+  })
+})
+
+describe('redactToken / containsToken', () => {
+  test('a quoted content URL loses its token, and a message without one is untouched', () => {
+    expect(redactToken('net::ERR_ABORTED at https://c.example.com/_t/AAA.bbb_CC-d/docs/site/a.html')).toBe('net::ERR_ABORTED at https://c.example.com/_t/<redacted>/docs/site/a.html')
+    expect(redactToken('browser down')).toBe('browser down')
+  })
+
+  test('finds the token anywhere in the bytes, and nothing when it is absent or truncated', () => {
+    const bytes = (s: string) => new TextEncoder().encode(s)
+    expect(containsToken(bytes('%PDF /URI (https://c/_t/AAA.bbb/x)'), 'AAA.bbb')).toBe(true)
+    expect(containsToken(bytes('AAA.bbb'), 'AAA.bbb')).toBe(true)
+    expect(containsToken(bytes('%PDF /URI (https://app/x) AAA.bb'), 'AAA.bbb')).toBe(false)
+    expect(containsToken(bytes(''), 'AAA.bbb')).toBe(false)
+    expect(containsToken(bytes('anything'), '')).toBe(false)
   })
 })
