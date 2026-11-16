@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { fetchPdf, fileBaseName, isDownloadShortcut, PdfUnavailableError, pdfRequestUrl, requestFrameExport } from './download'
+import { downloadIconVisible, fetchPdf, fileBaseName, isDownloadShortcut, PdfUnavailableError, pdfRequestUrl, requestFrameExport } from './download'
 
 describe('pdfRequestUrl / isDownloadShortcut / fileBaseName', () => {
   test('the request carries the scheme, and path and theme only when there are some', () => {
@@ -73,5 +73,19 @@ describe('requestFrameExport', () => {
   test('rejects when the frame never answers, and when there is no frame', async () => {
     await expect(requestFrameExport(frame().win, 'https://content.example.com', 'text', 20)).rejects.toThrow(/did not answer/)
     await expect(requestFrameExport(null, 'https://content.example.com', 'text')).rejects.toThrow(/not ready/)
+  })
+})
+
+describe('downloadIconVisible', () => {
+  const real = window.matchMedia
+  afterEach(() => {
+    window.matchMedia = real
+  })
+
+  test('the top-bar icon counts as visible from 40rem up, not below it', () => {
+    for (const wide of [true, false]) {
+      window.matchMedia = ((q: string) => ({ matches: wide && q === '(min-width: 40rem)' })) as typeof window.matchMedia
+      expect(downloadIconVisible()).toBe(wide)
+    }
   })
 })

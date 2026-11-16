@@ -14,6 +14,7 @@ import { encodePathSegments } from '@/lib/paths'
 import { type ArbiterEvent, type ArbiterState, type Decision, initialArbiter, stepArbiter } from '@/lib/prefetchArbiter'
 import {
   type DownloadFormat,
+  downloadIconVisible,
   fetchPdf,
   fileBaseName,
   PdfUnavailableError,
@@ -153,7 +154,10 @@ function Viewer() {
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const downloadingRef = useRef(false)
-  const openDownloadMenu = useCallback(() => setDownloadMenuOpen(true), [])
+  // The menu hangs off the top-bar icon; below `sm` that icon is hidden (downloads sit in the hamburger menu), so the shortcut stays quiet.
+  const openDownloadMenu = useCallback(() => {
+    if (downloadIconVisible()) setDownloadMenuOpen(true)
+  }, [])
   const frameWindow = useCallback(() => iframeRef.current?.contentWindow, [])
   useDownloadShortcut(!isAudio && filePath !== null, openDownloadMenu, frameWindow, contentOrigin)
 

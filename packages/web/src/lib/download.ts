@@ -16,6 +16,9 @@ export function isDownloadShortcut(e: Pick<KeyboardEvent, 'key' | 'metaKey' | 'c
   return (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 's'
 }
 
+/** The top bar shows the Download icon from `sm` (40rem) up; below that, downloads live in the hamburger menu. */
+export const downloadIconVisible = (): boolean => typeof window !== 'undefined' && window.matchMedia('(min-width: 40rem)').matches
+
 export function pdfRequestUrl(
   site: { spaceSlug: string; siteSlug: string },
   ctx: { path: string | null; dark: boolean; themeHref: string | null },
