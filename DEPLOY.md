@@ -114,3 +114,50 @@ The Google button appears automatically once both credentials are set. A later G
 ### Maintenance write freeze
 
 For a maintenance window (e.g. a database migration), set repo Actions variable `WRITE_FREEZE` to `1` and run the Deploy workflow manually (Actions → Deploy → Run workflow). The main worker then answers every `/api/*` write, and login, with `503` + `Retry-After: 300`; reads keep working. Best-effort writers are not frozen and fail without user impact if the database rejects them: page-view and CLI-usage events, API-key last-used timestamps, and the daily retention cron. Set it back to `0` (or delete it) and run the workflow again to lift the freeze.
+
+## Content search and D1 export
+
+Page text is searchable through `site_text` (the text of each site's html/md files) and `site_search`, an FTS5 virtual table over it (migration `0032_site_search.sql`).
+
+- **Existing sites are indexed by the hourly cron, up to 4 sites an hour** (a run also stops after reading 4 MiB of page source), so a large install catches up over days. A site that fails or is cut short 3 times is skipped until it is uploaded again. CJK text has no word breaks, so each unbroken run is one token: a query matches it from the start of the run only (a prefix match, from 3 characters).
+- **`wrangler d1 export` fails while `site_search` exists** ("Export is not supported for virtual tables"). The index is derived data, so drop it, export, then recreate and rebuild it. From `packages/api`:
+
+```bash
+# 1. Drop the index. Triggers first: a trigger left on a missing table would fail every upload.
+cat > drop-search.sql <<'SQL'
+DROP TRIGGER site_text_ai;
+DROP TRIGGER site_text_ad;
+DROP TRIGGER site_text_au;
+DROP TABLE site_search;
+SQL
+wrangler d1 execute glance-db --remote --file drop-search.sql
+
+# 2. Export.
+wrangler d1 export glance-db --remote --output backup.sql
+
+# 3. Recreate the index (the statements of drizzle/0032_site_search.sql) and rebuild it from site_text.
+cat > restore-search.sql <<'SQL'
+CREATE VIRTUAL TABLE `site_search` USING fts5(
+	`body`,
+	content = 'site_text',
+	content_rowid = 'id',
+	tokenize = 'unicode61 remove_diacritics 2'
+);
+CREATE TRIGGER `site_text_ai` AFTER INSERT ON `site_text` BEGIN
+	INSERT INTO `site_search` (`rowid`, `body`) VALUES (NEW.`id`, NEW.`body`);
+END;
+CREATE TRIGGER `site_text_ad` AFTER DELETE ON `site_text` BEGIN
+	INSERT INTO `site_search` (`site_search`, `rowid`, `body`) VALUES ('delete', OLD.`id`, OLD.`body`);
+END;
+CREATE TRIGGER `site_text_au` AFTER UPDATE ON `site_text` BEGIN
+	INSERT INTO `site_search` (`site_search`, `rowid`, `body`) VALUES ('delete', OLD.`id`, OLD.`body`);
+	INSERT INTO `site_search` (`rowid`, `body`) VALUES (NEW.`id`, NEW.`body`);
+END;
+INSERT INTO site_search(site_search) VALUES('rebuild');
+SQL
+wrangler d1 execute glance-db --remote --file restore-search.sql
+```
+
+- Content search requests error while the table is missing, so pick a quiet moment. Uploads, forks and deletes in that window are fine: the rebuild re-reads all of `site_text`.
+- **Step 3 is required.** The cron backfill only handles sites that are still unindexed (`searchIndexedAt IS NULL`); it never repairs the index, so skipping the rebuild leaves every already-indexed site unsearchable by content.
+- The export holds `site_text` but not the index: run step 3 on any database you import it into as well.
