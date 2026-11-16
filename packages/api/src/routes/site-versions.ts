@@ -1,7 +1,9 @@
 import { and, desc, eq, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { files, siteVersionFiles, siteVersions, sites, users } from '../db/schema'
+import { fireAndForget } from '../lib/events'
 import { extractHtmlMeta, NO_META, pickEntry } from '../lib/extract'
+import { trimSiteVersions, versionPolicy } from '../lib/retention'
 import { resolveSite } from '../lib/site-access'
 import { copyObjects, deleteKeys } from '../lib/storage'
 import { snapshotSiteFiles } from '../lib/versions'
@@ -114,5 +116,7 @@ versions.post('/:spaceSlug/:siteSlug/versions/:versionId/restore', requireAuth, 
     await deleteKeys(c.env.GLANCE_FILES, newKeys)
     throw err
   }
+  // The restore added a version (the content it replaced), so trim like a replace does.
+  await fireAndForget(c, trimSiteVersions(db, c.env.GLANCE_FILES, site.id, versionPolicy(c.env)))
   return c.json({ ok: true, restoredVersion: version.version, fileCount: copied.length })
 })

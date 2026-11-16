@@ -7,7 +7,7 @@ import { batchAll } from '../lib/d1'
 import { canReplace } from '../lib/access'
 import { fireAndForget } from '../lib/events'
 import { capTitle, extractHtmlMeta, NO_META, pickEntry } from '../lib/extract'
-import { versionPolicy } from '../lib/retention'
+import { trimSiteVersions, versionPolicy } from '../lib/retention'
 import { isValidSlug } from '../lib/slug'
 import { deleteKeys, MAX_FILE_BYTES, sanitizePath } from '../lib/storage'
 import { snapshotSiteFiles } from '../lib/versions'
@@ -167,7 +167,8 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
   let oldKeys: string[] = []
   // False when the operator turned version history off (SITE_VERSIONS_KEEP=0): a replace then
   // snapshots nothing and deletes the replaced objects, exactly as it did before versions existed.
-  const snapshot = versionPolicy(c.env).keep > 0
+  const policy = versionPolicy(c.env)
+  const snapshot = policy.keep > 0
   const snapshotStmts = (o: Parameters<typeof snapshotSiteFiles>[1]): BatchItem<'sqlite'>[] =>
     snapshot ? [...snapshotSiteFiles(db, o)] : []
   // True when the actor is exercising an EDITOR grant (not the owner). Editors are content-only:
@@ -359,11 +360,16 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
     throw err
   }
 
-  // With history on, the replaced objects are NOT deleted: the snapshot above handed their keys to a
-  // version, and the retention purge (lib/retention.ts) reclaims them once it ages out. With history
-  // off they are safe to purge only after the row swap committed; waitUntil keeps a transient R2
-  // failure from 500-ing an already-committed replace (the swap is done, reclaiming is best-effort).
-  if (!snapshot && oldKeys.length > 0) await fireAndForget(c, deleteKeys(c.env.GLANCE_FILES, oldKeys))
+  // Only after the row swap committed, and via waitUntil so a transient R2 failure can't 500 an
+  // already-committed replace (reclaiming is best-effort background cleanup). With history on the
+  // replaced objects now belong to a version, so what gets reclaimed is whatever fell out of the
+  // site's window; with it off they are simply deleted, as before versions existed.
+  if (!isCreate) {
+    await fireAndForget(
+      c,
+      snapshot ? trimSiteVersions(db, c.env.GLANCE_FILES, siteId, policy) : deleteKeys(c.env.GLANCE_FILES, oldKeys),
+    )
+  }
 
   return c.json({
     url: `${c.env.APP_URL}/${spaceSlug}/${siteSlug}`,

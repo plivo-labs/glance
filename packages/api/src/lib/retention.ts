@@ -97,18 +97,50 @@ export async function purgeRetention(db: DrizzleD1Database, now: Date = new Date
  * it). If the R2 delete throws, the rows survive and the next run retries; the reverse order would
  * strand the objects with nothing left pointing at them. Deleting a version cascades its file rows.
  */
-export async function purgeSiteVersions(
+export function purgeSiteVersions(
   db: DrizzleD1Database,
   bucket: R2Bucket,
   now: Date = new Date(),
   policy: VersionPolicy = versionPolicy({}),
 ): Promise<void> {
+  return purgeVersionPasses(db, bucket, policy, now, VERSION_PURGE_MAX_PASSES)
+}
+
+/**
+ * Trims ONE site's versions to the policy right after a replace or restore committed, so storage
+ * is reclaimed as it is made rather than waiting for the daily run (whose passes are capped for the
+ * whole instance). One pass only (4 subrequests on top of the request's own); what it leaves, the
+ * daily purge picks up. It never throws: the content swap has already committed, so a failure here
+ * must not turn that request into an error.
+ */
+export async function trimSiteVersions(
+  db: DrizzleD1Database,
+  bucket: R2Bucket,
+  siteId: string,
+  policy: VersionPolicy,
+): Promise<void> {
+  try {
+    await purgeVersionPasses(db, bucket, policy, new Date(), 1, siteId)
+  } catch (err) {
+    console.error('trimSiteVersions: failed, the daily purge will retry', { siteId, err })
+  }
+}
+
+async function purgeVersionPasses(
+  db: DrizzleD1Database,
+  bucket: R2Bucket,
+  policy: VersionPolicy,
+  now: Date,
+  maxPasses: number,
+  siteId?: string,
+): Promise<void> {
   const ageCutoff = cutoff(now, policy.days)
-  for (let pass = 0; pass < VERSION_PURGE_MAX_PASSES; pass++) {
+  const onlySite = siteId === undefined ? sql`` : sql`WHERE siteId = ${siteId}`
+  for (let pass = 0; pass < maxPasses; pass++) {
     const doomed = await db.all<{ id: string; fileCount: number }>(sql`
       SELECT id, fileCount FROM (
         SELECT id, createdAt, fileCount, row_number() OVER (PARTITION BY siteId ORDER BY createdAt DESC, version DESC) AS rn
-        FROM site_versions
+        FROM site_versions ${onlySite}
       ) WHERE rn > ${policy.keep} OR createdAt < ${ageCutoff}
       LIMIT ${D1_MAX_IN}`)
     if (doomed.length === 0) return

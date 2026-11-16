@@ -82,6 +82,28 @@ describe('SITE_VERSIONS_KEEP=0', () => {
   })
 })
 
+describe('trimming at write time', () => {
+  const versionNumbers = async (ctx: Ctx) => (await versionRows(ctx)).map((v) => v.version).sort()
+
+  test('versions.trim.replace: a replace trims the site to SITE_VERSIONS_KEEP and deletes the dropped objects', async () => {
+    const ctx = await setup()
+    ctx.env.SITE_VERSIONS_KEEP = '2'
+    for (const t of ['a', 'b', 'c', 'd', 'e']) await deploy(ctx, 'owner', { 'index.html': t })
+
+    expect(await versionNumbers(ctx)).toEqual([3, 4]) // the two newest; 1 and 2 were trimmed along the way
+    expect(ctx.r2.store.size).toBe(3) // live + the two kept versions
+  })
+
+  test('versions.trim.failure: a failing trim never fails the committed replace; the rows stay for the daily purge', async () => {
+    const ctx = await setup()
+    ctx.env.SITE_VERSIONS_KEEP = '1'
+    ctx.r2.delete = () => Promise.reject(new Error('r2 down'))
+    for (const t of ['a', 'b', 'c']) expect((await deploy(ctx, 'owner', { 'index.html': t })).status).toBe(200)
+
+    expect(await versionNumbers(ctx)).toEqual([1, 2]) // the over-cap one is still there to retry
+  })
+})
+
 describe('every lifecycle path accounts for version-owned objects', () => {
   // Two deploys → one live file + one version file: two R2 objects, both must be reclaimed.
   async function withHistory() {
@@ -201,6 +223,16 @@ describe('GET / POST /api/sites/:space/:site/versions', () => {
     expect(after).toHaveLength(3)
     expect((await call(ctx, 'owner', 'POST', `/${after[0]?.id}/restore`)).status).toBe(200)
     expect(await liveText(ctx)).toBe(blurb('two'))
+  })
+
+  test('versions.restore.trim: a restore trims the history to SITE_VERSIONS_KEEP too', async () => {
+    const ctx = await withHistory()
+    ctx.env.SITE_VERSIONS_KEEP = '1'
+    const [v] = await listed(ctx)
+    expect((await call(ctx, 'owner', 'POST', `/${v?.id}/restore`)).status).toBe(200)
+
+    expect(await listed(ctx)).toHaveLength(1)
+    expect(ctx.r2.store.size).toBe(2) // live + the one kept version
   })
 
   test('versions.restore.batch-failure: a failed swap reclaims the copied objects', async () => {
