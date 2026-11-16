@@ -194,7 +194,7 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
     actingAsEditor = !isOwner
 
     if (actingAsEditor) {
-      if (existing.status !== 'active') return c.json({ error: `site ${existing.status}` }, 403)
+      if (lapsed || existing.status !== 'active') return c.json({ error: `site ${lapsed ? 'expired' : existing.status}` }, 403)
       // The CAS below reads expectedVersion; require it up front so a versionless editor redeploy
       // can't silently clobber a newer one.
       if (expectedVersion === null) return c.json({ error: 'expectedVersion required' }, 400)

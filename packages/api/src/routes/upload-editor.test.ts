@@ -92,10 +92,13 @@ describe('upload — editor-share enforcement', () => {
     expect((await siteRow(db)).visibility).toBe('private')
   })
 
-  test('upload.editor.archived.403: an editor cannot replace an archived site', async () => {
-    const { db, app, env } = await fx()
-    await db.update(sites).set({ status: 'archived' }).where(eq(sites.id, 'site'))
-    expect((await post(app, env, 'ed', { replace: true, expectedVersion: 0 })).status).toBe(403)
+  test('upload.editor.inactive.403: an editor cannot replace an archived, expired, or past-expiry-but-unswept site', async () => {
+    const past = new Date(Date.now() - 60_000).toISOString()
+    for (const [status, expiresAt] of [['archived', null], ['expired', past], ['active', past]] as const) {
+      const { db, app, env } = await fx()
+      await db.update(sites).set({ status, expiresAt }).where(eq(sites.id, 'site'))
+      expect((await post(app, env, 'ed', { replace: true, expectedVersion: 0 })).status).toBe(403)
+    }
   })
 
   test('upload.editor.absentVersion.400: an editor replace without expectedVersion is rejected', async () => {
