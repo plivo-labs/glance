@@ -10,6 +10,7 @@ import {
   SITE_VERSIONS_RETENTION_DAYS,
   purgeRetention,
   purgeSiteVersions,
+  versionPolicy,
 } from './retention'
 
 const NOW = new Date('2026-08-18T12:00:00.000Z')
@@ -101,6 +102,17 @@ describe('purgeRetention', () => {
   })
 })
 
+describe('versionPolicy', () => {
+  test('reads the operator vars; unset, blank or junk falls back to the defaults; 0 turns history off', () => {
+    const defaults = { keep: SITE_VERSIONS_KEEP, days: SITE_VERSIONS_RETENTION_DAYS }
+    expect(versionPolicy({})).toEqual(defaults)
+    expect(versionPolicy({ SITE_VERSIONS_KEEP: '3', SITE_VERSIONS_RETENTION_DAYS: '7' })).toEqual({ keep: 3, days: 7 })
+    for (const junk of ['', ' ', '-1', '1.5', 'abc']) expect(versionPolicy({ SITE_VERSIONS_KEEP: junk })).toEqual(defaults)
+    expect(versionPolicy({ SITE_VERSIONS_KEEP: '0' })).toEqual({ keep: 0, days: 0 })
+    expect(versionPolicy({ SITE_VERSIONS_RETENTION_DAYS: '0' })).toEqual({ keep: 0, days: 0 })
+  })
+})
+
 describe('purgeSiteVersions', () => {
   // Two sites, so every spec also proves the ranking is per site. Each version owns one R2 object.
   async function setup() {
@@ -147,6 +159,16 @@ describe('purgeSiteVersions', () => {
     expect(await r2.get(`k/${old}`)).toBeNull()
     expect(await r2.get(`k/${lone}`)).toBeNull()
     expect(await r2.get(`k/${young}`)).not.toBeNull()
+  })
+
+  test('honors the operator policy: a smaller keep count and a shorter age cap', async () => {
+    const { db, r2, a, version, survivors } = await setup()
+    const [, v2, v3, v4] = await Promise.all([6, 3, 2, 1].map((age, i) => version(a, i + 1, daysAgo(age))))
+
+    await purgeSiteVersions(db, r2 as unknown as R2Bucket, NOW, { keep: 4, days: 5 })
+    expect(await survivors()).toEqual([v2, v3, v4].sort()) // v1 is past the 5 day cap
+    await purgeSiteVersions(db, r2 as unknown as R2Bucket, NOW, { keep: 1, days: 5 })
+    expect(await survivors()).toEqual([v4]) // the newest 1
   })
 
   test('a backlog larger than one pass (and the 100-bind cap) is drained across passes', async () => {

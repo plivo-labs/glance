@@ -159,6 +159,8 @@ jobs:
       # first-run superadmin (e.g. you@plivo.com) — wrangler replaces worker vars wholesale each
       # deploy, so this value must be correct here or the first admin is locked out.
       # WRITE_FREEZE comes from repo variable WRITE_FREEZE (`1` = maintenance write freeze, default `0`).
+      # SITE_VERSIONS_KEEP / SITE_VERSIONS_RETENTION_DAYS come from repo variables of the same name
+      # (version history per site, defaults 10 and 30; `SITE_VERSIONS_KEEP=0` keeps no history).
       - name: Deploy main worker
         working-directory: packages/api
         env:
@@ -166,6 +168,8 @@ jobs:
           CF_ALLOWED_HD: ${{ vars.CF_ALLOWED_HD }}
           CF_SUPERADMIN_EMAIL: ${{ vars.CF_SUPERADMIN_EMAIL }}
           WRITE_FREEZE: ${{ vars.WRITE_FREEZE || '0' }}
+          SITE_VERSIONS_KEEP: ${{ vars.SITE_VERSIONS_KEEP || '10' }}
+          SITE_VERSIONS_RETENTION_DAYS: ${{ vars.SITE_VERSIONS_RETENTION_DAYS || '30' }}
         run: |
           : "${CF_ALLOWED_HD:?set repo Actions variable CF_ALLOWED_HD}"
           : "${CF_SUPERADMIN_EMAIL:?set repo Actions variable CF_SUPERADMIN_EMAIL}"
@@ -174,7 +178,9 @@ jobs:
             --var "CONTENT_URL:${CONTENT_URL}" \
             --var "ALLOWED_HD:${CF_ALLOWED_HD}" \
             --var "SUPERADMIN_EMAIL:${CF_SUPERADMIN_EMAIL}" \
-            --var "WRITE_FREEZE:${WRITE_FREEZE}"
+            --var "WRITE_FREEZE:${WRITE_FREEZE}" \
+            --var "SITE_VERSIONS_KEEP:${SITE_VERSIONS_KEEP}" \
+            --var "SITE_VERSIONS_RETENTION_DAYS:${SITE_VERSIONS_RETENTION_DAYS}"
 
       - name: Deploy content worker
         working-directory: packages/api
