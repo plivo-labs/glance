@@ -32,10 +32,15 @@ export function versionPolicy(env: { SITE_VERSIONS_KEEP?: string; SITE_VERSIONS_
   const days = read(env.SITE_VERSIONS_RETENTION_DAYS, SITE_VERSIONS_RETENTION_DAYS)
   return keep === 0 || days === 0 ? { keep: 0, days: 0 } : { keep, days }
 }
-// One pass handles D1_MAX_IN versions (the id list is bound into inArray); a run stops after
-// MAX_PASSES so the Workers subrequest budget (~4 + one R2 delete per 1000 keys per pass) can't be
-// blown by a backlog — whatever is left is simply picked up by the next daily run.
-const VERSION_PURGE_MAX_PASSES = 10
+// SUBREQUEST BUDGET. Every D1 query and R2 call counts against the Workers limit (50 per invocation
+// on the free plan). A purge pass is bounded by R2 KEY count, not just version count: it takes at most
+// D1_MAX_IN versions (the id list is bound into inArray) AND at most VERSION_PURGE_KEYS_PER_PASS keys
+// (R2 caps one delete call at 1000), so every pass costs a fixed 4 subrequests however many files a
+// version holds: select doomed ids, select their keys, ONE R2 delete, delete the rows. The daily
+// tick is purgeRetention (up to 4) + MAX_PASSES x 4 = 36 of 50; whatever a backlog leaves over is
+// picked up by the next run (and trimmed at write time, see trimSiteVersions).
+const VERSION_PURGE_KEYS_PER_PASS = 1000
+const VERSION_PURGE_MAX_PASSES = 8
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const cutoff = (now: Date, days: number) => new Date(now.getTime() - days * DAY_MS).toISOString()
@@ -100,20 +105,28 @@ export async function purgeSiteVersions(
 ): Promise<void> {
   const ageCutoff = cutoff(now, policy.days)
   for (let pass = 0; pass < VERSION_PURGE_MAX_PASSES; pass++) {
-    const doomed = await db.all<{ id: string }>(sql`
-      SELECT id FROM (
-        SELECT id, createdAt, row_number() OVER (PARTITION BY siteId ORDER BY createdAt DESC, version DESC) AS rn
+    const doomed = await db.all<{ id: string; fileCount: number }>(sql`
+      SELECT id, fileCount FROM (
+        SELECT id, createdAt, fileCount, row_number() OVER (PARTITION BY siteId ORDER BY createdAt DESC, version DESC) AS rn
         FROM site_versions
       ) WHERE rn > ${policy.keep} OR createdAt < ${ageCutoff}
       LIMIT ${D1_MAX_IN}`)
     if (doomed.length === 0) return
-    const ids = doomed.map((r) => r.id)
+    // Spend the key budget in order (a version's fileCount is its file-row count, set in the same
+    // batch that creates it). The first version always goes, so a pass always makes progress.
+    const ids: string[] = []
+    let budget = VERSION_PURGE_KEYS_PER_PASS
+    for (const v of doomed) {
+      if (ids.length > 0 && v.fileCount > budget) break
+      ids.push(v.id)
+      budget -= v.fileCount
+    }
     const keys = await db
       .select({ storageKey: siteVersionFiles.storageKey })
       .from(siteVersionFiles)
       .where(inArray(siteVersionFiles.versionId, ids))
     await deleteKeys(bucket, keys.map((k) => k.storageKey))
     await db.delete(siteVersions).where(inArray(siteVersions.id, ids))
-    if (ids.length < D1_MAX_IN) return
+    if (ids.length === doomed.length && doomed.length < D1_MAX_IN) return
   }
 }

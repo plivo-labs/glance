@@ -122,10 +122,10 @@ describe('purgeSiteVersions', () => {
     const sp = await seedSpace(db, { createdBy: u })
     const a = await seedSite(db, { spaceId: sp, ownerId: u })
     const b = await seedSite(db, { spaceId: sp, ownerId: u })
-    const version = async (siteId: string, n: number, createdAt: string) => {
+    const version = async (siteId: string, n: number, createdAt: string, fileCount = 1) => {
       const id = `${siteId}-v${n}`
       await r2.put(`k/${id}`, 'x')
-      await db.insert(siteVersions).values({ id, siteId, version: n, createdAt, fileCount: 1, totalSize: 1 })
+      await db.insert(siteVersions).values({ id, siteId, version: n, createdAt, fileCount, totalSize: 1 })
       await db.insert(siteVersionFiles).values({ versionId: id, path: 'index.html', storageKey: `k/${id}` })
       return id
     }
@@ -179,6 +179,28 @@ describe('purgeSiteVersions', () => {
 
     expect(await survivors()).toEqual([])
     expect(r2.store.size).toBe(0)
+  })
+
+  test('a pass is bounded by R2 key count: versions with many files go one pass at a time', async () => {
+    const { db, r2, a, version, survivors } = await setup()
+    // Claimed key counts, newest first (each owns one real row, to keep the fixture small): 600 + 600
+    // is over one pass, and 1200 alone is over a pass but must still go.
+    for (const [i, fileCount] of [600, 600, 1200].entries()) {
+      await version(a, i + 1, daysAgo(SITE_VERSIONS_RETENTION_DAYS + 1 + i), fileCount)
+    }
+    const seen: number[] = [] // versions still in D1 at each R2 delete = one entry per pass
+    const counting = {
+      ...r2,
+      delete: async (k: string[]) => {
+        seen.push((await survivors()).length)
+        return r2.delete(k)
+      },
+    }
+
+    await purgeSiteVersions(db, counting as unknown as R2Bucket, NOW)
+
+    expect(seen).toEqual([3, 2, 1])
+    expect(await survivors()).toEqual([])
   })
 
   test('a failing R2 delete keeps the rows, so the next run retries instead of orphaning the objects', async () => {
