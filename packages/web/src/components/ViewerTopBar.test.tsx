@@ -29,6 +29,8 @@ function renderTopBar(
     onDownload: (format: string) => void
     downloadReady: boolean
     downloading: boolean
+    downloadMenuOpen: boolean
+    onDownloadMenuOpenChange: (open: boolean) => void
   }> = {},
 ) {
   const onToggleRail = overrides.onToggleRail ?? mock(() => {})
@@ -47,6 +49,8 @@ function renderTopBar(
           onDownload={overrides.onDownload}
           downloadReady={overrides.downloadReady}
           downloading={overrides.downloading}
+          downloadMenuOpen={overrides.downloadMenuOpen}
+          onDownloadMenuOpenChange={overrides.onDownloadMenuOpenChange}
         />
       ),
     },
@@ -143,6 +147,12 @@ describe('ViewerTopBar — Download is a menu of PDF, Markdown and plain text', 
     }
     openMenu()
     expect((await screen.findByRole('menuitem', { name: 'Download PDF' })).getAttribute('aria-disabled')).toBe('true')
+  })
+
+  test('a page that stops being ready closes an open menu for good', () => {
+    const onChange = mock((_open: boolean) => {})
+    renderTopBar({ onDownload: () => {}, downloadReady: false, downloadMenuOpen: true, onDownloadMenuOpenChange: onChange })
+    expect(onChange).toHaveBeenCalledWith(false)
   })
 
   test('while a download runs the trigger stays focusable (busy) and every item is disabled', async () => {

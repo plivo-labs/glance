@@ -1,5 +1,5 @@
 import { AlignLeft, ChevronRight, Command, Download, FileCode, FileText, GitFork, History, Menu, MessageSquare, Share2, Sparkles, Star } from 'lucide-react'
-import { type ReactNode, Suspense, lazy, useState } from 'react'
+import { type ReactNode, Suspense, lazy, useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { toast } from 'sonner'
 import { useStar } from '@/hooks/useStar'
@@ -87,6 +87,10 @@ export function ViewerTopBar({
   const [localMenuOpen, setLocalMenuOpen] = useState(false)
   const menuOpen = downloadMenuOpen ?? localMenuOpen
   const setMenuOpen = onDownloadMenuOpenChange ?? setLocalMenuOpen
+  // The page stopped being ready with the menu open: close it for good, or it would pop open again when it is.
+  useEffect(() => {
+    if (!downloadReady) setMenuOpen(false)
+  }, [downloadReady, setMenuOpen])
   // Star has a permanent slot in the row, so it is the one action with no menu-item twin.
   const { starred, toggle: toggleStar } = useStar(site)
   return (
@@ -176,7 +180,7 @@ export function ViewerTopBar({
             <DropdownMenu
               open={menuOpen && downloadReady}
               onOpenChange={(open) => {
-                if (downloadReady) setMenuOpen(open)
+                if (downloadReady || !open) setMenuOpen(open)
               }}
             >
               <DropdownMenuTrigger asChild>
