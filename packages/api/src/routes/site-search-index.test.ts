@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { eq, sql } from 'drizzle-orm'
-import { sites, users } from '../db/schema'
-import { READ_BYTES_PER_FILE, siteText } from '../lib/site-search'
+import { files, sites, users } from '../db/schema'
+import { batchAll } from '../lib/d1'
+import { READ_BYTES_PER_FILE, backfillSiteSearch, searchRowStmts, siteText } from '../lib/site-search'
 import { seedFile, seedMember, seedSite, seedSpace } from '../test/harness'
 import { APP_URL, makeRouteApp, mintUser } from '../test/route-fixtures'
 
@@ -87,6 +88,59 @@ describe('search index follows the files', () => {
     expect(await stamp(ctx, copy)).toBe(await stamp(ctx, await idOf(ctx, 'doc')))
     const rawCopy = await idOf(ctx, 'raw-copy')
     expect([await body(ctx, rawCopy), await stamp(ctx, rawCopy)]).toEqual([null, null])
+  })
+})
+
+// The fork copies the source's bytes first and its text/stamp at commit. If the source is replaced in
+// between, copying the text would give the fork NEW words over OLD bytes: it must be left unindexed so
+// the backfill reads the bytes it really has.
+describe('fork of a source replaced mid-copy', () => {
+  const forkDuring = async (replaceDuringCopy: (ctx: Ctx, id: string) => Promise<void>, claimFirst = false) => {
+    const ctx = await setup()
+    await seedSpace(ctx.db, { id: 'rd-sp', slug: 'rd', type: 'personal', createdBy: 'rd' })
+    await seedMember(ctx.db, 'rd-sp', 'rd')
+    await put(ctx, 'owner', 'doc', { 'index.html': '<p>forkable words</p>' })
+    const id = await idOf(ctx, 'doc')
+    // An editor's CAS claim lands BEFORE its swap batch: contentVersion is already ahead of the files.
+    if (claimFirst) await ctx.db.update(sites).set({ contentVersion: sql`${sites.contentVersion} + 1` }).where(eq(sites.id, id))
+    const realGet = ctx.r2.get
+    let fired = false
+    ctx.r2.get = (async (key: string, opts?: never) => {
+      const object = await realGet(key, opts) // the fork has its bytes: the OLD ones
+      if (!fired) {
+        fired = true
+        await replaceDuringCopy(ctx, id)
+      }
+      return object
+    }) as typeof ctx.r2.get
+    expect((await send(ctx, 'rd', 'POST', '/api/sites/acme/doc/fork')).status).toBe(200)
+    ctx.r2.get = realGet
+    return { ctx, copy: await idOf(ctx, 'doc-copy') }
+  }
+  // What an editor's swap batch does (routes/upload.ts): fresh file rows and keys, text and stamp, no version bump.
+  const editorSwap = async (ctx: Ctx, id: string) => {
+    const storageKey = `swapped/${id}/index.html`
+    await ctx.r2.put(storageKey, '<p>fresh words</p>', { httpMetadata: { contentType: 'text/html' } })
+    await batchAll(ctx.db, [
+      ctx.db.delete(files).where(eq(files.siteId, id)),
+      ctx.db.insert(files).values({ id: `f-${id}`, siteId: id, path: 'index.html', storageKey, mimeType: 'text/html', size: 18, etag: null }),
+      ctx.db.update(sites).set({ searchIndexedAt: 'upload-stamp', searchAttempts: 0 }).where(eq(sites.id, id)),
+      ...searchRowStmts(ctx.db, id, 'fresh words'),
+    ])
+  }
+
+  test('an owner replace (version bump) during the copy leaves the fork unindexed, and the backfill then indexes its real bytes', async () => {
+    const { ctx, copy } = await forkDuring((c) => put(c, 'owner', 'doc', { 'index.html': '<p>fresh words</p>' }, { replace: true }).then(() => {}))
+    expect([await body(ctx, copy), await stamp(ctx, copy)]).toEqual([null, null])
+    expect(await backfillSiteSearch(ctx.db, ctx.r2 as unknown as R2Bucket)).toBe(1)
+    expect(await body(ctx, copy)).toBe('forkable words')
+  })
+
+  test('an editor swap during the copy (version already bumped by its claim) leaves the fork unindexed too', async () => {
+    const { ctx, copy } = await forkDuring(editorSwap, true)
+    expect([await body(ctx, copy), await stamp(ctx, copy)]).toEqual([null, null])
+    expect(await backfillSiteSearch(ctx.db, ctx.r2 as unknown as R2Bucket)).toBe(1)
+    expect(await body(ctx, copy)).toBe('forkable words')
   })
 })
 

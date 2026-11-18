@@ -28,6 +28,7 @@ import { fetchAccessFacts, isSharedFromFacts, resolveSite, resolveSiteForAccess 
 import { deliverSlack, type SlackRecipient, slackDepsFromEnv, slackEnabled } from '../lib/slack'
 import {
   copySearchRowStmt,
+  filesUnchanged,
   ftsMatchQuery,
   searchHitJoin,
   searchRank,
@@ -769,6 +770,12 @@ sites.post('/:spaceSlug/:siteSlug/fork', requireAuth, requireControlGrant, async
     .from(filesTable)
     .where(eq(filesTable.siteId, site.id))
 
+  // The text and stamp may only be copied while the source still has the files copied below: a replace
+  // after this read gives it different text, which would sit over the old bytes. (Not contentVersion:
+  // an editor replace bumps that at its claim, before it swaps the files.) Otherwise the fork is left
+  // unindexed and the backfill indexes the bytes it really has.
+  const sourceUnchanged = filesUnchanged(site.id, sourceFiles[0]?.storageKey)
+
   // Copy the bytes BEFORE any D1 write: a failed/missing object aborts with nothing committed and
   // every copied key reclaimed, so a fork can never exist pointing at absent bytes.
   const copied = await copyObjects(c.env.GLANCE_FILES, sourceFiles, crypto.randomUUID())
@@ -793,10 +800,10 @@ sites.post('/:spaceSlug/:siteSlug/fork', requireAuth, requireControlGrant, async
         forkedFrom: site.id,
         // The bytes are copied, so the source's search text is the fork's too: take its index stamp and
         // row. A source the cron has not indexed yet is NULL here, which leaves the fork for the same backfill.
-        searchIndexedAt: sql`(select ${sitesTable.searchIndexedAt} from ${sitesTable} where ${sitesTable.id} = ${site.id})`,
+        searchIndexedAt: sql`(select ${sitesTable.searchIndexedAt} from ${sitesTable} where ${sitesTable.id} = ${site.id} and ${sourceUnchanged})`,
       }),
       ...copied.map((f) => db.insert(filesTable).values({ id: crypto.randomUUID(), siteId: id, ...f })),
-      copySearchRowStmt(db, site.id, id),
+      copySearchRowStmt(db, site.id, id, sourceUnchanged),
     ])
   } catch (err) {
     // Don't orphan the objects we just wrote (e.g. a concurrent fork won the (spaceId, slug) unique).

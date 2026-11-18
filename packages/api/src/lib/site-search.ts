@@ -4,7 +4,7 @@
 // `site_text`. Every query joins back to `sites`, so access is decided by the live site row, never
 // by these tables. This module owns the SQL: building the text, writing it (as batch statements, so
 // it commits WITH the file swap), the injection-safe MATCH string, snippets, and the cron backfill.
-import { and, asc, desc, eq, isNull, lt, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, isNull, lt, type SQL, sql } from 'drizzle-orm'
 import type { BatchItem } from 'drizzle-orm/batch'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { sqliteTable, text } from 'drizzle-orm/sqlite-core'
@@ -128,14 +128,14 @@ export const filesUnchanged = (siteId: string, key: string | undefined) =>
 
 /** A fork's text, copied from the source's in the fork's own batch (the bytes are copied, so the
  *  text is identical). */
-export const copySearchRowStmt = (db: DrizzleD1Database, fromSiteId: string, toSiteId: string) =>
+export const copySearchRowStmt = (db: DrizzleD1Database, fromSiteId: string, toSiteId: string, unchanged: SQL) =>
   db
     .insert(siteText)
     .select(
       db
         .select({ siteId: sql<string>`${toSiteId}`.as('siteId'), body: siteText.body })
         .from(siteText)
-        .where(eq(siteText.siteId, fromSiteId)),
+        .where(and(eq(siteText.siteId, fromSiteId), unchanged)),
     )
 
 /**
