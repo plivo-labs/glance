@@ -182,7 +182,7 @@ daily purge). Operators tune this with `SITE_VERSIONS_KEEP` and `SITE_VERSIONS_R
 lists them (`id`, `version`, `createdAt`, `createdBy`, `fileCount`, `totalSize`); `POST …/versions/:id/restore`
 makes one live and keeps the content it replaced as a new version, so a restore can be undone. Both are
 owner-only (no superadmin bypass); restore is refused (`409`) on an archived site and while history is off
-(`SITE_VERSIONS_KEEP=0`), where the content it replaces could not be kept.
+(`SITE_VERSIONS_KEEP=0`, or a retention of `0` days), where the content it replaces could not be kept.
 
 ## Deploy files
 

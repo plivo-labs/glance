@@ -121,7 +121,7 @@ Every replace (and every restore) keeps the content it replaced as a **version**
 
 | Var | Default | Meaning |
 | --- | --- | --- |
-| `SITE_VERSIONS_KEEP` | `10` | Versions kept per site (the newest N). `0` turns history off: a replace snapshots nothing and deletes the replaced files, as before versions existed. |
+| `SITE_VERSIONS_KEEP` | `10` | Versions kept per site (the newest N). `0` turns history off: a replace snapshots nothing and deletes the replaced files, as before versions existed, and restoring a version is refused (`409`), since the content it replaces could not be kept. |
 | `SITE_VERSIONS_RETENTION_DAYS` | `30` | A version is purged this many days after it was replaced. `0` also turns history off. |
 
 Set them in the `vars` block of `packages/api/wrangler.jsonc`, or, with CI auto-deploy, as repo Actions variables of the same names (the workflow passes them to `wrangler deploy`; unset means the defaults). Values must be non-negative whole numbers; anything else falls back to the default.
