@@ -52,6 +52,7 @@ versions.get('/:spaceSlug/:siteSlug/versions', requireAuth, async (c) => {
 // The version's objects are COPIED to a fresh prefix (the version keeps its own, so it stays
 // restorable and the one-object-one-owner invariant holds), then the live rows are swapped in one
 // batch that ALSO snapshots the content being replaced as a new version — a restore is reversible.
+// Refused (409) while history is off (SITE_VERSIONS_KEEP=0), where that snapshot could not be kept.
 versions.post('/:spaceSlug/:siteSlug/versions/:versionId/restore', requireAuth, requireControlGrant, async (c) => {
   const user = c.get('user')
   const db = c.get('db')
@@ -60,6 +61,11 @@ versions.post('/:spaceSlug/:siteSlug/versions/:versionId/restore', requireAuth, 
   if (!site) return c.json({ error: 'not found' }, 404)
   if (site.ownerId !== user.id) return c.json({ error: 'forbidden' }, 403)
   if (site.status !== 'active') return c.json({ error: 'site is not active', status: site.status }, 409)
+  // With history off the swap below would snapshot the content it replaces and the trim would delete
+  // that snapshot at once, so the old live content would be gone with no way back. Refuse up front.
+  if (versionPolicy(c.env).keep === 0) {
+    return c.json({ error: 'version history is turned off on this server, so a restore would lose the current content' }, 409)
+  }
 
   // Scoped to THIS site: a bare id lookup would let the owner of one site restore another's version.
   const version = (

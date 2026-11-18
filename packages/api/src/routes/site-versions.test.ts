@@ -239,6 +239,32 @@ describe('GET / POST /api/sites/:space/:site/versions', () => {
     expect(ctx.r2.store.size).toBe(2) // live + the one kept version
   })
 
+  test('versions.restore.off: with history off (SITE_VERSIONS_KEEP=0) restore is refused 409 before any write, so no live content is lost', async () => {
+    const ctx = await withHistory()
+    const [v] = await listed(ctx)
+    const live = await liveKeys(ctx)
+    const objects = ctx.r2.store.size
+    const put = ctx.r2.put
+    let r2Puts = 0
+    ctx.r2.put = ((...a: Parameters<typeof put>) => {
+      r2Puts++
+      return put(...a)
+    }) as never
+
+    ctx.env.SITE_VERSIONS_KEEP = '0'
+    const res = await call(ctx, 'owner', 'POST', `/${v?.id}/restore`)
+    expect(res.status).toBe(409)
+    expect(((await res.json()) as { error: string }).error).toMatch(/history is turned off/)
+    expect(r2Puts).toBe(0)
+    expect(await liveKeys(ctx)).toEqual(live)
+    expect(await liveText(ctx)).toBe(blurb('two')) // the old live content is still live...
+    expect(await listed(ctx)).toHaveLength(2) // ...and nothing was snapshotted or trimmed
+    expect(ctx.r2.store.size).toBe(objects)
+
+    ctx.env.SITE_VERSIONS_KEEP = '5' // the same request goes through once history is on again
+    expect((await call(ctx, 'owner', 'POST', `/${v?.id}/restore`)).status).toBe(200)
+  })
+
   test('versions.restore.batch-failure: a failed swap reclaims the copied objects', async () => {
     const ctx = await withHistory()
     const [v] = await listed(ctx)
