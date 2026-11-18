@@ -16,7 +16,8 @@ const PDF_TOKEN_TTL_SEC = 120
 type Renderer = (req: PdfRenderRequest) => Promise<Uint8Array>
 
 // PDF_RENDER is the test seam (like OG_RENDER); production uses the BROWSER binding. Neither bound
-// (local dev, a deploy without Browser Rendering) → null → 501 and the web app prints instead.
+// (local dev, a deploy without Browser Rendering) → null → 501 and the web app prints instead. So does a
+// page the render cannot reproduce (pdf-preflight.ts).
 function pickRenderer(env: AppEnv['Bindings']): Renderer | null {
   if (env.PDF_RENDER) return env.PDF_RENDER
   const binding = env.BROWSER
@@ -48,7 +49,7 @@ sitePdf.get('/:space/:site/pdf', async (c) => {
   if (cookieAuthed(c) && !isSameOrigin(c)) return c.json({ error: 'csrf' }, 403)
   // A page the headless render cannot reproduce is a 501 too, so the viewer prints it. After the checks
   // above (they stay cheap and first) and before the limiter and the render, so it costs neither.
-  const printOnly = await pdfPrintOnlyReason(c.get('db'), c.env.GLANCE_FILES, site, c.req.query('path'))
+  const printOnly = await pdfPrintOnlyReason(c.get('db'), c.env.GLANCE_FILES, site, c.req.query('path'), options.themeHref)
   if (printOnly) return c.json({ error: printOnly }, 501)
   if (c.env.PDF_LIMITER) {
     const { success } = await c.env.PDF_LIMITER.limit({ key: user.id })

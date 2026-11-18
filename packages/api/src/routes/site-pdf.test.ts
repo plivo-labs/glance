@@ -31,7 +31,7 @@ async function setup(env: Partial<AppEnv['Bindings']> = {}) {
   await seedSite(fixture.db, { spaceId: space, ownerId: 'owner', slug: 'secret', visibility: 'private' })
   // A file in a site's R2 bucket and files table, as the upload route leaves it.
   const addFile = (siteId: string, path: string, text: string) => seedFile(fixture.db, fixture.r2, siteId, { path, text })
-  const addSite = (slug: string) => seedSite(fixture.db, { spaceId: space, ownerId: 'owner', slug })
+  const addSite = (slug: string, theme: string | null = null) => seedSite(fixture.db, { spaceId: space, ownerId: 'owner', slug, theme })
   const get = (query = '', user: string | null = 'owner', site = 'report', extra: Record<string, string> = {}) =>
     fixture.app.request(`/api/sites/docs/${site}/pdf${query}`, { headers: { ...(user ? { Authorization: `Bearer tok-${user}` } : {}), ...extra } }, bindings)
   return { get, calls, db: fixture.db, reportId, addFile, addSite }
@@ -157,6 +157,13 @@ describe('GET /api/sites/:space/:site/pdf', () => {
     expect(calls).toHaveLength(1)
   })
 
+  test('a cross-site cookie request is refused before the page is read', async () => {
+    const { get, calls, reportId, addFile } = await setup()
+    await addFile(reportId, 'index.html', '<script>glance.db.collection("votes")</script>')
+    expect((await get('', 'owner', 'report', { Cookie: '__Host-glance_session=x', 'Sec-Fetch-Site': 'cross-site' })).status).toBe(403)
+    expect(calls).toHaveLength(0)
+  })
+
   test('a print-only page does not use up the rate limit', async () => {
     const limiter = { PDF_LIMITER: { limit: async () => ({ success: false }) } }
     const limited = await setup(limiter)
@@ -164,6 +171,45 @@ describe('GET /api/sites/:space/:site/pdf', () => {
     expect((await limited.get()).status).toBe(501)
     await limited.addFile(limited.reportId, 'plain.html', '<p>plain</p>')
     expect((await limited.get('?path=plain.html')).status).toBe(429)
+  })
+
+  // An unthemed markdown page is served with `style-src 'unsafe-inline'` (no 'self'), so the theme <link>
+  // the render adds for a viewer-chosen theme would be blocked. The CSP is not bypassed: it is printed.
+  const viewerTheme = `?theme=${encodeURIComponent('/_glance/theme/broadsheet.css?v=abc123')}`
+
+  test('unthemed markdown with a theme chosen in the viewer is a 501 before any render', async () => {
+    const { get, calls, addSite, addFile } = await setup()
+    await addFile(await addSite('notes'), 'doc.md', '# hello')
+    const res = await get(`${viewerTheme}&path=doc.md`, 'owner', 'notes')
+    expect(res.status).toBe(501)
+    expect(((await res.json()) as { error: string }).error).toContain('theme')
+    expect(calls).toHaveLength(0)
+  })
+
+  test('the same page renders when nothing is blocked: no viewer theme, a themed site, or an HTML page', async () => {
+    const { get, calls, addSite, addFile } = await setup()
+    await addFile(await addSite('plain'), 'doc.md', '# hello')
+    await addFile(await addSite('themed', 'broadsheet'), 'doc.md', '# hello')
+    await addFile(await addSite('page'), 'index.html', '<html><body>hi</body></html>')
+    expect((await get('?path=doc.md', 'owner', 'plain')).status).toBe(200)
+    expect((await get(`${viewerTheme}&path=doc.md`, 'owner', 'themed')).status).toBe(200)
+    expect((await get(viewerTheme, 'owner', 'page')).status).toBe(200)
+    expect(calls).toHaveLength(3)
+  })
+
+  test('a site whose stored theme was retired is unthemed, as the content worker serves it', async () => {
+    const { get, calls, addSite, addFile } = await setup()
+    await addFile(await addSite('old', 'retired-theme'), 'doc.md', '# hello')
+    expect((await get(`${viewerTheme}&path=doc.md`, 'owner', 'old')).status).toBe(501)
+    expect(calls).toHaveLength(0)
+  })
+
+  test('markdown at the root of a single-file site is judged without a path', async () => {
+    const { get, calls, addSite, addFile } = await setup()
+    await addFile(await addSite('readme'), 'README.md', '# hello')
+    expect((await get(viewerTheme, 'owner', 'readme')).status).toBe(501)
+    expect((await get('', 'owner', 'readme')).status).toBe(200)
+    expect(calls).toHaveLength(1)
   })
 
   test('a failed render never logs the token, and a PDF that still carries it is refused', async () => {

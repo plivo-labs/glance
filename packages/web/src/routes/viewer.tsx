@@ -181,7 +181,7 @@ function Viewer() {
             toast.success(`Saved ${base}.pdf`, { id: toastId })
           } catch (err) {
             if (!(err instanceof PdfUnavailableError)) throw err
-            // No server PDF here (self-hosted without Browser Rendering, or the render failed): the browser's own dialog.
+            // No server PDF here (self-hosted without Browser Rendering, the render failed, or a page it cannot reproduce): the browser's own dialog.
             toast.dismiss(toastId)
             toast.info('Server PDF is not available here', { description: 'Opening the browser print dialog instead.' })
             iframeRef.current?.contentWindow?.postMessage({ type: 'glance:print' }, contentOrigin)

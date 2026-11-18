@@ -14,7 +14,8 @@ const RENDER_DEADLINE_MS = 30_000
 // Browser-side snippets, as strings: this package compiles without the DOM lib.
 //
 // Re-point (or create) the stamped theme <link>, like the annotate client does for a viewer override,
-// and wait for the sheet so the PDF is not taken mid-restyle.
+// and wait for the sheet so the PDF is not taken mid-restyle. The route never sends the one page the
+// content CSP would block this for (unthemed markdown, see pdf-preflight.ts): that one is printed.
 const applyTheme = (href: string) => `new Promise((resolve) => {
   let l = document.getElementById('glance-theme')
   if (!l) { l = document.createElement('link'); l.id = 'glance-theme'; l.rel = 'stylesheet'; document.head.appendChild(l) }

@@ -30,7 +30,7 @@ export function pdfRequestUrl(
   return `/api/sites/${encodeURIComponent(site.spaceSlug)}/${encodeURIComponent(site.siteSlug)}/pdf?${q}`
 }
 
-/** The server cannot make a PDF here (no Browser Rendering binding, or the render failed). */
+/** The server cannot make a PDF here (no Browser Rendering binding, the render failed, or a page it cannot reproduce: glance.db, unthemed markdown in a chosen theme). */
 export class PdfUnavailableError extends Error {}
 
 export function fileBaseName(title: string | null, siteSlug: string, page: string | null = null): string {
