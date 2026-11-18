@@ -27,6 +27,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { VisibilityBadge } from '@/components/visibility'
 import { api, ApiError } from '@/lib/api'
 import type { SiteStatus, Visibility } from '@/lib/types'
+import { formatBytes } from '@/lib/utils'
 
 // ── API row shapes (admin endpoints; see API contract) ──────────────────────
 interface AdminSite {
@@ -187,22 +188,6 @@ function RestoreButton({ siteId }: { siteId: string }) {
 
 // ── Overview (usage analytics) tab ──────────────────────────────────────────
 const formatCount = new Intl.NumberFormat(undefined, { notation: 'compact' }).format
-
-// One narrow-unit formatter per binary magnitude ("512B", "3.4MB"). Not compact notation:
-// its suffixes are decimal and render gigabytes as "BB" (billion bytes).
-const byteFormats = (['byte', 'kilobyte', 'megabyte', 'gigabyte', 'terabyte'] as const).map(
-  (unit) => new Intl.NumberFormat(undefined, { style: 'unit', unit, unitDisplay: 'narrow', maximumFractionDigits: 1 }),
-)
-
-function formatBytes(bytes: number): string {
-  let value = bytes
-  let i = 0
-  while (value >= 1024 && i < byteFormats.length - 1) {
-    value /= 1024
-    i++
-  }
-  return byteFormats[i].format(value)
-}
 
 function StatCard({ icon: Icon, label, value, sub }: { icon: typeof Eye; label: string; value: string; sub?: string }) {
   return (

@@ -7,7 +7,8 @@ import { MountSensor } from '@/components/ui/mount-sensor'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
 import { timeAgo } from '@/lib/time'
-import { type SiteVersion, formatBytes, siteVersions, versionAuthor } from '@/lib/versions'
+import { formatBytes } from '@/lib/utils'
+import { type SiteVersion, siteVersions, versionAuthor } from '@/lib/versions'
 
 type Props = {
   spaceSlug: string

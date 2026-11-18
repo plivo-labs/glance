@@ -33,7 +33,7 @@ describe('HistorySheet', () => {
     renderSheet()
     expect(await screen.findByText('Version 2')).toBeDefined()
     expect(document.body.textContent).toContain('by Ada')
-    expect(document.body.textContent).toContain('3 files · 2.0 KB')
+    expect(document.body.textContent).toContain('3 files · 2kB')
     // The relative time is a hint; the exact moment is one hover away.
     expect(document.querySelector('time')?.getAttribute('title')).toBe(new Date(V2.createdAt).toLocaleString())
   })
