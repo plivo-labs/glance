@@ -356,9 +356,13 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
             // Same explicit-only rule for the expiry. A redeploy is also how an owner revives a LAPSED
             // site (flipped to 'expired', or still 'active' inside the sweep's lag): with no new
             // expiry the stale one is cleared (leaving a past instant would expire it again at the
-            // next sweep). An admin-'archived' site is left archived.
+            // next sweep). An admin-'archived' site is left archived: decided IN the UPDATE from the
+            // row's own status (as PATCH does), since `lapsed` was read before the R2 uploads and an
+            // admin archive landing in between must not be undone.
             ...(hasExpires || lapsed ? { expiresAt: nextExpiresAt } : {}),
-            ...(lapsed ? { status: 'active' as const } : {}),
+            ...(lapsed
+              ? { status: sql`case when ${sites.status} = 'archived' then 'archived' else 'active' end` }
+              : {}),
             ...(derivedTitle !== null ? { title: sql`coalesce(${sites.title}, ${derivedTitle})` } : {}),
             // Unconditional (not COALESCE'd): a redeploy whose entry dropped its description meta
             // must clear the stale blurb rather than keep unfurling the previous content's.

@@ -21,7 +21,8 @@ async function setupUpload() {
   const sp = await seedSpace(db, { createdBy: owner, slug: 'acme' })
   await seedMember(db, sp, owner)
   await kv.put('cli:tok', JSON.stringify({ id: owner, email: 'owner@example.com', name: null, role: 'member' }))
-  const env = { APP_URL: 'https://glance.example.com', SESSION_SECRET: 's', GLANCE_SESSIONS: kv, GLANCE_FILES: makeR2() } as unknown as AppEnv['Bindings']
+  const r2 = makeR2()
+  const env = { APP_URL: 'https://glance.example.com', SESSION_SECRET: 's', GLANCE_SESSIONS: kv, GLANCE_FILES: r2 } as unknown as AppEnv['Bindings']
   const app = new Hono<AppEnv>()
   app.use('*', async (c, next) => {
     c.set('db', db)
@@ -35,7 +36,7 @@ async function setupUpload() {
     return app.request(`/api/upload/acme/${slug}${o.replace ? '?replace=true' : ''}`, { method: 'POST', headers: { Authorization: 'Bearer tok' }, body: fd }, env)
   }
   const row = async (slug: string) => (await db.select({ expiresAt: sites.expiresAt, status: sites.status }).from(sites).where(eq(sites.slug, slug)))[0]
-  return { db, sp, owner, post, row }
+  return { db, sp, owner, r2, post, row }
 }
 
 describe('upload expires field', () => {
@@ -74,6 +75,19 @@ describe('upload expires field', () => {
     expect(Date.parse((await row('back'))?.expiresAt as string)).toBeGreaterThan(Date.now())
     await post('mod', { replace: true })
     expect((await row('mod'))?.status).toBe('archived')
+  })
+
+  test('an admin archive that lands during the R2 uploads is not undone by the revive', async () => {
+    const { db, sp, owner, r2, post, row } = await setupUpload()
+    const lapsedAt = iso(-HOUR)
+    await seedSite(db, { id: 'racy', spaceId: sp, ownerId: owner, slug: 'racy', status: 'active', expiresAt: lapsedAt })
+    const put = r2.put
+    r2.put = async (...args: Parameters<typeof put>) => {
+      await db.update(sites).set({ status: 'archived' }).where(eq(sites.id, 'racy'))
+      return put(...args)
+    }
+    expect((await post('racy', { replace: true })).status).toBe(200)
+    expect((await row('racy'))?.status).toBe('archived')
   })
 })
 
