@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test'
+import { eq } from 'drizzle-orm'
+import { sites } from '../db/schema'
 import { SNIPPET_CAP, siteText } from '../lib/site-search'
 import { auth, makeRouteApp, mintUser } from '../test/route-fixtures'
 import { makeDb, seedGroupShare, seedMember, seedSite, seedSpace, seedUser, seedUserShare } from '../test/harness'
@@ -36,6 +38,29 @@ describe('searchSites — page content', () => {
     await w.site('wordy', `${`${'x'.repeat(100)} `.repeat(20)}needle`) // 16 tokens of 100 characters
     const [hit] = await w.search('needle')
     expect(hit?.snippet?.length).toBeLessThanOrEqual(SNIPPET_CAP + 1)
+  })
+
+  // The snippet must come from the same read that decided access: a page that turns private (and gets
+  // new text) right after it must not leak that text through a later, access-free read.
+  test('a page that goes private right after the access read leaks no snippet', async () => {
+    const w = await world()
+    const id = await w.site('flip', 'needle in a public haystack')
+    const realBatch = w.db.batch.bind(w.db) as (stmts: unknown) => Promise<unknown>
+    let batches = 0
+    w.db.batch = (async (stmts: unknown) => {
+      const out = await realBatch(stmts)
+      if (++batches === 2) {
+        // the 2nd batch is the name + content one; flip the page once it has answered
+        await w.db.update(sites).set({ visibility: 'private' }).where(eq(sites.id, id))
+        await w.db.delete(siteText).where(eq(siteText.siteId, id))
+        await w.db.insert(siteText).values({ siteId: id, body: 'needle TOPSECRET plans' })
+      }
+      return out
+    }) as typeof w.db.batch
+    const rows = await w.search('needle')
+    expect(rows.map((r) => r.id)).toEqual([id]) // it was open when access was decided
+    expect(rows[0]?.snippet).toContain('public haystack')
+    expect(JSON.stringify(rows)).not.toContain('TOPSECRET')
   })
 
   test('name matches come first and a page matching by name AND content is listed once, as a name hit', async () => {

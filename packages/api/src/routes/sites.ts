@@ -31,9 +31,10 @@ import {
   ftsMatchQuery,
   searchHitJoin,
   searchRank,
+  searchSnippet,
   siteSearch,
-  siteSnippets,
   siteText,
+  tidySnippet,
 } from '../lib/site-search'
 import { isValidSlug } from '../lib/slug'
 import { copyObjects, deleteKeys, deleteSiteObjects } from '../lib/storage'
@@ -96,7 +97,9 @@ export type SearchRow = {
  *
  * Content hits are joined to the exact reach conditions IN SQL, before ORDER/LIMIT: a MATCH that is
  * limited first would let a common word fill the limit with pages the caller cannot open and push
- * their own out. Snippets are read last, only for ids that survived the final checkAccess pass.
+ * their own out. Each hit's snippet is a column of that same statement, so the text a caller sees is
+ * the text that was access-checked; a separate snippet read afterwards could return text from a page
+ * that turned private (or was replaced) in between.
  */
 export async function searchSites(
   db: AppEnv['Variables']['db'],
@@ -154,7 +157,7 @@ export async function searchSites(
   }
   const nameStmts = reaches.map((reach) =>
     db
-      .select({ ...cols, rank: sql<number>`0`.as('rank') })
+      .select({ ...cols, rank: sql<number>`0`.as('rank'), snippet: sql<string>`''`.as('snippet') })
       .from(sitesTable)
       .innerJoin(spaces, eq(sitesTable.spaceId, spaces.id))
       .where(and(active, qMatch, reach))
@@ -164,7 +167,9 @@ export async function searchSites(
   const contentStmts = match
     ? contentReaches.map((reach) =>
         db
-          .select({ ...cols, rank: searchRank.as('rank') })
+          // Tradeoff: an excerpt is built for up to CONTENT_SCAN_CAP rows per statement, including ones
+          // the checkAccess pass or the limit later drops, in exchange for never reading it unchecked.
+          .select({ ...cols, rank: searchRank.as('rank'), snippet: searchSnippet.as('snippet') })
           .from(siteSearch)
           .innerJoin(siteText, searchHitJoin)
           .innerJoin(sitesTable, eq(sitesTable.id, siteText.siteId))
@@ -192,15 +197,10 @@ export async function searchSites(
   const contents = union(batches.slice(nameStmts.length))
     .filter((r) => !listed.has(r.id))
     .sort((a, b) => a.rank - b.rank)
-  const picked = [
-    ...names.map(({ rank: _, ...r }) => ({ ...r, matchedIn: 'name' as const })),
-    ...contents.map(({ rank: _, ...r }) => ({ ...r, matchedIn: 'content' as const })),
+  return [
+    ...names.map(({ rank: _, snippet: __, ...r }) => ({ ...r, matchedIn: 'name' as const })),
+    ...contents.map(({ rank: _, snippet, ...r }) => ({ ...r, matchedIn: 'content' as const, snippet: tidySnippet(snippet) })),
   ].slice(0, limit)
-
-  // Snippets last, for the final content ids only (they have all passed checkAccess above).
-  const contentIds = picked.filter((r) => r.matchedIn === 'content').map((r) => r.id)
-  const snippets = match ? await siteSnippets(db, match, contentIds) : new Map<string, string>()
-  return picked.map((r) => (snippets.has(r.id) ? { ...r, snippet: snippets.get(r.id) } : r))
 }
 
 // POST /api/sites — create an empty site in a space the caller belongs to.

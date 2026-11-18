@@ -142,27 +142,14 @@ export function ftsMatchQuery(q: string): string | null {
 export const SNIPPET_CAP = 300 // chars
 
 /** One line, capped to SNIPPET_CAP chars (never splitting a surrogate pair), with an ellipsis when cut. */
-function tidySnippet(raw: string): string {
+export function tidySnippet(raw: string): string {
   const { text, truncated } = cap(raw.replace(/\s+/g, ' ').trim(), SNIPPET_CAP)
   return truncated ? `${text}…` : text
 }
 
-/** Plain-text excerpts around the match, keyed by site id. Call ONLY with ids that already passed the
- *  final access check — this reads page text and applies no access rule of its own. */
-export async function siteSnippets(
-  db: DrizzleD1Database,
-  match: string,
-  siteIds: string[],
-): Promise<Map<string, string>> {
-  if (siteIds.length === 0) return new Map()
-  const rows = await db.all<{ siteId: string; snippet: string }>(
-    sql`SELECT site_text.siteId AS siteId, snippet(site_search, 0, '', '', '…', 16) AS snippet FROM site_search JOIN site_text ON site_text.id = site_search.rowid WHERE site_search MATCH ${match} AND site_text.siteId IN (${sql.join(
-      siteIds.map((id) => sql`${id}`),
-      sql`, `,
-    )})`,
-  )
-  return new Map(rows.map((r) => [r.siteId, tidySnippet(r.snippet)]))
-}
+/** The FTS5 snippet column for content hits: an excerpt around the match, read in the same statement
+ *  (so the same snapshot) that the caller's access filter runs in. Pass the raw value to tidySnippet. */
+export const searchSnippet = sql<string>`snippet("site_search", 0, '', '', '…', 16)`
 
 /**
  * One cron tick of the backfill: index a few not-yet-indexed sites (fewest failed attempts first,
