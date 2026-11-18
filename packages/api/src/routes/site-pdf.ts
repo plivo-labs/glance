@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { containsToken, PdfPageNotFound, parsePdfQuery, pdfDisposition, pdfPagePath, pdfPlan, type PdfRenderRequest, redactToken } from '../lib/pdf'
+import { pdfPrintOnlyReason } from '../lib/pdf-preflight'
 import { fetchAccessFacts, siteAccessFromFacts } from '../lib/site-access'
 import { signToken } from '../lib/token'
 import { cookieAuthed, isSameOrigin, requireAuth } from '../middleware/auth'
@@ -45,6 +46,10 @@ sitePdf.get('/:space/:site/pdf', async (c) => {
   // client (the CLI) carries no cookie and is not affected. Checked here, not as route middleware,
   // so it covers only this handler and a deployment with no renderer still answers 501 (print fallback).
   if (cookieAuthed(c) && !isSameOrigin(c)) return c.json({ error: 'csrf' }, 403)
+  // A page the headless render cannot reproduce is a 501 too, so the viewer prints it. After the checks
+  // above (they stay cheap and first) and before the limiter and the render, so it costs neither.
+  const printOnly = await pdfPrintOnlyReason(c.get('db'), c.env.GLANCE_FILES, site, c.req.query('path'))
+  if (printOnly) return c.json({ error: printOnly }, 501)
   if (c.env.PDF_LIMITER) {
     const { success } = await c.env.PDF_LIMITER.limit({ key: user.id })
     if (!success) return c.json({ error: 'rate limited' }, 429)

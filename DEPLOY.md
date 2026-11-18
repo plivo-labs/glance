@@ -104,7 +104,7 @@ To turn it on, uncomment the `browser` line in `packages/api/wrangler.jsonc` and
 "browser": { "binding": "BROWSER" },
 ```
 
-Markdown and plain-text downloads need nothing. Without the binding, or if a render fails, the PDF option falls back to the browser's own print dialog.
+Markdown and plain-text downloads need nothing. Without the binding, or if a render fails, the PDF option falls back to the browser's own print dialog. It does the same for a page that uses [`glance.db`](SHARED_BACKEND.md) (the headless browser has no Glance app around the page to answer the SDK) and for any page of a site that holds `glance.db` documents.
 
 ## Google OAuth (optional)
 

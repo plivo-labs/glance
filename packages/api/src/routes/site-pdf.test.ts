@@ -1,7 +1,9 @@
 import { describe, expect, spyOn, test } from 'bun:test'
+import { eq } from 'drizzle-orm'
+import { sites } from '../db/schema'
 import { PdfPageNotFound, type PdfRenderRequest } from '../lib/pdf'
 import { verifyToken } from '../lib/token'
-import { seedMember, seedSite, seedSpace } from '../test/harness'
+import { seedFile, seedMember, seedSite, seedSpace } from '../test/harness'
 import { makeRouteApp, mintUser } from '../test/route-fixtures'
 import type { AppEnv } from '../types'
 
@@ -25,11 +27,14 @@ async function setup(env: Partial<AppEnv['Bindings']> = {}) {
   await mintUser(fixture.db, fixture.kv, 'stranger')
   const space = await seedSpace(fixture.db, { createdBy: 'owner', slug: 'docs' })
   await seedMember(fixture.db, space, 'owner')
-  await seedSite(fixture.db, { spaceId: space, ownerId: 'owner', slug: 'report', title: 'Q3 report' })
+  const reportId = await seedSite(fixture.db, { spaceId: space, ownerId: 'owner', slug: 'report', title: 'Q3 report' })
   await seedSite(fixture.db, { spaceId: space, ownerId: 'owner', slug: 'secret', visibility: 'private' })
+  // A file in a site's R2 bucket and files table, as the upload route leaves it.
+  const addFile = (siteId: string, path: string, text: string) => seedFile(fixture.db, fixture.r2, siteId, { path, text })
+  const addSite = (slug: string) => seedSite(fixture.db, { spaceId: space, ownerId: 'owner', slug })
   const get = (query = '', user: string | null = 'owner', site = 'report', extra: Record<string, string> = {}) =>
     fixture.app.request(`/api/sites/docs/${site}/pdf${query}`, { headers: { ...(user ? { Authorization: `Bearer tok-${user}` } : {}), ...extra } }, bindings)
-  return { get, calls }
+  return { get, calls, db: fixture.db, reportId, addFile, addSite }
 }
 
 describe('GET /api/sites/:space/:site/pdf', () => {
@@ -97,6 +102,68 @@ describe('GET /api/sites/:space/:site/pdf', () => {
   test('a page that is not in the site is a 404, not a render failure', async () => {
     const missing = await setup({ PDF_RENDER: async () => Promise.reject(new PdfPageNotFound('gone')) })
     expect((await missing.get('?path=nope.html')).status).toBe(404)
+  })
+
+  // The headless render has no Glance app around the page, so the glance.db SDK (a broker that needs
+  // the parent viewer frame) is never there: such a page is a 501, which the viewer turns into the
+  // browser's print dialog, before any render is started.
+  test('a page that uses glance.db is a 501 before any render, in any spelling of the SDK', async () => {
+    const spellings = [
+      '<script>glance.db.collection("votes").list()</script>',
+      '<script>window.glance?.db.collection("votes")</script>',
+      '<script>const db = glance["db"]</script>',
+      '<script src="/_glance/db.js"></script>',
+      '<script>window.__GLANCE_DB__ = {}</script>',
+    ]
+    for (const [i, html] of spellings.entries()) {
+      const { get, calls, reportId, addFile } = await setup()
+      await addFile(reportId, 'index.html', `<html><body>${html}</body></html>`)
+      const res = await get()
+      expect([i, res.status]).toEqual([i, 501])
+      expect(((await res.json()) as { error: string }).error).toContain('glance.db')
+      expect(calls).toHaveLength(0)
+    }
+  })
+
+  test('a page without it still renders, prose about a glance included', async () => {
+    const { get, calls, reportId, addFile } = await setup()
+    await addFile(reportId, 'index.html', '<html><body><p>Take a quick glance at the numbers.</p></body></html>')
+    expect((await get()).status).toBe(200)
+    expect(calls).toHaveLength(1)
+  })
+
+  test('the page asked for is the one judged: a sibling that uses glance.db does not stop another page', async () => {
+    const { get, calls, reportId, addFile } = await setup()
+    await addFile(reportId, 'index.html', '<html><body>plain</body></html>')
+    await addFile(reportId, 'live/votes.html', '<script>glance.db.collection("votes")</script>')
+    expect((await get('')).status).toBe(200)
+    expect((await get('?path=live/votes.html')).status).toBe(501)
+    expect(calls).toHaveLength(1)
+  })
+
+  test('the entry page is judged at the root when it is a lone uploaded file, not index.html', async () => {
+    const { get, calls, addSite, addFile } = await setup()
+    await addFile(await addSite('solo'), 'poll.html', '<script>glance.db.collection("votes")</script>')
+    expect((await get('', 'owner', 'solo')).status).toBe(501)
+    expect(calls).toHaveLength(0)
+  })
+
+  test('a site that holds glance.db documents prints too, as its script may live in a file of its own', async () => {
+    const { get, calls, db, reportId, addFile } = await setup()
+    await addFile(reportId, 'index.html', '<html><body><script src="app.js"></script></body></html>')
+    expect((await get()).status).toBe(200)
+    await db.update(sites).set({ docCount: 3 }).where(eq(sites.id, reportId))
+    expect((await get()).status).toBe(501)
+    expect(calls).toHaveLength(1)
+  })
+
+  test('a print-only page does not use up the rate limit', async () => {
+    const limiter = { PDF_LIMITER: { limit: async () => ({ success: false }) } }
+    const limited = await setup(limiter)
+    await limited.addFile(limited.reportId, 'index.html', '<script>glance.db.collection("votes")</script>')
+    expect((await limited.get()).status).toBe(501)
+    await limited.addFile(limited.reportId, 'plain.html', '<p>plain</p>')
+    expect((await limited.get('?path=plain.html')).status).toBe(429)
   })
 
   test('a failed render never logs the token, and a PDF that still carries it is refused', async () => {
