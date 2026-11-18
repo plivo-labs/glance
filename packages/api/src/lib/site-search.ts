@@ -114,6 +114,18 @@ export function searchRowStmts(db: DrizzleD1Database, siteId: string, body: stri
   ]
 }
 
+/**
+ * "These are still the file rows a reader saw": `key` is any ONE storageKey it read, or undefined when
+ * it read none. A swap (upload replace) deletes every file row of a site and inserts fresh ones in one
+ * batch, each under a new random R2 prefix, and nothing else rewrites the files of an existing site. So
+ * one surviving key proves the set was not swapped since. This is what contentVersion cannot say for an
+ * editor replace, which bumps it at the CAS claim and swaps the files in a later batch.
+ */
+export const filesUnchanged = (siteId: string, key: string | undefined) =>
+  key === undefined
+    ? sql`not exists (select 1 from ${files} where ${files.siteId} = ${siteId})`
+    : sql`exists (select 1 from ${files} where ${files.siteId} = ${siteId} and ${files.storageKey} = ${key})`
+
 /** A fork's text, copied from the source's in the fork's own batch (the bytes are copied, so the
  *  text is identical). */
 export const copySearchRowStmt = (db: DrizzleD1Database, fromSiteId: string, toSiteId: string) =>
@@ -156,12 +168,12 @@ export const searchSnippet = sql<string>`snippet("site_search", 0, '', '', '…'
  * then newest) by reading their html/md files from R2. Bounded — BACKFILL_SITES_PER_TICK sites,
  * BACKFILL_MAX_FILES reads each, the first READ_BYTES_PER_FILE of every file, SEARCH_SOURCE_BUDGET
  * bytes in all: once the budget is spent the tick ends, leaving the rest of its sites untouched. The
- * write only lands if the site is still at the content version we read and still unindexed, so a
- * replace racing the tick wins: its own batch has already written fresh rows and a stale read can
- * never overwrite them. Text is upserted, because an upload that ran out of budget leaves a partial
- * row, and only ever grows (a cut tick must not shrink a longer row). A site that fails, or is cut
- * while it had the whole budget, is retried on a later tick behind sites with fewer attempts until
- * it has used BACKFILL_MAX_ATTEMPTS. Returns how many sites it wrote.
+ * write only lands if the site is still at the content version we read, still unindexed and still
+ * has the files we read, so a replace racing the tick wins: its own batch has already written fresh
+ * rows and a stale read can never overwrite them. Text is upserted, because an upload that ran out
+ * of budget leaves a partial row, and only ever grows (a cut tick must not shrink a longer row). A
+ * site that fails, or is cut while it had the whole budget, is retried on a later tick behind sites
+ * with fewer attempts until it has used BACKFILL_MAX_ATTEMPTS. Returns how many sites it wrote.
  */
 export async function backfillSiteSearch(db: DrizzleD1Database, bucket: R2Bucket): Promise<number> {
   const pending = await db
@@ -193,6 +205,9 @@ export async function backfillSiteSearch(db: DrizzleD1Database, bucket: R2Bucket
         budget,
       )
       const cut = budget.left <= 0
+      // The version gate alone passes for an editor replace that swapped these files out while we read
+      // them (its claim moved the version earlier), so the write also needs the file set we read.
+      const current = and(unchanged, filesUnchanged(site.id, rows[0]?.storageKey))
       // A cut site stays unstamped, and is charged an attempt only if it was cut alone: one that just
       // ran out of what earlier sites left is not at fault, and reaches the head of the queue as they
       // finish or fall behind.
@@ -206,7 +221,7 @@ export async function backfillSiteSearch(db: DrizzleD1Database, bucket: R2Bucket
                   db
                     .select({ siteId: sql<string>`${site.id}`.as('siteId'), body: sql<string>`${body}`.as('body') })
                     .from(sites)
-                    .where(unchanged),
+                    .where(current),
                 )
                 .onConflictDoUpdate({
                   target: siteText.siteId,
@@ -215,7 +230,7 @@ export async function backfillSiteSearch(db: DrizzleD1Database, bucket: R2Bucket
                 }),
             ]
           : []),
-        ...(mark ? [db.update(sites).set(mark).where(unchanged)] : []),
+        ...(mark ? [db.update(sites).set(mark).where(current)] : []),
       ])
       processed++
     } catch (err) {

@@ -3,7 +3,8 @@ import { eq, inArray, sql } from 'drizzle-orm'
 import { files, sites } from '../db/schema'
 import worker from '../index'
 import { makeDb, makeKv, makeR2, seedFile, seedSite, seedSpace, seedUser } from '../test/harness'
-import { BACKFILL_MAX_ATTEMPTS, BACKFILL_MAX_FILES, BACKFILL_SITES_PER_TICK, READ_BYTES_PER_FILE, SEARCH_SOURCE_BUDGET, backfillSiteSearch, siteText } from './site-search'
+import { batchAll } from './d1'
+import { BACKFILL_MAX_ATTEMPTS, BACKFILL_MAX_FILES, BACKFILL_SITES_PER_TICK, READ_BYTES_PER_FILE, SEARCH_SOURCE_BUDGET, backfillSiteSearch, searchRowStmts, siteText } from './site-search'
 
 async function world() {
   const db = makeDb()
@@ -30,7 +31,32 @@ async function world() {
       return realGet(key, opts)
     }) as typeof r2.get
   }
-  return { db, r2, site, page, tick, row, stamp, tries, raceRead }
+  // The editor upload's two steps (routes/upload.ts): the CAS claim bumps contentVersion, a later batch
+  // swaps the files (fresh R2 keys for ALL of them) and rewrites the index row and stamp.
+  const claim = (id: string) => db.update(sites).set({ contentVersion: sql`${sites.contentVersion} + 1` }).where(eq(sites.id, id)).run()
+  const swap = async (id: string, html: string, o: { text: string | null; stamp: string | null }) => {
+    const storageKey = `swapped-${id}/index.html`
+    await r2.put(storageKey, html, { httpMetadata: { contentType: 'text/html' } }) // the route puts to R2 before it swaps
+    await batchAll(db, [
+      db.delete(files).where(eq(files.siteId, id)),
+      db.insert(files).values({ id: `f-${storageKey}`, siteId: id, path: 'index.html', storageKey, mimeType: 'text/html', size: html.length, etag: null }),
+      db.update(sites).set({ description: null, searchIndexedAt: o.stamp, searchAttempts: 0 }).where(eq(sites.id, id)),
+      ...searchRowStmts(db, id, o.text),
+    ])
+  }
+  // Like raceRead, but `during` runs once, before the first R2 read, and may be async.
+  const raceReadOnce = (during: () => Promise<void>) => {
+    const realGet = r2.get
+    let fired = false
+    r2.get = (async (key: string, opts?: never) => {
+      if (!fired) {
+        fired = true
+        await during()
+      }
+      return realGet(key, opts)
+    }) as typeof r2.get
+  }
+  return { db, r2, site, page, tick, row, stamp, tries, raceRead, claim, swap, raceReadOnce }
 }
 
 describe('backfillSiteSearch', () => {
@@ -77,6 +103,41 @@ describe('backfillSiteSearch', () => {
     w.raceRead(() => void w.db.update(sites).set({ contentVersion: 1 }).where(eq(sites.id, id)).run())
     await w.tick()
     expect([await w.row(id), await w.stamp(id)]).toEqual([null, null]) // still queued for the swap's batch or the next tick
+  })
+
+  test('a site with no files at all is stamped (nothing to read, nothing to gate on)', async () => {
+    const w = await world()
+    const id = await w.site({})
+    expect(await w.tick()).toBe(1)
+    expect([await w.row(id), (await w.stamp(id)) === null]).toEqual([null, false])
+  })
+
+  // The editor claim bumps contentVersion BEFORE its swap batch, so a tick that starts in between sees the
+  // new version over the old files. It indexes them (they are still what is served); the swap then
+  // overwrites that row and stamp, so the final state is the new content's. A guard, not a repro.
+  test('a tick between an editor claim and its swap is overwritten by the swap', async () => {
+    const w = await world()
+    const id = await w.site(w.page('old words'))
+    w.claim(id)
+    await w.tick()
+    expect(await w.row(id)).toBe('old words') // the files still served
+    await w.swap(id, '<p>new words</p>', { text: 'new words', stamp: 'upload-stamp' })
+    expect([await w.row(id), await w.stamp(id)]).toEqual(['new words', 'upload-stamp'])
+  })
+
+  // The mirror case: the swap lands while the tick is reading, and its own stamp is NULL (the upload ran
+  // out of budget or its indexing failed, so it left the site for the backfill). The claim already moved
+  // contentVersion, so the tick's gate still passes, and it would stamp the OLD files' text onto the new
+  // content for good.
+  test('a swap that lands mid-tick and left the site unstamped is not overwritten by the tick', async () => {
+    const w = await world()
+    const id = await w.site(w.page('old words'))
+    w.claim(id)
+    w.raceReadOnce(() => w.swap(id, '<p>new words</p>', { text: null, stamp: null }))
+    await w.tick()
+    expect([await w.row(id), await w.stamp(id)]).toEqual([null, null]) // still queued, nothing stale written
+    await w.tick()
+    expect([await w.row(id), await w.stamp(id) === null]).toEqual(['new words', false]) // the next tick reads the new files
   })
 
   test('a tick reads at most the source budget; a cut site keeps what fit, is charged only if cut alone, and its row never shrinks', async () => {
