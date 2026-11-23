@@ -226,8 +226,7 @@ func (c *client) deploy(argv []string) error {
 		}
 		ans := c.prompt(fmt.Sprintf("Site exists at %s/%s. Replace? (y/N) ", space, name))
 		if strings.ToLower(ans) != "y" {
-			fmt.Fprintln(c.out, "Cancelled.")
-			return nil
+			return fmt.Errorf("Cancelled: %s/%s already exists and was not replaced.", space, name)
 		}
 		replace = true
 	}

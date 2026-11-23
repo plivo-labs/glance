@@ -231,16 +231,14 @@ func TestDeployCommand(t *testing.T) {
 		writeFile(t, file, "x")
 		srv, st := newDeployServer(t)
 		st.existsBody = `{"exists":true,"owned":true}`
-		c, out := newTestClient(srv.URL, "tok")
+		c, _ := newTestClient(srv.URL, "tok")
 		c.in = strings.NewReader("\n")
-		if err := c.deploy([]string{file}); err != nil {
-			t.Fatalf("deploy: %v", err)
+		err := c.deploy([]string{file})
+		if err == nil || !strings.Contains(err.Error(), "Cancelled") {
+			t.Fatalf("deploy err = %v, want Cancelled error", err)
 		}
 		if st.uploadPath != "" {
 			t.Error("upload should not happen when replace declined")
-		}
-		if !strings.Contains(out.String(), "Cancelled") {
-			t.Fatalf("out = %q", out.String())
 		}
 	})
 
