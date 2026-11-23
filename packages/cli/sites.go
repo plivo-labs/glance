@@ -39,8 +39,7 @@ func (c *client) del(argv []string) error {
 	}
 	ans := c.prompt(fmt.Sprintf("Delete %s/%s? (y/N) ", space, name))
 	if strings.ToLower(ans) != "y" {
-		fmt.Fprintln(c.out, "Cancelled.")
-		return nil
+		return fmt.Errorf("Cancelled: %s/%s was not deleted.", space, name)
 	}
 	resp, err := c.authed("DELETE", "/api/sites/"+space+"/"+name, nil, nil)
 	if err != nil {
