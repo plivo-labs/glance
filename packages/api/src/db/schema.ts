@@ -118,6 +118,42 @@ export const files = sqliteTable(
   (t) => [unique('files_site_path_unq').on(t.siteId, t.path)],
 )
 
+// Version history. A REPLACE (or a restore) MOVES the file rows it replaces into a version here
+// instead of deleting their R2 objects, so the previous content stays restorable. The storage
+// invariant ("an object is referenced by exactly one row") still holds across the two tables: the
+// snapshot copies a row's key into `site_version_files` in the same D1 batch that deletes it from
+// `files`, and `storageKey` is UNIQUE here too, so a key can never be owned twice. `version` is the
+// contentVersion of the snapshotted content (a label, deliberately not unique); `createdAt` is the
+// SNAPSHOT time (when the content was superseded), which is what retention ages by; `createdBy` is
+// the actor whose replace/restore triggered the snapshot. Both tables die with the site (cascade) —
+// the R2 keys must be purged first (storage.ts deleteSiteObjects / deleteSpaceObjects).
+export const siteVersions = sqliteTable(
+  'site_versions',
+  {
+    id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+    siteId: text('siteId').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+    version: integer('version').notNull(),
+    createdAt: text('createdAt').notNull().$defaultFn(() => new Date().toISOString()),
+    createdBy: text('createdBy').references(() => users.id, { onDelete: 'set null' }),
+    fileCount: integer('fileCount').notNull(),
+    totalSize: integer('totalSize').notNull(),
+  },
+  (t) => [index('site_versions_site_created').on(t.siteId, t.createdAt)],
+)
+
+export const siteVersionFiles = sqliteTable(
+  'site_version_files',
+  {
+    versionId: text('versionId').notNull().references(() => siteVersions.id, { onDelete: 'cascade' }),
+    path: text('path').notNull(),
+    storageKey: text('storageKey').notNull().unique(),
+    mimeType: text('mimeType'),
+    size: integer('size'),
+    etag: text('etag'),
+  },
+  (t) => [primaryKey({ columns: [t.versionId, t.path] })],
+)
+
 // Explicit per-user sharing: grant a specific user access to a site, on top of its
 // visibility tier (additive — most useful for `private`). Composite PK = idempotent.
 export const siteUserShares = sqliteTable(

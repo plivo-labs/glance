@@ -10,3 +10,19 @@ const twMerge = extendTailwindMerge({ extend: { theme: { text: Object.keys(ramp)
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
+
+// One narrow-unit formatter per binary magnitude ("512B", "3.4MB"). Not compact notation:
+// its suffixes are decimal and render gigabytes as "BB" (billion bytes).
+const byteFormats = (['byte', 'kilobyte', 'megabyte', 'gigabyte', 'terabyte'] as const).map(
+  (unit) => new Intl.NumberFormat(undefined, { style: 'unit', unit, unitDisplay: 'narrow', maximumFractionDigits: 1 }),
+)
+
+export function formatBytes(bytes: number): string {
+  let value = bytes
+  let i = 0
+  while (value >= 1024 && i < byteFormats.length - 1) {
+    value /= 1024
+    i++
+  }
+  return byteFormats[i].format(value)
+}

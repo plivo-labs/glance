@@ -15,7 +15,9 @@
     "CONTENT_URL": "https://glance-content.YOUR-SUBDOMAIN.workers.dev", // EDIT: replace with your own (see README)
     "ALLOWED_HD": "yourcompany.com", // EDIT: replace with your own (see README)
     "SUPERADMIN_EMAIL": "you@yourcompany.com", // EDIT: replace with your own (see README)
-    "WRITE_FREEZE": "0" // "1" = maintenance write freeze (see DEPLOY.md)
+    "WRITE_FREEZE": "0", // "1" = maintenance write freeze (see DEPLOY.md)
+    "SITE_VERSIONS_KEEP": "10", // versions kept per site when content is replaced; "0" = keep none (see DEPLOY.md)
+    "SITE_VERSIONS_RETENTION_DAYS": "30" // a kept version is purged after this many days (see DEPLOY.md)
   },
   // Main worker serves the React SPA as static assets. run_worker_first forces
   // /api/* to Hono BEFORE the asset layer (otherwise SPA fallback returns index.html

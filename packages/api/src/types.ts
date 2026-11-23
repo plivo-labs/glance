@@ -52,6 +52,10 @@ export interface Bindings {
   SUPERADMIN_EMAIL: string
   // Optional maintenance switch: "1" → writes and login return 503 + Retry-After (see index.ts).
   WRITE_FREEZE?: string
+  // Optional version-history knobs (see lib/retention.ts versionPolicy): newest N versions kept per
+  // site and the age cap in days; 0 for either keeps no history. Unset = 10 and 30.
+  SITE_VERSIONS_KEEP?: string
+  SITE_VERSIONS_RETENTION_DAYS?: string
 }
 
 /** The minimal user identity stored in KV and attached to the request context. */

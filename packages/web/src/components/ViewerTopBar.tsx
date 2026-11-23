@@ -1,4 +1,4 @@
-import { ChevronRight, Command, Download, GitFork, History, Menu, MessageSquare, Share2, Sparkles, Star } from 'lucide-react'
+import { ChevronRight, Command, Download, GitFork, History, Menu, MessageSquare, RotateCcw, Share2, Sparkles, Star } from 'lucide-react'
 import { Suspense, lazy, useState } from 'react'
 import { Link } from 'react-router'
 import { toast } from 'sonner'
@@ -17,6 +17,7 @@ import { BrandMark, ByPlivo } from '@/components/states'
 // import graph, so the iframe cannot mount until they download.
 const SummarySheet = lazy(() => import('@/components/SummarySheet').then((m) => ({ default: m.SummarySheet })))
 const ShareDialog = lazy(() => import('@/components/ShareDialog').then((m) => ({ default: m.ShareDialog })))
+const HistorySheet = lazy(() => import('@/components/HistorySheet').then((m) => ({ default: m.HistorySheet })))
 
 // The persistent top chrome for the viewer: brand (→ dashboard) + a breadcrumb, then one action
 // row — Star, Comments, hamburger. Replaces the old floating PreviewToolbar dock.
@@ -67,8 +68,11 @@ export function ViewerTopBar({
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
   const [forkOpen, setForkOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
   // Star has a permanent slot in the row, so it is the one action with no menu-item twin.
   const { starred, toggle: toggleStar } = useStar(site)
+  // Owner only, and only while active: the server refuses a restore on an archived site (409).
+  const canViewHistory = site.isOwner && site.status === 'active'
   return (
     <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-background px-3 md:gap-3">
       <Link
@@ -187,6 +191,12 @@ export function ViewerTopBar({
               <Sparkles />
               TL;DR
             </DropdownMenuItem>
+            {canViewHistory && (
+              <DropdownMenuItem data-testid="viewer-history-menu-item" onSelect={() => setHistoryOpen(true)}>
+                <RotateCcw />
+                History
+              </DropdownMenuItem>
+            )}
             {site.isOwner && (
               <DropdownMenuItem onSelect={() => setShareOpen(true)}>
                 <Share2 />
@@ -213,6 +223,14 @@ export function ViewerTopBar({
             title={site.title}
             open={shareOpen}
             onOpenChange={setShareOpen}
+          />
+        )}
+        {canViewHistory && (
+          <HistorySheet
+            spaceSlug={site.spaceSlug}
+            siteSlug={site.siteSlug}
+            open={historyOpen}
+            onOpenChange={setHistoryOpen}
           />
         )}
       </Suspense>

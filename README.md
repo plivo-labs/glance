@@ -51,6 +51,7 @@ npx skills add plivo-labs/glance
 
 - **Visibility:** each site is `private`, `members`, or `team`. Every link requires a login; nothing is public.
 - **Audio:** audio files play in a built-in player. You can record audio or leave voice comments in the browser. Voice comments are transcribed, so agents read them as text.
+- **Version history:** each replace keeps the previous content as a version (the newest 10 per site, 30 days) that the owner can restore from the viewer menu. Kept versions use storage: set `SITE_VERSIONS_KEEP=0` to turn it off, or tune it. If you are upgrading, see [DEPLOY.md](DEPLOY.md#version-history).
 - **Slack** (optional): get comment notifications as Slack DMs, and Glance links show as preview cards in Slack. See [DEPLOY.md](DEPLOY.md).
 - **`glance.db`** (experimental, opt-in): a small JSON document store your pages can use directly from the browser. See [SHARED_BACKEND.md](SHARED_BACKEND.md).
 

@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { secureHeaders } from 'hono/secure-headers'
 import { onError, sessionDb, withDb } from './db/client'
 import { superadminExists } from './db/repo'
-import { purgeRetention } from './lib/retention'
+import { purgeRetention, purgeSiteVersions, versionPolicy } from './lib/retention'
 import { cachedStats } from './lib/stats'
 import { GLANCE_DB_JS } from './glancedb/bundle'
 import { buildPublicConfig } from './lib/bootstrap'
@@ -167,13 +167,22 @@ const DAILY_PURGE_CRON = '0 3 * * *'
 // inline await — there is no visitor waiting on this response, so nothing needs to run behind it.
 //
 // Daily retention purge (issue #82): trims `events` (90d) and read `notifications` (30d) — see
-// lib/retention.ts for the delete shapes and how it preserves stats.ts's all-time totals.
+// lib/retention.ts for the delete shapes and how it preserves stats.ts's all-time totals. It also
+// purges site versions past their window (by default the newest 10 per site, none older than 30d) and
+// their R2 keys.
 export default {
   fetch: app.fetch,
   async scheduled(event, env, _ctx) {
     const db = sessionDb(env.GLANCE_DB, 'first-unconstrained')
     if (event.cron === DAILY_PURGE_CRON) {
-      await purgeRetention(db)
+      // Isolated: one throwing must not skip the other. Both run, then every failure is rethrown so
+      // the invocation still shows as failed in the Workers dashboard.
+      const jobs = await Promise.allSettled([
+        purgeRetention(db),
+        purgeSiteVersions(db, env.GLANCE_FILES, new Date(), versionPolicy(env)),
+      ])
+      const errors = jobs.flatMap((j) => (j.status === 'rejected' ? [j.reason] : []))
+      if (errors.length > 0) throw new AggregateError(errors, 'scheduled: daily purge failed')
       return
     }
     await cachedStats(env.GLANCE_SESSIONS, db, (p) => p.then(() => {}))

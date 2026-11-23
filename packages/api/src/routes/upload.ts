@@ -1,4 +1,5 @@
 import { and, eq, sql } from 'drizzle-orm'
+import type { BatchItem } from 'drizzle-orm/batch'
 import { Hono } from 'hono'
 import type { NewFileRow } from '../db/schema'
 import { files, sites, spaceMembers, spaces, siteUserShares } from '../db/schema'
@@ -6,8 +7,10 @@ import { batchAll } from '../lib/d1'
 import { canReplace } from '../lib/access'
 import { fireAndForget } from '../lib/events'
 import { capTitle, extractHtmlMeta, NO_META, pickEntry } from '../lib/extract'
+import { trimSiteVersions, versionPolicy } from '../lib/retention'
 import { isValidSlug } from '../lib/slug'
 import { deleteKeys, MAX_FILE_BYTES, sanitizePath } from '../lib/storage'
+import { snapshotSiteFiles } from '../lib/versions'
 import { isVisibility, normalizeVisibility } from '../lib/visibility'
 import { isTheme, normalizeTheme } from '../themes/registry'
 import { requireAuth, requireControlGrant } from '../middleware/auth'
@@ -23,7 +26,7 @@ const enc = new TextEncoder()
 // can't reclaim objects when the failure IS exhaustion — so bound the request so it never gets
 // there. R2 also rejects object keys over 1024 bytes; catch that up front too, else the reject
 // lands only after sibling objects are already committed and orphaned.
-const MAX_FILE_COUNT = 200 // one put per file; sized well under the subrequest budget (D1 + deletes need headroom)
+export const MAX_FILE_COUNT = 200 // one put per file; sized well under the subrequest budget (D1 + deletes need headroom)
 const MAX_TOTAL_BYTES = 100 * 1024 * 1024 // headroom under the 128MB isolate; multipart overhead pushes Content-Length slightly past file bytes, fine for a reject-over threshold
 const MAX_STORAGE_KEY_BYTES = 1024 // R2's hard object-key limit
 const UPLOAD_CONCURRENCY = 10 // bounded parallelism for the R2 put loop
@@ -162,6 +165,12 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
   const isCreate = !existing
   let siteId: string
   let oldKeys: string[] = []
+  // False when the operator turned version history off (SITE_VERSIONS_KEEP=0): a replace then
+  // snapshots nothing and deletes the replaced objects, exactly as it did before versions existed.
+  const policy = versionPolicy(c.env)
+  const snapshot = policy.keep > 0
+  const snapshotStmts = (o: Parameters<typeof snapshotSiteFiles>[1]): BatchItem<'sqlite'>[] =>
+    snapshot ? [...snapshotSiteFiles(db, o)] : []
   // True when the actor is exercising an EDITOR grant (not the owner). Editors are content-only:
   // no visibility change, no archived-site edit, and every replace is version-CAS'd.
   let actingAsEditor = false
@@ -308,7 +317,11 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
       // The blurb ships in the SWAP batch, not the claim above: it describes the bytes, so it must
       // commit with them — a claim-time write would advertise the new description while the site
       // still served the old content if the swap then threw. (Editors never touch the title.)
-      await db.batch([
+      // The replaced rows are snapshotted into a version in this same batch (labelled with the
+      // version the editor pulled, since the claim already bumped the column) — a stale 409 above
+      // never reaches here, so it can't leave a phantom version.
+      await batchAll(db, [
+        ...snapshotStmts({ siteId, createdBy: user.id, version: expectedVersion as number }),
         db.delete(files).where(eq(files.siteId, siteId)),
         ...insertRows,
         db.update(sites).set({ description }).where(eq(sites.id, siteId)),
@@ -317,8 +330,10 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
       // OWNER / SUPERADMIN REPLACE: atomically swap file rows, bump the version advisorily + record
       // lastReplacedBy, and apply visibility only when the caller explicitly sent one (absent → keep
       // the existing tier — replace's long-standing default). One D1 batch so the serving worker
-      // never sees a half-updated site.
-      await db.batch([
+      // never sees a half-updated site. The rows being replaced are snapshotted into a version first
+      // (their R2 objects are kept, owned by the version).
+      await batchAll(db, [
+        ...snapshotStmts({ siteId, createdBy: user.id }),
         db.delete(files).where(eq(files.siteId, siteId)),
         ...insertRows,
         db
@@ -345,10 +360,16 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
     throw err
   }
 
-  // Old objects are safe to purge only after the row swap committed. Hand it to waitUntil so a
-  // transient R2 delete failure can't 500 an already-committed replace — the swap is done;
-  // reclaiming the old objects is best-effort background cleanup.
-  if (!isCreate && oldKeys.length > 0) await fireAndForget(c, deleteKeys(c.env.GLANCE_FILES, oldKeys))
+  // Only after the row swap committed, and via waitUntil so a transient R2 failure can't 500 an
+  // already-committed replace (reclaiming is best-effort background cleanup). With history on the
+  // replaced objects now belong to a version, so what gets reclaimed is whatever fell out of the
+  // site's window; with it off they are simply deleted, as before versions existed.
+  if (!isCreate) {
+    await fireAndForget(
+      c,
+      snapshot ? trimSiteVersions(db, c.env.GLANCE_FILES, siteId, policy) : deleteKeys(c.env.GLANCE_FILES, oldKeys),
+    )
+  }
 
   return c.json({
     url: `${c.env.APP_URL}/${spaceSlug}/${siteSlug}`,

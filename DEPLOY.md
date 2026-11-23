@@ -114,3 +114,16 @@ The Google button appears automatically once both credentials are set. A later G
 ### Maintenance write freeze
 
 For a maintenance window (e.g. a database migration), set repo Actions variable `WRITE_FREEZE` to `1` and run the Deploy workflow manually (Actions → Deploy → Run workflow). The main worker then answers every `/api/*` write, and login, with `503` + `Retry-After: 300`; reads keep working. Best-effort writers are not frozen and fail without user impact if the database rejects them: page-view and CLI-usage events, API-key last-used timestamps, and the daily retention cron. Set it back to `0` (or delete it) and run the workflow again to lift the freeze.
+
+### Version history
+
+Every replace (and every restore) keeps the content it replaced as a **version**, so the site owner can list and restore earlier versions from the viewer menu. Versions keep their R2 objects, so this raises storage use: a replace no longer frees the old files straight away. Two vars set the window, and a version must satisfy both to survive:
+
+| Var | Default | Meaning |
+| --- | --- | --- |
+| `SITE_VERSIONS_KEEP` | `10` | Versions kept per site (the newest N). `0` turns history off: a replace snapshots nothing and deletes the replaced files, as before versions existed, and restoring a version is refused (`409`), since the content it replaces could not be kept. |
+| `SITE_VERSIONS_RETENTION_DAYS` | `30` | A version is purged this many days after it was replaced. `0` also turns history off. |
+
+Set them in the `vars` block of `packages/api/wrangler.jsonc`, or, with CI auto-deploy, as repo Actions variables of the same names (the workflow passes them to `wrangler deploy`; unset means the defaults). Values must be non-negative whole numbers; anything else falls back to the default.
+
+A site is trimmed to the window right after each replace or restore, and the daily purge (03:00 UTC) covers the rest instance-wide. The daily purge caps each run to fit the free plan's 50 subrequests, and the per-replace trim does one bounded pass, so lowering the values, or turning history off, reclaims existing versions gradually (a site on its next replace, everything else over the following daily runs), not instantly.

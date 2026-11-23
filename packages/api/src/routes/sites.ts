@@ -32,6 +32,7 @@ import { signToken } from '../lib/token'
 import { isVisibility, normalizeVisibility } from '../lib/visibility'
 import { requireAuth, requireControlGrant } from '../middleware/auth'
 import type { AppEnv, SessionUser } from '../types'
+import { versions } from './site-versions'
 
 // Phase 4: site CRUD + viewer metadata. Mounted at /api/sites.
 
@@ -41,6 +42,11 @@ import type { AppEnv, SessionUser } from '../types'
 const CONTENT_TOKEN_TTL = 60 * 60 // 1h
 
 export const sites = new Hono<AppEnv>()
+
+// Version history (list + restore: /:space/:site/versions…) lives in its own file; mounted here so
+// index.ts and the route fixtures need no extra mount (3+ segment paths can't collide with the
+// two-segment routes below).
+sites.route('/', versions)
 
 // `resolveSite` now lives in lib/site-access (shared with the comments routes); see import.
 
