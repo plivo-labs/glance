@@ -21,7 +21,7 @@ import { canReplace, checkAccess } from '../lib/access'
 import { isTheme } from '../themes/registry'
 import { batchAll, chunk, D1_MAX_IN, FEED_ID_CHUNK } from '../lib/d1'
 import { fireAndForget } from '../lib/events'
-import { parseExpiry } from '../lib/expiry'
+import { isPastExpiry, parseExpiry } from '../lib/expiry'
 import { resolveIndexPath } from '../lib/extract'
 import { siteFeedColumns, toFeedRow } from '../lib/site-feed'
 import { computeSiteInsights } from '../lib/site-insights'
@@ -68,7 +68,7 @@ export type SearchRow = {
   siteSlug: string
   title: string | null
   visibility: Visibility
-  status: 'active' | 'archived' | 'expired'
+  status: 'active' | 'archived' | 'owner_archived' | 'expired'
   ownerId: string
   createdAt: string
 }
@@ -557,7 +557,7 @@ sites.put('/:spaceSlug/:siteSlug/shares', requireAuth, requireControlGrant, asyn
   })
 })
 
-// PATCH /api/sites/:spaceSlug/:siteSlug — owner-only update of visibility/title/theme/expiry. Strictly the
+// PATCH /api/sites/:spaceSlug/:siteSlug — owner-only update of visibility/title/theme/expiry/archive. Strictly the
 // owner: a superadmin here could downgrade `private` → `team` and then read the site legitimately.
 sites.patch('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c) => {
   const user = c.get('user')
@@ -569,11 +569,12 @@ sites.patch('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
 
   const body = await c.req.json().catch(() => null)
   if (!body || typeof body !== 'object') return c.json({ error: 'invalid body' }, 400)
-  const { visibility, title, theme, expires } = body as {
+  const { visibility, title, theme, expires, archived } = body as {
     visibility?: unknown
     title?: unknown
     theme?: unknown
     expires?: unknown
+    archived?: unknown
   }
 
   const patch: {
@@ -609,7 +610,22 @@ sites.patch('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
     const expiry = parseExpiry(expires)
     if (expiry.kind === 'invalid') return c.json({ error: expiry.reason }, 400)
     patch.expiresAt = expiry.kind === 'set' ? expiry.at : null
-    patch.status = sql`case when ${sitesTable.status} = 'archived' then 'archived' else 'active' end`
+    patch.status = sql`case when ${sitesTable.status} in ('archived', 'owner_archived') then ${sitesTable.status} else 'active' end`
+  }
+  // Archive (true) shelves the page: 410 for everyone and off every feed, but nothing is deleted. It
+  // is the owner's own state ('owner_archived'), apart from the admin's hold ('archived'), so the
+  // owner can undo theirs and never an admin's. Both directions are decided IN the UPDATE from the
+  // row's own status, so an admin archive landing after the read above is not overwritten. Unarchive
+  // goes back to 'expired' when the expiry passed meanwhile, as an admin restore does. Not combined
+  // with `expires`: both would write the status.
+  if (archived !== undefined) {
+    if (typeof archived !== 'boolean') return c.json({ error: 'invalid archived' }, 400)
+    if (expires !== undefined) return c.json({ error: 'archived cannot be combined with expires' }, 400)
+    if (!archived && site.status === 'archived') return c.json({ error: 'archived by an admin' }, 403)
+    const back = isPastExpiry(site.expiresAt) ? 'expired' : 'active'
+    patch.status = archived
+      ? sql`case when ${sitesTable.status} = 'archived' then 'archived' else 'owner_archived' end`
+      : sql`case when ${sitesTable.status} = 'owner_archived' then ${sql.raw(`'${back}'`)} else ${sitesTable.status} end`
   }
   if (Object.keys(patch).length > 0) {
     await db.update(sitesTable).set(patch).where(eq(sitesTable.id, site.id))

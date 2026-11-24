@@ -55,10 +55,12 @@ export const sites = sqliteTable(
       .notNull()
       .default('team'),
     // 'archived' is an admin's call (moderation, reversible only by an admin); 'expired' is the
-    // owner's own `expiresAt` coming due (reversible by the owner: redeploy, or set a new expiry).
-    // Kept apart so neither can be mistaken for, or undone as, the other. Every non-'active' status
-    // is 410 for everyone (lib/access.ts), so gates test `!== 'active'`, never `=== 'archived'`.
-    status: text('status', { enum: ['active', 'archived', 'expired'] }).notNull().default('active'),
+    // owner's own `expiresAt` coming due (reversible by the owner: redeploy, or set a new expiry);
+    // 'owner_archived' is the owner shelving their own page (reversible by the owner only: PATCH
+    // `archived:false`). Kept apart so none can be mistaken for, or undone as, another. Every
+    // non-'active' status is 410 for everyone (lib/access.ts), so gates test `!== 'active'`, never
+    // `=== 'archived'`.
+    status: text('status', { enum: ['active', 'archived', 'owner_archived', 'expired'] }).notNull().default('active'),
     // ISO-8601 UTC instant after which the site stops serving; null = never. The hourly cron flips
     // an active site past it to 'expired' (lib/expiry.ts), and checkAccess also refuses it, so the
     // cron's up-to-an-hour lag never serves a page late.
