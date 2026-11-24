@@ -32,7 +32,7 @@ function RootError() {
     401: { title: 'Sign in required', body: 'You need to sign in to view this.' },
     403: { title: "You don't have access", body: 'This site is private or restricted.' },
     404: { title: 'Not found', body: "That page or site doesn't exist." },
-    410: { title: 'Site archived', body: 'This site has been archived by an admin.' },
+    410: { title: 'Site unavailable', body: 'This site has expired or been archived by an admin.' },
   }
   const info = (status && map[status]) || { title: 'Something went wrong', body: 'Please try again.' }
   return (

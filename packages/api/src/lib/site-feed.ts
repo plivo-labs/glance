@@ -51,6 +51,7 @@ export function siteFeedColumns(userId: string) {
     title: sites.title,
     visibility: sites.visibility,
     status: sites.status,
+    expiresAt: sites.expiresAt,
     theme: sites.theme,
     createdAt: sites.createdAt,
     updatedAt: sites.updatedAt,
@@ -66,7 +67,8 @@ type FeedSourceRow = {
   slug: string
   title: string | null
   visibility: Visibility
-  status: 'active' | 'archived'
+  status: 'active' | 'archived' | 'expired'
+  expiresAt: string | null
   theme: string | null
   createdAt: string
   updatedAt: string
@@ -83,6 +85,7 @@ export function toFeedRow(row: FeedSourceRow, appUrl: string) {
     title: row.title,
     visibility: row.visibility,
     status: row.status,
+    expiresAt: row.expiresAt,
     theme: row.theme,
     audio: row.audio === 1,
     hasSummary: row.hasSummary === 1,

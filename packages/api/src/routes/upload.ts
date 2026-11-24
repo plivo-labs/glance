@@ -5,6 +5,7 @@ import { files, sites, spaceMembers, spaces, siteUserShares } from '../db/schema
 import { batchAll } from '../lib/d1'
 import { canReplace } from '../lib/access'
 import { fireAndForget } from '../lib/events'
+import { isLapsed, parseExpiry } from '../lib/expiry'
 import { capTitle, extractHtmlMeta, NO_META, pickEntry } from '../lib/extract'
 import { isValidSlug } from '../lib/slug'
 import { deleteKeys, MAX_FILE_BYTES, sanitizePath } from '../lib/storage'
@@ -67,6 +68,14 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
   const hasTheme = typeof rawTheme === 'string'
   const theme = normalizeTheme(rawTheme)
   if (theme !== null && !isTheme(theme)) return c.json({ error: 'unknown theme', theme }, 400)
+  // Optional expiry (`7d`, `2026-12-31`, `none`), mirroring theme's create/replace split: CREATE
+  // applies it; REPLACE only touches sites.expiresAt when the field was explicitly sent, so an
+  // agent's plain redeploy never strips an expiry the owner chose. Resolved against the server clock.
+  const rawExpires = form.get('expires')
+  const hasExpires = typeof rawExpires === 'string'
+  const expiry = parseExpiry(rawExpires)
+  if (hasExpires && expiry.kind === 'invalid') return c.json({ error: expiry.reason }, 400)
+  const expiresAt = expiry.kind === 'set' ? expiry.at : null
   // Optional display title. CREATE: an explicit form title wins; absent one, the entry HTML's
   // <title> is derived below. REPLACE never renames a titled site — a re-upload/record must not
   // silently rename it — but a still-null title may be filled from the new content
@@ -128,6 +137,7 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
         ownerId: sites.ownerId,
         contentVersion: sites.contentVersion,
         status: sites.status,
+        expiresAt: sites.expiresAt,
       })
       .from(sites)
       .innerJoin(spaces, eq(sites.spaceId, spaces.id))
@@ -160,6 +170,8 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
 
   const replace = c.req.query('replace') === 'true'
   const isCreate = !existing
+  // Past its expiry, whether or not the hourly sweep has flipped the row yet.
+  const lapsed = !!existing && isLapsed(existing)
   let siteId: string
   let oldKeys: string[] = []
   // True when the actor is exercising an EDITOR grant (not the owner). Editors are content-only:
@@ -182,7 +194,7 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
     actingAsEditor = !isOwner
 
     if (actingAsEditor) {
-      if (existing.status === 'archived') return c.json({ error: 'site archived' }, 403)
+      if (lapsed || existing.status !== 'active') return c.json({ error: `site ${lapsed ? 'expired' : existing.status}` }, 403)
       // The CAS below reads expectedVersion; require it up front so a versionless editor redeploy
       // can't silently clobber a newer one.
       if (expectedVersion === null) return c.json({ error: 'expectedVersion required' }, 400)
@@ -266,6 +278,16 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
   // The revision this upload publishes: CREATE starts at 0; every REPLACE bumps by one (advisory for
   // the owner, CAS-enforced for an editor).
   const newVersion = existing ? existing.contentVersion + 1 : 0
+  // The expiry in force once this upload commits (also what the response reports): CREATE and an
+  // owner's explicit field write it, an owner redeploy of a lapsed site clears the stale one, and an
+  // editor never writes it, so they get the stored value back, not the one they asked for.
+  const nextExpiresAt = actingAsEditor
+    ? (existing?.expiresAt ?? null)
+    : isCreate || hasExpires
+      ? expiresAt
+      : lapsed
+        ? null
+        : (existing?.expiresAt ?? null)
 
   try {
     if (isCreate) {
@@ -279,6 +301,7 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
           description,
           visibility: isVisibility(visibility) ? visibility : 'team',
           theme,
+          expiresAt,
           ownerId: user.id,
         }),
         ...insertRows,
@@ -330,6 +353,16 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
             ...(hasVisibility && isVisibility(visibility) ? { visibility } : {}),
             // Explicit-only, like visibility: an owner redeploy without --theme keeps the current one.
             ...(hasTheme ? { theme } : {}),
+            // Same explicit-only rule for the expiry. A redeploy is also how an owner revives a LAPSED
+            // site (flipped to 'expired', or still 'active' inside the sweep's lag): with no new
+            // expiry the stale one is cleared (leaving a past instant would expire it again at the
+            // next sweep). An admin-'archived' site is left archived: decided IN the UPDATE from the
+            // row's own status (as PATCH does), since `lapsed` was read before the R2 uploads and an
+            // admin archive landing in between must not be undone.
+            ...(hasExpires || lapsed ? { expiresAt: nextExpiresAt } : {}),
+            ...(lapsed
+              ? { status: sql`case when ${sites.status} = 'archived' then 'archived' else 'active' end` }
+              : {}),
             ...(derivedTitle !== null ? { title: sql`coalesce(${sites.title}, ${derivedTitle})` } : {}),
             // Unconditional (not COALESCE'd): a redeploy whose entry dropped its description meta
             // must clear the stale blurb rather than keep unfurling the previous content's.
@@ -355,5 +388,6 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
     siteSlug,
     fileCount: newRows.length,
     contentVersion: newVersion,
+    expiresAt: nextExpiresAt,
   })
 })

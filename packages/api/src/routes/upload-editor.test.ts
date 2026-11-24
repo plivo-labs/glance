@@ -39,11 +39,12 @@ async function fx() {
   return { db, app, env, site, oldKey }
 }
 
-type Opts = { slug?: string; replace?: boolean; visibility?: string; expectedVersion?: number }
+type Opts = { slug?: string; replace?: boolean; visibility?: string; expires?: string; expectedVersion?: number }
 function post(app: Hono<AppEnv>, env: AppEnv['Bindings'], token: string, opts: Opts = {}) {
   const fd = new FormData()
   fd.append('files', html('<html>new</html>'))
   if (opts.visibility !== undefined) fd.append('visibility', opts.visibility)
+  if (opts.expires !== undefined) fd.append('expires', opts.expires)
   if (opts.expectedVersion !== undefined) fd.append('expectedVersion', String(opts.expectedVersion))
   const q = opts.replace ? '?replace=true' : ''
   return app.request(`/api/upload/acme/${opts.slug ?? 'doc'}${q}`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd }, env)
@@ -77,16 +78,27 @@ describe('upload — editor-share enforcement', () => {
     expect((await siteRow(db)).visibility).toBe('team')
   })
 
+  test('upload.editor.expires.ignored: an editor replace cannot set an expiry, and the response reports the stored one', async () => {
+    const { db, app, env } = await fx()
+    const res = await post(app, env, 'ed', { replace: true, expectedVersion: 0, expires: '7d' })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ expiresAt: null })
+    expect((await siteRow(db)).expiresAt).toBeNull()
+  })
+
   test('upload.owner.visibility.applied: an owner replace with visibility changes it', async () => {
     const { db, app, env } = await fx()
     expect((await post(app, env, 'owner', { replace: true, visibility: 'private' })).status).toBe(200)
     expect((await siteRow(db)).visibility).toBe('private')
   })
 
-  test('upload.editor.archived.403: an editor cannot replace an archived site', async () => {
-    const { db, app, env } = await fx()
-    await db.update(sites).set({ status: 'archived' }).where(eq(sites.id, 'site'))
-    expect((await post(app, env, 'ed', { replace: true, expectedVersion: 0 })).status).toBe(403)
+  test('upload.editor.inactive.403: an editor cannot replace an archived, expired, or past-expiry-but-unswept site', async () => {
+    const past = new Date(Date.now() - 60_000).toISOString()
+    for (const [status, expiresAt] of [['archived', null], ['expired', past], ['active', past]] as const) {
+      const { db, app, env } = await fx()
+      await db.update(sites).set({ status, expiresAt }).where(eq(sites.id, 'site'))
+      expect((await post(app, env, 'ed', { replace: true, expectedVersion: 0 })).status).toBe(403)
+    }
   })
 
   test('upload.editor.absentVersion.400: an editor replace without expectedVersion is rejected', async () => {

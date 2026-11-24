@@ -23,16 +23,14 @@ func TestDeleteCommand(t *testing.T) {
 
 	t.Run("confirm-n-cancels-no-request", func(t *testing.T) {
 		srv, reqs := recordingServer(t, func(r *capturedReq) (int, string) { return 200, `{}` })
-		c, out := newTestClient(srv.URL, "tok")
+		c, _ := newTestClient(srv.URL, "tok")
 		c.in = strings.NewReader("\n") // empty = No
-		if err := c.del([]string{"docs/api"}); err != nil {
-			t.Fatalf("del: %v", err)
+		err := c.del([]string{"docs/api"})
+		if err == nil || !strings.Contains(err.Error(), "Cancelled") {
+			t.Fatalf("del err = %v, want Cancelled error", err)
 		}
 		if len(*reqs) != 0 {
 			t.Fatalf("expected no request, got %+v", *reqs)
-		}
-		if !strings.Contains(out.String(), "Cancelled") {
-			t.Fatalf("out = %q", out.String())
 		}
 	})
 

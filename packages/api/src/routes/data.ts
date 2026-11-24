@@ -101,6 +101,7 @@ dataApi.use('*', async (c, next) => {
         spaceId: sites.spaceId,
         visibility: sites.visibility,
         status: sites.status,
+        expiresAt: sites.expiresAt,
         ownerId: sites.ownerId,
       })
       .from(sites)

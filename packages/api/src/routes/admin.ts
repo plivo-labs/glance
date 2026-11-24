@@ -3,6 +3,7 @@ import { Hono } from 'hono'
 import { sites, spaceMembers, spaces as spacesTable, users } from '../db/schema'
 import { revokeUserApiKeys } from '../lib/api-key'
 import { fireAndForget } from '../lib/events'
+import { isPastExpiry } from '../lib/expiry'
 import { revokeUserCliTokens } from '../lib/session'
 import { cachedStats } from '../lib/stats'
 import { deleteSiteObjects } from '../lib/storage'
@@ -29,7 +30,7 @@ admin.get('/sites', async (c) => {
   const page = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1
 
   const filters = []
-  if (statusParam === 'active' || statusParam === 'archived') filters.push(eq(sites.status, statusParam))
+  if (statusParam === 'active' || statusParam === 'archived' || statusParam === 'expired') filters.push(eq(sites.status, statusParam))
   const vis = normalizeVisibility(visibilityParam)
   if (isVisibility(vis)) filters.push(eq(sites.visibility, vis))
   const where = filters.length > 0 ? and(...filters) : undefined
@@ -68,13 +69,16 @@ admin.patch('/sites/:id/archive', async (c) => {
   return c.json({ ok: true })
 })
 
-// PATCH /api/admin/sites/:id/restore — reactivate an archived site. 404 if missing.
+// PATCH /api/admin/sites/:id/restore — lift an archive. 404 if missing. Only the admin's hold is
+// lifted: a site whose owner-set expiry has passed comes back as 'expired' (the owner's call to
+// revive), never 'active', and its expiresAt is left as the owner set it.
 admin.patch('/sites/:id/restore', async (c) => {
   const db = c.get('db')
   const id = c.req.param('id')
-  const existing = await db.select({ id: sites.id }).from(sites).where(eq(sites.id, id)).limit(1)
+  const existing = await db.select({ id: sites.id, expiresAt: sites.expiresAt }).from(sites).where(eq(sites.id, id)).limit(1)
   if (existing.length === 0) return c.json({ error: 'site not found' }, 404)
-  await db.update(sites).set({ status: 'active' }).where(eq(sites.id, id))
+  const status = isPastExpiry(existing[0]?.expiresAt) ? 'expired' : 'active'
+  await db.update(sites).set({ status }).where(eq(sites.id, id))
   return c.json({ ok: true })
 })
 

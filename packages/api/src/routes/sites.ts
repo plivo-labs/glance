@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, or, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, or, type SQL, sql } from 'drizzle-orm'
 import type { DrizzleD1Database } from 'drizzle-orm/d1'
 import { type Context, Hono } from 'hono'
 import { createNotifications, usersEmailsByIds } from '../db/notifications'
@@ -21,8 +21,10 @@ import { canReplace, checkAccess } from '../lib/access'
 import { isTheme } from '../themes/registry'
 import { batchAll, chunk, D1_MAX_IN, FEED_ID_CHUNK } from '../lib/d1'
 import { fireAndForget } from '../lib/events'
+import { parseExpiry } from '../lib/expiry'
 import { resolveIndexPath } from '../lib/extract'
 import { siteFeedColumns, toFeedRow } from '../lib/site-feed'
+import { computeSiteInsights } from '../lib/site-insights'
 import { readSessionOrBearer } from '../lib/session'
 import { fetchAccessFacts, isSharedFromFacts, resolveSite, resolveSiteForAccess } from '../lib/site-access'
 import { deliverSlack, type SlackRecipient, slackDepsFromEnv, slackEnabled } from '../lib/slack'
@@ -66,7 +68,7 @@ export type SearchRow = {
   siteSlug: string
   title: string | null
   visibility: Visibility
-  status: 'active' | 'archived'
+  status: 'active' | 'archived' | 'expired'
   ownerId: string
   createdAt: string
 }
@@ -496,6 +498,19 @@ sites.get('/:spaceSlug/:siteSlug/shares', requireAuth, async (c) => {
   })
 })
 
+// GET /api/sites/:spaceSlug/:siteSlug/stats — owner-only view counts for the last 30 days. Counts
+// only, never viewer identities. Strictly the owner, no role bypass (see lib/access.ts), the same
+// rule as /shares below. Admins get site-wide totals from the admin routes instead.
+sites.get('/:spaceSlug/:siteSlug/stats', requireAuth, async (c) => {
+  const user = c.get('user')
+  const db = c.get('db')
+  const { spaceSlug, siteSlug } = c.req.param()
+  const site = await resolveSite(db, spaceSlug, siteSlug)
+  if (!site) return c.json({ error: 'not found' }, 404)
+  if (site.ownerId !== user.id) return c.json({ error: 'forbidden' }, 403)
+  return c.json(await computeSiteInsights(db, site.id))
+})
+
 // PUT /api/sites/:spaceSlug/:siteSlug/shares — owner-only: replace the whole share set. Strictly
 // the owner: a superadmin here could grant ITSELF a share and read a site checkAccess denies it.
 sites.put('/:spaceSlug/:siteSlug/shares', requireAuth, requireControlGrant, async (c) => {
@@ -542,7 +557,7 @@ sites.put('/:spaceSlug/:siteSlug/shares', requireAuth, requireControlGrant, asyn
   })
 })
 
-// PATCH /api/sites/:spaceSlug/:siteSlug — owner-only update of visibility/title. Strictly the
+// PATCH /api/sites/:spaceSlug/:siteSlug — owner-only update of visibility/title/theme/expiry. Strictly the
 // owner: a superadmin here could downgrade `private` → `team` and then read the site legitimately.
 sites.patch('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c) => {
   const user = c.get('user')
@@ -554,9 +569,20 @@ sites.patch('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
 
   const body = await c.req.json().catch(() => null)
   if (!body || typeof body !== 'object') return c.json({ error: 'invalid body' }, 400)
-  const { visibility, title, theme } = body as { visibility?: unknown; title?: unknown; theme?: unknown }
+  const { visibility, title, theme, expires } = body as {
+    visibility?: unknown
+    title?: unknown
+    theme?: unknown
+    expires?: unknown
+  }
 
-  const patch: { visibility?: Visibility; title?: string | null; theme?: string | null } = {}
+  const patch: {
+    visibility?: Visibility
+    title?: string | null
+    theme?: string | null
+    expiresAt?: string | null
+    status?: SQL
+  } = {}
   if (visibility !== undefined) {
     const vis = normalizeVisibility(visibility)
     if (!isVisibility(vis)) return c.json({ error: 'invalid visibility' }, 400)
@@ -573,6 +599,17 @@ sites.patch('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
   if (theme !== undefined) {
     if (theme !== null && !isTheme(theme)) return c.json({ error: 'invalid theme' }, 400)
     patch.theme = theme
+  }
+  // Expiry (`7d`, `2026-12-31`, `none`; null clears): presentation-neutral like theme, so no
+  // contentVersion/updatedAt bump. Setting or clearing it is also how an owner revives an EXPIRED
+  // site; an admin-'archived' one stays archived (that is the admin's call, not the owner's). The
+  // status is decided IN the UPDATE, from the row's own value: deciding it from the `site` read above
+  // would let the hourly sweep (or an admin archive) land in between and be overwritten.
+  if (expires !== undefined) {
+    const expiry = parseExpiry(expires)
+    if (expiry.kind === 'invalid') return c.json({ error: expiry.reason }, 400)
+    patch.expiresAt = expiry.kind === 'set' ? expiry.at : null
+    patch.status = sql`case when ${sitesTable.status} = 'archived' then 'archived' else 'active' end`
   }
   if (Object.keys(patch).length > 0) {
     await db.update(sitesTable).set(patch).where(eq(sitesTable.id, site.id))
