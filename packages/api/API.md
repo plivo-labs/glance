@@ -155,6 +155,7 @@ A revoked key stops authenticating immediately. One documented exception: a
 | `GET` | `/api/sites/search?q=` | Search |
 | `GET` | `/api/sites/:space/:site` | Viewer metadata + a token-gated content URL |
 | `GET` | `/api/sites/:space/:site/exists` | Slug-conflict probe |
+| `GET` | `/api/sites/:space/:site/stats` | Last-30-day view counts (owner only; counts, no viewer names) |
 | `GET` | `/api/sites/:space/:site/shares` | Current shares |
 | `PUT` | `/api/sites/:space/:site/shares` ✱ | Replace shares |
 | `PATCH` | `/api/sites/:space/:site` ✱ | Rename / change visibility |
