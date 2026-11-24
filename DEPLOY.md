@@ -94,6 +94,18 @@ bun run deploy   # build web → deploy main worker (with assets) → deploy con
 
 Open `https://glance.<your-subdomain>.workers.dev/login`, paste `BOOTSTRAP_TOKEN` into **Complete setup**, and submit. This claims `SUPERADMIN_EMAIL` as the first superadmin and signs you in. Once an admin exists the setup panel disappears and the token is inert.
 
+## PDF export (optional)
+
+The viewer's Download menu can make PDFs on the server with [Cloudflare Browser Rendering](https://developers.cloudflare.com/browser-rendering/). It is off by default because it is metered: the Workers Free plan allows 10 browser-minutes a day, and Workers Paid is billed per browser hour. Each export is also limited to 5 a minute per user (`PDF_LIMITER`) and stops after 30 seconds.
+
+To turn it on, uncomment the `browser` line in `packages/api/wrangler.jsonc` and redeploy:
+
+```jsonc
+"browser": { "binding": "BROWSER" },
+```
+
+Markdown and plain-text downloads need nothing. Without the binding, or if a render fails, the PDF option falls back to the browser's own print dialog. It does the same for a page that uses [`glance.db`](SHARED_BACKEND.md) (the headless browser has no Glance app around the page to answer the SDK) and for any page of a site that holds `glance.db` documents. A markdown page on a site with no theme, viewed in a theme picked in the viewer, is printed too: its security policy does not let the theme's stylesheet load into a server-side PDF.
+
 ## Google OAuth (optional)
 
 Glance runs fine on bootstrap auth alone. To add Google Workspace SSO, create an OAuth client at console.cloud.google.com → Credentials (authorized redirect URI `https://glance.<your-subdomain>.workers.dev/api/auth/callback`), then:

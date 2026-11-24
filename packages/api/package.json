@@ -14,6 +14,7 @@
     "deploy:content": "bun run build:annotate && bun run build:db && bun run build:themes && wrangler deploy --config wrangler.content.jsonc"
   },
   "dependencies": {
+    "@cloudflare/puppeteer": "^2.0.0",
     "arctic": "^3.7.0",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.12.0",

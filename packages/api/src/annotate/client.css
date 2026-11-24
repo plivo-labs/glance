@@ -36,3 +36,13 @@ dialog.glance-lb svg {
   height: auto;
   max-height: 84vh;
 }
+
+/* Print / Save as PDF: keep the page's own background and colors. Browsers drop backgrounds when
+   printing, which turns a dark theme into pale text on white paper; `exact` is the standard
+   opt-in. The property inherits, so setting it on the root covers the whole page. */
+@media print {
+  :root {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

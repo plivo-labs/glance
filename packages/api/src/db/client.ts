@@ -21,7 +21,7 @@ function deadline<T>(p: Promise<T>, ms: number): Promise<T> {
   const expired = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new D1DeadlineError(`D1 call exceeded ${ms}ms`)), ms)
   })
-  return Promise.race([p, expired]).finally(() => clearTimeout(timer))
+  return Promise.race([p, expired]).finally(() => clearTimeout(timer ?? undefined))
 }
 
 /** Hono's default handler, plus a 503 for a D1 deadline. Drizzle rethrows driver errors wrapped

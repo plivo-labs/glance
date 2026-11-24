@@ -58,6 +58,10 @@ Unset → `/api/_data` is inert (404). The `documents` table ships with the stan
 - **Standalone tabs** — a site opened directly on the content origin has no parent frame, so
   `glance.db` calls fail with a clear "open this site through the Glance app" error. By design
   for now.
+- **Server-side PDF** — the headless render has no parent frame to answer the SDK, so a page that
+  uses `glance.db`, or any page of a site that holds documents, is printed through the browser's
+  print dialog instead. Detection reads the page's own source: a page that loads the SDK from a
+  script file of its own, on a site with no documents yet, is still rendered without it.
 - **`glance.fs` / `glance.ai`** (planned) — with serve-time non-exec fs serving + AI quotas;
   both ride the same broker channel.
 - **`glance.config.json` capability manifest** (the `shared-*` naming convention covers the

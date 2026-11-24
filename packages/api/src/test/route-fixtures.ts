@@ -9,6 +9,7 @@ import { admin } from '../routes/admin'
 import { apiKeys } from '../routes/api-keys'
 import { commentFeed } from '../routes/comment-feed'
 import { comments } from '../routes/comments'
+import { sitePdf } from '../routes/site-pdf'
 import { summary } from '../routes/summary'
 import { sites } from '../routes/sites'
 import { slackEvents } from '../routes/slack-events'
@@ -46,6 +47,7 @@ export function makeRouteApp() {
   // Same order as index.ts: sites first, then comments on the same mount (3-segment paths).
   app.route('/api/sites', comments)
   app.route('/api/sites', summary)
+  app.route('/api/sites', sitePdf)
   app.route('/api/comments', commentFeed)
   app.route('/api/slack', slackEvents)
   app.route('/api/api-keys', apiKeys)
