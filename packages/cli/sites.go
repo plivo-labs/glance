@@ -87,3 +87,43 @@ func (c *client) move(argv []string) error {
 	fmt.Fprintf(c.out, "✓ Moved → %s\n", out.URL)
 	return nil
 }
+
+// archive / unarchive shelve and restore the caller's own page (PATCH {archived}). The page answers 410
+// while archived and nothing is deleted. An admin's own archive is not the owner's to lift: the server
+// answers 403 and says so.
+func (c *client) archive(argv []string) error   { return c.setArchived(argv, true) }
+func (c *client) unarchive(argv []string) error { return c.setArchived(argv, false) }
+
+func (c *client) setArchived(argv []string, archived bool) error {
+	verb := "unarchive"
+	if archived {
+		verb = "archive"
+	}
+	target := ""
+	if len(argv) > 0 {
+		target = argv[0]
+	}
+	space, name, err := splitSpaceSlug(target)
+	if err != nil {
+		return fmt.Errorf("Usage: glance %s <space/slug>", verb)
+	}
+	if err := c.requireAuth(); err != nil {
+		return err
+	}
+	payload, _ := json.Marshal(map[string]bool{"archived": archived})
+	resp, err := c.authed("PATCH", "/api/sites/"+space+"/"+name,
+		strings.NewReader(string(payload)), map[string]string{"Content-Type": "application/json"})
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if !ok(resp) {
+		return fmt.Errorf("%s failed (%d): %s", strings.ToUpper(verb[:1])+verb[1:], resp.StatusCode, bodySlice(resp))
+	}
+	if archived {
+		fmt.Fprintf(c.out, "✓ Archived %s/%s. It answers 410 until you run: glance unarchive %s/%s\n", space, name, space, name)
+	} else {
+		fmt.Fprintf(c.out, "✓ Unarchived %s/%s.\n", space, name)
+	}
+	return nil
+}

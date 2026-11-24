@@ -40,6 +40,8 @@ var authedCmds = map[string]func(*client, []string) error{
 	"list":          func(c *client, _ []string) error { return c.list() },
 	"delete":        (*client).del,
 	"move":          (*client).move,
+	"archive":       (*client).archive,
+	"unarchive":     (*client).unarchive,
 	"fork":          (*client).fork,
 	"comments":      (*client).comments,
 	"read":          (*client).read,
@@ -97,6 +99,8 @@ func printHelp() {
 	fmt.Println("  glance list")
 	fmt.Println("  glance delete <space/slug>")
 	fmt.Println("  glance move <space/slug> <new-space>")
+	fmt.Println("  glance archive <space/slug>      (shelve a page instead of deleting it)")
+	fmt.Println("  glance unarchive <space/slug>")
 	fmt.Println("  glance fork <space/slug> [--space <slug>] [--name <slug>]")
 	fmt.Println("  glance comments <space/slug> [--file <path>] [--open] [--json]")
 	fmt.Println("  glance reply <space/slug> <threadId> [message] [--tag <label> | --no-tag]")

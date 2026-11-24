@@ -33,6 +33,7 @@ Put it in your shell profile to make it permanent. Token + URL are saved to `~/.
 | `glance deploy <path> [--space <slug>] [--name <slug>] [--visibility team\|private\|members] [--expires 7d\|<date>\|none]` | uploads a file or a folder |
 | `glance list` | lists your sites — `space/slug  visibility  url` |
 | `glance delete <space/slug>` | confirms (y/N), then deletes |
+| `glance archive <space/slug>` / `glance unarchive <space/slug>` | shelves your own page instead of deleting it (410 for everyone, kept in your list) / brings it back. An admin's archive can't be lifted this way |
 | `glance move <space/slug> <new-space>` | moves a site to another space you belong to (keeps its files, comments, shares) |
 | `glance fork <space/slug> [--space <slug>] [--name <slug>]` | copies a site you can open into your own space — your copy, to edit freely |
 | `glance comments <space/slug> [--file <path>] [--open] [--json]` | prints a site's review comments as a markdown digest (or raw JSON) |
@@ -90,6 +91,9 @@ The web app deploys the same way — drop a folder (or loose files, including a 
 
 ### delete
 Argument must be `space/slug` (with the slash), e.g. `glance delete docs/api-reference`.
+
+### archive / unarchive
+Prefer these to `delete` for a page that is just stale: `glance archive <space/slug>` makes it answer `410` for everyone and drops it from lists and search, but keeps the files, comments and shares, and it stays in your own list with an `archived` badge. `glance unarchive <space/slug>` brings it back. Owner-only. Redeploying over an archived page fails with `409` until you unarchive it. A page an admin archived stays archived (`403`).
 
 ### move
 Move an existing site into another space you belong to: `glance move <space/slug> <new-space>`, e.g. `glance move my-handle/api-reference docs`. The site keeps its files, comments and shares — only its URL changes to `/<new-space>/<slug>`. Owner-only. Fails if a site with the same slug already exists in the target space.
