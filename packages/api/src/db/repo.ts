@@ -276,8 +276,8 @@ export async function listMentionableUsers(
   site: Pick<Site, 'id' | 'spaceId' | 'visibility' | 'ownerId' | 'status'>,
   callerId: string,
 ): Promise<UserLite[]> {
-  // Archived sites are 410 for everyone (superadmin aside) — nobody is mentionable.
-  if (site.status === 'archived') return []
+  // Archived and expired sites are 410 for everyone (superadmin aside) — nobody is mentionable.
+  if (site.status !== 'active') return []
 
   const project = { id: users.id, name: users.name, email: users.email }
   const byName = sql`coalesce(${users.name}, ${users.email})`

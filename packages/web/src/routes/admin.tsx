@@ -363,7 +363,7 @@ function StatsPanel({ data }: { data: StatsData }) {
   )
 }
 
-const STATUS_OPTIONS = ['active', 'archived'] as const
+const STATUS_OPTIONS = ['active', 'archived', 'expired'] as const
 const VISIBILITY_OPTIONS: Visibility[] = ['private', 'members', 'team']
 
 // "all" is the sentinel for the unfiltered option (Radix Select can't hold an empty value).
@@ -461,6 +461,8 @@ function SitesPanel({ data }: { data: SitesData }) {
                   <TableCell>
                     {s.status === 'active' ? (
                       <Badge className="border-transparent bg-success/15 text-success">active</Badge>
+                    ) : s.status === 'expired' ? (
+                      <Badge variant="destructive">expired</Badge>
                     ) : (
                       <Badge variant="secondary" className="text-muted-foreground">
                         archived
@@ -470,7 +472,9 @@ function SitesPanel({ data }: { data: SitesData }) {
                   <TableCell className="text-muted-foreground">{formatDate(s.createdAt)}</TableCell>
                   <TableCell>
                     <div className="flex items-center justify-end gap-2">
-                      {s.status === 'active' ? (
+                      {s.status === 'archived' ? (
+                        <RestoreButton siteId={s.id} />
+                      ) : (
                         <ConfirmDialog
                           title="Archive this site?"
                           description={`/${s.spaceSlug}/${s.siteSlug} will be hidden from listings but can be restored.`}
@@ -482,8 +486,6 @@ function SitesPanel({ data }: { data: SitesData }) {
                             Archive
                           </Button>
                         </ConfirmDialog>
-                      ) : (
-                        <RestoreButton siteId={s.id} />
                       )}
                       <ConfirmDialog
                         title="Delete this site?"

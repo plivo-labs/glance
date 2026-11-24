@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { useRevalidator } from 'react-router'
-import { Copy, FolderInput, GitFork, MoreVertical, Pencil, Share2, Sparkles, Trash2 } from 'lucide-react'
+import { Copy, FolderInput, GitFork, MoreVertical, Pencil, Share2, Sparkles, Timer, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { ForkDialog } from '@/components/ForkDialog'
@@ -33,6 +33,9 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
@@ -95,6 +98,26 @@ function OwnerVisibilityCell({ site }: { site: SiteSummary }) {
 type RowDialog = 'rename' | 'move' | 'share' | 'summary' | 'fork' | 'delete' | null
 
 // Open + a kebab that collapses Rename / Move / Share / Copy link / Fork / Delete.
+// Row-menu expiry presets, in the same words the API and `glance deploy --expires` accept. Picking one
+// on an expired site also brings it back (the server revives it), so this doubles as "extend".
+const EXPIRY_PRESETS: [label: string, expires: string][] = [
+  ['In 1 day', '1d'],
+  ['In 7 days', '7d'],
+  ['In 30 days', '30d'],
+  ['Never expires', 'none'],
+]
+
+async function patchExpiry(spaceSlug: string, siteSlug: string, expires: string): Promise<boolean> {
+  try {
+    await api.patch(`/api/sites/${spaceSlug}/${siteSlug}`, { expires })
+    toast.success(expires === 'none' ? 'Expiry removed' : 'Expiry updated')
+    return true
+  } catch (err) {
+    toast.error('Could not update expiry', { description: err instanceof Error ? err.message : undefined })
+    return false
+  }
+}
+
 function OwnerActions({ site }: { site: SiteSummary }) {
   const revalidator = useRevalidator()
   const [dialog, setDialog] = useState<RowDialog>(null)
@@ -151,6 +174,26 @@ function OwnerActions({ site }: { site: SiteSummary }) {
               })
             }
           />
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger className="gap-2">
+              <Timer className="size-4 text-muted-foreground" />
+              Expiry
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="w-44">
+              {EXPIRY_PRESETS.map(([label, expires]) => (
+                <DropdownMenuItem
+                  key={expires}
+                  onSelect={() =>
+                    void patchExpiry(site.spaceSlug, site.siteSlug, expires).then((ok) => {
+                      if (ok) refresh()
+                    })
+                  }
+                >
+                  {label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
           <DropdownMenuSeparator />
           <DropdownMenuItem variant="destructive" onSelect={() => setDialog('delete')}>
             <Trash2 />

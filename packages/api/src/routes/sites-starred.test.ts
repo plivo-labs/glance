@@ -51,6 +51,7 @@ describe('GET /api/sites/starred', () => {
         visibility: 'team',
         status: 'active',
         theme: null,
+        expiresAt: null,
         audio: false,
         hasSummary: false,
         starred: true,

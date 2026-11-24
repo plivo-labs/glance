@@ -108,7 +108,7 @@ describe('T1.5 cross-space same-slug isolation (pin)', () => {
 // cache ops — authorization is decided purely in D1, bytes are never touched.
 // ---------------------------------------------------------------------------------------------
 describe('T1.3 denial matrix — no R2/cache work on any denial (pin)', () => {
-  async function privateSite(s: Setup, o: { status?: 'active' | 'archived' } = {}) {
+  async function privateSite(s: Setup, o: { status?: 'active' | 'archived'; expiresAt?: string } = {}) {
     const owner = await seedUser(s.db)
     const sp = await seedSpace(s.db, { createdBy: owner, slug: 'sp' })
     await seedMember(s.db, sp, owner)
@@ -118,6 +118,7 @@ describe('T1.3 denial matrix — no R2/cache work on any denial (pin)', () => {
       slug: 'site',
       visibility: 'private',
       status: o.status ?? 'active',
+      expiresAt: o.expiresAt,
     })
     await seedFile(s.db, s.r2, siteId, { path: 'index.html', text: '<p>secret</p>' })
     return { owner, sp, siteId }
@@ -137,6 +138,15 @@ describe('T1.3 denial matrix — no R2/cache work on any denial (pin)', () => {
     const { owner } = await privateSite(s, { status: 'archived' })
     const res = await s.app.request(`/_t/${await token(owner, 'sp/site')}/sp/site/`, {}, s.env)
     expect(res.status).toBe(410)
+    expectNoByteWork(s)
+  })
+
+  test('active site past its expiresAt, owner → 410 expired, before the sweep flips it', async () => {
+    const s = setup()
+    const { owner } = await privateSite(s, { expiresAt: new Date(Date.now() - 60_000).toISOString() })
+    const res = await s.app.request(`/_t/${await token(owner, 'sp/site')}/sp/site/`, {}, s.env)
+    expect(res.status).toBe(410)
+    expect(await res.text()).toBe('This site has expired')
     expectNoByteWork(s)
   })
 

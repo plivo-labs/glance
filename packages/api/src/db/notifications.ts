@@ -95,7 +95,7 @@ export async function resolveCommentAudience(
   site: Pick<Site, 'id' | 'spaceId' | 'visibility' | 'ownerId' | 'status'>,
   opts: { threadId: string; isReply: boolean; exclude: Set<string> },
 ): Promise<CommentRecipient[]> {
-  if (site.status === 'archived') return []
+  if (site.status !== 'active') return []
 
   const directSharesStmt = db
     .select({ userId: siteUserShares.userId })
