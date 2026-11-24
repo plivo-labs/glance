@@ -158,7 +158,7 @@ A revoked key stops authenticating immediately. One documented exception: a
 | `GET` | `/api/sites/:space/:site/stats` | Last-30-day view counts (owner only; counts, no viewer names) |
 | `GET` | `/api/sites/:space/:site/shares` | Current shares |
 | `PUT` | `/api/sites/:space/:site/shares` ✱ | Replace shares |
-| `PATCH` | `/api/sites/:space/:site` ✱ | Rename / change visibility / theme / expiry (`expires`: `7d`, `2026-12-31`, `none`) |
+| `PATCH` | `/api/sites/:space/:site` ✱ | Rename / change visibility / theme / expiry (`expires`: `7d`, `2026-12-31`, `none`) / archive (`archived`: `true` shelves the page: `410` for everyone, off every list, nothing deleted; `false` brings it back. Owner only, not combinable with `expires`; an admin's own archive can't be lifted this way: `403`). A redeploy over an archived page is `409` until it is unarchived. |
 | `POST` | `/api/sites/:space/:site/move` ✱ | Move to another space |
 | `POST` | `/api/sites/:space/:site/fork` ✱ | Fork |
 | `DELETE` | `/api/sites/:space/:site` | Delete — **always `403` for a key** |

@@ -192,6 +192,9 @@ upload.post('/:spaceSlug/:siteSlug', requireAuth, requireControlGrant, async (c)
     const shareRole = isOwner ? null : (shareRoleRows[0]?.role ?? null)
     if (!canReplace(user, existing, shareRole)) return c.json({ error: 'forbidden' }, 403)
     actingAsEditor = !isOwner
+    // The owner shelved this page: a redeploy would publish into a 410, and silently un-shelving it is
+    // not the deploy's call. Say so, and let them unarchive first (editors are 403'd below).
+    if (isOwner && existing.status === 'owner_archived') return c.json({ error: 'site is archived: unarchive it first' }, 409)
 
     if (actingAsEditor) {
       if (lapsed || existing.status !== 'active') return c.json({ error: `site ${lapsed ? 'expired' : existing.status}` }, 403)

@@ -13,4 +13,5 @@ test('name column: an active expiry shows its date, an expired site says expired
   expect(expired).toContain('expired')
   expect(expired).not.toContain('expires 2026')
   expect(cell({ status: 'archived' })).toContain('archived')
+  expect(cell({ status: 'owner_archived' })).toContain('archived')
 })

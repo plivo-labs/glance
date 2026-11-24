@@ -142,3 +142,14 @@ describe('PATCH /api/admin/sites/:id/restore', () => {
     expect(await row('live')).toEqual({ status: 'active', expiresAt: expiries.live })
   })
 })
+
+describe('upload over an owner-archived page', () => {
+  test('the owner gets a 409 until they unarchive, and nothing is replaced', async () => {
+    const { db, sp, owner, post, row } = await setupUpload()
+    await seedSite(db, { id: 'shelved', spaceId: sp, ownerId: owner, slug: 'shelved', status: 'owner_archived' })
+    expect((await post('shelved', { replace: true })).status).toBe(409)
+    expect((await row('shelved'))?.status).toBe('owner_archived')
+    await db.update(sites).set({ status: 'active' }).where(eq(sites.id, 'shelved'))
+    expect((await post('shelved', { replace: true })).status).toBe(200)
+  })
+})

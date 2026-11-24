@@ -67,7 +67,7 @@ type FeedSourceRow = {
   slug: string
   title: string | null
   visibility: Visibility
-  status: 'active' | 'archived' | 'expired'
+  status: 'active' | 'archived' | 'owner_archived' | 'expired'
   expiresAt: string | null
   theme: string | null
   createdAt: string

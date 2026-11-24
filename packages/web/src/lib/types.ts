@@ -1,7 +1,7 @@
 // Mirrors the API response contract (packages/api routes).
 
 export type Visibility = 'private' | 'members' | 'team'
-export type SiteStatus = 'active' | 'archived' | 'expired'
+export type SiteStatus = 'active' | 'archived' | 'owner_archived' | 'expired'
 
 export interface Me {
   id: string

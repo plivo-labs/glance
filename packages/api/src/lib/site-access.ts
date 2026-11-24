@@ -19,7 +19,7 @@ export type ResolvedSite = {
   title: string | null
   description: string | null
   visibility: Visibility
-  status: 'active' | 'archived' | 'expired'
+  status: 'active' | 'archived' | 'owner_archived' | 'expired'
   expiresAt: string | null
   ownerId: string
   contentVersion: number
