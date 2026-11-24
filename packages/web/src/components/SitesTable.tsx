@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { useRevalidator } from 'react-router'
-import { Copy, FolderInput, GitFork, MoreVertical, Pencil, Share2, Sparkles, Timer, Trash2 } from 'lucide-react'
+import { Archive, ArchiveRestore, Copy, FolderInput, GitFork, MoreVertical, Pencil, Share2, Sparkles, Timer, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { ForkDialog } from '@/components/ForkDialog'
@@ -107,6 +107,19 @@ const EXPIRY_PRESETS: [label: string, expires: string][] = [
   ['Never expires', 'none'],
 ]
 
+// Archive shelves the owner's own page (410 for everyone, kept in My sites with an 'archived' badge)
+// instead of deleting it; the same call with `false` brings it back.
+async function patchArchived(spaceSlug: string, siteSlug: string, archived: boolean): Promise<boolean> {
+  try {
+    await api.patch(`/api/sites/${spaceSlug}/${siteSlug}`, { archived })
+    toast.success(archived ? 'Site archived' : 'Site restored')
+    return true
+  } catch (err) {
+    toast.error(archived ? 'Could not archive' : 'Could not restore', { description: err instanceof Error ? err.message : undefined })
+    return false
+  }
+}
+
 async function patchExpiry(spaceSlug: string, siteSlug: string, expires: string): Promise<boolean> {
   try {
     await api.patch(`/api/sites/${spaceSlug}/${siteSlug}`, { expires })
@@ -195,6 +208,19 @@ function OwnerActions({ site }: { site: SiteSummary }) {
             </DropdownMenuSubContent>
           </DropdownMenuSub>
           <DropdownMenuSeparator />
+          {/* An admin's own archive can't be lifted by the owner, so it offers neither action. */}
+          {site.status !== 'archived' && (
+            <DropdownMenuItem
+              onSelect={() =>
+                void patchArchived(site.spaceSlug, site.siteSlug, site.status !== 'owner_archived').then((ok) => {
+                  if (ok) refresh()
+                })
+              }
+            >
+              {site.status === 'owner_archived' ? <ArchiveRestore /> : <Archive />}
+              {site.status === 'owner_archived' ? 'Unarchive' : 'Archive'}
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem variant="destructive" onSelect={() => setDialog('delete')}>
             <Trash2 />
             Delete

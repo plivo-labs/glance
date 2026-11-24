@@ -65,7 +65,7 @@ export function nameColumn<T extends SiteSummary>(): Column<T> {
         <a href={s.url} target="_blank" rel="noreferrer" title={s.title ?? s.siteSlug} className="truncate font-medium underline-offset-4 hover:underline">
           {s.title ?? s.siteSlug}
         </a>
-        {s.status === 'archived' && <Badge variant="secondary">archived</Badge>}
+        {(s.status === 'archived' || s.status === 'owner_archived') && <Badge variant="secondary">archived</Badge>}
         {s.status === 'expired' && <Badge variant="destructive">expired</Badge>}
         {s.status === 'active' && s.expiresAt && <Badge variant="outline">expires {isoDate(s.expiresAt)}</Badge>}
         {/* "Shared with me" feed only: an editor grantee can redeploy this site's content. */}
