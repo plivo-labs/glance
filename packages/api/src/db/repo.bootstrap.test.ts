@@ -109,6 +109,23 @@ describe('createPersonalSpace — slug-conflict resilience (#27)', () => {
     const mine = await db.select().from(spaces).where(eq(spaces.slug, 'bob-2'))
     expect(mine[0]?.createdBy).toBe('bob')
   })
+
+  test('a slug taken between the lookup and the insert moves on to the next candidate', async () => {
+    const db = makeDb()
+    await db.insert(users).values({ id: 'racer', email: 'racer@x.com', role: 'member' })
+    await db.insert(users).values({ id: 'carol', email: 'carol@example.com', role: 'member' })
+    const batch = db.batch.bind(db)
+    db.batch = (async (stmts: Parameters<typeof db.batch>[0]) => {
+      db.batch = batch
+      await createSpace(db, { slug: 'carol', name: 'carol', type: 'personal', createdBy: 'racer' })
+      return batch(stmts)
+    }) as typeof db.batch
+
+    await createPersonalSpace(db, 'carol', 'carol@example.com')
+
+    expect((await db.select().from(spaces).where(eq(spaces.slug, 'carol')))[0]?.createdBy).toBe('racer')
+    expect((await db.select().from(spaces).where(eq(spaces.slug, 'carol-1')))[0]?.createdBy).toBe('carol')
+  })
 })
 
 describe('indexes (0007 migration reaches the harness)', () => {

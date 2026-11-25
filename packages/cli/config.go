@@ -5,11 +5,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type Config struct {
 	ApiUrl string `json:"apiUrl"`
 	Token  string `json:"token,omitempty"`
+	// Oidc replaces Token when the instance signs the CLI in through its identity provider.
+	Oidc *OidcSession `json:"oidc,omitempty"`
 }
 
 func configDir() string {
@@ -87,8 +90,15 @@ func apiToken() string {
 	if v := strings.TrimSpace(os.Getenv("GLANCE_TOKEN")); v != "" {
 		return v
 	}
-	if c := readConfig(); c != nil {
-		return c.Token
+	c := readConfig()
+	if c == nil {
+		return ""
 	}
-	return ""
+	if c.Oidc != nil {
+		return oidcBearer(c.Oidc, time.Now(), func(s *OidcSession) {
+			c.Oidc = s
+			_ = writeConfig(*c)
+		})
+	}
+	return c.Token
 }

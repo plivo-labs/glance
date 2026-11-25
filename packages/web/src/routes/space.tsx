@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { type LoaderFunctionArgs, useLoaderData, useNavigate, useRevalidator } from 'react-router'
+import { type LoaderFunctionArgs, useLoaderData, useNavigate, useRevalidator, useRouteLoaderData } from 'react-router'
 import { ExternalLink, Trash2, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
@@ -21,6 +21,7 @@ import {
 import { MountSensor } from '@/components/ui/mount-sensor'
 import { api, ApiError } from '@/lib/api'
 import { toLogin } from '@/lib/nav'
+import type { RootData } from '@/lib/notifications'
 import type { SiteSummary, SpaceDetail, UserLite } from '@/lib/types'
 
 // GET /api/spaces/:slug/sites returns the shared feed-row shape plus per-row ownership.
@@ -179,6 +180,7 @@ function DangerZone({ space }: { space: SpaceDetail }) {
 
 export function Component() {
   const { space, sites } = useLoaderData() as { space: SpaceDetail; sites: SpaceSite[] }
+  const root = useRouteLoaderData('root') as RootData | undefined
   const isGroup = space.type === 'group'
 
   return (
@@ -201,6 +203,9 @@ export function Component() {
       >
         {/* Invite is owner-only server-side — don't offer a button that can only 403. */}
         {isGroup && space.isOwner && <InviteMembersDialog slug={space.slug} />}
+        {space.managed && (
+          <p className="text-muted-foreground text-sm">Members come from your sign-in provider</p>
+        )}
       </PageHeader>
 
       <section className="space-y-4">
@@ -221,7 +226,8 @@ export function Component() {
         )}
       </section>
 
-      {isGroup && <DangerZone space={space} />}
+      {/* Nobody owns a managed space: only a superadmin can delete it. */}
+      {isGroup && (!space.managed || root?.user?.role === 'superadmin') && <DangerZone space={space} />}
     </div>
   )
 }

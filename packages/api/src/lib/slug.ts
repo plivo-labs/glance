@@ -17,11 +17,38 @@ export function isValidSlug(slug: string): boolean {
 
 /** Best-effort conversion of an email handle into a candidate personal-space slug. */
 export function slugifyHandle(email: string): string {
-  const handle = (email.split('@')[0] ?? 'user').toLowerCase()
-  let s = handle
+  return slugifyText(email.split('@')[0] ?? 'user', 'user')
+}
+
+/** Best-effort conversion of an identity-provider group name into a candidate group-space slug. */
+export function slugifyGroup(name: string): string {
+  return slugifyText(name, 'group')
+}
+
+/** The base slug, then `-1`…`-25`: the bounded list a creator walks on slug collisions. */
+export function slugCandidates(base: string): string[] {
+  const first = RESERVED_SLUGS.has(base) ? `${base}-1` : base
+  return [first, ...Array.from({ length: 25 }, (_, i) => `${first}-${i + 1}`)]
+}
+
+/** A short stable suffix derived from `text` (FNV-1a, base36), for when every readable candidate is
+ *  taken. Not a security boundary: any member can compute it, but they must also pre-create the
+ *  slug, and the caller still skips rather than failing when even that is gone. */
+export function slugSuffix(text: string): string {
+  let hash = 0x811c9dc5
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  return hash.toString(36).padStart(6, '0').slice(0, 6)
+}
+
+function slugifyText(text: string, fallback: string): string {
+  let s = text
+    .toLowerCase()
     .replace(/[^a-z0-9-]+/g, '-')
     .replace(/-{2,}/g, '-')
     .replace(/^-+|-+$/g, '')
-  if (s.length < 3) s = `${s || 'user'}-glance`
+  if (s.length < 3) s = `${s || fallback}-glance`
   return s.slice(0, 40).replace(/-+$/g, '')
 }
