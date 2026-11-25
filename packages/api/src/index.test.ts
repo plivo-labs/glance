@@ -96,6 +96,7 @@ describe('WRITE_FREEZE maintenance switch', () => {
     ['POST', '/api/sites/acme/deck/star'],
     ['POST', '/api/_data/acme/deck/collections/todos'],
     ['GET', '/api/auth/callback'],
+    ['GET', '/api/auth/oidc/callback'],
   ] as const
 
   test.each(writes)('frozen: %s %s → 503 + Retry-After', async (method, path) => {

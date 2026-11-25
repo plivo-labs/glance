@@ -91,17 +91,26 @@ describe('bootstrapDecision (pure)', () => {
 })
 
 describe('buildPublicConfig (pure)', () => {
-  test('config-shape: bootstrapAvailable iff token set AND no superadmin; googleEnabled passthrough', () => {
-    expect(buildPublicConfig({ googleEnabled: true, hasSuperadmin: false, bootstrapTokenSet: true })).toEqual({
+  test('config-shape: bootstrapAvailable iff token set AND no superadmin; googleEnabled + oidcName passthrough', () => {
+    expect(
+      buildPublicConfig({ googleEnabled: true, oidcName: null, hasSuperadmin: false, bootstrapTokenSet: true }),
+    ).toEqual({
       googleEnabled: true,
+      oidcName: null,
       bootstrapAvailable: true,
     })
-    expect(buildPublicConfig({ googleEnabled: false, hasSuperadmin: true, bootstrapTokenSet: true })).toEqual({
+    expect(
+      buildPublicConfig({ googleEnabled: false, oidcName: 'Okta', hasSuperadmin: true, bootstrapTokenSet: true }),
+    ).toEqual({
       googleEnabled: false,
+      oidcName: 'Okta',
       bootstrapAvailable: false,
     })
-    expect(buildPublicConfig({ googleEnabled: false, hasSuperadmin: false, bootstrapTokenSet: false })).toEqual({
+    expect(
+      buildPublicConfig({ googleEnabled: false, oidcName: null, hasSuperadmin: false, bootstrapTokenSet: false }),
+    ).toEqual({
       googleEnabled: false,
+      oidcName: null,
       bootstrapAvailable: false,
     })
   })
